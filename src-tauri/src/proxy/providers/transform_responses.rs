@@ -360,6 +360,14 @@ pub fn anthropic_to_responses(
             .iter()
             .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
             .map(|t| {
+                // Anthropic server-side web_search tool (e.g. type
+                // "web_search_20250305" / "web_search_20260209" /
+                // "web_search_20260318"). Responses gateways like DeepSeek
+                // declare it as {"type":"web_search"} and execute the search
+                // server-side; a function-style definition is not accepted.
+                if is_anthropic_web_search_tool(t) {
+                    return json!({"type": "web_search"});
+                }
                 json!({
                     "type": "function",
                     "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
@@ -377,7 +385,7 @@ pub fn anthropic_to_responses(
     }
 
     if let Some(v) = body.get("tool_choice") {
-        result["tool_choice"] = map_tool_choice_to_responses(v);
+        result["tool_choice"] = map_tool_choice_to_responses(v, body.get("tools"));
     }
 
     // Inject prompt_cache_key for improved cache routing on OpenAI-compatible endpoints
@@ -446,7 +454,29 @@ pub fn anthropic_to_responses(
     Ok(result)
 }
 
-fn map_tool_choice_to_responses(tool_choice: &Value) -> Value {
+/// Detect Anthropic's server-side `web_search` tool declaration. The Messages
+/// API exposes it as a versioned tool type (`web_search_20250305`,
+/// `web_search_20260209`, `web_search_20260318`, ...) with `name: "web_search"`.
+/// A user-defined function tool named "web_search" (type `custom`/missing) must
+/// NOT be treated as the server tool, so the versioned `type` prefix is the
+/// authoritative signal; the bare `name` fallback only catches the unversioned
+/// `{"type":"web_search"}` form some gateways emit.
+fn is_anthropic_web_search_tool(tool: &Value) -> bool {
+    matches!(
+        tool.get("type").and_then(Value::as_str),
+        Some(t) if t.starts_with("web_search_") || t == "web_search"
+    )
+}
+
+/// Map an Anthropic forced/auto tool_choice to the Responses equivalent.
+///
+/// `tools` is the original Anthropic request's `tools` array (if any). For a
+/// forced `{"type":"tool","name":...}` choice, the selector follows the matching
+/// tool declaration: a server-side web_search tool maps to Responses' built-in
+/// `{"type":"web_search"}`, while a user-defined function (even one named
+/// "web_search") keeps a `function` selector so the declaration and the choice
+/// stay consistent.
+fn map_tool_choice_to_responses(tool_choice: &Value, tools: Option<&Value>) -> Value {
     match tool_choice {
         Value::String(_) => tool_choice.clone(),
         Value::Object(obj) => match obj.get("type").and_then(|t| t.as_str()) {
@@ -454,13 +484,29 @@ fn map_tool_choice_to_responses(tool_choice: &Value) -> Value {
             Some("any") => json!("required"),
             Some("auto") => json!("auto"),
             Some("none") => json!("none"),
-            // Anthropic forced tool -> Responses function tool selector
+            // Anthropic forced tool -> Responses tool selector
             Some("tool") => {
                 let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                json!({
-                    "type": "function",
-                    "name": name
-                })
+                // Only map to Responses' built-in web_search when the forced
+                // tool's declaration in `tools` is Anthropic's server-side
+                // web_search tool. DeepSeek and other Responses gateways
+                // reject a function-style selector for it with a 400 while
+                // thinking is enabled; conversely, a user-defined function
+                // named "web_search" must keep its function selector.
+                let is_server_web_search = tools.and_then(|t| t.as_array()).is_some_and(|arr| {
+                    arr.iter().any(|t| {
+                        t.get("name").and_then(Value::as_str) == Some(name)
+                            && is_anthropic_web_search_tool(t)
+                    })
+                });
+                if is_server_web_search {
+                    json!({"type": "web_search"})
+                } else {
+                    json!({
+                        "type": "function",
+                        "name": name
+                    })
+                }
             }
             _ => tool_choice.clone(),
         },
@@ -1186,6 +1232,151 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"]["type"], "function");
         assert_eq!(result["tool_choice"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_web_search_tool_preserved() {
+        // Anthropic server-side web_search must map to Responses' built-in
+        // web_search tool, not a function definition.
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [{
+                "type": "web_search_20260318",
+                "name": "web_search"
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tools"][0], json!({"type": "web_search"}));
+        assert!(result["tools"][0].get("name").is_none());
+        assert!(result["tools"][0].get("parameters").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_web_search_older_version_preserved() {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search"
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tools"][0], json!({"type": "web_search"}));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_mixed_web_search_and_function_tools() {
+        // A request mixing the server tool with a normal function tool must
+        // keep both: web_search stays a server tool, the function stays a
+        // function.
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Do both"}],
+            "tools": [
+                {"type": "web_search_20260209", "name": "web_search"},
+                {
+                    "name": "get_weather",
+                    "description": "Get weather info",
+                    "input_schema": {"type": "object", "properties": {"location": {"type": "string"}}}
+                }
+            ]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(result["tools"][0], json!({"type": "web_search"}));
+        assert_eq!(result["tools"][1]["type"], "function");
+        assert_eq!(result["tools"][1]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_user_function_named_web_search_not_mapped() {
+        // A user-defined function tool that happens to be named "web_search"
+        // (type custom/missing, with an input_schema) is NOT the server tool and
+        // must stay a function definition.
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Use my tool"}],
+            "tools": [{
+                "name": "web_search",
+                "description": "custom wrapper",
+                "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}}
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tools"][0]["type"], "function");
+        assert_eq!(result["tools"][0]["name"], "web_search");
+        assert!(result["tools"][0].get("parameters").is_some());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_web_search_tool_choice_preserved() {
+        // Forced web_search tool_choice must map to Responses' built-in
+        // web_search selector, NOT a function-style selector. DeepSeek rejects
+        // the latter with a 400 when thinking is enabled.
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [{"type": "web_search_20260318", "name": "web_search"}],
+            "tool_choice": {"type": "tool", "name": "web_search"}
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tool_choice"], json!({"type": "web_search"}));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_regular_tool_choice_unaffected() {
+        // A forced tool_choice for a normal function must still map to the
+        // function selector.
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Weather?"}],
+            "tools": [{"name": "get_weather", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "get_weather"}
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_forced_choice_for_custom_web_search_function_keeps_function_selector(
+    ) {
+        // A user-defined function named "web_search" (type custom/missing) that
+        // is forced via tool_choice must keep a function selector, matching its
+        // function declaration. Only Anthropic's server-side web_search tool
+        // (versioned type) maps to {"type":"web_search"}.
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Use my tool"}],
+            "tools": [{
+                "name": "web_search",
+                "description": "custom wrapper",
+                "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}}
+            }],
+            "tool_choice": {"type": "tool", "name": "web_search"}
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tools"][0]["type"], "function");
+        assert_eq!(
+            result["tool_choice"],
+            json!({"type": "function", "name": "web_search"})
+        );
     }
 
     #[test]
