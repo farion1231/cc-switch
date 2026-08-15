@@ -9,7 +9,7 @@ mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
 mod codex_state_db;
-mod commands;
+pub mod commands;
 mod config;
 mod database;
 mod deeplink;
@@ -615,6 +615,20 @@ pub fn run() {
             }
 
             let app_state = AppState::new(db);
+
+            let tandem_state = match app.path().app_data_dir() {
+                Ok(app_data_dir) => crate::tandem::TandemState::initialize(&app_data_dir),
+                Err(error) => crate::tandem::TandemState::unavailable(
+                    error.to_string(),
+                    Arc::new(crate::tandem::SystemClock),
+                ),
+            };
+            if let Some(error) = tandem_state.init_error.as_deref() {
+                log::error!("Failed to initialize Tandem database: {error}");
+            } else {
+                log::info!("Tandem database initialized");
+            }
+            app.manage(tandem_state);
 
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
             app_state.proxy_service.set_app_handle(app.handle().clone());
@@ -1643,6 +1657,10 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
+            // Tandem task ledger
+            commands::create_tandem_task,
+            commands::list_tandem_ledger,
+            commands::confirm_tandem_task_completed,
             // lightweight mode (for testing or low-resource environments)
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
