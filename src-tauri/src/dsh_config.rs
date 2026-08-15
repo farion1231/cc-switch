@@ -836,6 +836,7 @@ fn lock_holder_dead(lock_path: &Path) -> bool {
     std::io::Error::last_os_error().kind() != ErrorKind::PermissionDenied
 }
 
+#[cfg(unix)]
 fn lock_holder_pid(lock_path: &Path) -> Option<u32> {
     fs::read(lock_path)
         .ok()
@@ -852,6 +853,10 @@ fn lock_older_than(lock_path: &Path, age: Duration) -> bool {
 }
 
 pub(crate) fn ensure_secure_home(home: &Path) -> Result<(), String> {
+    // Must be captured before create_dir_all; only newly created homes get
+    // their permissions tightened on Unix. The variable is cfg'd so Windows
+    // builds do not warn about an unused binding.
+    #[cfg(unix)]
     let existed = home.exists();
     fs::create_dir_all(home)
         .map_err(|source| io_error("create-home-failed", "Failed to create DSH home", source))?;
