@@ -1234,15 +1234,22 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.stepfun.com/step_plan/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 档位照抄官方两站模型页与 reasoning 指南（2026-08-15 盘点）：
+      // 3.7-flash 三档默认 medium、2603 两档；无后缀 3.5-flash 官方未暴露
+      // effort，不填。全系无关思考形态，none 一律不列。effort 下发由后端
+      // 按模型推断（2603=low_high 收敛、3.7=passthrough），预设不加
+      // codexChatReasoning——显式声明是 provider 级会丢 per-model 门控
       {
         model: "step-3.7-flash",
         displayName: "Step 3.7 Flash",
         contextWindow: 262144,
+        reasoningLevels: ["low", "medium", "high"],
       },
       {
         model: "step-3.5-flash-2603",
         displayName: "Step 3.5 Flash 2603",
         contextWindow: 262144,
+        reasoningLevels: ["low", "high"],
       },
       {
         model: "step-3.5-flash",
@@ -1267,15 +1274,22 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.stepfun.ai/step_plan/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 档位照抄官方两站模型页与 reasoning 指南（2026-08-15 盘点）：
+      // 3.7-flash 三档默认 medium、2603 两档；无后缀 3.5-flash 官方未暴露
+      // effort，不填。全系无关思考形态，none 一律不列。effort 下发由后端
+      // 按模型推断（2603=low_high 收敛、3.7=passthrough），预设不加
+      // codexChatReasoning——显式声明是 provider 级会丢 per-model 门控
       {
         model: "step-3.7-flash",
         displayName: "Step 3.7 Flash",
         contextWindow: 262144,
+        reasoningLevels: ["low", "medium", "high"],
       },
       {
         model: "step-3.5-flash-2603",
         displayName: "Step 3.5 Flash 2603",
         contextWindow: 262144,
+        reasoningLevels: ["low", "high"],
       },
       {
         model: "step-3.5-flash",

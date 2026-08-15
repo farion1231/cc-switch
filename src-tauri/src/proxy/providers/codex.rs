@@ -406,16 +406,27 @@ fn infer_codex_chat_reasoning_config(
         });
     }
 
-    // StepFun：仅 step-3.5-flash-2603 这一版支持 reasoning effort（low/high 两档），
-    // 其余 step 模型不暴露 effort，故 supports_effort 仅对含 "2603" 的模型置真。
+    // StepFun：官方 reasoning 指南与两站模型页（2026-08-15 盘点）——
+    // step-3.5-flash-2603 支持 low/high 两档；step-3.7-flash 支持
+    // low/medium/high 三档（官方默认 medium）；其余 step 模型（含无后缀
+    // step-3.5-flash）不暴露 effort。2603 沿用 low_high 收敛映射；
+    // 3.7-flash 必须 passthrough——套 low_high 会把 medium 塌成 high，
+    // 造出 wire 上无差异的假档位。全系无思考开关（thinking_param 恒 none）。
     // 第二个 OR 分支覆盖「经中转/聚合跑该模型、但平台 name/base_url 不含 stepfun」的情况。
     if haystack.contains("stepfun") || haystack.contains("step-3.5-flash-2603") {
         return Some(CodexChatReasoningConfig {
             supports_thinking: Some(true),
-            supports_effort: Some(model.contains("2603")),
+            supports_effort: Some(model.contains("2603") || model.contains("step-3.7-flash")),
             thinking_param: Some("none".to_string()),
             effort_param: Some("reasoning_effort".to_string()),
-            effort_value_mode: Some("low_high".to_string()),
+            effort_value_mode: Some(
+                if model.contains("2603") {
+                    "low_high"
+                } else {
+                    "passthrough"
+                }
+                .to_string(),
+            ),
             output_format: Some("reasoning".to_string()),
         });
     }
@@ -1563,6 +1574,45 @@ wire_api = "chat"
         assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_infer_codex_chat_reasoning_stepfun_per_model_effort() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "stepfun"
+model = "step-3.7-flash"
+
+[model_providers.stepfun]
+name = "StepFun"
+base_url = "https://api.stepfun.com/step_plan/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // step-3.7-flash：官方三档 low/medium/high —— 必须 passthrough，
+        // 套 low_high 会把 medium 塌成 high（假差异档）
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "step-3.7-flash" }))
+                .unwrap();
+        assert_eq!(config.supports_effort, Some(true));
+        assert_eq!(config.effort_value_mode.as_deref(), Some("passthrough"));
+
+        // step-3.5-flash-2603：官方两档 low/high，沿用收敛映射
+        let config = resolve_codex_chat_reasoning_config(
+            &provider,
+            &json!({ "model": "step-3.5-flash-2603" }),
+        )
+        .unwrap();
+        assert_eq!(config.supports_effort, Some(true));
+        assert_eq!(config.effort_value_mode.as_deref(), Some("low_high"));
+
+        // 无后缀 step-3.5-flash：官方未暴露 effort，不下发
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "step-3.5-flash" }))
+                .unwrap();
+        assert_eq!(config.supports_effort, Some(false));
+        assert_eq!(config.thinking_param.as_deref(), Some("none"));
     }
 
     #[test]
