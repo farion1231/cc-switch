@@ -571,25 +571,42 @@ fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
         .map(|(_, description)| *description)
 }
 
-/// User-declared levels reduced to the canonical efforts Codex understands,
-/// in canonical (lowest → highest) order regardless of declaration order.
-/// Unknown efforts are dropped so a typo can never produce an entry Codex
-/// would reject.
-fn codex_canonical_efforts(levels: &[String]) -> Vec<&str> {
-    CODEX_REASONING_LEVEL_DESCRIPTIONS
+/// Normalize declared effort values, preserving known values in the canonical
+/// lowest-to-highest order and keeping provider-specific values after them.
+///
+/// Model catalogs are consumed by different Codex versions and providers, so
+/// CC Switch intentionally keeps unknown non-empty values instead of silently
+/// dropping a provider capability the built-in list has not learned yet.
+fn codex_normalized_efforts(levels: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let declared: Vec<String> = levels
         .iter()
-        .filter(|(effort, _)| levels.iter().any(|candidate| candidate == effort))
-        .map(|(effort, _)| *effort)
-        .collect()
+        .map(|level| level.trim().to_ascii_lowercase())
+        .filter(|level| !level.is_empty())
+        .filter(|level| seen.insert(level.clone()))
+        .collect();
+
+    let mut ordered: Vec<String> = CODEX_REASONING_LEVEL_DESCRIPTIONS
+        .iter()
+        .filter(|(effort, _)| declared.iter().any(|candidate| candidate == effort))
+        .map(|(effort, _)| (*effort).to_string())
+        .collect();
+    ordered.extend(
+        declared
+            .into_iter()
+            .filter(|level| codex_reasoning_level_description(level).is_none()),
+    );
+    ordered
 }
 
 /// Build a `supported_reasoning_levels` array from user-declared effort values.
 fn codex_supported_reasoning_levels(levels: &[String]) -> Value {
-    let entries: Vec<Value> = codex_canonical_efforts(levels)
-        .into_iter()
+    let entries: Vec<Value> = levels
+        .iter()
         .map(|effort| {
             let description = codex_reasoning_level_description(effort)
-                .expect("canonical effort always has a description");
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("Reasoning effort: {effort}"));
             json!({ "effort": effort, "description": description })
         })
         .collect();
@@ -609,23 +626,26 @@ fn apply_codex_reasoning_level_override(
     let Some(levels) = spec.reasoning_levels.as_deref() else {
         return false;
     };
-    let canonical = codex_canonical_efforts(levels);
-    if canonical.is_empty() {
+    let normalized = codex_normalized_efforts(levels);
+    if normalized.is_empty() {
         return false;
     }
-    let supported = codex_supported_reasoning_levels(levels);
+    let supported = codex_supported_reasoning_levels(&normalized);
     entry_obj.insert("supported_reasoning_levels".to_string(), supported);
 
     // Default: explicit user value wins; otherwise keep the base default when
-    // it is still supported; otherwise fall back to the highest supported
-    // level in canonical order. All candidates are validated against the
-    // canonical set so the default can never reference a dropped effort.
-    let default_level = spec
+    // it is still supported; otherwise fall back to the last declared value.
+    let declared_default = spec
         .default_reasoning_level
         .as_deref()
-        .filter(|level| canonical.contains(level))
-        .or_else(|| template_default.filter(|level| canonical.contains(level)))
-        .or_else(|| canonical.last().copied());
+        .map(|level| level.trim().to_ascii_lowercase());
+    let default_level = declared_default
+        .as_deref()
+        .filter(|level| normalized.iter().any(|candidate| candidate == *level))
+        .or_else(|| {
+            template_default.filter(|level| normalized.iter().any(|candidate| candidate == level))
+        })
+        .or_else(|| normalized.last().map(String::as_str));
     if let Some(default_level) = default_level {
         entry_obj.insert("default_reasoning_level".to_string(), json!(default_level));
     }
@@ -3507,12 +3527,12 @@ base_url = "https://production.api/v1"
                     },
                     {
                         "model": "dirty-levels",
-                        "reasoningLevels": ["none", "bogus", "high", ""]
+                        "reasoningLevels": ["none", "adaptive", "high", ""]
                     },
                     {
                         "model": "unordered-model",
-                        "reasoningLevels": ["xhigh", "low", "bogus", "low"],
-                        "defaultReasoningLevel": "bogus"
+                        "reasoningLevels": ["xhigh", "low", "adaptive", "low"],
+                        "defaultReasoningLevel": "adaptive"
                     }
                 ]
             }
@@ -3567,9 +3587,9 @@ base_url = "https://production.api/v1"
             Some("high")
         );
 
-        // Unknown / empty efforts are dropped; the default still resolves to
-        // a supported level (the template default, "high").
-        assert_eq!(efforts(3), vec!["none", "high"]);
+        // Provider-specific non-empty levels are retained after canonical
+        // levels; the template default remains valid.
+        assert_eq!(efforts(3), vec!["none", "high", "adaptive"]);
         assert_eq!(
             models[3]
                 .get("default_reasoning_level")
@@ -3577,16 +3597,20 @@ base_url = "https://production.api/v1"
             Some("high")
         );
 
-        // Declaration order is normalized to canonical order, duplicates and
-        // an unknown explicit default are dropped, and the fallback picks the
-        // highest supported level in canonical order (not the last declared
-        // one, and never an unknown effort).
-        assert_eq!(efforts(4), vec!["low", "xhigh"]);
+        // Canonical levels use canonical order, duplicates are removed, and
+        // provider-specific levels are preserved after canonical values.
+        assert_eq!(efforts(4), vec!["low", "xhigh", "adaptive"]);
         assert_eq!(
             models[4]
                 .get("default_reasoning_level")
                 .and_then(|v| v.as_str()),
-            Some("xhigh")
+            Some("adaptive")
+        );
+        assert_eq!(
+            models[3]["supported_reasoning_levels"][2]
+                .get("description")
+                .and_then(|value| value.as_str()),
+            Some("Reasoning effort: adaptive")
         );
     }
 

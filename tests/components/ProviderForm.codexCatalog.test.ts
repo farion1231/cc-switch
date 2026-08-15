@@ -56,8 +56,17 @@ describe("ProviderForm Codex catalog helpers", () => {
         {
           model: "deepseek-v4-flash",
           displayName: "DeepSeek V4 Flash",
-          reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
-          defaultReasoningLevel: " xhigh ",
+          reasoningLevels: [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            " Adaptive ",
+            "adaptive",
+          ],
+          defaultReasoningLevel: " ADAPTIVE ",
         },
         // empty levels / whitespace default are dropped
         {
@@ -70,8 +79,16 @@ describe("ProviderForm Codex catalog helpers", () => {
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
-        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
-        defaultReasoningLevel: "xhigh",
+        reasoningLevels: [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "adaptive",
+        ],
+        defaultReasoningLevel: "adaptive",
       },
       { model: "plain-model" },
     ]);

@@ -188,8 +188,8 @@ function catalogRowsMatchModels(
   });
 }
 
-// Reasoning effort levels Codex understands, in ascending depth order. The
-// backend drops unknown values, so the UI only offers canonical ones.
+// Common Reasoning Effort levels, shown first in ascending depth order.
+// Providers may support additional values, which can be entered manually.
 const CODEX_REASONING_LEVELS = [
   "none",
   "minimal",
@@ -205,6 +205,22 @@ const CODEX_REASONING_LEVELS = [
 // values, so "back to Auto" needs a non-empty value mapped to undefined.
 const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
 
+function orderReasoningLevels(levels: Iterable<string>): string[] {
+  const normalized = Array.from(
+    new Set(
+      Array.from(levels)
+        .map((level) => level.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+  const knownLevels = new Set<string>(CODEX_REASONING_LEVELS);
+
+  return [
+    ...CODEX_REASONING_LEVELS.filter((level) => normalized.includes(level)),
+    ...normalized.filter((level) => !knownLevels.has(level)),
+  ];
+}
+
 function ReasoningLevelsEditor({
   levels,
   defaultLevel,
@@ -218,23 +234,30 @@ function ReasoningLevelsEditor({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const selected = (levels ?? []).filter((level) =>
-    (CODEX_REASONING_LEVELS as readonly string[]).includes(level),
+  const [customLevelInput, setCustomLevelInput] = useState("");
+  const selected = orderReasoningLevels(levels ?? []);
+  const customLevels = selected.filter(
+    (level) => !(CODEX_REASONING_LEVELS as readonly string[]).includes(level),
   );
 
   const toggleLevel = (level: string) => {
     const picked = selected.includes(level)
       ? selected.filter((item) => item !== level)
       : [...selected, level];
-    // Store in canonical ascending-depth order (not click order): the Codex
-    // picker and the generated catalog both follow array order.
-    const next = (CODEX_REASONING_LEVELS as readonly string[]).filter((item) =>
-      picked.includes(item),
-    );
+    const next = orderReasoningLevels(picked);
     onLevelsChange(next.length > 0 ? next : undefined);
     if (defaultLevel && !next.includes(defaultLevel)) {
       onDefaultLevelChange(undefined);
     }
+  };
+
+  const addCustomLevel = () => {
+    const level = customLevelInput.trim().toLowerCase();
+    if (!level) return;
+
+    const next = orderReasoningLevels([...selected, level]);
+    onLevelsChange(next);
+    setCustomLevelInput("");
   };
 
   const triggerLabel =
@@ -303,6 +326,63 @@ function ReasoningLevelsEditor({
             </CommandGroup>
           </CommandList>
         </Command>
+        <div className="border-t border-border-default p-2">
+          <div className="flex gap-1.5">
+            <Input
+              value={customLevelInput}
+              onChange={(event) => setCustomLevelInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                addCustomLevel();
+              }}
+              placeholder={t("codexConfig.reasoningLevelsCustomPlaceholder", {
+                defaultValue: "Custom level, e.g. adaptive",
+              })}
+              className="h-8 text-xs"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 gap-1 px-2"
+              disabled={!customLevelInput.trim()}
+              onClick={addCustomLevel}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("codexConfig.reasoningLevelsAdd", { defaultValue: "Add" })}
+            </Button>
+          </div>
+          {customLevels.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {customLevels.map((level) => (
+                <span
+                  key={level}
+                  className="inline-flex h-6 items-center gap-1 rounded-md border border-border-default bg-muted/50 px-2 font-mono text-[11px]"
+                >
+                  {level}
+                  <button
+                    type="button"
+                    className="rounded-sm text-muted-foreground hover:text-destructive"
+                    onClick={() => toggleLevel(level)}
+                    aria-label={t("codexConfig.reasoningLevelsRemove", {
+                      defaultValue: `Remove ${level}`,
+                      level,
+                    })}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+            {t("codexConfig.reasoningLevelsCustomHint", {
+              defaultValue:
+                "Use a value supported by both Codex and the upstream provider. Unknown values may cause requests to fail.",
+            })}
+          </p>
+        </div>
         {selected.length > 0 && (
           <div className="border-t border-border-default p-2">
             <span className="text-xs text-muted-foreground">

@@ -161,10 +161,21 @@ export const normalizeCodexCatalogModelsForSave = (
     );
 
     const baseInstructions = item.baseInstructions?.trim();
-    const reasoningLevels = item.reasoningLevels?.filter(
-      (level) => typeof level === "string" && level.trim(),
+    const reasoningLevels = Array.from(
+      new Set(
+        (item.reasoningLevels ?? [])
+          .filter((level): level is string => typeof level === "string")
+          .map((level) => level.trim().toLowerCase())
+          .filter(Boolean),
+      ),
     );
-    const defaultReasoningLevel = item.defaultReasoningLevel?.trim();
+    const defaultReasoningLevel = item.defaultReasoningLevel
+      ?.trim()
+      .toLowerCase();
+    const normalizedDefaultReasoningLevel =
+      defaultReasoningLevel && reasoningLevels.includes(defaultReasoningLevel)
+        ? defaultReasoningLevel
+        : undefined;
 
     normalized.push({
       model,
@@ -178,10 +189,10 @@ export const normalizeCodexCatalogModelsForSave = (
         ? { inputModalities }
         : {}),
       ...(baseInstructions ? { baseInstructions } : {}),
-      ...(reasoningLevels && reasoningLevels.length > 0
-        ? { reasoningLevels }
+      ...(reasoningLevels.length > 0 ? { reasoningLevels } : {}),
+      ...(normalizedDefaultReasoningLevel
+        ? { defaultReasoningLevel: normalizedDefaultReasoningLevel }
         : {}),
-      ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
     });
   }
 
