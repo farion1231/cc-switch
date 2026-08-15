@@ -2,7 +2,7 @@ import type { TaskLedger, TaskLedgerItem } from "./types";
 
 const newestFirst = (left: TaskLedgerItem, right: TaskLedgerItem) =>
   right.task.updatedAt - left.task.updatedAt ||
-  left.task.id.localeCompare(right.task.id);
+  (left.task.id < right.task.id ? -1 : left.task.id > right.task.id ? 1 : 0);
 
 export function buildTaskLedger(items: TaskLedgerItem[]): TaskLedger {
   const needsAttention: TaskLedgerItem[] = [];

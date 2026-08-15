@@ -12,13 +12,43 @@ const tokenRules = [
 ] as const;
 
 const namedSecrets = ["api_key", "apikey", "token", "secret", "password"];
-const unicodeIdentifierCharacter = /[\p{L}\p{N}]/u;
+const rustAlphanumericCharacter = /[\p{Alphabetic}\p{Number}]/u;
+const rustWhitespaceCharacter = /\p{White_Space}/u;
 const asciiTokenCharacter = /[A-Za-z0-9_]/;
+
+const trimRustStart = (value: string) => {
+  let start = 0;
+  for (const character of value) {
+    if (!rustWhitespaceCharacter.test(character)) break;
+    start += character.length;
+  }
+  return value.slice(start);
+};
+
+const trimRust = (value: string) => {
+  const characters = Array.from(value);
+  let start = 0;
+  let end = characters.length;
+  while (start < end && rustWhitespaceCharacter.test(characters[start]))
+    start += 1;
+  while (end > start && rustWhitespaceCharacter.test(characters[end - 1]))
+    end -= 1;
+  return characters.slice(start, end).join("");
+};
+
+const nonWhitespaceScalarLength = (value: string) => {
+  let length = 0;
+  for (const character of value) {
+    if (rustWhitespaceCharacter.test(character)) break;
+    length += 1;
+  }
+  return length;
+};
 
 const hasIdentifierBoundary = (value: string, start: number) => {
   if (start === 0) return true;
   const preceding = Array.from(value.slice(0, start)).at(-1);
-  return preceding !== "_" && !unicodeIdentifierCharacter.test(preceding ?? "");
+  return preceding !== "_" && !rustAlphanumericCharacter.test(preceding ?? "");
 };
 
 const containsToken = (
@@ -43,7 +73,7 @@ const containsToken = (
 
 const containsPrivateKeyHeader = (value: string) =>
   value.split(/\r?\n/).some((rawLine) => {
-    const line = rawLine.trim();
+    const line = trimRust(rawLine);
     if (!line.startsWith("-----BEGIN ") || !line.endsWith("PRIVATE KEY-----")) {
       return false;
     }
@@ -62,11 +92,10 @@ const containsNamedSecret = (value: string) => {
     let start = lowercase.indexOf(name);
     while (start !== -1) {
       if (hasIdentifierBoundary(lowercase, start)) {
-        const remainder = lowercase.slice(start + name.length).trimStart();
+        const remainder = trimRustStart(lowercase.slice(start + name.length));
         if (remainder.startsWith(":") || remainder.startsWith("=")) {
-          const assigned =
-            remainder.slice(1).trimStart().match(/^\S*/u)?.[0] ?? "";
-          if (Array.from(assigned).length >= 12) return true;
+          const assigned = trimRustStart(remainder.slice(1));
+          if (nonWhitespaceScalarLength(assigned) >= 12) return true;
         }
       }
       start = lowercase.indexOf(name, start + name.length);

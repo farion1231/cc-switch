@@ -89,6 +89,15 @@ describe("buildTaskLedger", () => {
     }
   });
 
+  it("uses locale-independent UTF-16 ordinal order for ID ties", () => {
+    const ledger = buildTaskLedger([
+      item("a", "active", 100),
+      item("Z", "active", 100),
+    ]);
+
+    expect(ledger.active.map(({ task }) => task.id)).toEqual(["Z", "a"]);
+  });
+
   it("limits recent paused tasks to ten", () => {
     const paused = Array.from({ length: 12 }, (_, index) =>
       item(`paused-${index.toString().padStart(2, "0")}`, "paused", index),
