@@ -28,6 +28,11 @@ const DEFAULT_API_KEY_ENV: &str = "DEEPSEEK_API_KEY";
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const LOCK_INITIAL_DELAY: Duration = Duration::from_millis(20);
 const LOCK_MAX_DELAY: Duration = Duration::from_millis(200);
+/// Locks older than this are abandoned: no DSH write takes anywhere near this
+/// long, so a lock this old belongs to a process that died mid-write. This is
+/// the fallback on platforms without a PID liveness probe and the backstop
+/// against PID reuse after a crash.
+const LOCK_STALE_AGE: Duration = Duration::from_secs(30);
 
 pub const PROTOCOLS: [&str; 3] = [
     "openai-completions",
@@ -764,6 +769,13 @@ impl FileLock {
                     return Ok(Self { path: lock_path });
                 }
                 Err(source) if source.kind() == ErrorKind::AlreadyExists => {
+                    // A previous process may have been terminated after
+                    // creating the lock but before dropping it. Remove such an
+                    // abandoned lock instead of waiting out the timeout.
+                    if lock_is_stale(&lock_path) {
+                        let _ = fs::remove_file(&lock_path);
+                        continue;
+                    }
                     if Instant::now() >= deadline {
                         return Err(error(
                             "lock-timeout",
@@ -793,6 +805,50 @@ impl Drop for FileLock {
             }
         }
     }
+}
+
+/// True when the lock holder is gone and the `.lock` file can be reclaimed.
+///
+/// A lock is stale when its recorded PID is no longer alive (Unix) or when it
+/// is older than [`LOCK_STALE_AGE`], which also covers platforms without a
+/// liveness probe, unreadable PID files, and PID reuse after a crash.
+fn lock_is_stale(lock_path: &Path) -> bool {
+    #[cfg(unix)]
+    if lock_holder_dead(lock_path) {
+        return true;
+    }
+    lock_older_than(lock_path, LOCK_STALE_AGE)
+}
+
+/// Read the PID a lock file was created with and report whether that process
+/// still exists.
+#[cfg(unix)]
+fn lock_holder_dead(lock_path: &Path) -> bool {
+    let Some(pid) = lock_holder_pid(lock_path) else {
+        return false;
+    };
+    // Signal 0 only probes for existence; no signal is delivered.
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    if result == 0 {
+        return false;
+    }
+    // EPERM means a process with this PID exists but belongs to another user.
+    std::io::Error::last_os_error().kind() != ErrorKind::PermissionDenied
+}
+
+fn lock_holder_pid(lock_path: &Path) -> Option<u32> {
+    fs::read(lock_path)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| text.trim().parse().ok())
+}
+
+fn lock_older_than(lock_path: &Path, age: Duration) -> bool {
+    fs::metadata(lock_path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|elapsed| elapsed >= age)
 }
 
 pub(crate) fn ensure_secure_home(home: &Path) -> Result<(), String> {
@@ -1346,7 +1402,11 @@ fn append_custom_provider(
 }
 
 pub fn upsert_native(input: DshNativeInput) -> Result<DshSnapshot, String> {
-    let base_url = normalize_optional(input.base_url);
+    // `base_url` keeps the absent-vs-cleared distinction after trimming:
+    // `None` means the field was not sent (leave the stored value untouched),
+    // `Some("")` means the user cleared it (remove the stored override), and a
+    // non-empty value is written as the new override.
+    let base_url = input.base_url.map(|value| value.trim().to_string());
     let api_key_env = normalize_optional(input.api_key_env);
     if let Some(reference) = &api_key_env {
         validate_credential_ref(reference)?;
@@ -1357,8 +1417,8 @@ pub fn upsert_native(input: DshNativeInput) -> Result<DshSnapshot, String> {
     let settings = parse_settings(&read_bytes(&paths().settings)?)?;
     if map_get(&settings, NATIVE_NAMESPACE).is_none() {
         let mut section = SerdeMapping::new();
-        if let Some(base_url) = &base_url {
-            section.insert("baseURL".into(), base_url.clone().into());
+        if let Some(base_url) = base_url.as_deref().filter(|value| !value.is_empty()) {
+            section.insert("baseURL".into(), base_url.into());
         }
         if let Some(reference) = &api_key_env {
             section.insert("apiKeyEnv".into(), reference.clone().into());
@@ -1380,8 +1440,14 @@ pub fn upsert_native(input: DshNativeInput) -> Result<DshSnapshot, String> {
         let section = root
             .get_mapping(NATIVE_NAMESPACE)
             .ok_or_else(|| error("invalid-settings", "llm-deepseek must be a mapping"))?;
-        if let Some(base_url) = base_url.as_deref() {
-            section.set("baseURL", base_url);
+        match base_url.as_deref() {
+            Some("") => {
+                section.remove("baseURL");
+            }
+            Some(base_url) => {
+                section.set("baseURL", base_url);
+            }
+            None => {}
         }
         if let Some(reference) = api_key_env.as_deref() {
             section.set("apiKeyEnv", reference);
@@ -2458,6 +2524,100 @@ mod tests {
                     .contains("insecure-credentials-permissions")
             );
             assert_eq!(fs::read(&paths.credentials).unwrap(), before);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn clears_native_base_url_override_when_the_field_is_emptied() {
+        with_home(|_| {
+            let paths = paths();
+            fs::create_dir_all(&paths.home).unwrap();
+            let existing = "llm-deepseek:\n  baseURL: https://example.test\n";
+            fs::write(&paths.settings, existing).unwrap();
+
+            // Whitespace-only input is the cleared signal, not "leave alone".
+            upsert_native(DshNativeInput {
+                base_url: Some("   ".to_string()),
+                models: None,
+                api_key_env: None,
+                expected_revision: Some(sha256_hex(existing.as_bytes())),
+            })
+            .unwrap();
+
+            let output = fs::read_to_string(&paths.settings).unwrap();
+            assert!(!output.contains("baseURL"));
+            assert!(output.contains("llm-deepseek:"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    #[cfg(unix)]
+    fn reclaims_abandoned_lock_from_a_dead_process() {
+        with_home(|_| {
+            let paths = paths();
+            fs::create_dir_all(&paths.home).unwrap();
+            fs::write(&paths.settings, "llm-deepseek:\n  baseURL: https://example.test\n")
+                .unwrap();
+
+            // A child that is spawned and reaped has a verifiably free PID.
+            let mut child = std::process::Command::new("true").spawn().unwrap();
+            let dead_pid = child.id();
+            child.wait().unwrap();
+            fs::write(&paths.settings.with_file_name("settings.yaml.lock"), format!("{dead_pid}\n"))
+                .unwrap();
+
+            // The dead holder's lock is reclaimed instead of waiting out the
+            // timeout, so the mutation succeeds immediately.
+            upsert_native(DshNativeInput {
+                base_url: Some("https://api.deepseek.com".to_string()),
+                models: None,
+                api_key_env: None,
+                expected_revision: Some(sha256_hex(&fs::read(&paths.settings).unwrap())),
+            })
+            .unwrap();
+
+            let output = fs::read_to_string(&paths.settings).unwrap();
+            assert!(output.contains("baseURL: https://api.deepseek.com"));
+            assert!(!paths.settings.with_file_name("settings.yaml.lock").exists());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn reclaims_lock_older_than_the_stale_age() {
+        with_home(|_| {
+            use std::fs::FileTimes;
+
+            let paths = paths();
+            fs::create_dir_all(&paths.home).unwrap();
+            fs::write(&paths.settings, "llm-deepseek:\n  baseURL: https://example.test\n")
+                .unwrap();
+
+            // The live test process owns this PID, so only the age fallback
+            // can reclaim the lock.
+            let lock_path = paths.settings.with_file_name("settings.yaml.lock");
+            fs::write(&lock_path, format!("{}\n", std::process::id())).unwrap();
+            let past = SystemTime::now() - LOCK_STALE_AGE - Duration::from_secs(60);
+            fs::File::options()
+                .write(true)
+                .open(&lock_path)
+                .unwrap()
+                .set_times(FileTimes::new().set_modified(past))
+                .unwrap();
+
+            upsert_native(DshNativeInput {
+                base_url: Some("https://api.deepseek.com".to_string()),
+                models: None,
+                api_key_env: None,
+                expected_revision: Some(sha256_hex(&fs::read(&paths.settings).unwrap())),
+            })
+            .unwrap();
+
+            let output = fs::read_to_string(&paths.settings).unwrap();
+            assert!(output.contains("baseURL: https://api.deepseek.com"));
+            assert!(!lock_path.exists());
         });
     }
 }
