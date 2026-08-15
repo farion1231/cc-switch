@@ -18,7 +18,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
 import { toast } from "sonner";
-import { MCP_APP_IDS } from "@/config/appConfig";
+import { isMcpAppId, MCP_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -163,7 +163,7 @@ const UnifiedMcpPanel = React.forwardRef<
     app: AppId,
     enabled: boolean,
   ) => {
-    if (app === "dsh") return;
+    if (!isMcpAppId(app)) return;
     if (!beginWrite()) return;
     try {
       await toggleAppMutation.mutateAsync({ serverId, app, enabled });
@@ -175,7 +175,7 @@ const UnifiedMcpPanel = React.forwardRef<
   };
 
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
-    if (app === "dsh") return;
+    if (!isMcpAppId(app)) return;
     if (!beginWrite()) return;
 
     // AppCountBar summarizes the complete collection, so its bulk action must

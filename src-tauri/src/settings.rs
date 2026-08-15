@@ -48,6 +48,7 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub dsh: bool,
+    pub pi: bool,
 }
 
 impl Default for VisibleApps {
@@ -62,6 +63,7 @@ impl Default for VisibleApps {
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
             dsh: true,
+            pi: true,
         }
     }
 }
@@ -78,6 +80,7 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
+            AppType::Pi => self.pi,
         }
     }
 }
@@ -427,6 +430,7 @@ pub struct AppSettings {
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dsh_config_dir: Option<String>,
+    pub pi_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -539,6 +543,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             dsh_config_dir: None,
+            pi_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -622,6 +627,13 @@ impl AppSettings {
 
         self.dsh_config_dir = self
             .dsh_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.pi_config_dir = self
+            .pi_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -718,18 +730,25 @@ fn settings_store() -> &'static RwLock<AppSettings> {
     SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::load_from_file()))
 }
 
-fn resolve_override_path(raw: &str) -> PathBuf {
+pub(crate) fn resolve_override_path(raw: &str) -> PathBuf {
+    let join_home = |home: PathBuf, suffix: &str| {
+        suffix
+            .split(['/', '\\'])
+            .filter(|component| !component.is_empty())
+            .fold(home, |path, component| path.join(component))
+    };
+
     if raw == "~" {
         if let Some(home) = dirs::home_dir() {
             return home;
         }
     } else if let Some(stripped) = raw.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
+            return join_home(home, stripped);
         }
     } else if let Some(stripped) = raw.strip_prefix("~\\") {
         if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
+            return join_home(home, stripped);
         }
     }
 
@@ -971,6 +990,14 @@ pub fn get_dsh_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_dsh_override_path(p))
 }
 
+pub fn get_pi_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .pi_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -1008,6 +1035,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
+        AppType::Pi => None,
     }
 }
 
@@ -1026,6 +1054,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
+        AppType::Pi => {}
     })
 }
 
@@ -1232,5 +1261,14 @@ mod tests {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
+    }
+
+    fn override_paths_expand_windows_style_tilde_separators() {
+        let home = dirs::home_dir().expect("home directory");
+        assert_eq!(
+            resolve_override_path(r"~\pi\agent"),
+            home.join("pi").join("agent")
+        );
+    }
     }
 }

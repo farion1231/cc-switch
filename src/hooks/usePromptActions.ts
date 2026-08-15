@@ -14,6 +14,7 @@ export function usePromptActions(appId: AppId) {
     null,
   );
   const [currentFileAppId, setCurrentFileAppId] = useState<AppId | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const reloadGenerationRef = useRef(0);
   const currentAppIdRef = useRef(appId);
   const promptsAppIdRef = useRef<AppId | null>(null);
@@ -62,20 +63,19 @@ export function usePromptActions(appId: AppId) {
       if (!isCurrentRequest()) return false;
       updatePromptsForApp(requestAppId, () => data);
 
-      // 同时加载当前文件内容
       try {
         const content = await promptsApi.getCurrentFileContent(requestAppId);
         if (!isCurrentRequest()) return false;
         setCurrentFileContent(content);
         setCurrentFileAppId(requestAppId);
-      } catch (error) {
+      } catch {
         if (isCurrentRequest()) {
           setCurrentFileContent(null);
           setCurrentFileAppId(requestAppId);
         }
       }
       return true;
-    } catch (error) {
+    } catch {
       if (isCurrentRequest()) {
         toast.error(t("prompts.loadFailed"));
       }
@@ -97,7 +97,13 @@ export function usePromptActions(appId: AppId) {
         }));
         const refreshed =
           currentAppIdRef.current === appId ? await reload() : false;
-        toast.success(t("prompts.saveSuccess"), { closeButton: true });
+        toast.success(t("prompts.saveSuccess"), {
+          closeButton: true,
+          description:
+            appId === "pi" && prompt.enabled
+              ? t("pi.prompts.reloadNotice")
+              : undefined,
+        });
         return refreshed;
       } catch (error) {
         toast.error(t("prompts.saveFailed"));
@@ -154,11 +160,48 @@ export function usePromptActions(appId: AppId) {
 
   const toggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
-      // Optimistic update
+      if (appId === "pi") {
+        setTogglingId(id);
+        try {
+          if (enabled) {
+            await promptsApi.enablePrompt(appId, id);
+          } else {
+            const prompt = visiblePrompts[id];
+            if (!prompt) {
+              throw new Error(`Prompt ${id} does not exist`);
+            }
+            await promptsApi.upsertPrompt(appId, id, {
+              ...prompt,
+              enabled: false,
+            });
+          }
+          const refreshed =
+            currentAppIdRef.current === appId ? await reload() : false;
+          toast.success(
+            t(
+              enabled
+                ? "pi.prompts.usePromptSuccess"
+                : "pi.prompts.stopUsingSuccess",
+            ),
+            {
+              closeButton: true,
+              description: t("pi.prompts.reloadNotice"),
+            },
+          );
+          return refreshed;
+        } catch (error) {
+          toast.error(
+            enabled ? t("prompts.enableFailed") : t("prompts.disableFailed"),
+          );
+          throw error;
+        } finally {
+          setTogglingId(null);
+        }
+      }
+
       const previousPrompts = visiblePrompts;
       const mutationGeneration = reloadGenerationRef.current;
 
-      // 如果要启用当前提示词，先禁用其他所有提示词
       if (enabled) {
         const updatedPrompts = Object.keys(visiblePrompts).reduce(
           (acc, key) => {
@@ -186,7 +229,6 @@ export function usePromptActions(appId: AppId) {
           await promptsApi.enablePrompt(appId, id);
           toast.success(t("prompts.enableSuccess"), { closeButton: true });
         } else {
-          // 禁用提示词 - 需要后端支持
           await promptsApi.upsertPrompt(appId, id, {
             ...visiblePrompts[id],
             enabled: false,
@@ -195,7 +237,6 @@ export function usePromptActions(appId: AppId) {
         }
         return currentAppIdRef.current === appId ? await reload() : false;
       } catch (error) {
-        // Rollback on failure
         if (
           currentAppIdRef.current === appId &&
           reloadGenerationRef.current === mutationGeneration
@@ -229,6 +270,7 @@ export function usePromptActions(appId: AppId) {
     prompts: visiblePrompts,
     loading,
     currentFileContent: visibleCurrentFileContent,
+    togglingId,
     reload,
     savePrompt,
     deletePrompt,

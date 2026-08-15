@@ -74,6 +74,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   openclaw: {},
   hermes: {},
   dsh: {},
+  pi: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -86,6 +87,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   openclaw: "",
   hermes: "",
   dsh: "",
+  pi: "",
 });
 
 let providers = createDefaultProviders();
@@ -201,6 +203,7 @@ let mcpConfigs: McpConfigState = {
   openclaw: {},
   hermes: {},
   dsh: {},
+  pi: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -272,6 +275,7 @@ export const resetProviderState = () => {
     openclaw: {},
     hermes: {},
     dsh: {},
+    pi: {},
   };
 };
 

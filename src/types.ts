@@ -227,6 +227,8 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
+  // Whether this provider is currently projected into an additive app's live config.
+  liveConfigManaged?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -286,6 +288,7 @@ export interface VisibleApps {
   hermes: boolean;
   /** DeepSeek Harness (live YAML settings, not the SQLite provider store). */
   dsh: boolean;
+  pi: boolean;
 }
 
 // WebDAV 同步状态
@@ -407,6 +410,8 @@ export interface Settings {
   hermesConfigDir?: string;
   // 覆盖 DeepSeek Harness 配置目录（可选）
   dshConfigDir?: string;
+  // 覆盖 Pi agent 配置目录（可选）
+  piConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）

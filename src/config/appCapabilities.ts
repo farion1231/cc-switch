@@ -91,6 +91,13 @@ export const APP_CAPABILITIES: Record<AppId, AppCapabilities> = {
     prompts: false,
     hermesMemory: true,
   }),
+  pi: generic({
+    // Pi manages its own MCP surface separately; it keeps the shared
+    // prompts, skills, sessions, and usage integrations.
+    mcp: false,
+    proxy: false,
+    failover: false,
+  }),
   /** DSH routes live in settings.yaml/.credentials.yaml, never SQLite. */
   dsh: {
     providerMode: "dsh-live",

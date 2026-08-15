@@ -334,11 +334,19 @@ pub(crate) fn atomic_write_with_mode(path: &Path, data: &[u8], mode: u32) -> Res
     atomic_write_with_unix_mode(path, data, Some(mode))
 }
 
+/// 原子写入包含凭据的文件。Unix 上新文件和替换文件始终使用 0600。
+pub fn atomic_write_private(path: &Path, data: &[u8]) -> Result<(), AppError> {
+    atomic_write_with_unix_mode(path, data, Some(0o600))
+}
+
 fn atomic_write_with_unix_mode(
     path: &Path,
     data: &[u8],
     unix_mode: Option<u32>,
 ) -> Result<(), AppError> {
+    #[cfg(not(unix))]
+    let _ = unix_mode;
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
@@ -367,9 +375,9 @@ fn atomic_write_with_unix_mode(
             let mut options = fs::OpenOptions::new();
             options.write(true).create_new(true);
             #[cfg(unix)]
-            {
+            if let Some(mode) = unix_mode {
                 use std::os::unix::fs::OpenOptionsExt;
-                options.mode(unix_mode.unwrap_or(0o666));
+                options.mode(mode);
             }
             match options.open(&candidate) {
                 Ok(file) => return Ok((candidate, file)),
@@ -395,11 +403,13 @@ fn atomic_write_with_unix_mode(
     {
         use std::os::unix::fs::PermissionsExt;
         if let Some(mode) = unix_mode {
-            fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
-                .map_err(|source| AppError::io(&tmp, source))?;
+            if let Err(source) = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode)) {
+                let _ = fs::remove_file(&tmp);
+                return Err(AppError::io(&tmp, source));
+            }
         } else if let Ok(meta) = fs::metadata(path) {
-            let mode = meta.permissions().mode();
-            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
+            let perm = meta.permissions().mode();
+            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(perm));
         }
     }
 

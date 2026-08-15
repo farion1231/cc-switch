@@ -49,6 +49,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
+
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
   currentApp: AppId;
@@ -127,6 +129,8 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+  const visibleSkillAppIds =
+    currentApp === "pi" ? SKILLS_APP_IDS : IMPORT_SKILLS_APP_IDS;
 
   const mutationPending =
     deleteBackupMutation.isPending ||
@@ -217,12 +221,15 @@ const UnifiedSkillsPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      pi: 0,
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
       for (const app of SKILLS_APP_IDS) {
         if (app === "dsh") continue;
-        if (skill.apps[app]) counts[app]++;
+        if (skill.apps[app]) {
+          counts[app]++;
+        }
       }
     });
     return counts;
@@ -322,12 +329,31 @@ const UnifiedSkillsPanel = React.forwardRef<
         try {
           const result = await uninstallMutation.mutateAsync(skill.id);
           setConfirmDialog(null);
-          toast.success(t("skills.uninstallSuccess", { name: skill.name }), {
-            description: result.backupPath
-              ? t("skills.backup.location", { path: result.backupPath })
-              : undefined,
+          const piCleanupIncomplete =
+            result.piCleanupIncomplete || Boolean(result.preservedPiPath);
+          const toastOptions = {
+            description: result.preservedPiPath
+              ? t("skills.uninstallPiPreserved", {
+                  path: result.preservedPiPath,
+                })
+              : result.piCleanupIncomplete
+                ? t("skills.uninstallPiCleanupIncomplete")
+                : result.backupPath
+                  ? t("skills.backup.location", { path: result.backupPath })
+                  : undefined,
             closeButton: true,
-          });
+          };
+          if (piCleanupIncomplete) {
+            toast.warning(
+              t("skills.uninstallSuccess", { name: skill.name }),
+              toastOptions,
+            );
+          } else {
+            toast.success(
+              t("skills.uninstallSuccess", { name: skill.name }),
+              toastOptions,
+            );
+          }
         } catch (error) {
           toast.error(t("common.error"), { description: String(error) });
         } finally {
@@ -603,7 +629,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           <AppCountBar
             totalLabel={t("skills.installed", { count: skills?.length || 0 })}
             counts={enabledCounts}
-            appIds={SKILLS_APP_IDS}
+            appIds={visibleSkillAppIds}
             totalCount={skills?.length ?? 0}
             onToggleAll={handleToggleAll}
             pendingApp={pendingApp}
@@ -683,6 +709,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                       updateSkillMutation.variables === skill.id
                     }
                     actionsDisabled={interactionBlocked}
+                    appIds={visibleSkillAppIds}
                     onToggleApp={handleToggleApp}
                     onUninstall={() => handleUninstall(skill)}
                     onUpdate={() => handleUpdateSkill(skill)}
@@ -736,6 +763,7 @@ UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
+  appIds: AppId[];
   hasUpdate?: boolean;
   isUpdating?: boolean;
   actionsDisabled?: boolean;
@@ -747,6 +775,7 @@ interface InstalledSkillListItemProps {
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   skill,
+  appIds,
   hasUpdate,
   isUpdating,
   actionsDisabled,
@@ -814,7 +843,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       <AppToggleGroup
         apps={skill.apps}
         onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={SKILLS_APP_IDS}
+        appIds={appIds}
         disabled={actionsDisabled}
       />
 
@@ -1022,6 +1051,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
+          pi: false,
         },
       ]),
     ),
@@ -1049,6 +1079,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: false,
           openclaw: false,
           hermes: false,
+          pi: false,
         },
       })),
     );
@@ -1112,7 +1143,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           },
                         }));
                       }}
-                      appIds={SKILLS_APP_IDS}
+                      appIds={IMPORT_SKILLS_APP_IDS}
                     />
                   </div>
                   <div

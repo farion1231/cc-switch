@@ -333,7 +333,7 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 ///
 /// 单引号内不做任何展开，唯一的特例是 `'` 自身无法被表示：用「闭合-转义-重开」
 /// 的 `'\''` 序列绕过。
-fn shell_escape(value: &str) -> String {
+pub(crate) fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 

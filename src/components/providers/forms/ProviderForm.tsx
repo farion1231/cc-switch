@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import {
   buildLocalProxyRequestOverrides,
@@ -80,6 +80,7 @@ import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
@@ -214,6 +215,9 @@ const normalizeCodexChatReasoningForSave = (
   };
 };
 
+const normalizeProviderKey = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+
 type LocalProxyRequestOverridesBuildResult = ReturnType<
   typeof buildLocalProxyRequestOverrides
 >;
@@ -227,6 +231,7 @@ export interface ProviderFormProps {
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
+  onSubmitReadyChange?: (isReady: boolean) => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -242,6 +247,9 @@ export interface ProviderFormProps {
 }
 
 export function ProviderForm(props: ProviderFormProps) {
+  if (props.appId === "pi") {
+    return <PiProviderForm {...props} />;
+  }
   if (props.appId === "claude-desktop") {
     return <ClaudeDesktopProviderForm {...props} />;
   }
@@ -1537,8 +1545,16 @@ function ProviderFormFull({
       }
     }
 
-    const baseMeta: ProviderMeta | undefined =
-      payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    const metaSource = payload.meta ?? initialData?.meta;
+    const baseMeta: ProviderMeta | undefined = metaSource
+      ? { ...metaSource }
+      : undefined;
+    // Existing-provider edits never own endpoint membership. The backend
+    // rejects endpoint-bearing update payloads; add/remove/touch use their
+    // dedicated commands and remain safe from stale form snapshots.
+    if (isEditMode && baseMeta) {
+      delete baseMeta.custom_endpoints;
+    }
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType = presetProviderType || initialData?.meta?.providerType;
@@ -1981,14 +1997,11 @@ function ProviderFormFull({
                     {t("opencode.providerKey")}
                     <span className="text-destructive ml-1">*</span>
                   </Label>
-                  <Input
+                  <ImeSafeInput
                     id="opencode-key"
                     value={opencodeForm.opencodeProviderKey}
-                    onChange={(e) =>
-                      opencodeForm.setOpencodeProviderKey(
-                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
-                      )
-                    }
+                    onValueChange={opencodeForm.setOpencodeProviderKey}
+                    normalize={normalizeProviderKey}
                     placeholder={t("opencode.providerKeyPlaceholder")}
                     disabled={
                       isProviderKeyLocked || isProviderKeyLockStateLoading
@@ -2047,14 +2060,11 @@ function ProviderFormFull({
                     {t("openclaw.providerKey")}
                     <span className="text-destructive ml-1">*</span>
                   </Label>
-                  <Input
+                  <ImeSafeInput
                     id="openclaw-key"
                     value={openclawForm.openclawProviderKey}
-                    onChange={(e) =>
-                      openclawForm.setOpenclawProviderKey(
-                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
-                      )
-                    }
+                    onValueChange={openclawForm.setOpenclawProviderKey}
+                    normalize={normalizeProviderKey}
                     placeholder={t("openclaw.providerKeyPlaceholder")}
                     disabled={
                       isProviderKeyLocked || isProviderKeyLockStateLoading
@@ -2115,14 +2125,11 @@ function ProviderFormFull({
                     })}
                     <span className="text-destructive ml-1">*</span>
                   </Label>
-                  <Input
+                  <ImeSafeInput
                     id="hermes-key"
                     value={hermesForm.hermesProviderKey}
-                    onChange={(e) =>
-                      hermesForm.setHermesProviderKey(
-                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
-                      )
-                    }
+                    onValueChange={hermesForm.setHermesProviderKey}
+                    normalize={normalizeProviderKey}
                     placeholder={t("hermes.form.providerKeyPlaceholder", {
                       defaultValue: "my-provider",
                     })}

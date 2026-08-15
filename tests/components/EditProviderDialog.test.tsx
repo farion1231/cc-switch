@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Provider } from "@/types";
 
@@ -7,6 +14,8 @@ const apiMocks = vi.hoisted(() => ({
   getLiveProviderSettings: vi.fn(),
   getOpenClawLiveProvider: vi.fn(),
 }));
+let mockFormReady = true;
+let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -42,6 +51,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     initialData,
     onSubmit,
+    onSubmitReadyChange,
     isProxyTakeover,
   }: {
     initialData: {
@@ -62,37 +72,49 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       icon?: string;
       iconColor?: string;
     }) => void;
+    onSubmitReadyChange?: (isReady: boolean) => void;
     isProxyTakeover?: boolean;
-  }) => (
-    <form
-      id="provider-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit({
-          name: initialData.name ?? "",
-          websiteUrl: initialData.websiteUrl ?? "",
-          notes: initialData.notes,
-          settingsConfig: JSON.stringify(initialData.settingsConfig ?? {}),
-          meta: initialData.meta,
-          icon: initialData.icon,
-          iconColor: initialData.iconColor,
-        });
-      }}
-    >
-      <output data-testid="settings-config">
-        {JSON.stringify(initialData.settingsConfig ?? {})}
-      </output>
-      <output data-testid="is-proxy-takeover">
-        {isProxyTakeover ? "true" : "false"}
-      </output>
-    </form>
-  ),
+    appId?: string;
+  }) => {
+    useEffect(() => {
+      if (onSubmitReadyChange) {
+        submitReadyCallbacks.push(onSubmitReadyChange);
+        onSubmitReadyChange(mockFormReady);
+      }
+    }, [onSubmitReadyChange]);
+    return (
+      <form
+        id="provider-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit({
+            name: initialData.name ?? "",
+            websiteUrl: initialData.websiteUrl ?? "",
+            notes: initialData.notes,
+            settingsConfig: JSON.stringify(initialData.settingsConfig ?? {}),
+            meta: initialData.meta,
+            icon: initialData.icon,
+            iconColor: initialData.iconColor,
+          });
+        }}
+      >
+        <output data-testid="settings-config">
+          {JSON.stringify(initialData.settingsConfig ?? {})}
+        </output>
+        <output data-testid="is-proxy-takeover">
+          {isProxyTakeover ? "true" : "false"}
+        </output>
+      </form>
+    );
+  },
 }));
 
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 
 describe("EditProviderDialog", () => {
   beforeEach(() => {
+    mockFormReady = true;
+    submitReadyCallbacks = [];
     apiMocks.getCurrent.mockReset();
     apiMocks.getLiveProviderSettings.mockReset();
     apiMocks.getOpenClawLiveProvider.mockReset();
@@ -201,5 +223,80 @@ describe("EditProviderDialog", () => {
     expect(
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
+  });
+
+  it("编辑 Pi 供应商时保留通用元数据", async () => {
+    const provider: Provider = {
+      id: "pi-provider",
+      name: "Pi Provider",
+      settingsConfig: {
+        baseUrl: "https://api.example.com/v1",
+        models: [{ id: "model" }],
+      },
+      meta: {
+        isPartner: true,
+        endpointAutoSelect: true,
+        custom_endpoints: {
+          "https://failover.example.com/v1": {
+            url: "https://failover.example.com/v1",
+            addedAt: 1,
+          },
+        },
+      },
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="pi"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].provider.meta).toMatchObject({
+      isPartner: true,
+    });
+    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
+      "expectedSettingsConfig",
+    );
+  });
+
+  it("重新打开 Pi 编辑表单后忽略上一轮的就绪回调", async () => {
+    const provider: Provider = {
+      id: "pi-provider",
+      name: "Pi Provider",
+      settingsConfig: { models: [{ id: "model" }] },
+    };
+    const props = {
+      provider,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+      appId: "pi" as const,
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+
+    const saveButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    const staleCallback = submitReadyCallbacks.at(-1);
+    expect(staleCallback).toBeDefined();
+
+    rerender(<EditProviderDialog open={false} {...props} />);
+    mockFormReady = false;
+    rerender(<EditProviderDialog open {...props} />);
+    const reopenedButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(reopenedButton).toBeDisabled());
+
+    act(() => staleCallback?.(true));
+    expect(reopenedButton).toBeDisabled();
   });
 });

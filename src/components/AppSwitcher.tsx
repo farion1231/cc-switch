@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { Monitor, MoreHorizontal, Terminal } from "lucide-react";
+import { APP_IDS } from "@/config/appConfig";
 
 const APP_BADGE_ICON: Partial<
   Record<AppId, { icon: typeof Terminal; offsetY?: number }>
@@ -24,17 +25,6 @@ interface AppSwitcherProps {
   visibleApps?: VisibleApps;
 }
 
-const ALL_APPS: AppId[] = [
-  "claude",
-  "claude-desktop",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "dsh",
-];
 const STORAGE_KEY = "cc-switch-last-app";
 
 const APP_ICON_NAME: Record<AppId, string> = {
@@ -47,6 +37,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   openclaw: "openclaw",
   hermes: "hermes",
   dsh: "deepseek",
+  pi: "pi",
 };
 
 const APP_DISPLAY_NAME: Record<AppId, string> = {
@@ -59,6 +50,7 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   dsh: "DeepSeek Harness",
+  pi: "Pi",
 };
 
 /** 应用图标 + 角标（Claude Code / Desktop 用角标区分终端与桌面） */
@@ -113,7 +105,7 @@ export function AppSwitcher({
   };
 
   // Filter apps based on visibility settings (default all visible)
-  const appsToShow = ALL_APPS.filter((app) => {
+  const appsToShow = APP_IDS.filter((app) => {
     if (!visibleApps) return true;
     return visibleApps[app];
   });

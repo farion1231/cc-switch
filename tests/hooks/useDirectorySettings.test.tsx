@@ -75,6 +75,7 @@ describe("useDirectorySettings", () => {
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
       if (app === "dsh") return "/remote/dsh";
+      if (app === "pi") return "/remote/pi";
       return "/remote/hermes";
     });
     getDshDefaultHomeMock.mockResolvedValue("/default/dsh");
@@ -101,6 +102,7 @@ describe("useDirectorySettings", () => {
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
       dsh: "/remote/dsh",
+      pi: "/remote/pi",
     });
   });
 

@@ -14,7 +14,8 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes"
-  | "dsh";
+  | "dsh"
+  | "pi";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -27,6 +28,7 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   dsh: string;
+  pi: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -42,6 +44,7 @@ const APP_DIRECTORY_META: Record<
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   dsh: { key: "dsh", defaultFolder: ".dsh" },
+  pi: { key: "pi", defaultFolder: ".pi/agent" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -56,6 +59,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   dsh: "dshConfigDir",
+  pi: "piConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -143,6 +147,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     dsh: "",
+    pi: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -156,6 +161,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     dsh: "",
+    pi: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
 
@@ -188,6 +194,7 @@ export function useDirectorySettings({
           openclawDir,
           hermesDir,
           dshDir,
+          piDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -197,6 +204,7 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultDshDir,
+          defaultPiDir,
         ] = await Promise.all([
           read(settingsApi.getAppConfigDirOverride(), null),
           read(settingsApi.getConfigDir("claude"), ""),
@@ -207,6 +215,7 @@ export function useDirectorySettings({
           read(settingsApi.getConfigDir("openclaw"), ""),
           read(settingsApi.getConfigDir("hermes"), ""),
           read(settingsApi.getConfigDir("dsh"), ""),
+          read(settingsApi.getConfigDir("pi"), ""),
           read(computeDefaultAppConfigDir(), undefined),
           read(computeDefaultConfigDir("claude"), undefined),
           read(computeDefaultConfigDir("codex"), undefined),
@@ -216,6 +225,7 @@ export function useDirectorySettings({
           read(computeDefaultConfigDir("openclaw"), undefined),
           read(computeDefaultConfigDir("hermes"), undefined),
           read(computeDefaultConfigDir("dsh"), undefined),
+          read(computeDefaultConfigDir("pi"), undefined),
         ]);
 
         if (!active) return;
@@ -232,6 +242,7 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           dsh: defaultDshDir ?? "",
+          pi: defaultPiDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -247,6 +258,7 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           dsh: dshDir || defaultsRef.current.dsh,
+          pi: piDir || defaultsRef.current.pi,
         });
       } catch (error) {
         console.error(
@@ -414,6 +426,7 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         dsh: overrides?.dsh ?? defaultsRef.current.dsh,
+        pi: overrides?.pi ?? defaultsRef.current.pi,
       });
     },
     [],
