@@ -72,6 +72,11 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["SiliconFlow en", "MiniMaxAI/MiniMax-M3", ["none", "high"]],
     // Novita：平台真开关 enable_thinking（声明已修正方言）→ 两态
     ["Novita AI", "zai-org/glm-5.1", ["none", "high"]],
+    // 千帆 v2 官方 thinking:{type}（声明已补）→ 两态
+    ["Baidu Qianfan Coding Plan", "qianfan-code-latest", ["none", "high"]],
+    // BytePlus 国际站已切原生 Responses，档位=官方 Codex 文档三档（与国内
+    // 站火山双 Plan 同源交叉印证）
+    ["BytePlus", "ark-code-latest", ["low", "medium", "high"]],
     // StepFun 官方两站模型页+reasoning 指南：3.7-flash 三档（默认 medium）、
     // 2603 两档；全系无关思考形态故无 none。effort 下发走后端 per-model
     // 推断（2603=low_high、3.7=passthrough）

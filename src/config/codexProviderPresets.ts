@@ -577,15 +577,20 @@ requires_openai_auth = true`,
     endpointCandidates: [
       "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
     ],
-    // 国内站 plan/v3、coding/v3 已切原生 Responses（见 火山 Agent Plan /
-    // 火山 Coding Plan 预设），但 BytePlus
-    // 国际站（bytepluses.com）文档未单独核实，暂保持 Chat 路由
-    apiFormat: "openai_chat",
+    // 国际站已核实（2026-08-15 盘点）：BytePlus 官方 Codex 接入文档
+    //（docs.byteplus.com/en/docs/ModelArk/2556056）标准 config.toml 的
+    // base_url 就是本端点且 wire_api="responses"，OpenCode 文档亦明写
+    // Responses 优先——与国内站火山双 Plan 对齐切原生直连
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "ark-code-latest",
         displayName: "Ark Code Latest",
         contextWindow: 256000,
+        // 官方 Codex 文档 model_reasoning_effort 限定 low/medium/high，与
+        // 国内站同名模型四份文档交叉印证。⚠️auto 路由别名固有不确定性：
+        // 路由到 glm-5-2-260617 时官方明载 low/medium 按 high 等价处理
+        reasoningLevels: ["low", "medium", "high"],
       },
     ]),
     category: "cn_official",
@@ -1137,12 +1142,26 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://qianfan.baidubce.com/v2/coding"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 两态（2026-08-15 盘点）：千帆 v2 官方 thinking:{type:enabled/disabled}
+      // 覆盖 Coding Plan 主力六模型，官方 OpenCode 接入文档在 /v2/coding 上
+      // 对 minimax-m2.5/glm-5/kimi-k2.5 照发该字段。⚠️别名固有缺陷：控制台把
+      // qianfan-code-latest 解析到 ernie-4.5-turbo 时 none 不会真关思考
       {
         model: "qianfan-code-latest",
         displayName: "Qianfan Code Latest",
         contextWindow: 131072,
+        reasoningLevels: ["none", "high"],
       },
     ]),
+    // 千帆 v2 Chat API 官方顶层参数（与智谱同形态）；平台对不支持的参数
+    // "忽略不报错"（官方多处明载），别名解析到非清单模型时只失效不 400
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: false,
+      thinkingParam: "thinking",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
     category: "cn_official",
     icon: "baidu",
     iconColor: "#2932E1",

@@ -10,15 +10,8 @@ const expectedChatPresets = new Map<
   string,
   { baseUrl: string; contextWindows: Record<string, number> }
 >([
-  // 火山 Agent Plan / Coding Plan（国内站 plan/v3、coding/v3）已切原生
-  // Responses，见下方 native 清单；BytePlus 国际站未核实，保持 Chat 路由
-  [
-    "BytePlus",
-    {
-      baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
-      contextWindows: { "ark-code-latest": 256000 },
-    },
-  ],
+  // 火山 Agent Plan / Coding Plan 与 BytePlus 国际站（coding/v3）均已切
+  // 原生 Responses，见下方 native 清单
   [
     "Zhipu GLM",
     {
@@ -152,9 +145,11 @@ describe("Codex Chat provider presets", () => {
       { contextWindows: Record<string, number> }
     >([
       // 官方 Codex 文档确认 Agent Plan /api/plan/v3 与 Coding Plan
-      // /api/coding/v3 均支持 Responses API
+      // /api/coding/v3 均支持 Responses API；BytePlus 国际站 coding/v3
+      // 同（docs.byteplus.com/en/docs/ModelArk/2556056，2026-08-15 核实）
       ["火山 Agent Plan", { contextWindows: { "ark-code-latest": 256000 } }],
       ["火山 Coding Plan", { contextWindows: { "ark-code-latest": 256000 } }],
+      ["BytePlus", { contextWindows: { "ark-code-latest": 256000 } }],
       [
         "DouBaoSeed",
         { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
