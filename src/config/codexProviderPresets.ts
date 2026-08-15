@@ -1023,20 +1023,23 @@ requires_openai_auth = true`,
     // deepseek-v4-flash 原生 Responses（wire_api=responses 对自家 base_url），无需路由接管转换。
     // 后端按 deepseek.com host 直接镜像官方 models.json（freeform apply_patch +
     // GPT-5 harness + low/high/max 思考档，需 codex >= 0.144.0），这里只保留行清单与展示名。
-    // 档位不预填：镜像的官方 catalog 已带 low/high/max 默认 high（2026-08-15
-    // 复核 flash/pro 逐字节一致），预填 reasoningLevels 反而会覆盖官方声明
+    // 档位照抄官方 catalog（low/high/max 默认 high，2026-08-15 复核 flash/pro
+    // 逐字节一致）：per-row 值会覆盖官方镜像，DeepSeek 官方目录变更时须同步这里
+    // （Jason 2026-08-15 拍板：表单可见性优先于快照过时风险，"未设置"误导性更大）
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
       },
       // pro 已于 2026-08 开通 Responses/Codex 集成（官方 catalog 条目与 flash 仅差 priority）
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
         contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
       },
     ]),
     category: "cn_official",
@@ -1056,7 +1059,16 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://open.bigmodel.cn/api/coding/paas/v4"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "glm-5.2", displayName: "GLM-5.2", contextWindow: 200000 },
+      // Chat 路由 supportsEffort:false：档位值不进 wire，none=注入
+      // thinking:{type:"disabled"} 关思考，其余档一律等价于开思考。只暴露真实
+      // 两态；不填的话 gpt5_5 模板默认 low/medium/high/xhigh 全是假差异档，
+      // 且没有 none，用户在 Codex 里反而关不掉思考
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "high"],
+      },
     ]),
     codexChatReasoning: {
       supportsThinking: true,
@@ -1082,7 +1094,16 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.z.ai/api/coding/paas/v4"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "glm-5.2", displayName: "GLM-5.2", contextWindow: 200000 },
+      // Chat 路由 supportsEffort:false：档位值不进 wire，none=注入
+      // thinking:{type:"disabled"} 关思考，其余档一律等价于开思考。只暴露真实
+      // 两态；不填的话 gpt5_5 模板默认 low/medium/high/xhigh 全是假差异档，
+      // 且没有 none，用户在 Codex 里反而关不掉思考
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "high"],
+      },
     ]),
     codexChatReasoning: {
       supportsThinking: true,
@@ -1334,13 +1355,15 @@ requires_openai_auth = true`,
     apiFormat: "openai_responses",
     // 官方 Codex catalog（platform.minimaxi.com/docs/token-plan/codex-cli）：
     // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch。
-    // 档位不预填：官方 catalog 就是 none/high 与模板默认一致（M3 的 effort
-    // 是思考开关，minimal/low/medium 端点接受但与 high 行为完全等价）
+    // 档位照抄官方 catalog：none/high（M3 的 effort 是思考开关，minimal/low/medium
+    // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
+    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
         contextWindow: 1000000,
+        reasoningLevels: ["none", "high"],
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         baseInstructions:
@@ -1371,13 +1394,15 @@ requires_openai_auth = true`,
     apiFormat: "openai_responses",
     // 官方 Codex catalog（platform.minimax.io/docs/token-plan/codex）：
     // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch。
-    // 档位不预填：官方 catalog 就是 none/high 与模板默认一致（M3 的 effort
-    // 是思考开关，minimal/low/medium 端点接受但与 high 行为完全等价）
+    // 档位照抄官方 catalog：none/high（M3 的 effort 是思考开关，minimal/low/medium
+    // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
+    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
         contextWindow: 1000000,
+        reasoningLevels: ["none", "high"],
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         baseInstructions:
@@ -1429,14 +1454,16 @@ requires_openai_auth = true`,
     apiFormat: "openai_responses",
     // 官方 Codex catalog（mimo.mi.com/.../codex-configuration）：
     // shell_command 编辑、不声明 freeform apply_patch。
-    // 档位不预填：官方 catalog 就是 none/high 与模板默认一致（端点另收
-    // low/medium 但官方自述三档"效果一致，暂不区分推理强度"）
+    // 档位照抄官方 catalog：none/high（端点另收 low/medium 但官方自述三档
+    // "效果一致，暂不区分推理强度"，不给假差异档）。与模板默认一致故 Codex 侧
+    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
       {
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
         inputModalities: ["text"],
+        reasoningLevels: ["none", "high"],
         baseInstructions:
           "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
       },
@@ -1445,6 +1472,7 @@ requires_openai_auth = true`,
         displayName: "MiMo V2.5",
         contextWindow: 1048576,
         inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "high"],
         baseInstructions:
           "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
       },
@@ -1468,14 +1496,16 @@ requires_openai_auth = true`,
     apiFormat: "openai_responses",
     // 官方 Codex catalog（mimo.mi.com/.../codex-configuration）：
     // shell_command 编辑、不声明 freeform apply_patch。
-    // 档位不预填：官方 catalog 就是 none/high 与模板默认一致（端点另收
-    // low/medium 但官方自述三档"效果一致，暂不区分推理强度"）
+    // 档位照抄官方 catalog：none/high（端点另收 low/medium 但官方自述三档
+    // "效果一致，暂不区分推理强度"，不给假差异档）。与模板默认一致故 Codex 侧
+    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
       {
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
         inputModalities: ["text"],
+        reasoningLevels: ["none", "high"],
         baseInstructions:
           "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
       },
@@ -1484,6 +1514,7 @@ requires_openai_auth = true`,
         displayName: "MiMo V2.5",
         contextWindow: 1048576,
         inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "high"],
         baseInstructions:
           "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
       },

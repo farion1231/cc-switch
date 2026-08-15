@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 
-// 预填口径（2026-08-15 官方文档盘点）：只给 native Responses 直连预设填
-// reasoningLevels，取值 = 厂商官方文档声明的真实差异化档位子集。
+// 预填口径（2026-08-15 官方文档盘点 + Jason 同日拍板"表单可见性优先"）：
+// - native Responses 直连预设：填厂商官方声明的真实差异化档位子集（含照抄
+//   DeepSeek 官方 catalog 镜像、MiniMax/MiMo 与模板默认相同的显式声明——
+//   表单显示"未设置"的误导比快照过时/冗余声明的代价更大）；
+// - Chat 路由预设（supportsEffort:false）：档位值不进 wire，仅当预设声明了
+//   真实思考开关（supportsThinking + thinkingParam）时填两态 none/high；
+// - 后端对两条路径的 catalog 都应用 per-row 覆盖（apply_codex_reasoning_
+//   level_override "Applies to every profile"）。
 // 后端 codex_canonical_efforts 对未知值静默丢弃——预设里的拼写错误不会报错，
 // 只会让 Codex 选择器静默少档/错档，所以白名单校验必须在测试层兜住。
 const CANONICAL_EFFORTS = [
@@ -46,6 +52,21 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // xAI Reasoning guide 模型级枚举；grok-4.5 不可关思考故无 none
     ["xAI (Grok)", "grok-4.5", ["low", "medium", "high"]],
     ["xAI (Grok) OAuth", "grok-4.5", ["low", "medium", "high"]],
+    // DeepSeek 直连照抄官方 catalog 镜像（Jason 2026-08-15 拍板：表单可见性
+    // 优先，接受快照过时风险——官方目录变更时须同步）
+    ["DeepSeek", "deepseek-v4-flash", ["low", "high", "max"]],
+    ["DeepSeek", "deepseek-v4-pro", ["low", "high", "max"]],
+    // MiniMax/MiMo 官方 catalog=none/high（与模板默认一致，声明只为表单可见）
+    ["MiniMax", "MiniMax-M3", ["none", "high"]],
+    ["MiniMax en", "MiniMax-M3", ["none", "high"]],
+    ["Xiaomi MiMo", "mimo-v2.5-pro", ["none", "high"]],
+    ["Xiaomi MiMo", "mimo-v2.5", ["none", "high"]],
+    ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5-pro", ["none", "high"]],
+    ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5", ["none", "high"]],
+    // GLM 走 Chat 路由（supportsEffort:false）：none=真实关思考开关，其余档
+    // 等价开思考；只暴露两态，顺带补上模板四档里缺失的 none（关思考入口）
+    ["Zhipu GLM", "glm-5.2", ["none", "high"]],
+    ["Zhipu GLM en", "glm-5.2", ["none", "high"]],
   ];
 
   it.each(EXPECTED)(
@@ -60,17 +81,14 @@ describe("Codex preset pre-filled reasoning levels", () => {
   );
 
   it("keeps deliberately-unfilled presets unfilled", () => {
-    // DeepSeek 直连走官方 catalog 镜像（已带 low/high/max），预填会覆盖官方声明；
-    // MiniMax/MiMo 官方 catalog 就是 none/high 与模板默认一致，填了是零效果改动；
-    // Bailian qwen3-coder-plus 无 per-model 档位证据
+    // Bailian qwen3-coder-plus 无 per-model 档位证据；OpenCode Go 是多厂商
+    // Chat 网关且无 codexChatReasoning 声明（思考开关不生效，填 none 会是假
+    // 开关），逐模型语义未经网关验证前保持不填
     const UNFILLED: Array<[string, string]> = [
-      ["DeepSeek", "deepseek-v4-flash"],
-      ["DeepSeek", "deepseek-v4-pro"],
-      ["MiniMax", "MiniMax-M3"],
-      ["MiniMax en", "MiniMax-M3"],
-      ["Xiaomi MiMo", "mimo-v2.5-pro"],
-      ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5-pro"],
       ["Bailian", "qwen3-coder-plus"],
+      ["OpenCode Go", "glm-5.2"],
+      ["OpenCode Go", "deepseek-v4-flash"],
+      ["OpenCode Go", "mimo-v2.5-pro"],
     ];
     for (const [presetName, modelId] of UNFILLED) {
       const model = catalogModel(presetName, modelId);
