@@ -24,6 +24,8 @@ export interface SkillApps {
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;
+  // WorkBuddy 不参与 Skill 同步，可选
+  workbuddy?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
