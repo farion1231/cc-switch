@@ -89,7 +89,7 @@ pub(super) fn list_ledger(connection: &rusqlite::Connection) -> Result<TaskLedge
                 p.id, p.name, p.root_path, p.created_at, p.updated_at
              FROM tandem_tasks t
              JOIN tandem_projects p ON p.id = t.project_id
-             WHERE t.status IN ('needs_attention', 'awaiting_acceptance', 'active', 'paused')
+             WHERE t.status != 'completed'
              ORDER BY t.updated_at DESC, t.id ASC",
     )?;
     let items = statement
@@ -208,7 +208,6 @@ fn domain_error(error: TandemDomainError) -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::tandem::{database::TandemDatabase, domain::TaskStatus};
     use rusqlite::params;
 
@@ -287,9 +286,7 @@ mod tests {
              PRAGMA ignore_check_constraints = OFF;",
         ).unwrap();
 
-        let mut connection = database.connection.lock().unwrap();
-        let transaction = connection.transaction().unwrap();
-        let error = select_task_with_project(&transaction, "invalid").unwrap_err();
+        let error = database.list_ledger().unwrap_err();
         assert!(matches!(error, crate::AppError::Database(_)));
         assert!(error
             .to_string()
