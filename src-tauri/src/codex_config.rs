@@ -465,6 +465,56 @@ pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
         .is_some_and(|key| !key.is_empty())
 }
 
+/// Remove a known outgoing provider key without touching any other auth data.
+///
+/// The caller must establish that `expected_key` belongs to the provider being
+/// switched away from. Exact matching avoids deleting an unrelated official
+/// API-key login that happens to coexist with OAuth metadata.
+pub(crate) fn strip_codex_auth_api_key_if_matches(
+    auth: &mut Value,
+    expected_key: Option<&str>,
+) -> bool {
+    let Some(expected_key) = expected_key.map(str::trim).filter(|key| !key.is_empty()) else {
+        return false;
+    };
+    let Some(current_key) = auth
+        .get("OPENAI_API_KEY")
+        .and_then(Value::as_str)
+        .map(str::trim)
+    else {
+        return false;
+    };
+    if current_key != expected_key {
+        return false;
+    }
+    auth.as_object_mut()
+        .is_some_and(|object| object.remove("OPENAI_API_KEY").is_some())
+}
+
+/// Clear a known outgoing provider key from the live Codex auth file.
+///
+/// Missing auth or a non-matching key is a no-op. If the key was the only
+/// credential, delete the file so Codex presents its normal login flow;
+/// otherwise preserve the remaining OAuth/login material.
+pub(crate) fn clear_codex_live_auth_api_key_if_matches(
+    expected_key: Option<&str>,
+) -> Result<bool, AppError> {
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(false);
+    }
+    let mut live_auth: Value = read_json_file(&auth_path)?;
+    if !strip_codex_auth_api_key_if_matches(&mut live_auth, expected_key) {
+        return Ok(false);
+    }
+    if codex_auth_has_credential_login_material(&live_auth) {
+        write_json_file(&auth_path, &live_auth)?;
+    } else {
+        delete_file(&auth_path)?;
+    }
+    Ok(true)
+}
+
 /// After a normal switch to an official provider that carries no login
 /// material of its own, delete a live `auth.json` that only holds a stale
 /// third-party API key, so Codex shows its login screen instead of sending
@@ -2786,6 +2836,49 @@ experimental_bearer_token = "stale-table-key"
         assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
             "OPENAI_API_KEY": ""
         })));
+    }
+
+    #[test]
+    fn strip_codex_auth_api_key_requires_exact_provider_key_match() {
+        let mut auth = json!({
+            "OPENAI_API_KEY": "official-key",
+            "tokens": { "access_token": "oauth-access" }
+        });
+        assert!(!strip_codex_auth_api_key_if_matches(
+            &mut auth,
+            Some("third-party-key")
+        ));
+        assert_eq!(
+            auth,
+            json!({
+                "OPENAI_API_KEY": "official-key",
+                "tokens": { "access_token": "oauth-access" }
+            })
+        );
+
+        assert!(strip_codex_auth_api_key_if_matches(
+            &mut auth,
+            Some("official-key")
+        ));
+        assert_eq!(
+            auth,
+            json!({ "tokens": { "access_token": "oauth-access" } })
+        );
+
+        let mut metadata_only_auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "third-party-key",
+            "last_refresh": "2026-08-13T00:00:00Z",
+            "tokens": { "account_id": "acct-metadata-only" }
+        });
+        assert!(strip_codex_auth_api_key_if_matches(
+            &mut metadata_only_auth,
+            Some("third-party-key")
+        ));
+        assert!(
+            !codex_auth_has_credential_login_material(&metadata_only_auth),
+            "metadata without OAuth tokens must not preserve auth.json"
+        );
     }
 
     #[test]
