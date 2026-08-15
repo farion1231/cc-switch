@@ -30,6 +30,51 @@ pub enum RunStatus {
     Ended,
 }
 
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("unknown Tandem {kind}: {value}")]
+pub struct PersistedEnumError {
+    kind: &'static str,
+    value: String,
+}
+
+macro_rules! persisted_enum {
+    ($type:ty, $kind:literal, {$($name:literal => $variant:path),+ $(,)?}) => {
+        impl TryFrom<&str> for $type {
+            type Error = PersistedEnumError;
+
+            fn try_from(value: &str) -> Result<Self, Self::Error> {
+                match value {
+                    $($name => Ok($variant),)+
+                    _ => Err(PersistedEnumError {
+                        kind: $kind,
+                        value: value.to_owned(),
+                    }),
+                }
+            }
+        }
+    };
+}
+
+persisted_enum!(TaskStatus, "task status", {
+    "active" => TaskStatus::Active,
+    "needs_attention" => TaskStatus::NeedsAttention,
+    "awaiting_acceptance" => TaskStatus::AwaitingAcceptance,
+    "paused" => TaskStatus::Paused,
+    "completed" => TaskStatus::Completed,
+});
+persisted_enum!(RunStatus, "run status", {
+    "active" => RunStatus::Active,
+    "awaiting_user" => RunStatus::AwaitingUser,
+    "awaiting_acceptance" => RunStatus::AwaitingAcceptance,
+    "paused" => RunStatus::Paused,
+    "ended" => RunStatus::Ended,
+});
+persisted_enum!(AgentKind, "agent", {
+    "cursor" => AgentKind::Cursor,
+    "codex" => AgentKind::Codex,
+    "claude" => AgentKind::Claude,
+});
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
