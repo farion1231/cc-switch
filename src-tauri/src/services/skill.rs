@@ -190,6 +190,23 @@ impl Default for SkillStore {
     }
 }
 
+/// GitHub 仓库树 API 响应（git/trees/{ref}?recursive=1）
+#[derive(Debug, Deserialize)]
+struct GithubRepoTree {
+    tree: Vec<GithubTreeEntry>,
+    /// 文件树过大被 GitHub 截断时为 true
+    truncated: Option<bool>,
+}
+
+/// 单个文件树条目
+#[derive(Debug, Deserialize)]
+struct GithubTreeEntry {
+    #[serde(rename = "type")]
+    kind: String,
+    /// 相对仓库根的路径（正斜杠）
+    path: String,
+}
+
 /// Skill 卸载结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -325,6 +342,9 @@ const DIRECTORY_BUDGET_COST: u64 = 4096;
 /// 已经在内存里了，所以下载这一步需要自己的上限。技能仓库是 Markdown，
 /// 128 MiB 的压缩包已经远超正常规模。
 const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
+/// 发现阶段经 raw.githubusercontent.com 抓取单个 SKILL.md 的内容上限。
+/// 正常的 SKILL.md 是几 KB 到几十 KB 的 Markdown，512 KiB 是宽松上限。
+const MAX_SKILL_MD_BYTES: u64 = 512 * 1024;
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -2616,30 +2636,212 @@ impl SkillService {
         Ok(skills)
     }
 
-    /// 从仓库获取技能列表
+    /// 从仓库获取技能列表（仅读取元数据与 SKILL.md，不下载整仓归档）
+    ///
+    /// 通过 GitHub Trees API（git/trees/{ref}?recursive=1）拿到整棵文件树——这
+    /// 只是 JSON 路径元数据，不含文件内容——再并发抓取每个 SKILL.md 的正文。
+    /// 相比下载整仓 zip：超大仓库（如 hugohe3/ppt-master，归档 200MB+）不再触发
+    /// ARCHIVE_TOO_LARGE，且非技能文件一个字节都不会落到磁盘。安装时才整仓下载。
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_guard, resolved_branch) =
-            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-                .await
-                .map_err(|_| {
-                    anyhow!(format_skill_error(
-                        "DOWNLOAD_TIMEOUT",
-                        &[
-                            ("owner", &repo.owner),
-                            ("name", &repo.name),
-                            ("timeout", "60")
-                        ],
-                        Some("checkNetwork"),
-                    ))
-                })??;
+        let (resolved_branch, tree) = timeout(
+            std::time::Duration::from_secs(60),
+            self.fetch_repo_tree(repo),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(format_skill_error(
+                "DOWNLOAD_TIMEOUT",
+                &[
+                    ("owner", &repo.owner),
+                    ("name", &repo.name),
+                    ("timeout", "60")
+                ],
+                Some("checkNetwork"),
+            ))
+        })??;
 
-        let mut skills = Vec::new();
-        let scan_dir = temp_guard.path();
-        let mut resolved_repo = repo.clone();
-        resolved_repo.branch = resolved_branch;
-        self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
+        if tree.truncated.unwrap_or(false) {
+            log::warn!(
+                "仓库 {}/{} 的文件树被 GitHub 截断，部分技能可能未列出",
+                repo.owner,
+                repo.name
+            );
+        }
+
+        let doc_paths: Vec<&str> = tree
+            .tree
+            .iter()
+            .filter(|entry| entry.kind == "blob" && entry.path.ends_with("SKILL.md"))
+            .map(|entry| entry.path.as_str())
+            .collect();
+
+        let client = crate::proxy::http_client::get();
+        let contents = futures::future::join_all(doc_paths.iter().map(|doc_path| {
+            timeout(
+                std::time::Duration::from_secs(30),
+                self.fetch_raw_skill_md(
+                    &client,
+                    &repo.owner,
+                    &repo.name,
+                    &resolved_branch,
+                    doc_path,
+                ),
+            )
+        }))
+        .await;
+
+        let doc_path_count = doc_paths.len();
+        let mut skills = Vec::with_capacity(doc_path_count);
+        for (doc_path, content) in doc_paths.into_iter().zip(contents) {
+            // 单个 SKILL.md 抓取失败只跳过该技能，不拖垮整个仓库
+            let content = match content {
+                Ok(Ok(content)) => content,
+                _ => continue,
+            };
+
+            let directory = match doc_path.rsplit_once('/') {
+                Some((dir, "SKILL.md")) if !dir.is_empty() => dir.to_string(),
+                // SKILL.md 在仓库根：与旧 zip 扫描一致，用仓库名当目录名
+                _ => repo.name.clone(),
+            };
+            let meta = Self::parse_skill_metadata_from_str(&content);
+
+            skills.push(DiscoverableSkill {
+                key: format!("{}/{}:{}", repo.owner, repo.name, directory),
+                name: meta.name.unwrap_or_else(|| directory.to_string()),
+                description: meta.description.unwrap_or_default(),
+                directory,
+                readme_url: Self::build_skill_doc_url(
+                    &repo.owner,
+                    &repo.name,
+                    &resolved_branch,
+                    doc_path,
+                ),
+                repo_owner: repo.owner.clone(),
+                repo_name: repo.name.clone(),
+                repo_branch: resolved_branch.clone(),
+            });
+        }
+
+        if doc_path_count > 0 && skills.is_empty() {
+            log::warn!(
+                "仓库 {}/{} 有 {} 个 SKILL.md 但正文全部抓取失败",
+                repo.owner,
+                repo.name,
+                doc_path_count
+            );
+        }
 
         Ok(skills)
+    }
+
+    /// 解析分支并获取仓库的递归文件树（GitHub Trees API，仅元数据）
+    ///
+    /// 分支候选顺序与 `download_repo` 一致：配置分支（非空且非 HEAD）→ main → master，
+    /// 返回实际解析成功的分支与文件树。
+    async fn fetch_repo_tree(&self, repo: &SkillRepo) -> Result<(String, GithubRepoTree)> {
+        Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+
+        let mut branches = Vec::new();
+        if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
+            branches.push(repo.branch.clone());
+        }
+        for fallback in ["main", "master"] {
+            if !branches.iter().any(|b| b == fallback) {
+                branches.push(fallback.to_string());
+            }
+        }
+
+        let client = crate::proxy::http_client::get();
+        let mut last_error: Option<anyhow::Error> = None;
+        for branch in branches {
+            let url = format!(
+                "https://api.github.com/repos/{}/{}/git/trees/{}?recursive=1",
+                repo.owner, repo.name, branch
+            );
+            let response = client
+                .get(&url)
+                .header(
+                    "User-Agent",
+                    format!("cc-switch/{}", env!("CARGO_PKG_VERSION")),
+                )
+                .header("Accept", "application/vnd.github+json")
+                // 全局客户端禁用了自动解压，必须显式要求 identity，
+                // 否则 API 返回 gzip 后 .json() 无法解析
+                .header("Accept-Encoding", "identity")
+                .send()
+                .await
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            match response.status().as_u16() {
+                200 => {
+                    let tree: GithubRepoTree =
+                        response.json().await.map_err(|e| anyhow!(e.to_string()))?;
+                    return Ok((branch, tree));
+                }
+                404 => {
+                    last_error = Some(anyhow!(format_skill_error(
+                        "DOWNLOAD_FAILED",
+                        &[("status", "404")],
+                        Some("http404"),
+                    )));
+                }
+                // 未认证 GitHub API 限流 60 次/小时/IP
+                403 | 429 => {
+                    return Err(anyhow!(format_skill_error(
+                        "DOWNLOAD_FAILED",
+                        &[("status", &response.status().as_u16().to_string())],
+                        Some("http403"),
+                    )));
+                }
+                status => {
+                    last_error = Some(anyhow!(format_skill_error(
+                        "DOWNLOAD_FAILED",
+                        &[("status", &status.to_string())],
+                        Some("checkNetwork"),
+                    )));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支获取失败")))
+    }
+
+    /// 经 raw.githubusercontent.com 抓取 SKILL.md 正文（不消耗 GitHub API 限流配额）
+    async fn fetch_raw_skill_md(
+        &self,
+        client: &reqwest::Client,
+        owner: &str,
+        name: &str,
+        branch: &str,
+        doc_path: &str,
+    ) -> Result<String> {
+        let url = format!("https://raw.githubusercontent.com/{owner}/{name}/{branch}/{doc_path}");
+        let response = client
+            .get(&url)
+            .header("Accept-Encoding", "identity")
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(anyhow!(format_skill_error(
+                "DOWNLOAD_FAILED",
+                &[("status", &response.status().as_u16().to_string())],
+                Some("checkNetwork"),
+            )));
+        }
+
+        let mut response = response;
+        let mut bytes: Vec<u8> = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if bytes.len().saturating_add(chunk.len()) as u64 > MAX_SKILL_MD_BYTES {
+                return Err(anyhow::anyhow!(
+                    "SKILL.md 超过 {MAX_SKILL_MD_BYTES} 字节上限"
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// 递归扫描目录查找 SKILL.md
@@ -2720,23 +2922,26 @@ impl SkillService {
     /// 静态方法：解析技能元数据
     fn parse_skill_metadata_static(path: &Path) -> Result<SkillMetadata> {
         let content = fs::read_to_string(path)?;
+        Ok(Self::parse_skill_metadata_from_str(&content))
+    }
+
+    /// 从 SKILL.md 正文解析 frontmatter（name / description）
+    fn parse_skill_metadata_from_str(content: &str) -> SkillMetadata {
         let content = content.trim_start_matches('\u{feff}');
 
         let parts: Vec<&str> = content.splitn(3, "---").collect();
         if parts.len() < 3 {
-            return Ok(SkillMetadata {
+            return SkillMetadata {
                 name: None,
                 description: None,
-            });
+            };
         }
 
         let front_matter = parts[1].trim();
-        let meta: SkillMetadata = serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
+        serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
             name: None,
             description: None,
-        });
-
-        Ok(meta)
+        })
     }
 
     /// 从 SKILL.md 读取名称和描述，不存在则用目录名兜底
@@ -5985,5 +6190,25 @@ mod tests {
             SkillService::doc_path_for_source(temp.path(), std::path::Path::new("/elsewhere")),
             None
         );
+    }
+
+    #[test]
+    fn parse_skill_metadata_from_str_reads_frontmatter_only() {
+        // 标准 frontmatter：解析 name / description
+        let meta = SkillService::parse_skill_metadata_from_str(
+            "---\nname: build-slides\ndescription: 用 ppt-master 生成 PPT\n---\n\n正文...",
+        );
+        assert_eq!(meta.name.as_deref(), Some("build-slides"));
+        assert_eq!(meta.description.as_deref(), Some("用 ppt-master 生成 PPT"));
+
+        // 无 frontmatter 分隔符：不报错，name/description 回退 None
+        let meta = SkillService::parse_skill_metadata_from_str("纯正文，没有 YAML 头");
+        assert!(meta.name.is_none());
+        assert!(meta.description.is_none());
+
+        // BOM 前缀不能影响 frontmatter 识别
+        let meta =
+            SkillService::parse_skill_metadata_from_str("\u{feff}---\nname: bom-skill\n---\n");
+        assert_eq!(meta.name.as_deref(), Some("bom-skill"));
     }
 }
