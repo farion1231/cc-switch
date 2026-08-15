@@ -71,6 +71,10 @@ export type ClaudeDesktopProviderFormValues = ProviderFormData & {
 
 type ApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
+function defaultApiKeyField(mode: "direct" | "proxy"): ApiKeyField {
+  return mode === "direct" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN";
+}
+
 type PresetEntry = {
   id: string;
   preset: ClaudeDesktopProviderPreset;
@@ -263,7 +267,9 @@ export function ClaudeDesktopProviderForm({
   const [apiKeyField, setApiKeyField] = useState<ApiKeyField>(() =>
     envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY")
       ? "ANTHROPIC_API_KEY"
-      : "ANTHROPIC_AUTH_TOKEN",
+      : envString(initialData?.settingsConfig, "ANTHROPIC_AUTH_TOKEN")
+        ? "ANTHROPIC_AUTH_TOKEN"
+        : defaultApiKeyField(initialMode),
   );
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -417,7 +423,7 @@ export function ClaudeDesktopProviderForm({
 
     setBaseUrl(preset.baseUrl);
     setApiKey("");
-    setApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
+    setApiKeyField(preset.apiKeyField ?? defaultApiKeyField(preset.mode));
     setApiFormat(preset.apiFormat ?? "anthropic");
 
     const presetMode =
@@ -465,7 +471,7 @@ export function ClaudeDesktopProviderForm({
       form.reset(defaultValues);
       setBaseUrl("");
       setApiKey("");
-      setApiKeyField("ANTHROPIC_AUTH_TOKEN");
+      setApiKeyField(defaultApiKeyField("direct"));
       setApiFormat("anthropic");
       didSeedDefaultProxyRoutes.current = false;
       setMode("direct");

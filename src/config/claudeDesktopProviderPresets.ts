@@ -51,6 +51,7 @@ export interface ClaudeDesktopProviderPreset {
   partnerPromotionKey?: string;
 
   baseUrl: string;
+  // Defaults to API_KEY for direct mode and AUTH_TOKEN for proxy upstreams.
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
   mode: "direct" | "proxy";
