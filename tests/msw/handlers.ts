@@ -1,6 +1,8 @@
 import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
 import type { McpServer, Provider, Settings } from "@/types";
+import { containsStructuredCredential } from "@/tandem/taskValidation";
+import type { CreateTaskInput } from "@/tandem/types";
 import {
   addProvider,
   deleteProvider,
@@ -23,6 +25,9 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
+  completeTaskFixture,
+  createTaskFixture,
+  listTaskLedger,
 } from "./state";
 
 const TAURI_ENDPOINT = "http://tauri.local";
@@ -39,7 +44,45 @@ const withJson = async <T>(request: Request): Promise<T> => {
 
 const success = <T>(payload: T) => HttpResponse.json(payload as any);
 
+const validateTaskInput = (input: CreateTaskInput) => {
+  const values = [
+    input.projectName,
+    input.projectRootPath,
+    input.title,
+    input.originalInstruction,
+  ];
+  if (values.some((value) => !value?.trim())) return "required field";
+  if (Array.from(input.title.trim()).length > 120) return "title too long";
+  if (Array.from(input.originalInstruction.trim()).length > 20_000)
+    return "instruction too long";
+  if (
+    containsStructuredCredential(input.title) ||
+    containsStructuredCredential(input.originalInstruction)
+  )
+    return "structured plaintext credential";
+  return null;
+};
+
 export const handlers = [
+  http.post(`${TAURI_ENDPOINT}/list_tandem_ledger`, () =>
+    success(listTaskLedger()),
+  ),
+  http.post(`${TAURI_ENDPOINT}/create_tandem_task`, async ({ request }) => {
+    const { input } = await withJson<{ input: CreateTaskInput }>(request);
+    const error = validateTaskInput(input);
+    if (error) return HttpResponse.json(error, { status: 400 });
+    return success(createTaskFixture(input));
+  }),
+  http.post(
+    `${TAURI_ENDPOINT}/confirm_tandem_task_completed`,
+    async ({ request }) => {
+      const { taskId } = await withJson<{ taskId: string }>(request);
+      const completed = completeTaskFixture(taskId);
+      if (!completed)
+        return HttpResponse.json("Tandem task not found", { status: 404 });
+      return success(completed);
+    },
+  ),
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),

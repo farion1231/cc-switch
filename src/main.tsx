@@ -1,6 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import LegacyConfigApp from "./App";
+import { TaskGatewayProvider } from "./tandem/api/TaskGatewayProvider";
+import { createTaskGateway } from "./tandem/api/taskGateway";
+import { TandemShell } from "./tandem/components/TandemShell";
 import { DatabaseUpgrade } from "./components/DatabaseUpgrade";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
@@ -120,7 +123,9 @@ async function bootstrap() {
         <QueryClientProvider client={queryClient}>
           <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
             <UpdateProvider>
-              <App />
+              <TaskGatewayProvider gateway={createTaskGateway()}>
+                <TandemShell LegacyConfigApp={LegacyConfigApp} />
+              </TaskGatewayProvider>
               <Toaster />
             </UpdateProvider>
           </ThemeProvider>

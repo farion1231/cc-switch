@@ -1,5 +1,12 @@
 import type { AppId } from "@/lib/api/types";
 import type {
+  CreateTaskInput,
+  TaskLedger,
+  TaskLedgerItem,
+  TaskStatus,
+} from "@/tandem/types";
+import { buildTaskLedger } from "@/tandem/taskLedger";
+import type {
   McpServer,
   Provider,
   SessionMessage,
@@ -102,6 +109,41 @@ let settingsState: Settings = {
   language: "zh",
 };
 let appConfigDirOverride: string | null = null;
+
+const taskFixture = (
+  id: string,
+  status: TaskStatus,
+  updatedAt: number,
+): TaskLedgerItem => ({
+  project: {
+    id: `project-${id}`,
+    name: `Project ${id}`,
+    rootPath: `/projects/${id}`,
+    createdAt: updatedAt - 100,
+    updatedAt,
+  },
+  task: {
+    id,
+    projectId: `project-${id}`,
+    title: `Task ${id}`,
+    originalInstruction: `Private instruction for ${id}`,
+    status,
+    createdAt: updatedAt - 100,
+    updatedAt,
+    completedAt: null,
+  },
+});
+
+export const createDefaultTaskFixtures = (): TaskLedgerItem[] => [
+  taskFixture("attention", "needs_attention", 1_700_000_000_400),
+  taskFixture("acceptance", "awaiting_acceptance", 1_700_000_000_300),
+  taskFixture("active", "active", 1_700_000_000_200),
+  taskFixture("paused", "paused", 1_700_000_000_100),
+];
+
+let taskItems = createDefaultTaskFixtures();
+let nextTaskId = 1;
+
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
   `${providerId}:${sourcePath}`;
 
@@ -221,6 +263,8 @@ export const resetProviderState = () => {
     language: "zh",
   };
   appConfigDirOverride = null;
+  taskItems = createDefaultTaskFixtures();
+  nextTaskId = 1;
   mcpConfigs = {
     claude: {
       sample: {
@@ -268,6 +312,50 @@ export const resetProviderState = () => {
     hermes: {},
   };
 };
+
+export const listTaskLedger = (): TaskLedger =>
+  buildTaskLedger(deepClone(taskItems) as TaskLedgerItem[]);
+
+export const setTaskFixtures = (items: TaskLedgerItem[]) => {
+  taskItems = deepClone(items) as TaskLedgerItem[];
+};
+
+export const createTaskFixture = (input: CreateTaskInput): TaskLedgerItem => {
+  const now = 1_700_000_001_000 + nextTaskId;
+  const id = `created-${nextTaskId++}`;
+  const item: TaskLedgerItem = {
+    project: {
+      id: `project-${id}`,
+      name: input.projectName.trim(),
+      rootPath: input.projectRootPath.trim(),
+      createdAt: now,
+      updatedAt: now,
+    },
+    task: {
+      id,
+      projectId: `project-${id}`,
+      title: input.title.trim(),
+      originalInstruction: input.originalInstruction.trim(),
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+    },
+  };
+  taskItems.push(item);
+  return deepClone(item) as TaskLedgerItem;
+};
+
+export const completeTaskFixture = (taskId: string): TaskLedgerItem | null => {
+  const item = taskItems.find(({ task }) => task.id === taskId);
+  if (!item) return null;
+  item.task.status = "completed";
+  item.task.updatedAt += 1;
+  item.task.completedAt = item.task.updatedAt;
+  return deepClone(item) as TaskLedgerItem;
+};
+
+export const getTaskFixtures = () => deepClone(taskItems) as TaskLedgerItem[];
 
 export const getProviders = (appType: AppId) =>
   cloneProviders(providers)[appType] ?? {};

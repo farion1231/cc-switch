@@ -16,6 +16,12 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "src/index.html"),
+        "tandem-demo": path.resolve(__dirname, "src/tandem-demo.html"),
+      },
+    },
   },
   server: {
     port: 3000,
@@ -29,4 +35,3 @@ export default defineConfig(({ command }) => ({
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_"],
 }));
-
