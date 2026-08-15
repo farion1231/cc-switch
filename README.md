@@ -18,6 +18,10 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_
 
 </div>
 
+## Tandem development
+
+Tandem product work follows the approved [product design](docs/tandem/2026-08-14-tandem-product-design.md) and [v0 roadmap](docs/tandem/2026-08-14-tandem-v0-roadmap.md). Source lineage and imported-document details are recorded in [Tandem provenance](docs/tandem/PROVENANCE.md).
+
 ## ❤️Sponsor
 
 > [Want to appear here?](mailto:farion1231@gmail.com)
