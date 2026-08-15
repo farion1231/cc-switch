@@ -228,7 +228,7 @@ fn contains_token(value: &str, prefix: &str, minimum_suffix_len: usize) -> bool 
         let starts_at_boundary = value[..start]
             .chars()
             .next_back()
-            .is_none_or(|character| !character.is_ascii_alphanumeric() && character != '_');
+            .is_none_or(|character| !(character.is_alphanumeric() || character == '_'));
         if !starts_at_boundary {
             return false;
         }
@@ -251,7 +251,7 @@ fn contains_named_secret(value: &str) -> bool {
             let before_is_identifier = lowercase[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_');
+                .is_some_and(|character| character.is_alphanumeric() || character == '_');
             if before_is_identifier {
                 return false;
             }
@@ -414,6 +414,8 @@ mod tests {
             "xoxb-123456789",
             "AKIA123456789012345",
             "api_key=12345678901",
+            "ésk-12345678901234567890",
+            "épassword=123456789012",
             "prefixsk-12345678901234567890",
             "prefixAKIA1234567890123456",
         ] {
