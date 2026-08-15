@@ -10,6 +10,8 @@ use database::TandemDatabase;
 pub mod database;
 pub mod domain;
 pub mod repository;
+#[path = "tray.rs"]
+pub mod tray_summary;
 
 pub trait Clock: Send + Sync {
     fn now_ms(&self) -> i64;

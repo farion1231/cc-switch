@@ -73,21 +73,32 @@ pub async fn confirm_tandem_task_completed_with_state(
 
 #[tauri::command]
 pub async fn create_tandem_task(
+    app: tauri::AppHandle,
     state: State<'_, TandemState>,
     input: CreateTandemTaskInput,
 ) -> Result<TaskLedgerItem, String> {
-    create_tandem_task_with_state(&state, input).await
+    let item = create_tandem_task_with_state(&state, input).await?;
+    crate::tray::schedule_tandem_tray_refresh(&app);
+    Ok(item)
 }
 
 #[tauri::command]
-pub async fn list_tandem_ledger(state: State<'_, TandemState>) -> Result<TaskLedger, String> {
-    list_tandem_ledger_with_state(&state).await
+pub async fn list_tandem_ledger(
+    app: tauri::AppHandle,
+    state: State<'_, TandemState>,
+) -> Result<TaskLedger, String> {
+    let ledger = list_tandem_ledger_with_state(&state).await?;
+    crate::tray::schedule_tandem_tray_refresh(&app);
+    Ok(ledger)
 }
 
 #[tauri::command]
 pub async fn confirm_tandem_task_completed(
+    app: tauri::AppHandle,
     state: State<'_, TandemState>,
     task_id: String,
 ) -> Result<TaskLedgerItem, String> {
-    confirm_tandem_task_completed_with_state(&state, task_id).await
+    let item = confirm_tandem_task_completed_with_state(&state, task_id).await?;
+    crate::tray::schedule_tandem_tray_refresh(&app);
+    Ok(item)
 }
