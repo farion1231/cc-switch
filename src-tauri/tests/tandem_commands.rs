@@ -128,11 +128,23 @@ async fn unavailable_state_returns_stored_reason_without_reading_clock() {
 }
 
 #[test]
-fn tandem_database_path_is_isolated_under_temp_app_data_directory() {
-    let app_data_dir = tempfile::tempdir().unwrap();
-    let path = tandem_database_path(app_data_dir.path());
+fn tandem_database_path_is_isolated_in_config_directory() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let path = tandem_database_path(config_dir.path());
 
-    assert_eq!(path, app_data_dir.path().join("tandem").join("tandem.db"));
-    assert_ne!(path, app_data_dir.path().join("cc-switch.db"));
-    assert!(path.starts_with(Path::new(app_data_dir.path())));
+    assert_eq!(path, config_dir.path().join("tandem.db"));
+    assert_ne!(path, config_dir.path().join("cc-switch.db"));
+    assert!(path.starts_with(Path::new(config_dir.path())));
+}
+
+#[test]
+fn initialize_creates_tandem_database_in_config_directory() {
+    let config_dir = tempfile::tempdir().unwrap();
+
+    let state = TandemState::initialize(config_dir.path());
+
+    state.database().unwrap();
+    assert!(config_dir.path().join("tandem.db").is_file());
+    assert!(!config_dir.path().join("cc-switch.db").exists());
+    assert!(!config_dir.path().join("tandem").exists());
 }

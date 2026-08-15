@@ -47,8 +47,8 @@ impl TandemState {
         }
     }
 
-    pub fn initialize(app_data_dir: &Path) -> Self {
-        let path = tandem_database_path(app_data_dir);
+    pub fn initialize(config_dir: &Path) -> Self {
+        let path = tandem_database_path(config_dir);
         let result = path
             .parent()
             .ok_or_else(|| "Tandem database path has no parent directory".to_string())
@@ -83,6 +83,39 @@ impl TandemState {
     }
 }
 
-pub fn tandem_database_path(app_data_dir: &Path) -> PathBuf {
-    app_data_dir.join("tandem").join("tandem.db")
+pub fn tandem_database_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("tandem.db")
+}
+
+#[cfg(test)]
+mod tests {
+    use serial_test::serial;
+
+    use super::tandem_database_path;
+
+    #[test]
+    #[serial]
+    fn production_tandem_database_path_honors_test_home() {
+        struct TestHomeGuard(Option<std::ffi::OsString>);
+
+        impl Drop for TestHomeGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+            }
+        }
+
+        let test_home = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", test_home.path());
+
+        let config_dir = crate::config::get_app_config_dir();
+        let tandem_path = tandem_database_path(&config_dir);
+
+        assert_eq!(config_dir, test_home.path().join(".cc-switch"));
+        assert_eq!(tandem_path, config_dir.join("tandem.db"));
+        assert_ne!(tandem_path, config_dir.join("cc-switch.db"));
+    }
 }

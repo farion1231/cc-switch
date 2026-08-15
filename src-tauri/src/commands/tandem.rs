@@ -83,13 +83,8 @@ pub async fn create_tandem_task(
 }
 
 #[tauri::command]
-pub async fn list_tandem_ledger(
-    app: tauri::AppHandle,
-    state: State<'_, TandemState>,
-) -> Result<TaskLedger, String> {
-    let ledger = list_tandem_ledger_with_state(&state).await?;
-    crate::tray::schedule_tandem_tray_refresh(&app);
-    Ok(ledger)
+pub async fn list_tandem_ledger(state: State<'_, TandemState>) -> Result<TaskLedger, String> {
+    list_tandem_ledger_with_state(&state).await
 }
 
 #[tauri::command]

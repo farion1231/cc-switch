@@ -616,13 +616,8 @@ pub fn run() {
 
             let app_state = AppState::new(db);
 
-            let tandem_state = match app.path().app_data_dir() {
-                Ok(app_data_dir) => crate::tandem::TandemState::initialize(&app_data_dir),
-                Err(error) => crate::tandem::TandemState::unavailable(
-                    error.to_string(),
-                    Arc::new(crate::tandem::SystemClock),
-                ),
-            };
+            let config_dir = crate::config::get_app_config_dir();
+            let tandem_state = crate::tandem::TandemState::initialize(&config_dir);
             if let Some(error) = tandem_state.init_error.as_deref() {
                 log::error!("Failed to initialize Tandem database: {error}");
             } else {
