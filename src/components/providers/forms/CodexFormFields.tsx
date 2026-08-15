@@ -326,7 +326,10 @@ function ReasoningLevelsEditor({
                   )}
                 />
               </SelectTrigger>
-              <SelectContent>
+              {/* Must render above the enclosing z-[1000] popover: the
+                  default SelectContent z-[100] would hide the menu behind
+                  the panel when it flips upward. */}
+              <SelectContent className="z-[1100]">
                 <SelectItem value={AUTO_DEFAULT_REASONING_LEVEL}>
                   {t("codexConfig.defaultReasoningLevelPlaceholder", {
                     defaultValue: "Auto",
