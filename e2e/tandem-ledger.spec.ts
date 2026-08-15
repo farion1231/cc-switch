@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { isWithinVerticalViewport } from "./viewportGeometry";
 const fixtureRows = [
   "Resolve foundation alert",
   "Review foundation acceptance",
@@ -76,6 +77,42 @@ async function expectAccessibleInteractiveControls(page: Page) {
     unnamed,
     "every visible interactive control must have an accessible name or label",
   ).toEqual([]);
+}
+
+async function expectWithinVerticalViewport(locator: Locator) {
+  const box = await locator.boundingBox();
+  const viewport = locator.page().viewportSize();
+  expect(box, "expected element must have rendered geometry").not.toBeNull();
+  expect(viewport, "page must have an explicit viewport").not.toBeNull();
+  expect(
+    isWithinVerticalViewport(
+      { top: box!.y, bottom: box!.y + box!.height },
+      viewport!.height,
+    ),
+    "expected element must be fully within the vertical viewport",
+  ).toBe(true);
+}
+
+async function expectLedgerSectionWithinViewport(
+  page: Page,
+  sectionName: string,
+  headingName: string,
+  rowName: string,
+) {
+  const section = page.getByRole("region", { name: sectionName });
+  await section.scrollIntoViewIfNeeded();
+  const expected = [
+    section.getByRole("heading", { name: headingName }),
+    section.getByText(rowName),
+  ];
+  for (const locator of expected) {
+    await expect(locator).toBeVisible();
+    await expectWithinVerticalViewport(locator);
+  }
+  for (const control of await section.locator(interactiveSelector).all()) {
+    if (await control.isVisible()) await expectWithinVerticalViewport(control);
+  }
+  await expectCoherentVisibleGeometry(page);
 }
 
 async function expectCoherentVisibleGeometry(page: Page) {
@@ -202,23 +239,21 @@ for (const viewport of [
       await expect(
         page.getByRole("button", { name: "任务", exact: true }),
       ).toHaveAttribute("aria-current", "page");
-      for (const heading of [
-        "需要你处理 1",
-        "待验收 1",
-        "正在推进 1",
-        "最近可继续 1",
-      ])
-        await expect(
-          page.getByRole("heading", { name: heading }),
-        ).toBeVisible();
-      for (const row of fixtureRows)
-        await expect(page.getByText(row)).toBeVisible();
       await expectTopConsoleDimensions(page, viewport.width);
       await expectAutomatedLayoutChecks(page);
+      for (const [section, heading, row] of [
+        ["需要你处理", "需要你处理 1", fixtureRows[0]],
+        ["待验收", "待验收 1", fixtureRows[1]],
+        ["正在推进", "正在推进 1", fixtureRows[2]],
+        ["最近可继续", "最近可继续 1", fixtureRows[3]],
+      ] as const) {
+        await expectLedgerSectionWithinViewport(page, section, heading, row);
+      }
 
       await page.getByRole("button", { name: "新建任务" }).click();
       const createDialog = page.getByRole("dialog", { name: "新建任务" });
       await expect(createDialog).toBeVisible();
+      await expectWithinVerticalViewport(createDialog);
       await expectAutomatedLayoutChecks(page);
       await createDialog.getByLabel("项目名称").fill("Tandem Demo");
       await createDialog.getByLabel("项目路径").fill("/tmp/tandem-demo");
@@ -228,11 +263,12 @@ for (const viewport of [
         .fill("Disposable browser instruction");
       await createDialog.getByRole("button", { name: "创建任务" }).click();
       await expect(createDialog).toHaveCount(0);
-      await expect(
-        page
-          .getByRole("region", { name: "正在推进" })
-          .getByText("修复恢复流程"),
-      ).toBeVisible();
+      const createdRow = page
+        .getByRole("region", { name: "正在推进" })
+        .getByText("修复恢复流程");
+      await createdRow.scrollIntoViewIfNeeded();
+      await expect(createdRow).toBeVisible();
+      await expectWithinVerticalViewport(createdRow);
 
       await page
         .getByRole("button", { name: "确认完成 Review foundation acceptance" })
@@ -241,6 +277,7 @@ for (const viewport of [
         name: "确认任务完成",
       });
       await expect(confirmDialog).toBeVisible();
+      await expectWithinVerticalViewport(confirmDialog);
       await expectAutomatedLayoutChecks(page);
       await confirmDialog.getByRole("button", { name: "确认完成" }).click();
       await expect(confirmDialog).toHaveCount(0);
@@ -256,12 +293,20 @@ for (const viewport of [
       ).toBeVisible();
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Agent 配置" }).click();
-      await expect(
-        page.getByRole("heading", { name: "Agent Configuration" }),
-      ).toBeVisible();
-      await expect(page.getByText("Demo legacy provider root")).toBeVisible();
+      const configHeading = page.getByRole("heading", {
+        name: "Agent Configuration",
+      });
+      await configHeading.scrollIntoViewIfNeeded();
+      await expect(configHeading).toBeVisible();
+      await expectWithinVerticalViewport(configHeading);
+      const legacyRoot = page.getByText("Demo legacy provider root");
+      await legacyRoot.scrollIntoViewIfNeeded();
+      await expect(legacyRoot).toBeVisible();
+      await expectWithinVerticalViewport(legacyRoot);
       await page.getByRole("button", { name: "任务", exact: true }).click();
-      await expect(page.getByText("修复恢复流程")).toBeVisible();
+      await createdRow.scrollIntoViewIfNeeded();
+      await expect(createdRow).toBeVisible();
+      await expectWithinVerticalViewport(createdRow);
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await expect(page.getByRole("alertdialog")).toHaveCount(0);
       await expectTopConsoleDimensions(page, viewport.width);
