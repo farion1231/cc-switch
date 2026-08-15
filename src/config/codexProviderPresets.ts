@@ -149,22 +149,36 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     endpointCandidates: ["https://api.moonshot.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 档位照抄官方参数文档（2026-08-15 盘点）：k2.7-code 始终思考、官方
+      // 标注不支持 reasoning_effort → 单档 high（防模板假差异档，LongCat
+      // 先例）；k3 不可关思考、顶层 reasoning_effort 三档官方默认 max——
+      // 不声明 default：模板默认 medium ∉ 子集时后端回落最高档 = max，恰合
+      // 官方默认。两模型都关不掉思考，none 一律不列
       {
         model: "kimi-k2.7-code",
         displayName: "Kimi K2.7 Code",
         contextWindow: 262144,
+        reasoningLevels: ["high"],
       },
       {
         model: "kimi-k3",
         displayName: "Kimi K3",
         contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
       },
     ]),
+    // supportsEffort:true（2026-08-15 盘点）：Kimi 官方 Codex 接入文档
+    //（platform.kimi.com/docs/guide/codex-kimi.md，直接以 CC Switch 为例）
+    // 要求「支持思考模式 开启 / 支持推理强度 开启」；k3 的 reasoning_effort
+    // 是顶层字符串。effortValueMode 不声明=passthrough 原值透传（勿用
+    // deepseek 模式，会把 low 压成 high）。注：官方参数页写 k3"不应传入
+    // thinking"、与接入指南"思考模式开启"矛盾，现网无事故报告，按接入指南
+    // 保持 thinking 注入；用户报 Kimi 400 时首查此处
     codexChatReasoning: {
       supportsThinking: true,
-      supportsEffort: false,
+      supportsEffort: true,
       thinkingParam: "thinking",
-      effortParam: "none",
+      effortParam: "reasoning_effort",
       outputFormat: "reasoning_content",
     },
     category: "cn_official",
@@ -187,17 +201,49 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     apiFormat: "openai_chat",
     promptCacheRouting: "enabled",
     modelCatalog: modelCatalog([
+      // Kimi Code 官方模型表（2026-08-15 盘点）：kimi-for-coding(-highspeed)
+      // =K2.7 Code、Thinking 恒 ON 无档位 → 单档 high；k3/k3-256k 三档官方
+      // 默认 high（与开放平台的默认 max 不同，须显式 default 防后端回落到
+      // 最高档 max）。none 不列——该网关关思考=静默路由到 K2.6（换模型换
+      // 计费）。网关 effort 白名单 ultra/max/xhigh/high/medium/low/minimum/
+      // light/none，未知值 400（Codex 的 minimal 不在内，档位子集已挡住
+      // 选择器，用户自改档位需自担）
       {
         model: "kimi-for-coding",
         displayName: "Kimi For Coding",
         contextWindow: 262144,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "kimi-for-coding-highspeed",
+        displayName: "Kimi For Coding HighSpeed",
+        contextWindow: 262144,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "k3-256k",
+        displayName: "Kimi K3 256K",
+        contextWindow: 262144,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
       },
     ]),
+    // 官方 Codex 接入文档（kimi.com/code/docs/third-party-tools/codex.html，
+    // 以 CC Switch 为例）：「支持思考模式 开启（必须——关闭后 K3/K2.7 Code
+    // 都会被路由到 K2.6）/ 支持思考等级 开启」。effortValueMode 不声明=
+    // passthrough；网关自身对 effort 做归一映射（null→high、none→关思考）
     codexChatReasoning: {
       supportsThinking: true,
-      supportsEffort: false,
+      supportsEffort: true,
       thinkingParam: "thinking",
-      effortParam: "none",
+      effortParam: "reasoning_effort",
       outputFormat: "reasoning_content",
     },
     category: "cn_official",

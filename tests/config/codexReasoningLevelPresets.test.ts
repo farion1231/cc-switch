@@ -33,8 +33,10 @@ function catalogModel(presetName: string, modelId: string) {
 }
 
 describe("Codex preset pre-filled reasoning levels", () => {
-  // 每条期望值都对应官方文档证据（见预设文件内注释）；改动任一侧前先核对来源
-  const EXPECTED: Array<[string, string, string[]]> = [
+  // 每条期望值都对应官方文档证据（见预设文件内注释）；改动任一侧前先核对来源。
+  // 第四位=期望的显式 defaultReasoningLevel：仅在官方默认 ≠ 后端回落结果时
+  // 声明（后端回落=模板默认 ∈ 子集则保留、否则取子集最高档），其余一律留空
+  const EXPECTED: Array<[string, string, string[], string?]> = [
     // 火山官方 Codex 接入文档四份一致：low/medium/high
     ["火山 Agent Plan", "ark-code-latest", ["low", "medium", "high"]],
     ["火山 Coding Plan", "ark-code-latest", ["low", "medium", "high"]],
@@ -84,16 +86,26 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["StepFun", "step-3.5-flash-2603", ["low", "high"]],
     ["StepFun en", "step-3.7-flash", ["low", "medium", "high"]],
     ["StepFun en", "step-3.5-flash-2603", ["low", "high"]],
+    // Kimi 开放平台：k2.7-code 始终思考且官方标注不支持 effort → 单档；k3
+    // 三档（官方默认 max=后端回落结果，无需显式 default）。均关不掉思考无 none
+    ["Kimi", "kimi-k2.7-code", ["high"]],
+    ["Kimi", "kimi-k3", ["low", "high", "max"]],
+    // Kimi Code 端点：k3/k3-256k 官方默认 high ≠ 回落值 max → 显式 default
+    // 首两例；kimi-for-coding(-highspeed) Thinking 恒 ON 单档
+    ["Kimi For Coding", "kimi-for-coding", ["high"]],
+    ["Kimi For Coding", "kimi-for-coding-highspeed", ["high"]],
+    ["Kimi For Coding", "k3", ["low", "high", "max"], "high"],
+    ["Kimi For Coding", "k3-256k", ["low", "high", "max"], "high"],
   ];
 
   it.each(EXPECTED)(
     "%s / %s declares the vendor-documented levels",
-    (presetName, modelId, levels) => {
+    (presetName, modelId, levels, expectedDefault) => {
       const model = catalogModel(presetName, modelId);
       expect(model.reasoningLevels).toEqual(levels);
-      // 默认档一律不显式声明：后端 fallback（模板默认 high ∈ 声明子集时保留）
-      // 在上述每一家都自然落到正确的 high
-      expect(model.defaultReasoningLevel).toBeUndefined();
+      // 默认档通常不显式声明（后端 fallback 已落到正确档位）；仅当官方默认
+      // 与回落结果不一致时才有第四位期望值（Kimi Code k3 系先例）
+      expect(model.defaultReasoningLevel).toBe(expectedDefault);
     },
   );
 

@@ -41,6 +41,18 @@ const expectedChatPresets = new Map<
     },
   ],
   [
+    "Kimi For Coding",
+    {
+      baseUrl: "https://api.kimi.com/coding/v1",
+      contextWindows: {
+        "kimi-for-coding": 262144,
+        "kimi-for-coding-highspeed": 262144,
+        k3: 1048576,
+        "k3-256k": 262144,
+      },
+    },
+  ],
+  [
     "StepFun",
     {
       baseUrl: "https://api.stepfun.com/step_plan/v1",
