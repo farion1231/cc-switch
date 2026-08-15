@@ -10,7 +10,7 @@ body:
       label: Self Checks / 自检
       options:
         - label: |
-            I have read the [FAQ](https://github.com/farion1231/cc-switch#faq) section in README.
+            I have read the [FAQ](https://github.com/farion1231/cc-switch#faq) section in the README.
             我已阅读 README 中的[常见问题](https://github.com/farion1231/cc-switch#常见问题)。
           required: true
         - label: |
