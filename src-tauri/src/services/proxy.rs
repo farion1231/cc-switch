@@ -21,6 +21,23 @@ use tokio::sync::RwLock;
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+/// Codex `config.toml` 中由 cc-switch 代理/供应商模板管理的顶层键。
+///
+/// 热切换、完整重启重建备份时，这些键必须以新供应商模板为准，绝不能从
+/// 旧配置保留，否则旧供应商的路由 / 模型 / 令牌会泄漏到新供应商。
+const CODEX_PROXY_MANAGED_TOP_KEYS: &[&str] = &[
+    "model_provider",
+    "model",
+    "model_reasoning_effort",
+    "disable_response_storage",
+    "experimental_bearer_token",
+    "model_catalog_json",
+    "web_search",
+];
+
+/// Codex `config.toml` 中由 cc-switch 管理的整段（整个段以新模板为准）。
+const CODEX_PROXY_MANAGED_SECTIONS: &[&str] = &["model_providers"];
+
 /// 代理接管模式下需要从 Claude Live 配置中移除的"模型覆盖"字段。
 ///
 /// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
@@ -378,6 +395,10 @@ impl ProxyService {
         .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
         if let Some(existing_live) = existing_live.as_ref() {
             Self::preserve_toml_mcp_servers_from_existing_config(
+                &mut effective_settings,
+                existing_live,
+            )?;
+            Self::preserve_codex_user_sections_from_existing_config(
                 &mut effective_settings,
                 existing_live,
             )?;
@@ -2380,6 +2401,10 @@ impl ProxyService {
                     &mut effective_settings,
                     existing_value,
                 )?;
+                Self::preserve_codex_user_sections_from_existing_config(
+                    &mut effective_settings,
+                    existing_value,
+                )?;
                 Self::preserve_codex_auth_in_backup(
                     &mut effective_settings,
                     existing_value,
@@ -2536,12 +2561,24 @@ impl ProxyService {
             }
 
             if has_backup && !live_taken_over && matches!(app_type_enum, AppType::Codex) {
-                let effective_settings = build_effective_settings_with_common_config(
+                let mut effective_settings = build_effective_settings_with_common_config(
                     self.db.as_ref(),
                     &AppType::Codex,
                     &provider,
                 )
                 .map_err(|e| format!("构建 Codex 有效配置失败: {e}"))?;
+                // 非接管切换直接用模板写 live：从切换前的 live 配置保留用户段，
+                // 避免模板全量覆盖丢掉 [desktop] / [features] / [memories] 等。
+                if let Some(previous_live) = previous_live_before_direct_write.as_ref() {
+                    Self::preserve_codex_user_sections_from_existing_config(
+                        &mut effective_settings,
+                        previous_live,
+                    )?;
+                    Self::preserve_toml_mcp_servers_from_existing_config(
+                        &mut effective_settings,
+                        previous_live,
+                    )?;
+                }
                 let auth = effective_settings
                     .get("auth")
                     .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
@@ -2682,6 +2719,73 @@ impl ProxyService {
                     target_doc["mcp_servers"] = existing_mcp_servers.clone();
                 }
             }
+        }
+
+        target_obj.insert("config".to_string(), json!(target_doc.to_string()));
+        Ok(())
+    }
+
+    /// 从现有 Codex 配置保留用户 / Codex 自管理的 TOML 段到目标配置。
+    ///
+    /// 热切换、完整重启重建备份时，目标配置由 provider 模板全量构建，模板
+    /// 通常只含代理字段与 `[model_providers]`，会丢掉用户在 Codex 里配置的
+    /// `[desktop]`、`[features]`、`[memories]`、`personality`、
+    /// `[shell_environment_policy]`、`[plugins]`、`[marketplaces]`、
+    /// `[windows]`、`[computer_use]`、`[projects]` 等段。
+    ///
+    /// 保留策略：
+    /// - 代理字段（`model_provider` / `model` / `experimental_bearer_token` 等）
+    ///   与 `[model_providers]` 整段：以目标（新模板）为准，绝不覆盖。
+    /// - `[mcp_servers]`：由 `preserve_toml_mcp_servers_from_existing_config`
+    ///   单独做 per-server 合并，此处跳过避免冲突。
+    /// - 其余所有段：以现有配置为准（用户实时设置优先于模板 / Common Config
+    ///   的默认值），现有配置没有的段则保留目标现有值，绝不主动删除。
+    fn preserve_codex_user_sections_from_existing_config(
+        target_settings: &mut Value,
+        existing_config: &Value,
+    ) -> Result<(), String> {
+        let target_obj = target_settings
+            .as_object_mut()
+            .ok_or_else(|| "TOML 应用备份必须是 JSON 对象".to_string())?;
+
+        let target_config = target_obj
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let mut target_doc = if target_config.trim().is_empty() {
+            toml_edit::DocumentMut::new()
+        } else {
+            target_config
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|e| format!("解析新的 config.toml 失败: {e}"))?
+        };
+
+        let existing_config = existing_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if existing_config.trim().is_empty() {
+            return Ok(());
+        }
+
+        let existing_doc = existing_config
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("解析现有 config.toml 备份失败: {e}"))?;
+
+        // `&Table` 迭代产出 `(&str, &Item)`，key 直接就是 &str
+        for (key, existing_item) in existing_doc.as_table().iter() {
+            if CODEX_PROXY_MANAGED_TOP_KEYS.contains(&key) {
+                continue;
+            }
+            if CODEX_PROXY_MANAGED_SECTIONS.contains(&key) {
+                continue;
+            }
+            if key == "mcp_servers" {
+                continue; // 由 per-server 合并函数单独处理
+            }
+            target_doc
+                .as_table_mut()
+                .insert(key, existing_item.clone());
         }
 
         target_obj.insert("config".to_string(), json!(target_doc.to_string()));
@@ -6080,6 +6184,173 @@ base_url = "https://new.example/v1"
         assert!(
             config.contains("https://new.example/v1"),
             "provider-specific base_url should still update to the new provider"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_live_backup_from_provider_preserves_codex_user_sections() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {
+                    "OPENAI_API_KEY": "old-token"
+                },
+                "config": r#"model_provider = "any"
+model = "gpt-4"
+personality = "pragmatic"
+notify = [ "turn-ended" ]
+
+[model_providers.any]
+base_url = "https://old.example/v1"
+
+[desktop]
+followUpQueueMode = "steer"
+sansFontSize = 16
+
+[features]
+js_repl = false
+memories = true
+
+[memories]
+generate_memories = true
+use_memories = true
+
+[shell_environment_policy.set]
+BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
+"#
+            }))
+            .expect("serialize seed backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        // Provider template carries only proxy fields — exactly the shape that
+        // used to wipe user sections (desktop / features / memories / personality).
+        let provider = Provider::with_id(
+            "p2".to_string(),
+            "P2".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "new-token"
+                },
+                "config": r#"model_provider = "any"
+model = "gpt-5"
+
+[model_providers.any]
+base_url = "https://new.example/v1"
+"#
+            }),
+            None,
+        );
+
+        service
+            .update_live_backup_from_provider("codex", &provider)
+            .await
+            .expect("update live backup");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        let config = stored
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config string");
+
+        for needle in [
+            "personality = \"pragmatic\"",
+            "[desktop]",
+            "followUpQueueMode = \"steer\"",
+            "sansFontSize = 16",
+            "[features]",
+            "memories = true",
+            "[memories]",
+            "generate_memories = true",
+            "use_memories = true",
+            "[shell_environment_policy.set]",
+        ] {
+            assert!(
+                config.contains(needle),
+                "user section '{needle}' should survive backup rebuild; got:\n{config}"
+            );
+        }
+        assert!(
+            config.contains("https://new.example/v1"),
+            "provider base_url should still update to the new provider"
+        );
+        // Proxy-managed keys must still come from the new template, not the old backup.
+        assert!(
+            !config.contains("https://old.example/v1"),
+            "old provider base_url must not leak into the rebuilt backup; got:\n{config}"
+        );
+    }
+
+    #[test]
+    fn preserve_codex_user_sections_keeps_user_toml_but_not_proxy_fields() {
+        let mut target = json!({
+            "auth": { "OPENAI_API_KEY": "new-token" },
+            "config": r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+name = "New"
+base_url = "https://new.example/v1"
+"#
+        });
+        let existing = json!({
+            "auth": { "OPENAI_API_KEY": "old-token" },
+            "config": r#"model_provider = "custom"
+model = "gpt-4"
+personality = "pragmatic"
+
+[model_providers.custom]
+base_url = "https://old.example/v1"
+
+[desktop]
+followUpQueueMode = "steer"
+
+[features]
+memories = true
+
+[memories]
+use_memories = true
+
+[mcp_servers.echo]
+command = "npx"
+"#
+        });
+
+        ProxyService::preserve_codex_user_sections_from_existing_config(&mut target, &existing)
+            .expect("preserve user sections");
+
+        let config = target.get("config").and_then(|v| v.as_str()).expect("config");
+        assert!(config.contains("personality = \"pragmatic\""));
+        assert!(config.contains("[desktop]"));
+        assert!(config.contains("followUpQueueMode = \"steer\""));
+        assert!(config.contains("[features]"));
+        assert!(config.contains("memories = true"));
+        assert!(config.contains("[memories]"));
+        assert!(config.contains("use_memories = true"));
+
+        // Proxy-managed fields come from the new template.
+        assert!(config.contains("https://new.example/v1"));
+        assert!(!config.contains("https://old.example/v1"));
+        assert!(config.contains("model = \"gpt-5\""));
+
+        // mcp_servers is left to the per-server merge function.
+        assert!(
+            !config.contains("[mcp_servers.echo]"),
+            "mcp_servers must be handled by preserve_toml_mcp_servers_from_existing_config"
         );
     }
 
