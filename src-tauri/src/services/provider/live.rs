@@ -214,25 +214,54 @@ fn json_is_subset(target: &Value, source: &Value) -> bool {
 }
 
 fn json_array_contains_subset(target_arr: &[Value], source_arr: &[Value]) -> bool {
-    let mut matched = vec![false; target_arr.len()];
-
-    source_arr.iter().all(|source_item| {
-        if let Some((index, _)) = target_arr.iter().enumerate().find(|(index, target_item)| {
-            !matched[*index] && json_is_subset(target_item, source_item)
-        }) {
-            matched[index] = true;
-            true
-        } else {
-            false
+    // Bipartite matching with reassignment (Kuhn's algorithm) so each source
+    // element claims a distinct target element. Greedy first-match is not enough
+    // when a broader target element is claimed by an earlier source item that
+    // could also match a narrower target.
+    fn try_match(
+        target_arr: &[Value],
+        source_arr: &[Value],
+        source_index: usize,
+        seen: &mut [bool],
+        matched_source_by_target: &mut [Option<usize>],
+    ) -> bool {
+        for (target_index, target_item) in target_arr.iter().enumerate() {
+            if seen[target_index] || !json_is_subset(target_item, &source_arr[source_index]) {
+                continue;
+            }
+            seen[target_index] = true;
+            let matched_source = matched_source_by_target[target_index];
+            if matched_source.is_none_or(|ms| {
+                try_match(target_arr, source_arr, ms, seen, matched_source_by_target)
+            }) {
+                matched_source_by_target[target_index] = Some(source_index);
+                return true;
+            }
         }
+        false
+    }
+
+    let mut matched_source_by_target = vec![None; target_arr.len()];
+    source_arr.iter().enumerate().all(|(source_index, _)| {
+        try_match(
+            target_arr,
+            source_arr,
+            source_index,
+            &mut vec![false; target_arr.len()],
+            &mut matched_source_by_target,
+        )
     })
+}
+
+fn json_arrays_equal(a: &Value, b: &Value) -> bool {
+    json_is_subset(a, b) && json_is_subset(b, a)
 }
 
 fn json_remove_array_items(target_arr: &mut Vec<Value>, source_arr: &[Value]) {
     for source_item in source_arr {
         if let Some(index) = target_arr
             .iter()
-            .position(|target_item| json_is_subset(target_item, source_item))
+            .position(|target_item| json_arrays_equal(target_item, source_item))
         {
             target_arr.remove(index);
         }
@@ -248,6 +277,16 @@ fn json_deep_merge(target: &mut Value, source: &Value) {
                     None => {
                         target_map.insert(key.clone(), source_value.clone());
                     }
+                }
+            }
+        }
+        (Value::Array(target_arr), Value::Array(source_arr)) => {
+            for source_item in source_arr {
+                let exists = target_arr
+                    .iter()
+                    .any(|target_item| json_arrays_equal(target_item, source_item));
+                if !exists {
+                    target_arr.push(source_item.clone());
                 }
             }
         }
@@ -276,6 +315,111 @@ fn json_deep_remove(target: &mut Value, source: &Value) {
                 remove_key = target_arr.is_empty();
             } else if json_is_subset(target_value, source_value) {
                 remove_key = true;
+            }
+        }
+
+        if remove_key {
+            target_map.remove(key);
+        }
+    }
+}
+
+/// Like `json_deep_remove` but preserves provider-owned array entries when
+/// stripping a common-config snippet from live settings.
+///
+/// When the live config was built by merging the snippet into the provider's
+/// original settings, a simple `json_deep_remove` would also strip entries
+/// that the provider already had before the merge. This variant receives the
+/// original provider settings and uses them to avoid removing entries that
+/// were already present in the original (i.e. not injected by the snippet).
+fn json_deep_remove_preserving_original_arrays(
+    target: &mut Value,
+    source: &Value,
+    original: Option<&Value>,
+) {
+    let (Some(target_map), Some(source_map)) = (target.as_object_mut(), source.as_object()) else {
+        return;
+    };
+    let original_map = original.and_then(Value::as_object);
+
+    for (key, source_value) in source_map {
+        let mut remove_key = false;
+        let original_value = original_map.and_then(|map| map.get(key));
+
+        if let Some(target_value) = target_map.get_mut(key) {
+            if source_value.is_object() && target_value.is_object() {
+                // Guard against type mismatch: if the original value for this
+                // key is not an object (e.g. scalar or array), the snippet
+                // changed the type. Restore the original wholesale instead of
+                // recursing with a None original map.
+                if original_value.is_some_and(|ov| !ov.is_object()) {
+                    if let Some(ov) = original_value {
+                        *target_value = ov.clone();
+                    }
+                } else {
+                    json_deep_remove_preserving_original_arrays(
+                        target_value,
+                        source_value,
+                        original_value,
+                    );
+                    remove_key = original_value.is_none()
+                        && target_value.as_object().is_some_and(|obj| obj.is_empty());
+                }
+            } else if source_value.is_array() && target_value.is_array() {
+                // Guard against type mismatch: if the original value for this
+                // key is not an array (e.g. scalar or object), the snippet
+                // changed the type. Restore the original wholesale instead of
+                // treating it as an empty array.
+                if original_value.is_some_and(|ov| !ov.is_array()) {
+                    if let Some(ov) = original_value {
+                        *target_value = ov.clone();
+                    }
+                } else if let (Some(target_arr), Some(source_arr)) =
+                    (target_value.as_array_mut(), source_value.as_array())
+                {
+                    let original_arr = original_value
+                        .and_then(Value::as_array)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
+                    let mut processed_source_items: Vec<&Value> = Vec::new();
+                    for source_item in source_arr {
+                        let already_processed = processed_source_items
+                            .iter()
+                            .any(|pi| json_arrays_equal(pi, source_item));
+                        if already_processed {
+                            continue;
+                        }
+                        processed_source_items.push(source_item);
+
+                        let original_count = original_arr
+                            .iter()
+                            .filter(|oi| json_arrays_equal(oi, source_item))
+                            .count();
+                        // Only remove entries that were injected by the snippet,
+                        // not ones the provider already had.
+                        let injection_budget = usize::from(original_count == 0);
+                        let target_count = target_arr
+                            .iter()
+                            .filter(|ti| json_arrays_equal(ti, source_item))
+                            .count();
+                        let remove_count = target_count.min(injection_budget);
+                        for _ in 0..remove_count {
+                            if let Some(index) = target_arr
+                                .iter()
+                                .position(|ti| json_arrays_equal(ti, source_item))
+                            {
+                                target_arr.remove(index);
+                            }
+                        }
+                    }
+                    remove_key = original_value.is_none() && target_arr.is_empty();
+                }
+            } else if json_is_subset(target_value, source_value) {
+                if let Some(ov) = original_value {
+                    *target_value = ov.clone();
+                } else {
+                    remove_key = true;
+                }
             }
         }
 
@@ -721,6 +865,32 @@ pub(crate) fn write_live_with_common_config(
     write_live_snapshot(app_type, &effective_provider)
 }
 
+/// Like `remove_common_config_from_settings` but for Claude uses the
+/// array-preserving variant that knows the original provider settings.
+/// This prevents stripping entries that the provider already had before
+/// the common-config snippet was merged in.
+fn remove_common_config_from_live_settings(
+    app_type: &AppType,
+    settings: &Value,
+    snippet: &str,
+    original_settings: &Value,
+) -> Result<Value, AppError> {
+    if !matches!(app_type, AppType::Claude) {
+        return remove_common_config_from_settings(app_type, settings, snippet);
+    }
+
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() {
+        return Ok(settings.clone());
+    }
+
+    let source = serde_json::from_str::<Value>(trimmed)
+        .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+    let mut result = settings.clone();
+    json_deep_remove_preserving_original_arrays(&mut result, &source, Some(original_settings));
+    Ok(result)
+}
+
 pub(crate) fn strip_common_config_from_live_settings(
     db: &Database,
     app_type: &AppType,
@@ -742,7 +912,12 @@ pub(crate) fn strip_common_config_from_live_settings(
     let backfill_settings = if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
         match snippet.as_deref() {
             Some(snippet_text) => {
-                match remove_common_config_from_settings(app_type, &live_settings, snippet_text) {
+                match remove_common_config_from_live_settings(
+                    app_type,
+                    &live_settings,
+                    snippet_text,
+                    &provider.settings_config,
+                ) {
                     Ok(settings) => settings,
                     Err(err) => {
                         log::warn!(
@@ -2407,6 +2582,171 @@ base_url = "https://a.example/v1"
         let stripped =
             remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn claude_common_config_array_union_preserves_provider_entries() {
+        let settings = json!({
+            "permissions": {
+                "deny": ["WebSearch"]
+            }
+        });
+        let snippet = r#"{
+  "permissions": {
+    "deny": ["Read(~/.ssh/**)"]
+  }
+}"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(
+            applied["permissions"]["deny"],
+            json!(["WebSearch", "Read(~/.ssh/**)"])
+        );
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
+        assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn claude_common_config_array_union_preserves_richer_provider_items() {
+        let settings = json!({
+            "hooks": [{ "tool": "Read", "path": "x" }]
+        });
+        let snippet = r#"{
+  "hooks": [{ "tool": "Read" }]
+}"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(
+            applied["hooks"],
+            json!([{ "tool": "Read", "path": "x" }, { "tool": "Read" }])
+        );
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
+        assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn claude_common_config_live_backfill_preserves_provider_owned_array_entries() {
+        let db = Database::memory().expect("create memory db");
+        let snippet = r#"{
+  "permissions": {
+    "deny": ["WebSearch"]
+  }
+}"#;
+        db.set_config_snippet(AppType::Claude.as_str(), Some(snippet.to_string()))
+            .expect("save common config");
+
+        let settings = json!({
+            "permissions": {
+                "deny": ["WebSearch"]
+            }
+        });
+        let mut provider = Provider::with_id(
+            "claude-test".to_string(),
+            "Claude Test".to_string(),
+            settings.clone(),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+            .expect("build effective settings");
+        assert_eq!(live["permissions"]["deny"], json!(["WebSearch"]));
+
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert_eq!(backfilled, settings);
+    }
+
+    #[test]
+    fn claude_common_config_scalar_backfill_restores_original_values() {
+        let db = Database::memory().expect("create memory db");
+        let snippet = r#"{
+  "env": {
+    "MODE": "shared",
+    "SAME": "x"
+  }
+}"#;
+        db.set_config_snippet(AppType::Claude.as_str(), Some(snippet.to_string()))
+            .expect("save common config");
+
+        let settings = json!({
+            "env": {
+                "MODE": "provider",
+                "SAME": "x"
+            }
+        });
+        let mut provider = Provider::with_id(
+            "claude-test".to_string(),
+            "Claude Test".to_string(),
+            settings.clone(),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+            .expect("build effective settings");
+        assert_eq!(live["env"]["MODE"], json!("shared"));
+
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert_eq!(backfilled, settings);
+    }
+
+    #[test]
+    fn json_array_subset_matching_reassigns_broad_matches() {
+        let target = json!([{ "a": 1, "b": 2 }, { "a": 1 }]);
+        let source = json!([{ "a": 1 }, { "a": 1, "b": 2 }]);
+
+        assert!(json_is_subset(&target, &source));
+    }
+
+    #[test]
+    fn claude_common_config_backfill_restores_original_on_type_mismatch_scalar_to_array() {
+        let original = json!({ "key": "scalar_value" });
+        let snippet = json!({ "key": ["item1"] });
+
+        // Simulate what merge does: scalar overwritten by array
+        let live = json!({ "key": ["item1"] });
+
+        let mut result = live.clone();
+        json_deep_remove_preserving_original_arrays(&mut result, &snippet, Some(&original));
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn claude_common_config_backfill_restores_original_on_type_mismatch_object_to_array() {
+        let original = json!({ "key": { "nested": "v" } });
+        let snippet = json!({ "key": ["item1"] });
+
+        let live = json!({ "key": ["item1"] });
+
+        let mut result = live.clone();
+        json_deep_remove_preserving_original_arrays(&mut result, &snippet, Some(&original));
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn claude_common_config_backfill_restores_original_on_type_mismatch_array_to_object() {
+        let original = json!({ "key": ["item1"] });
+        let snippet = json!({ "key": { "nested": "v" } });
+
+        let live = json!({ "key": { "nested": "v" } });
+
+        let mut result = live.clone();
+        json_deep_remove_preserving_original_arrays(&mut result, &snippet, Some(&original));
+        assert_eq!(result, original);
     }
 
     #[test]
