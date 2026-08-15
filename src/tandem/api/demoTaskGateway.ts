@@ -36,25 +36,25 @@ const demoItem = (
 let items: TaskLedgerItem[] = [
   demoItem(
     "demo-attention",
-    "Resolve test failure",
+    "Resolve foundation alert",
     "needs_attention",
     1_700_000_004_000,
   ),
   demoItem(
     "demo-acceptance",
-    "Review ledger shell",
+    "Review foundation acceptance",
     "awaiting_acceptance",
     1_700_000_003_000,
   ),
   demoItem(
     "demo-active",
-    "Implement task gateway",
+    "Continue foundation build",
     "active",
     1_700_000_002_000,
   ),
   demoItem(
     "demo-paused",
-    "Continue responsive polish",
+    "Resume foundation task",
     "paused",
     1_700_000_001_000,
   ),

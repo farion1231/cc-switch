@@ -13,12 +13,16 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest watch"
+    "test:unit:watch": "vitest watch",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots",
+    "test:scope": "node scripts/check-tandem-scope.mts"
   },
   "keywords": [],
   "author": "Jason Young",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2.8.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.1",
