@@ -59,24 +59,30 @@ export function UsageTrendChart({
   const isHourly = durationSeconds <= 24 * 60 * 60;
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const dateLocale = getLocaleFromLanguage(language);
+
+  // X 轴必须用原始日期做 key：跨年区间里不同年份的相同 MM/DD 会生成重复
+  // label，recharts 按类别匹配时 tooltip 和高亮点会命中前一年的数据点。
+  // 显示用的 label 由 formatTrendLabel 统一格式化。
+  const formatTrendLabel = (rawDate: string) => {
+    const pointDate = new Date(rawDate);
+    return isHourly
+      ? pointDate.toLocaleString(dateLocale, {
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : pointDate.toLocaleDateString(dateLocale, {
+          month: "2-digit",
+          day: "2-digit",
+        });
+  };
+
   const chartData =
     trends?.map((stat) => {
-      const pointDate = new Date(stat.date);
       const cost = parseFiniteNumber(stat.totalCost);
       return {
         rawDate: stat.date,
-        label: isHourly
-          ? pointDate.toLocaleString(dateLocale, {
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : pointDate.toLocaleDateString(dateLocale, {
-              month: "2-digit",
-              day: "2-digit",
-            }),
-        hour: pointDate.getHours(),
         inputTokens: stat.totalInputTokens,
         outputTokens: stat.totalOutputTokens,
         cacheCreationTokens: stat.totalCacheCreationTokens,
@@ -91,7 +97,7 @@ export function UsageTrendChart({
     if (active && payload && payload.length) {
       return (
         <div className="rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur-md">
-          <p className="mb-2 font-medium">{label}</p>
+          <p className="mb-2 font-medium">{formatTrendLabel(String(label))}</p>
           {payload.map((entry: any, index: number) => (
             <div
               key={index}
@@ -162,10 +168,11 @@ export function UsageTrendChart({
               opacity={0.4}
             />
             <XAxis
-              dataKey="label"
+              dataKey="rawDate"
               axisLine={false}
               tickLine={false}
               tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+              tickFormatter={(value: string) => formatTrendLabel(value)}
               dy={10}
             />
             <YAxis
