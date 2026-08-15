@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::app_config::{AppType, McpServer};
+use crate::database::Database;
 use crate::error::AppError;
 use crate::mcp;
 use crate::store::AppState;
@@ -164,6 +165,10 @@ impl McpService {
     }
 
     fn remove_server_from_app(_state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
+        Self::remove_server_from_app_no_config(id, app)
+    }
+
+    fn remove_server_from_app_no_config(id: &str, app: &AppType) -> Result<(), AppError> {
         match app {
             AppType::Claude => mcp::remove_server_from_claude(id)?,
             AppType::ClaudeDesktop => {
@@ -198,7 +203,7 @@ impl McpService {
 
         let mut failures: Vec<String> = Vec::new();
         for app in AppType::all() {
-            if let Err(err) = Self::project_servers_to_app(state, &servers, &app) {
+            if let Err(err) = Self::project_servers_to_app(&servers, &app) {
                 log::warn!("同步 MCP 到 {app:?} 失败: {err}");
                 failures.push(format!("{}: {err}", app.as_str()));
             }
@@ -218,12 +223,17 @@ impl McpService {
     /// 定向重投影，避免把无关应用的失败面（如 ~/.claude.json 坏 JSON）
     /// 牵连进目标应用的关键路径。
     pub fn sync_enabled_for_app(state: &AppState, app: &AppType) -> Result<(), AppError> {
-        let servers = Self::get_all_servers(state)?;
-        Self::project_servers_to_app(state, &servers, app)
+        Self::sync_enabled_for_app_from_db(state.db.as_ref(), app)
+    }
+
+    /// 从数据库读取启用状态并投影到单个应用。供只持有数据库句柄、但会
+    /// 整体重写 live 配置的服务使用。
+    pub fn sync_enabled_for_app_from_db(db: &Database, app: &AppType) -> Result<(), AppError> {
+        let servers = db.get_all_mcp_servers()?;
+        Self::project_servers_to_app(&servers, app)
     }
 
     fn project_servers_to_app(
-        state: &AppState,
         servers: &IndexMap<String, McpServer>,
         app: &AppType,
     ) -> Result<(), AppError> {
@@ -236,9 +246,9 @@ impl McpService {
 
         for server in servers.values() {
             if server.apps.is_enabled_for(app) {
-                Self::sync_server_to_app(state, server, app)?;
+                Self::sync_server_to_app_no_config(server, app)?;
             } else {
-                Self::remove_server_from_app(state, &server.id, app)?;
+                Self::remove_server_from_app_no_config(&server.id, app)?;
             }
         }
 
