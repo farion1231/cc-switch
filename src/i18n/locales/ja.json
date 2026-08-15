@@ -193,6 +193,7 @@
     "mode": "モデル処理方式",
     "modeDirect": "直結",
     "modeProxy": "ルーティング必要",
+    "authFieldHint": "ローカルプロキシがプロバイダーへ認証情報を送る方式を選択します：ANTHROPIC_AUTH_TOKEN は Authorization: Bearer、ANTHROPIC_API_KEY は x-api-key を送信します。",
     "modelMappingToggle": "モデルマッピングが必要",
     "modelMappingOffHint": "プロバイダーが Claude Desktop の三つの役割 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）を受け付ける場合のみ直結できます。それ以外のモデル名（claude-3-5-sonnet-… などの旧式 ID を含む）はこのスイッチを有効にしてマッピングを使ってください。",
     "modelMappingOnHint": "Claude Desktop は claude-sonnet-* / claude-opus-* / claude-haiku-* の三つの役割 ID のみ受け付けます。有効にすると CC Switch がこの三役割をプロバイダーの実モデルにマッピングし、使用中はローカルルーティングを起動したままにします。",

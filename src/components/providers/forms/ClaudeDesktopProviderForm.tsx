@@ -720,6 +720,12 @@ export function ClaudeDesktopProviderForm({
       }
     }
 
+    // 直连模式下 Claude Desktop 的 gateway profile 固定 bearer 鉴权，且后端
+    // direct_gateway_credentials 只认 ANTHROPIC_AUTH_TOKEN；认证字段选择仅对
+    // 走本地代理的映射模式有意义，直连一律归一化成 AUTH_TOKEN。
+    const effectiveApiKeyField: ApiKeyField =
+      effectiveMode === "proxy" ? apiKeyField : "ANTHROPIC_AUTH_TOKEN";
+
     const settingsConfig = clonePlainRecord(initialData?.settingsConfig);
     const env = clonePlainRecord(settingsConfig.env);
     delete env.ANTHROPIC_AUTH_TOKEN;
@@ -732,7 +738,7 @@ export function ClaudeDesktopProviderForm({
       : {
           ...env,
           ANTHROPIC_BASE_URL: baseUrl.trim().replace(/\/+$/, ""),
-          [apiKeyField]: apiKey.trim(),
+          [effectiveApiKeyField]: apiKey.trim(),
         };
 
     const routeMap = routeEntries.reduce<
@@ -784,7 +790,12 @@ export function ClaudeDesktopProviderForm({
             : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
-    meta.apiKeyField = apiKeyField;
+    // 与 Claude Code 表单一致：只持久化非默认选择，缺省即 ANTHROPIC_AUTH_TOKEN
+    if (effectiveApiKeyField === "ANTHROPIC_API_KEY") {
+      meta.apiKeyField = effectiveApiKeyField;
+    } else {
+      delete meta.apiKeyField;
+    }
 
     delete meta.endpointAutoSelect;
     delete meta.isFullUrl;
@@ -888,38 +899,43 @@ export function ClaudeDesktopProviderForm({
               </div>
             ) : (
               <>
-                <div className="space-y-2">
-                  <Label>
-                    {t("providerForm.authField", {
-                      defaultValue: "认证字段",
-                    })}
-                  </Label>
-                  <Select
-                    value={apiKeyField}
-                    onValueChange={(v) => setApiKeyField(v as ApiKeyField)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ANTHROPIC_AUTH_TOKEN">
-                        {t("providerForm.authFieldAuthToken", {
-                          defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
-                        })}
-                      </SelectItem>
-                      <SelectItem value="ANTHROPIC_API_KEY">
-                        {t("providerForm.authFieldApiKey", {
-                          defaultValue: "ANTHROPIC_API_KEY",
-                        })}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {t("providerForm.authFieldHint", {
-                      defaultValue: "选择写入配置的认证环境变量名",
-                    })}
-                  </p>
-                </div>
+                {/* 认证字段仅在映射（本地代理）模式下生效：直连模式由 Claude
+                    Desktop 自己出网，其 gateway profile 固定 bearer 鉴权。 */}
+                {needsModelMapping && (
+                  <div className="space-y-2">
+                    <Label>
+                      {t("providerForm.authField", {
+                        defaultValue: "认证字段",
+                      })}
+                    </Label>
+                    <Select
+                      value={apiKeyField}
+                      onValueChange={(v) => setApiKeyField(v as ApiKeyField)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                          {t("providerForm.authFieldAuthToken", {
+                            defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
+                          })}
+                        </SelectItem>
+                        <SelectItem value="ANTHROPIC_API_KEY">
+                          {t("providerForm.authFieldApiKey", {
+                            defaultValue: "ANTHROPIC_API_KEY",
+                          })}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {t("claudeDesktop.authFieldHint", {
+                        defaultValue:
+                          "选择本地代理向供应商发送凭证的方式：ANTHROPIC_AUTH_TOKEN 发 Authorization: Bearer，ANTHROPIC_API_KEY 发 x-api-key。",
+                      })}
+                    </p>
+                  </div>
+                )}
                 <ApiKeySection
                   value={apiKey}
                   onChange={setApiKey}

@@ -193,6 +193,7 @@
     "mode": "模型處理方式",
     "modeDirect": "直連",
     "modeProxy": "需要路由",
+    "authFieldHint": "選擇本機代理向供應商傳送憑證的方式：ANTHROPIC_AUTH_TOKEN 送 Authorization: Bearer，ANTHROPIC_API_KEY 送 x-api-key。",
     "modelMappingToggle": "需要模型對應",
     "modelMappingOffHint": "僅當供應商直接接受 Claude Desktop 可識別的三檔角色 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）時才適用直連；其他模型名（含 claude-3-5-sonnet-… 等舊式 ID）請開啟此開關走對應。",
     "modelMappingOnHint": "Claude Desktop 只接受 claude-sonnet-* / claude-opus-* / claude-haiku-* 三檔角色 ID。開啟後 CC Switch 會把這三檔對應到供應商的實際模型，並在使用期間保持本地路由開啟。",
