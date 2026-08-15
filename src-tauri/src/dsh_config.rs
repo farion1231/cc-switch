@@ -1443,6 +1443,13 @@ pub fn upsert_native(input: DshNativeInput) -> Result<DshSnapshot, String> {
         match base_url.as_deref() {
             Some("") => {
                 section.remove("baseURL");
+                // Removing the last entry would leave `llm-deepseek:` with a
+                // null value that the lossless serializer emits and this
+                // module rejects. A section with nothing left is equivalent
+                // to no section at all, so drop it entirely.
+                if section.is_empty() {
+                    root.remove(NATIVE_NAMESPACE);
+                }
             }
             Some(base_url) => {
                 section.set("baseURL", base_url);
@@ -1787,19 +1794,26 @@ async fn discover_models_with_key(
     base_url: &str,
     api_key: String,
 ) -> Result<DshModelDiscoveryResult, String> {
-    let models =
-        crate::services::model_fetch::fetch_models(base_url, api_key.trim(), false, None, None)
-            .await?
-            .into_iter()
-            .map(|model| DshModel {
-                id: model.id,
-                name: None,
-                description: model.owned_by,
-                context_window: None,
-                max_tokens: None,
-                extra: BTreeMap::new(),
-            })
-            .collect();
+    let models = crate::services::model_fetch::fetch_models(
+        base_url,
+        api_key.trim(),
+        false,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await?
+    .into_iter()
+    .map(|model| DshModel {
+        id: model.id,
+        name: None,
+        description: model.owned_by,
+        context_window: None,
+        max_tokens: None,
+        extra: BTreeMap::new(),
+    })
+    .collect();
     Ok(DshModelDiscoveryResult { models })
 }
 
@@ -2533,9 +2547,12 @@ mod tests {
         with_home(|_| {
             let paths = paths();
             fs::create_dir_all(&paths.home).unwrap();
+
+            // A section that only held a base URL becomes default after the
+            // clear, so the whole section is removed rather than emitting an
+            // unparseable empty mapping.
             let existing = "llm-deepseek:\n  baseURL: https://example.test\n";
             fs::write(&paths.settings, existing).unwrap();
-
             // Whitespace-only input is the cleared signal, not "leave alone".
             upsert_native(DshNativeInput {
                 base_url: Some("   ".to_string()),
@@ -2544,9 +2561,25 @@ mod tests {
                 expected_revision: Some(sha256_hex(existing.as_bytes())),
             })
             .unwrap();
-
             let output = fs::read_to_string(&paths.settings).unwrap();
             assert!(!output.contains("baseURL"));
+            assert!(!output.contains("llm-deepseek"));
+
+            // A section with other fields keeps them and only the base URL
+            // override is removed.
+            let existing =
+                "llm-deepseek:\n  baseURL: https://example.test\n  apiKeyEnv: CUSTOM_KEY\n";
+            fs::write(&paths.settings, existing).unwrap();
+            upsert_native(DshNativeInput {
+                base_url: Some(String::new()),
+                models: None,
+                api_key_env: None,
+                expected_revision: Some(sha256_hex(existing.as_bytes())),
+            })
+            .unwrap();
+            let output = fs::read_to_string(&paths.settings).unwrap();
+            assert!(!output.contains("baseURL"));
+            assert!(output.contains("apiKeyEnv: CUSTOM_KEY"));
             assert!(output.contains("llm-deepseek:"));
         });
     }
@@ -2558,15 +2591,21 @@ mod tests {
         with_home(|_| {
             let paths = paths();
             fs::create_dir_all(&paths.home).unwrap();
-            fs::write(&paths.settings, "llm-deepseek:\n  baseURL: https://example.test\n")
-                .unwrap();
+            fs::write(
+                &paths.settings,
+                "llm-deepseek:\n  baseURL: https://example.test\n",
+            )
+            .unwrap();
 
             // A child that is spawned and reaped has a verifiably free PID.
             let mut child = std::process::Command::new("true").spawn().unwrap();
             let dead_pid = child.id();
             child.wait().unwrap();
-            fs::write(&paths.settings.with_file_name("settings.yaml.lock"), format!("{dead_pid}\n"))
-                .unwrap();
+            fs::write(
+                &paths.settings.with_file_name("settings.yaml.lock"),
+                format!("{dead_pid}\n"),
+            )
+            .unwrap();
 
             // The dead holder's lock is reclaimed instead of waiting out the
             // timeout, so the mutation succeeds immediately.
@@ -2592,8 +2631,11 @@ mod tests {
 
             let paths = paths();
             fs::create_dir_all(&paths.home).unwrap();
-            fs::write(&paths.settings, "llm-deepseek:\n  baseURL: https://example.test\n")
-                .unwrap();
+            fs::write(
+                &paths.settings,
+                "llm-deepseek:\n  baseURL: https://example.test\n",
+            )
+            .unwrap();
 
             // The live test process owns this PID, so only the age fallback
             // can reclaim the lock.

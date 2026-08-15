@@ -145,7 +145,6 @@ const UnifiedMcpPanel = React.forwardRef<
     };
     serverEntries.forEach(([_, server]) => {
       for (const app of MCP_APP_IDS) {
-        if (app === "dsh") continue;
         if (server.apps[app]) counts[app]++;
       }
     });

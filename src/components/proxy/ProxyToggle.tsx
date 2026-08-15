@@ -29,7 +29,6 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
   } = useProxyStatus();
 
   const handleToggle = async (checked: boolean) => {
-    if (activeApp === "dsh") return;
     try {
       await setTakeoverForApp({ appType: activeApp, enabled: checked });
     } catch (error) {
@@ -37,8 +36,7 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
     }
   };
 
-  const takeoverEnabled =
-    activeApp === "dsh" ? false : (takeoverStatus?.[activeApp] ?? false);
+  const takeoverEnabled = takeoverStatus?.[activeApp] ?? false;
 
   const appLabel = getAppLabel(activeApp);
 

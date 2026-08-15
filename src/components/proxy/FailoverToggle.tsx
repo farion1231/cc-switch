@@ -26,11 +26,9 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
     useAutoFailoverEnabled(activeApp);
   const setEnabled = useSetAutoFailoverEnabled();
   const { takeoverStatus } = useProxyStatus();
-  const takeoverEnabled =
-    activeApp === "dsh" ? false : (takeoverStatus?.[activeApp] ?? false);
+  const takeoverEnabled = takeoverStatus?.[activeApp] ?? false;
 
   const handleToggle = (checked: boolean) => {
-    if (activeApp === "dsh") return;
     if (checked && !takeoverEnabled) return;
     setEnabled.mutate({ appType: activeApp, enabled: checked });
   };

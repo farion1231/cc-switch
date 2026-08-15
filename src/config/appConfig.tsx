@@ -87,7 +87,10 @@ export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
 }
 
 /** Pi has no native MCP registry; do not manufacture a disabled mirror. */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "pi" | "dsh"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",

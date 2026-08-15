@@ -402,9 +402,7 @@ export function DshProviderDialog({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className={
-                    confirmRemoveKey ? "text-destructive" : undefined
-                  }
+                  className={confirmRemoveKey ? "text-destructive" : undefined}
                   onClick={() => void removeKey()}
                   disabled={disabled || busy}
                 >

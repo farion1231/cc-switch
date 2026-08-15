@@ -48,6 +48,7 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub dsh: bool,
+    #[serde(default = "default_true")]
     pub pi: bool,
 }
 
@@ -1269,6 +1270,5 @@ mod tests {
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
         );
-    }
     }
 }
