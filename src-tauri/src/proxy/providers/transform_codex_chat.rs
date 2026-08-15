@@ -461,9 +461,13 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
         return None;
     }
 
+    // ultra 是 Codex 扩展档位：已知枚举的专用模式（deepseek/openrouter/low_high）
+    // 钳到自身最高合法档而非丢弃——丢弃会让"选最深思考"静默退化成"不带 effort"；
+    // passthrough 面向枚举未知的通用上游，档位由用户/预设的 reasoningLevels 声明
+    // 背书，与 max/xhigh 一样原值透传。
     match mode.unwrap_or("passthrough") {
         "deepseek" => match effort.as_str() {
-            "max" | "xhigh" => Some("max"),
+            "max" | "xhigh" | "ultra" => Some("max"),
             _ => Some("high"),
         },
         "low_high" => match effort.as_str() {
@@ -475,7 +479,7 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
         // `400 reasoning_effort: Invalid option`（见 openclaw#77350）；钳到最高合法档
         // xhigh，其余合法值透传，未知值丢弃以免被上游拒绝。
         "openrouter" => match effort.as_str() {
-            "max" | "xhigh" => Some("xhigh"),
+            "max" | "xhigh" | "ultra" => Some("xhigh"),
             "high" => Some("high"),
             "medium" => Some("medium"),
             "low" => Some("low"),
@@ -489,6 +493,7 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "high" => Some("high"),
             "xhigh" => Some("xhigh"),
             "max" => Some("max"),
+            "ultra" => Some("ultra"),
             _ => None,
         },
     }
@@ -2013,6 +2018,25 @@ mod tests {
 
     fn result_messages(result: &Value) -> &[Value] {
         result["messages"].as_array().unwrap()
+    }
+
+    #[test]
+    fn map_reasoning_effort_handles_ultra_per_mode() {
+        // passthrough 面向枚举未知的通用上游：ultra 与 max/xhigh 一样原值透传，
+        // 让声明了该档位的上游能收到用户选择。
+        assert_eq!(map_reasoning_effort("ultra", None), Some("ultra"));
+        // 已知枚举的专用模式钳到自身最高合法档，而不是走 None 被静默丢弃。
+        assert_eq!(map_reasoning_effort("ultra", Some("deepseek")), Some("max"));
+        assert_eq!(
+            map_reasoning_effort("ultra", Some("low_high")),
+            Some("high")
+        );
+        assert_eq!(
+            map_reasoning_effort("ultra", Some("openrouter")),
+            Some("xhigh")
+        );
+        // 真正的未知值仍然丢弃，防上游 400。
+        assert_eq!(map_reasoning_effort("turbo", None), None);
     }
 
     #[test]
