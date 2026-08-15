@@ -699,6 +699,56 @@ pub(crate) fn build_effective_settings_with_common_config(
     Ok(effective_settings)
 }
 
+/// Re-extract the common-config snippet from the current live settings and
+/// persist it to the DB, so a subsequent [`write_live_with_common_config`]
+/// preserves live-side changes to whitelisted common fields.
+///
+/// Thin, `SwitchResult`-free sibling of
+/// [`ProviderService::sync_common_config_snippet_from_live`]: reads live
+/// once, delegates to the shared `_core`, and logs any warnings via
+/// `log::warn!` (non-switch paths have no `SwitchResult` to carry them in).
+///
+/// No-op for additive-mode apps (they don't use common-config snippets —
+/// matches the switch path's scope guard). Respects the user's explicit
+/// `_cleared` flag. All failures are non-fatal: log a warning and return
+/// `Ok(())`, never blocking the caller's write (same contract as the switch
+/// path).
+pub(crate) fn sync_common_config_snippet_from_live_simple(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    if app_type.is_additive_mode() {
+        return Ok(());
+    }
+    let live_config = match read_live_settings(app_type.clone()) {
+        Ok(v) => v,
+        Err(err) => {
+            log::warn!(
+                "Failed to read live settings for {} pre-write common-config sync: {err}",
+                app_type.as_str()
+            );
+            return Ok(());
+        }
+    };
+    let mut warnings: Vec<String> = Vec::new();
+    crate::services::provider::ProviderService::sync_common_config_snippet_from_live_core(
+        state,
+        app_type,
+        provider,
+        &live_config,
+        &mut warnings,
+    );
+    for w in warnings {
+        log::warn!(
+            "common-config pre-write sync ({}, provider '{}'): {w}",
+            app_type.as_str(),
+            provider.id
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn write_live_with_common_config(
     db: &Database,
     app_type: &AppType,
@@ -1223,6 +1273,7 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
+            let _ = sync_common_config_snippet_from_live_simple(state, app_type, provider);
             write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
         }
     }
@@ -1274,6 +1325,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     }
 
+    let _ = sync_common_config_snippet_from_live_simple(state, app_type, provider);
     write_live_with_common_config(state.db.as_ref(), app_type, provider)
 }
 

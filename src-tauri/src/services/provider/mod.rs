@@ -94,6 +94,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
         return Ok(true);
     }
 
+    let _ = live::sync_common_config_snippet_from_live_simple(state, &AppType::Codex, provider);
     live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
     // 重写 live 会整体替换 config.toml（有意设计），[mcp_servers] 随之丢失，
     // 写完必须立刻从 DB 重新投影启用的 MCP。只投影 Codex 而非
@@ -2603,6 +2604,7 @@ impl ProviderService {
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
+            let _ = live::sync_common_config_snippet_from_live_simple(state, &app_type, &provider);
             write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
         }
 
@@ -2823,6 +2825,8 @@ impl ProviderService {
                     }
                 }
             } else {
+                let _ =
+                    live::sync_common_config_snippet_from_live_simple(state, &app_type, &provider);
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                 // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
                 // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
@@ -3428,6 +3432,30 @@ impl ProviderService {
         live_config: &Value,
         result: &mut SwitchResult,
     ) {
+        Self::sync_common_config_snippet_from_live_core(
+            state,
+            app_type,
+            provider,
+            live_config,
+            &mut result.warnings,
+        );
+    }
+
+    /// Core of [`sync_common_config_snippet_from_live`]: re-extract the
+    /// common-config snippet from `live_config` and persist it to the DB,
+    /// pushing any non-fatal warnings into `warnings`. Shared by the switch
+    /// path (via the wrapper above) and the pre-write sync helper in
+    /// `live.rs` (which has no `SwitchResult`).
+    ///
+    /// Scope, opt-in, `_cleared` guard, and "skip when unchanged" semantics
+    /// are identical to the switch path — see the doc on the wrapper.
+    pub(crate) fn sync_common_config_snippet_from_live_core(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+        live_config: &Value,
+        warnings: &mut Vec<String>,
+    ) {
         // 作用域限定 Claude + Codex（见函数文档）。
         if !matches!(app_type, AppType::Claude | AppType::Codex) {
             return;
@@ -3488,9 +3516,7 @@ impl ProviderService {
                 app_type.as_str(),
                 provider.id
             );
-            result
-                .warnings
-                .push(format!("common_config_sync_failed:{}", provider.id));
+            warnings.push(format!("common_config_sync_failed:{}", provider.id));
         }
     }
 
