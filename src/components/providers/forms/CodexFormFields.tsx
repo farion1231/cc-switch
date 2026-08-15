@@ -201,6 +201,10 @@ const CODEX_REASONING_LEVELS = [
   "ultra",
 ] as const;
 
+// Sentinel for the default-level Select: Radix Select forbids empty item
+// values, so "back to Auto" needs a non-empty value mapped to undefined.
+const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
+
 function ReasoningLevelsEditor({
   levels,
   defaultLevel,
@@ -219,9 +223,14 @@ function ReasoningLevelsEditor({
   );
 
   const toggleLevel = (level: string) => {
-    const next = selected.includes(level)
+    const picked = selected.includes(level)
       ? selected.filter((item) => item !== level)
       : [...selected, level];
+    // Store in canonical ascending-depth order (not click order): the Codex
+    // picker and the generated catalog both follow array order.
+    const next = (CODEX_REASONING_LEVELS as readonly string[]).filter((item) =>
+      picked.includes(item),
+    );
     onLevelsChange(next.length > 0 ? next : undefined);
     if (defaultLevel && !next.includes(defaultLevel)) {
       onDefaultLevelChange(undefined);
@@ -302,9 +311,11 @@ function ReasoningLevelsEditor({
               })}
             </span>
             <Select
-              value={defaultLevel ?? ""}
+              value={defaultLevel ?? AUTO_DEFAULT_REASONING_LEVEL}
               onValueChange={(value) =>
-                onDefaultLevelChange(value || undefined)
+                onDefaultLevelChange(
+                  value === AUTO_DEFAULT_REASONING_LEVEL ? undefined : value,
+                )
               }
             >
               <SelectTrigger className="mt-1 h-8 w-full">
@@ -316,6 +327,11 @@ function ReasoningLevelsEditor({
                 />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={AUTO_DEFAULT_REASONING_LEVEL}>
+                  {t("codexConfig.defaultReasoningLevelPlaceholder", {
+                    defaultValue: "Auto",
+                  })}
+                </SelectItem>
                 {selected.map((level) => (
                   <SelectItem key={level} value={level}>
                     {level}

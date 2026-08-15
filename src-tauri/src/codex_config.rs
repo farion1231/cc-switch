@@ -3511,7 +3511,7 @@ base_url = "https://production.api/v1"
                     },
                     {
                         "model": "unordered-model",
-                        "reasoningLevels": ["xhigh", "low", "bogus"],
+                        "reasoningLevels": ["xhigh", "low", "bogus", "low"],
                         "defaultReasoningLevel": "bogus"
                     }
                 ]
@@ -3577,10 +3577,10 @@ base_url = "https://production.api/v1"
             Some("high")
         );
 
-        // Declaration order is normalized to canonical order, an unknown
-        // explicit default is dropped, and the fallback picks the highest
-        // supported level in canonical order (not the last declared one, and
-        // never an unknown effort).
+        // Declaration order is normalized to canonical order, duplicates and
+        // an unknown explicit default are dropped, and the fallback picks the
+        // highest supported level in canonical order (not the last declared
+        // one, and never an unknown effort).
         assert_eq!(efforts(4), vec!["low", "xhigh"]);
         assert_eq!(
             models[4]
@@ -3632,6 +3632,7 @@ base_url = "https://production.api/v1"
             Some("xhigh")
         );
     }
+
     #[test]
     fn native_responses_profile_suppresses_apply_patch_and_keeps_shell() {
         // Native (direct) /responses providers must NOT emit a freeform
