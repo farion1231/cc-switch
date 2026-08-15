@@ -168,6 +168,12 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
 
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
+    if let Some(active) = std::env::var_os("CODEX_HOME") {
+        if !active.is_empty() {
+            return PathBuf::from(active);
+        }
+    }
+
     if let Some(custom) = crate::settings::get_codex_override_dir() {
         return custom;
     }
@@ -266,6 +272,7 @@ pub fn write_codex_live_atomic(
         return Err(e);
     }
 
+    crate::codex_profile::mirror_active_config_to_shared()?;
     Ok(())
 }
 
@@ -328,7 +335,8 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
     }
 
-    write_text_file(&config_path, &cfg_text)
+    write_text_file(&config_path, &cfg_text)?;
+    crate::codex_profile::mirror_active_config_to_shared()
 }
 
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
