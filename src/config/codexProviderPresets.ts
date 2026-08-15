@@ -1324,10 +1324,14 @@ requires_openai_auth = true`,
         contextWindow: 200000,
       },
     ]),
+    // 平台方言修正（2026-08-15 盘点）：thinking:{type} 是智谱自家端点形态，
+    // ModelScope 平台文档零出现；平台真实开关=顶层 enable_thinking 布尔
+    //（官方模型页 extra_body 范例+百炼 GLM 一手文档双证）。整块必须保留——
+    // 删掉会落到后端 glm 模型名推断、错误方言原地复活
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: false,
-      thinkingParam: "thinking",
+      thinkingParam: "enable_thinking",
       effortParam: "none",
       outputFormat: "reasoning_content",
     },
@@ -1561,16 +1565,22 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.novita.ai/openai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 平台真开关=顶层 enable_thinking 布尔（Novita API 参考+FAQ 双证）→
+      // 两态。glm-5.1 响应该字段是"官方替代公告+Z.AI 模型卡"两跳推断，无逐字
+      // 直证（2026-08-15 盘点，中置信；同平台 MiniMax-M1 是不可关思考的反例）
       {
         model: "zai-org/glm-5.1",
         displayName: "GLM-5.1",
         contextWindow: 202800,
+        reasoningLevels: ["none", "high"],
       },
     ]),
+    // 方言修正（2026-08-15 盘点）：thinking:{type} 是 Z.AI 自家端点形态，
+    // Novita「Create chat completion」参数枚举与全站文档零出现
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: false,
-      thinkingParam: "thinking",
+      thinkingParam: "enable_thinking",
       effortParam: "none",
       outputFormat: "reasoning_content",
     },
@@ -1654,10 +1664,15 @@ requires_openai_auth = true`,
         contextWindow: 262144,
       },
     ]),
+    // 假开关撤销（2026-08-15 盘点）：NIM 官方 OpenAPI（moonshotai-kimi-k2-5-infer）
+    // 请求体 additionalProperties:false 且合法字段表无顶层 thinking——原
+    // thinking:{type} 注入要么被吞要么直接被拒；真参数 chat_template_kwargs:
+    // {thinking:bool} 不在 thinkingParam 值域内。⚠️整块保留、thinkingParam
+    // 显式置 none：删块会让后端推断按模型名命中 kimi 分支、假开关原地复活
     codexChatReasoning: {
-      supportsThinking: true,
+      supportsThinking: false,
       supportsEffort: false,
-      thinkingParam: "thinking",
+      thinkingParam: "none",
       effortParam: "none",
       outputFormat: "reasoning_content",
     },

@@ -70,6 +70,8 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // SiliconFlow .com 的 M3：平台级 enable_thinking 布尔开关（后端按平台
     // 推断兜底），M3 官方可关思考 → 两态
     ["SiliconFlow en", "MiniMaxAI/MiniMax-M3", ["none", "high"]],
+    // Novita：平台真开关 enable_thinking（声明已修正方言）→ 两态
+    ["Novita AI", "zai-org/glm-5.1", ["none", "high"]],
     // StepFun 官方两站模型页+reasoning 指南：3.7-flash 三档（默认 medium）、
     // 2603 两档；全系无关思考形态故无 none。effort 下发走后端 per-model
     // 推断（2603=low_high、3.7=passthrough）
@@ -106,6 +108,9 @@ describe("Codex preset pre-filled reasoning levels", () => {
       // StepFun 无后缀 3.5-flash：官方未暴露 effort，单一常开思考态
       ["StepFun", "step-3.5-flash"],
       ["StepFun en", "step-3.5-flash"],
+      // Nvidia NIM：无思考开关（真参数 chat_template_kwargs 不在值域），
+      // 声明已改 thinkingParam:none 撤销假开关
+      ["Nvidia", "moonshotai/kimi-k2.5"],
     ];
     for (const [presetName, modelId] of UNFILLED) {
       const model = catalogModel(presetName, modelId);

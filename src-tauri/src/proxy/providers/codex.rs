@@ -529,6 +529,22 @@ fn infer_aggregator_platform_config(
         });
     }
 
+    // ModelScope 魔搭 API-Inference：与 SiliconFlow 同构——平台级统一
+    // `enable_thinking` 布尔（官方模型页范例 extra_body {"enable_thinking": bool}，
+    // OpenAI SDK 的 extra_body 合并进请求体顶层），思维回传 reasoning_content。
+    // 智谱风格 thinking:{type} 是模型厂商自家方言，平台文档零出现——没有这条
+    // 分支时挂 GLM 的 ModelScope 供应商会被下方 glm 模型规则错误注入该形态。
+    if platform.contains("modelscope") {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(false),
+            thinking_param: Some("enable_thinking".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            output_format: Some("reasoning_content".to_string()),
+        });
+    }
+
     None
 }
 
@@ -1570,6 +1586,31 @@ wire_api = "chat"
             &json!({ "model": "MiniMaxAI/MiniMax-M2.5" }),
         )
         .unwrap();
+
+        assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
+        assert_eq!(config.supports_effort, Some(false));
+        assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_modelscope_platform_overrides_glm() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "modelscope"
+model = "ZhipuAI/GLM-5.2"
+
+[model_providers.modelscope]
+name = "ModelScope"
+base_url = "https://api-inference.modelscope.cn/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // 模型是 GLM（智谱自家用 thinking:{type}），但平台是 ModelScope ——
+        // 应走平台级 enable_thinking，而不是被 glm 模型规则注入智谱方言。
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "ZhipuAI/GLM-5.2" }))
+                .unwrap();
 
         assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
         assert_eq!(config.supports_effort, Some(false));
