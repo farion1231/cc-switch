@@ -892,6 +892,42 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
 }
 
 #[test]
+fn minimax_m3_pricing_repairs_previous_builtin_but_preserves_custom_prices() {
+    const PREVIOUS_BUILTIN: &str = "UPDATE model_pricing SET input_cost_per_million = '0.30', output_cost_per_million = '1.20', cache_read_cost_per_million = '0.06' WHERE model_id = 'minimax-m3'";
+    const CUSTOM: &str = "UPDATE model_pricing SET input_cost_per_million = '9', output_cost_per_million = '2.40', cache_read_cost_per_million = '0.12' WHERE model_id = 'minimax-m3'";
+
+    fn price(conn: &Connection) -> String {
+        conn.query_row(
+            "SELECT input_cost_per_million || '/' || output_cost_per_million || '/' ||
+                    cache_read_cost_per_million || '/' || cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'minimax-m3'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query MiniMax M3 price")
+    }
+
+    let db = Database::memory().expect("create memory db");
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        assert_eq!(price(&conn), "0.60/2.40/0.12/0");
+        conn.execute(PREVIOUS_BUILTIN, [])
+            .expect("restore previous MiniMax M3 price");
+    }
+    db.ensure_model_pricing_seeded()
+        .expect("repair previous price");
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        assert_eq!(price(&conn), "0.60/2.40/0.12/0");
+        conn.execute(CUSTOM, []).expect("set custom price");
+    }
+    db.ensure_model_pricing_seeded()
+        .expect("preserve custom price");
+    let conn = db.conn.lock().expect("lock conn");
+    assert_eq!(price(&conn), "9/2.40/0.12/0");
+}
+
+#[test]
 fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
     let temp = NamedTempFile::new().expect("create temp db file");
     let path = temp.path().to_path_buf();

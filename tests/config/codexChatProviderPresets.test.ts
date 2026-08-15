@@ -221,4 +221,17 @@ describe("Codex Chat provider presets", () => {
       expect(preset?.codexChatReasoning).toBeUndefined();
     }
   });
+
+  it("advertises MiniMax M3 video input for both regional presets", () => {
+    for (const name of ["MiniMax", "MiniMax en"]) {
+      const preset = codexProviderPresets.find((item) => item.name === name);
+
+      expect(preset?.modelCatalog).toHaveLength(1);
+      expect(preset?.modelCatalog?.[0]?.inputModalities).toEqual([
+        "text",
+        "image",
+        "video",
+      ]);
+    }
+  });
 });
