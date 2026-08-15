@@ -166,13 +166,24 @@ fn read_tandem_ledger(
         .and_then(|db| db.list_ledger())
 }
 
+fn resolve_tandem_summary_label<F>(
+    precomputed: Option<String>,
+    language: &str,
+    read_ledger: F,
+) -> String
+where
+    F: FnOnce() -> Result<crate::tandem::repository::TaskLedger, AppError>,
+{
+    precomputed.unwrap_or_else(|| tandem_task_summary_label(read_ledger(), language))
+}
+
 fn tandem_task_summary_label(
     ledger: Result<crate::tandem::repository::TaskLedger, AppError>,
     language: &str,
 ) -> String {
     match ledger {
         Ok(ledger) => crate::tandem::tray_summary::summary_label(
-            &crate::tandem::tray_summary::summarize_ledger(&ledger),
+            &crate::tandem::tray_summary::summarize(&ledger),
             language,
         ),
         Err(error) => {
@@ -667,6 +678,14 @@ pub fn create_tray_menu(
     app: &tauri::AppHandle,
     app_state: &AppState,
 ) -> Result<Menu<tauri::Wry>, AppError> {
+    create_tray_menu_with_tandem_label(app, app_state, None)
+}
+
+fn create_tray_menu_with_tandem_label(
+    app: &tauri::AppHandle,
+    app_state: &AppState,
+    tandem_summary_label: Option<String>,
+) -> Result<Menu<tauri::Wry>, AppError> {
     let app_settings = crate::settings::get_settings();
     // 用户未显式设置语言（首次安装）时，按系统区域回退而非硬编码简体，
     // 否则繁中系统的托盘会固定显示简体直到用户手动切换一次。
@@ -695,8 +714,8 @@ pub fn create_tray_menu(
         None::<&str>,
     )
     .map_err(|e| AppError::Message(format!("创建打开官方网站菜单失败: {e}")))?;
-    let tandem_ledger = read_tandem_ledger(app);
-    let tandem_summary_label = tandem_task_summary_label(tandem_ledger, language);
+    let tandem_summary_label =
+        resolve_tandem_summary_label(tandem_summary_label, language, || read_tandem_ledger(app));
     let tandem_summary_item = MenuItem::with_id(
         app,
         TANDEM_TASK_SUMMARY_ID,
@@ -946,23 +965,57 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     }
 }
 
-fn should_replace_tandem_menu<T>(ledger: &Result<T, AppError>) -> bool {
-    ledger.is_ok()
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TandemMenuRefreshDecision {
+    PreservePrevious,
+    ReplaceWith(String),
+}
+
+fn tandem_menu_refresh_decision(
+    ledger: Result<crate::tandem::repository::TaskLedger, AppError>,
+    language: &str,
+) -> TandemMenuRefreshDecision {
+    match ledger {
+        Ok(ledger) => {
+            TandemMenuRefreshDecision::ReplaceWith(crate::tandem::tray_summary::summary_label(
+                &crate::tandem::tray_summary::summarize(&ledger),
+                language,
+            ))
+        }
+        Err(error) => {
+            log::error!("Failed to refresh tray from Tandem task ledger: {error}");
+            TandemMenuRefreshDecision::PreservePrevious
+        }
+    }
 }
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
     use crate::store::AppState;
 
-    let tandem_ledger = read_tandem_ledger(app);
-    if !should_replace_tandem_menu(&tandem_ledger) {
-        if let Err(error) = tandem_ledger {
-            log::error!("Failed to refresh tray from Tandem task ledger: {error}");
-        }
-        return;
-    }
-
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(new_menu) = create_tray_menu(app, state.inner()) {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                if let Err(e) = tray.set_menu(Some(new_menu)) {
+                    log::error!("刷新托盘菜单失败: {e}");
+                }
+            }
+        }
+    }
+}
+
+fn refresh_tandem_tray_menu(app: &tauri::AppHandle) {
+    let app_settings = crate::settings::get_settings();
+    let language = match app_settings.language.as_deref() {
+        Some(language) => language,
+        None => detect_system_tray_language(),
+    };
+    let decision = tandem_menu_refresh_decision(read_tandem_ledger(app), language);
+
+    let TandemMenuRefreshDecision::ReplaceWith(label) = decision else {
+        return;
+    };
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(new_menu) = create_tray_menu_with_tandem_label(app, state.inner(), Some(label)) {
             if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 if let Err(e) = tray.set_menu(Some(new_menu)) {
                     log::error!("刷新托盘菜单失败: {e}");
@@ -1077,7 +1130,7 @@ fn usage_refresh_action() -> TrayRefreshAction {
 
 fn run_refresh_action(app: &tauri::AppHandle, action: TrayRefreshAction) {
     match action {
-        TrayRefreshAction::RefreshFullMenu => refresh_tray_menu(app),
+        TrayRefreshAction::RefreshFullMenu => refresh_tandem_tray_menu(app),
         TrayRefreshAction::UpdateUsageLabels => update_tray_usage_labels(app),
     }
 }
@@ -1251,12 +1304,43 @@ mod tests {
     }
 
     #[test]
-    fn tandem_refresh_replaces_menu_only_after_a_successful_read() {
-        let success: Result<(), AppError> = Ok(());
-        let failure: Result<(), AppError> = Err(AppError::Message("read failed".into()));
+    fn tandem_refresh_decision_replaces_with_precomputed_label_after_success() {
+        let database = crate::tandem::database::TandemDatabase::memory().unwrap();
+        database
+            .create_task(
+                crate::tandem::domain::NewTask {
+                    project_name: "Project".into(),
+                    project_root_path: "/project".into(),
+                    title: "Task".into(),
+                    original_instruction: "Safe instruction".into(),
+                },
+                1,
+            )
+            .unwrap();
 
-        assert!(super::should_replace_tandem_menu(&success));
-        assert!(!super::should_replace_tandem_menu(&failure));
+        assert_eq!(
+            super::tandem_menu_refresh_decision(database.list_ledger(), "en"),
+            super::TandemMenuRefreshDecision::ReplaceWith(
+                "Tasks · 0 attention · 0 review · 1 active".into()
+            )
+        );
+    }
+
+    #[test]
+    fn precomputed_tandem_label_skips_the_ledger_reader() {
+        let label = super::resolve_tandem_summary_label(Some("precomputed".into()), "en", || {
+            panic!("ledger must not be read twice")
+        });
+
+        assert_eq!(label, "precomputed");
+    }
+
+    #[test]
+    fn tandem_refresh_decision_preserves_previous_menu_after_read_failure() {
+        assert_eq!(
+            super::tandem_menu_refresh_decision(Err(AppError::Message("read failed".into())), "en"),
+            super::TandemMenuRefreshDecision::PreservePrevious
+        );
     }
 
     #[test]

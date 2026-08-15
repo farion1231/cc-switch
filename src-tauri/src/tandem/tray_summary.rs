@@ -7,11 +7,11 @@ pub struct TaskSummary {
     pub active: usize,
 }
 
-pub fn summarize_ledger(ledger: &TaskLedger) -> TaskSummary {
+pub fn summarize(ledger: &TaskLedger) -> TaskSummary {
     TaskSummary {
         needs_attention: ledger.needs_attention.len(),
         awaiting_acceptance: ledger.awaiting_acceptance.len(),
-        active: ledger.active.len() + ledger.recent_resumable.len(),
+        active: ledger.active.len(),
     }
 }
 
@@ -59,8 +59,8 @@ mod tests {
     }
 
     #[test]
-    fn summarize_ledger_returns_zero_counts_for_empty_ledger() {
-        let summary = summarize_ledger(&TaskLedger {
+    fn summarize_returns_zero_counts_for_empty_ledger() {
+        let summary = summarize(&TaskLedger {
             needs_attention: vec![],
             awaiting_acceptance: vec![],
             active: vec![],
@@ -73,8 +73,8 @@ mod tests {
     }
 
     #[test]
-    fn summarize_ledger_counts_action_buckets_and_recent_resumable_as_active() {
-        let summary = summarize_ledger(&TaskLedger {
+    fn summarize_counts_only_the_active_bucket_as_active() {
+        let summary = summarize(&TaskLedger {
             needs_attention: vec![item("attention", TaskStatus::NeedsAttention)],
             awaiting_acceptance: vec![
                 item("review-1", TaskStatus::AwaitingAcceptance),
@@ -86,7 +86,7 @@ mod tests {
 
         assert_eq!(summary.needs_attention, 1);
         assert_eq!(summary.awaiting_acceptance, 2);
-        assert_eq!(summary.active, 2);
+        assert_eq!(summary.active, 1);
     }
 
     #[test]
