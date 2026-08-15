@@ -6,28 +6,183 @@ const fixtureRows = [
   "Resume foundation task",
 ];
 
-async function expectNoViewportOverflow(page: Page) {
-  const overflow = await page.evaluate(() => ({
-    width:
-      document.documentElement.scrollWidth -
-      document.documentElement.clientWidth,
-    clipped: Array.from(
-      document.querySelectorAll("button, [role=dialog], [role=menu], section"),
+const interactiveSelector = [
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "a[href]",
+  "[role=button]",
+  "[role=checkbox]",
+  "[role=combobox]",
+  "[role=link]",
+  "[role=menuitem]",
+  "[role=menuitemcheckbox]",
+  "[role=menuitemradio]",
+  "[role=option]",
+  "[role=radio]",
+  "[role=searchbox]",
+  "[role=slider]",
+  "[role=spinbutton]",
+  "[role=switch]",
+  "[role=tab]",
+  "[role=textbox]",
+].join(",");
+
+async function expectAccessibleInteractiveControls(page: Page) {
+  const unnamed = await page
+    .locator(interactiveSelector)
+    .evaluateAll((controls) =>
+      controls
+        .filter((control) => {
+          const element = control as HTMLElement;
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return (
+            style.visibility !== "hidden" &&
+            style.display !== "none" &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        })
+        .filter((control) => {
+          const element = control as HTMLElement;
+          const labelledBy = element.getAttribute("aria-labelledby");
+          const labels =
+            element instanceof HTMLInputElement ||
+            element instanceof HTMLTextAreaElement ||
+            element instanceof HTMLSelectElement
+              ? Array.from(element.labels ?? [])
+                  .map((label) => label.textContent?.trim())
+                  .join(" ")
+              : "";
+          const labelledByText = labelledBy
+            ? labelledBy
+                .split(/\s+/)
+                .map((id) => document.getElementById(id)?.textContent?.trim())
+                .join(" ")
+            : "";
+          return ![
+            element.getAttribute("aria-label"),
+            labelledByText,
+            labels,
+            element.textContent?.trim(),
+            element.getAttribute("title"),
+          ].some((name) => name && /\S/.test(name));
+        })
+        .map((control) => control.outerHTML.slice(0, 200)),
+    );
+  expect(
+    unnamed,
+    "every visible interactive control must have an accessible name or label",
+  ).toEqual([]);
+}
+
+async function expectCoherentVisibleGeometry(page: Page) {
+  const result = await page.evaluate((selector) => {
+    const activeDialog = document.querySelector(
+      '[role="dialog"], [role="alertdialog"]',
+    );
+    const root = activeDialog ?? document.body;
+    const independentSelector = activeDialog
+      ? selector
+      : [
+          selector,
+          "section > div:first-child",
+          "section > div:nth-child(2) > div",
+        ].join(",");
+    const elements = Array.from(
+      root.querySelectorAll<HTMLElement>(independentSelector),
     )
       .filter((element) => {
+        const style = getComputedStyle(element);
         const rect = element.getBoundingClientRect();
-        return rect.right > window.innerWidth + 1 || rect.left < -1;
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
       })
-      .map(
-        (element) =>
-          element.getAttribute("aria-label") ||
-          element.textContent?.trim().slice(0, 80),
-      ),
-  }));
-  expect(overflow, "interactive regions must fit the viewport").toEqual({
-    width: 0,
+      .map((element, index) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          element,
+          label:
+            element.getAttribute("aria-label") ||
+            element.textContent?.trim().replace(/\s+/g, " ").slice(0, 80) ||
+            element.tagName.toLowerCase() + " " + index,
+          rect: {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+          },
+        };
+      });
+    const clipped = elements
+      .filter(({ rect }) => {
+        const verticallyExpected =
+          rect.bottom > 0 && rect.top < window.innerHeight;
+        return (
+          rect.left < -1 ||
+          rect.right > window.innerWidth + 1 ||
+          (verticallyExpected &&
+            (rect.top < -1 || rect.bottom > window.innerHeight + 1))
+        );
+      })
+      .map(({ label }) => label);
+    const overlaps: string[] = [];
+    for (let leftIndex = 0; leftIndex < elements.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < elements.length;
+        rightIndex += 1
+      ) {
+        const left = elements[leftIndex];
+        const right = elements[rightIndex];
+        if (
+          left.element.contains(right.element) ||
+          right.element.contains(left.element)
+        )
+          continue;
+        const overlapWidth =
+          Math.min(left.rect.right, right.rect.right) -
+          Math.max(left.rect.left, right.rect.left);
+        const overlapHeight =
+          Math.min(left.rect.bottom, right.rect.bottom) -
+          Math.max(left.rect.top, right.rect.top);
+        if (overlapWidth > 1 && overlapHeight > 1)
+          overlaps.push(left.label + " <> " + right.label);
+      }
+    }
+    return {
+      overflow:
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+      clipped,
+      overlaps,
+    };
+  }, interactiveSelector);
+  expect(
+    result,
+    "visible controls and independent regions must fit coherently",
+  ).toEqual({
+    overflow: 0,
     clipped: [],
+    overlaps: [],
   });
+}
+
+async function expectAutomatedLayoutChecks(page: Page) {
+  await expectAccessibleInteractiveControls(page);
+  await expectCoherentVisibleGeometry(page);
+}
+
+async function expectTopConsoleDimensions(page: Page, width: number) {
+  const box = await page.locator("header").boundingBox();
+  expect(box).not.toBeNull();
+  expect(box).toMatchObject({ x: 0, y: 0, width, height: 52 });
 }
 
 for (const viewport of [
@@ -43,7 +198,7 @@ for (const viewport of [
     viewport.name + " production-component ledger journey",
     async ({ page }) => {
       await page.setViewportSize(viewport);
-      await page.goto("/tandem-demo.html");
+      await page.goto("");
       await expect(
         page.getByRole("button", { name: "任务", exact: true }),
       ).toHaveAttribute("aria-current", "page");
@@ -58,11 +213,13 @@ for (const viewport of [
         ).toBeVisible();
       for (const row of fixtureRows)
         await expect(page.getByText(row)).toBeVisible();
-      await expectNoViewportOverflow(page);
+      await expectTopConsoleDimensions(page, viewport.width);
+      await expectAutomatedLayoutChecks(page);
 
       await page.getByRole("button", { name: "新建任务" }).click();
       const createDialog = page.getByRole("dialog", { name: "新建任务" });
       await expect(createDialog).toBeVisible();
+      await expectAutomatedLayoutChecks(page);
       await createDialog.getByLabel("项目名称").fill("Tandem Demo");
       await createDialog.getByLabel("项目路径").fill("/tmp/tandem-demo");
       await createDialog.getByLabel("任务标题").fill("修复恢复流程");
@@ -70,6 +227,7 @@ for (const viewport of [
         .getByLabel("原始指令")
         .fill("Disposable browser instruction");
       await createDialog.getByRole("button", { name: "创建任务" }).click();
+      await expect(createDialog).toHaveCount(0);
       await expect(
         page
           .getByRole("region", { name: "正在推进" })
@@ -83,7 +241,9 @@ for (const viewport of [
         name: "确认任务完成",
       });
       await expect(confirmDialog).toBeVisible();
+      await expectAutomatedLayoutChecks(page);
       await confirmDialog.getByRole("button", { name: "确认完成" }).click();
+      await expect(confirmDialog).toHaveCount(0);
       await expect(page.getByText("Review foundation acceptance")).toHaveCount(
         0,
       );
@@ -102,7 +262,10 @@ for (const viewport of [
       await expect(page.getByText("Demo legacy provider root")).toBeVisible();
       await page.getByRole("button", { name: "任务", exact: true }).click();
       await expect(page.getByText("修复恢复流程")).toBeVisible();
-      await expectNoViewportOverflow(page);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(page.getByRole("alertdialog")).toHaveCount(0);
+      await expectTopConsoleDimensions(page, viewport.width);
+      await expectAutomatedLayoutChecks(page);
       const screenshot = await page.screenshot({
         path: "e2e/__screenshots__/" + viewport.screenshot,
         fullPage: false,

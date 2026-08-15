@@ -6,25 +6,22 @@ const BASE = "a2de8debc451828261e60fada9aa1a7a808e9961";
 type ScopeChange = { path: string; content: string };
 
 const evidenceOnly = (path: string) =>
-  path.startsWith("docs/") ||
-  path.startsWith("tests/") ||
-  path.startsWith(".superpowers/");
+  ["docs/", "tests/", ".superpowers/", "scratch/"].some((directory) =>
+    path.startsWith(directory),
+  );
 const allowedPath = (path: string) =>
   [
     "package.json",
     "pnpm-lock.yaml",
     "playwright.config.ts",
     "vitest.config.ts",
-  ].includes(path) ||
-  [
-    "e2e/",
     "scripts/check-tandem-scope.mts",
     "src/tandem/api/demoTaskGateway.ts",
     "src/tandem/demo/DemoLegacyConfigApp.tsx",
-    "tests/tandem/",
-    "tests/scripts/",
-    ".superpowers/sdd/",
-  ].some((prefix) => path.startsWith(prefix));
+  ].includes(path) ||
+  ["e2e/", "tests/tandem/", "tests/scripts/", ".superpowers/sdd/"].some(
+    (directory) => path.startsWith(directory),
+  );
 
 export function inspectScopeChanges(changes: ScopeChange[]): string[] {
   const findings = [];

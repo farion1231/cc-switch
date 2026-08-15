@@ -6,7 +6,7 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: "http://127.0.0.1:3000/tandem-demo.html",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

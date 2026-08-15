@@ -77,6 +77,20 @@ describe("Task 7 scope guard", () => {
       ),
     ).toEqual([]);
   });
+  it.each([
+    "package.json.extra",
+    "pnpm-lock.yaml.extra",
+    "playwright.config.ts.extra",
+    "vitest.config.ts.extra",
+    "scripts/check-tandem-scope.mts.extra",
+    "src/tandem/api/demoTaskGateway.ts.extra",
+    "src/tandem/demo/DemoLegacyConfigApp.tsx.extra",
+  ])("rejects an .extra variant of allowlisted file %s", (path) => {
+    expect(inspect(path, "generated scope noise")).toEqual([
+      path + ": out-of-scope path",
+    ]);
+  });
+
   it("does not allow generated scope declaration noise", () => {
     expect(
       inspect(
