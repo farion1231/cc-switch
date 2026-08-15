@@ -2454,6 +2454,33 @@ impl ProxyService {
         self.hot_switch_provider_inner(app_type, provider_id).await
     }
 
+    /// Atomically switch a failover target only when the provider selected at
+    /// request start is still current. The comparison happens after acquiring
+    /// the per-app switch lock so a manual switch cannot be overwritten by a
+    /// stale in-flight request.
+    pub async fn hot_switch_provider_if_current(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        expected_previous_provider_id: &str,
+    ) -> Result<HotSwitchOutcome, String> {
+        let _guard = self.switch_locks.lock_for_app(app_type).await;
+        let app_type_enum =
+            AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
+        let current = crate::settings::get_effective_current_provider(&self.db, &app_type_enum)
+            .map_err(|e| format!("读取当前供应商失败: {e}"))?;
+
+        if current.as_deref() != Some(expected_previous_provider_id) {
+            log::info!(
+                "[Failover] 跳过自动切换 {app_type} → {provider_id}: 当前供应商已变为 {:?}（期望 {expected_previous_provider_id}），尊重用户选择",
+                current
+            );
+            return Ok(HotSwitchOutcome::default());
+        }
+
+        self.hot_switch_provider_inner(app_type, provider_id).await
+    }
+
     pub(crate) async fn hot_switch_provider_inner(
         &self,
         app_type: &str,
@@ -5805,6 +5832,103 @@ model = "gpt-5.1-codex"
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_c.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
+    }
+
+    async fn seed_conditional_claude_switch_state() -> (Arc<Database>, ProxyService) {
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
+            None,
+        );
+        let provider_c = Provider::with_id(
+            "c".to_string(),
+            "C".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "c-key" } }),
+            None,
+        );
+
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.save_provider("claude", &provider_c)
+            .expect("save provider c");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed live backup");
+
+        (db, service)
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn conditional_hot_switch_switches_when_current_matches_snapshot() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let (db, service) = seed_conditional_claude_switch_state().await;
+
+        let outcome = service
+            .hot_switch_provider_if_current("claude", "c", "a")
+            .await
+            .expect("conditional hot switch");
+
+        assert!(outcome.logical_target_changed);
+        assert_eq!(
+            crate::settings::get_effective_current_provider(&db, &AppType::Claude)
+                .expect("effective current"),
+            Some("c".to_string())
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn conditional_hot_switch_skips_stale_request_after_manual_switch() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let (db, service) = seed_conditional_claude_switch_state().await;
+
+        // A stale failover request waits while a user-owned switch is in progress.
+        let guard = service.lock_switch_for_test("claude").await;
+        let failover_service = service.clone();
+        let stale_failover = tokio::spawn(async move {
+            failover_service
+                .hot_switch_provider_if_current("claude", "c", "a")
+                .await
+                .expect("stale conditional switch")
+        });
+        tokio::task::yield_now().await;
+
+        // ProviderService::switch holds this same lock before calling the inner method.
+        service
+            .hot_switch_provider_inner("claude", "b")
+            .await
+            .expect("manual switch to b");
+        drop(guard);
+
+        let outcome = stale_failover.await.expect("join stale failover");
+        assert!(!outcome.logical_target_changed);
+        assert_eq!(
+            crate::settings::get_effective_current_provider(&db, &AppType::Claude)
+                .expect("effective current"),
+            Some("b".to_string()),
+            "a stale request must not overwrite the user's manual switch"
+        );
     }
 
     #[tokio::test]

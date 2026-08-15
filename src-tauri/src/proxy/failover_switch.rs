@@ -34,9 +34,13 @@ impl FailoverSwitchManager {
     ///
     /// 如果相同的切换已在进行中，则跳过；否则执行切换逻辑。
     ///
+    /// `expected_previous_provider_id` 是发起请求时快照的"当前供应商"。
+    /// ProxyService 会在持有 per-app switch lock 后校验该快照，避免
+    /// 已完成的手动切换被旧请求的 failover 覆盖。
+    ///
     /// # Returns
     /// - `Ok(true)` - 切换成功执行
-    /// - `Ok(false)` - 切换已在进行中，跳过
+    /// - `Ok(false)` - 切换已在进行中 / 当前供应商已变化，跳过
     /// - `Err(e)` - 切换过程中发生错误
     pub async fn try_switch(
         &self,
@@ -44,6 +48,7 @@ impl FailoverSwitchManager {
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
+        expected_previous_provider_id: &str,
     ) -> Result<bool, AppError> {
         let switch_key = format!("{app_type}:{provider_id}");
 
@@ -59,7 +64,13 @@ impl FailoverSwitchManager {
 
         // 执行切换（确保最后清理 pending 标记）
         let result = self
-            .do_switch(app_handle, app_type, provider_id, provider_name)
+            .do_switch(
+                app_handle,
+                app_type,
+                provider_id,
+                provider_name,
+                expected_previous_provider_id,
+            )
             .await;
 
         // 清理 pending 标记
@@ -77,6 +88,7 @@ impl FailoverSwitchManager {
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
+        expected_previous_provider_id: &str,
     ) -> Result<bool, AppError> {
         // 检查该应用是否已被代理接管（enabled=true）
         // 只有被接管的应用才允许执行故障转移切换
@@ -101,7 +113,11 @@ impl FailoverSwitchManager {
             if let Some(app_state) = app.try_state::<crate::store::AppState>() {
                 switched = app_state
                     .proxy_service
-                    .hot_switch_provider(app_type, provider_id)
+                    .hot_switch_provider_if_current(
+                        app_type,
+                        provider_id,
+                        expected_previous_provider_id,
+                    )
                     .await
                     .map_err(AppError::Message)?
                     .logical_target_changed;
