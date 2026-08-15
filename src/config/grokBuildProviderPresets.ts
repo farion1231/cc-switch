@@ -10,8 +10,10 @@
  *   独立的 "Grok Official" 条目（对应 providers_seed.rs 的 seed，
  *   空 config = 不写自定义模型表）。
  * - 不含国产模型官方直连（cn_official）与纯开源模型托管站
- *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud / OpenCode Go）：
+ *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud）：
  *   这些上游没有 Grok 模型，无法在 Grok CLI 中使用。
+ * - OpenCode Go 上游自 2026-08 起已提供 grok-4.5，但暂仍不收录：
+ *   订阅制网关是否纳入 Grok 预设属产品决策，收录前需单独评估。
  * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.5；
  *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.5"。
  *
@@ -164,10 +166,11 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     auth: grokAuth(),
-    config: grokPresetConfig("RunAPI", "https://runapi.co/v1"),
+    config: grokPresetConfig("RunAPI", "https://runapi.host/v1"),
+    endpointCandidates: ["https://runapi.host/v1", "https://runapi.co/v1"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "runapi",

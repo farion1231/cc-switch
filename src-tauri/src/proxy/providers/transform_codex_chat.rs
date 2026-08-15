@@ -461,9 +461,13 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
         return None;
     }
 
+    // ultra 是 Codex 扩展档位：已知枚举的专用模式（deepseek/openrouter/low_high）
+    // 钳到自身最高合法档而非丢弃——丢弃会让"选最深思考"静默退化成"不带 effort"；
+    // passthrough 面向枚举未知的通用上游，档位由用户/预设的 reasoningLevels 声明
+    // 背书，与 max/xhigh 一样原值透传。
     match mode.unwrap_or("passthrough") {
         "deepseek" => match effort.as_str() {
-            "max" | "xhigh" => Some("max"),
+            "max" | "xhigh" | "ultra" => Some("max"),
             _ => Some("high"),
         },
         "low_high" => match effort.as_str() {
@@ -475,7 +479,7 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
         // `400 reasoning_effort: Invalid option`（见 openclaw#77350）；钳到最高合法档
         // xhigh，其余合法值透传，未知值丢弃以免被上游拒绝。
         "openrouter" => match effort.as_str() {
-            "max" | "xhigh" => Some("xhigh"),
+            "max" | "xhigh" | "ultra" => Some("xhigh"),
             "high" => Some("high"),
             "medium" => Some("medium"),
             "low" => Some("low"),
@@ -489,6 +493,7 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "high" => Some("high"),
             "xhigh" => Some("xhigh"),
             "max" => Some("max"),
+            "ultra" => Some("ultra"),
             _ => None,
         },
     }
@@ -1794,6 +1799,7 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage.filter(|value| value.is_object() && !value.is_null()) else {
         return json!({
             "input_tokens": 0,
+            "input_tokens_details": { "cached_tokens": 0 },
             "output_tokens": 0,
             "total_tokens": 0,
             "output_tokens_details": { "reasoning_tokens": 0 }
@@ -1821,10 +1827,18 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         "total_tokens": total_tokens
     });
 
-    let cached = usage
-        .pointer("/prompt_tokens_details/cached_tokens")
-        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
-        .and_then(|v| v.as_u64())
+    let direct_cache_read = usage.get("cache_read_input_tokens").and_then(Value::as_u64);
+    let cached = direct_cache_read
+        .or_else(|| {
+            usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            usage
+                .pointer("/input_tokens_details/cached_tokens")
+                .and_then(Value::as_u64)
+        })
         .unwrap_or(0);
     let cache_write = usage
         .pointer("/prompt_tokens_details/cache_write_tokens")
@@ -1841,6 +1855,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
             "cached_tokens": cached,
             "cache_write_tokens": cache_write
         });
+    } else {
+        result["input_tokens_details"] = json!({ "cached_tokens": 0 });
     }
 
     if let Some(details) = usage
@@ -1856,8 +1872,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         result["output_tokens_details"] = json!({ "reasoning_tokens": 0 });
     }
 
-    if let Some(cache_read) = usage.get("cache_read_input_tokens") {
-        result["cache_read_input_tokens"] = cache_read.clone();
+    if let Some(cache_read) = direct_cache_read {
+        result["cache_read_input_tokens"] = json!(cache_read);
     }
     if cache_write > 0 {
         result["cache_creation_input_tokens"] = json!(cache_write);
@@ -2002,6 +2018,25 @@ mod tests {
 
     fn result_messages(result: &Value) -> &[Value] {
         result["messages"].as_array().unwrap()
+    }
+
+    #[test]
+    fn map_reasoning_effort_handles_ultra_per_mode() {
+        // passthrough 面向枚举未知的通用上游：ultra 与 max/xhigh 一样原值透传，
+        // 让声明了该档位的上游能收到用户选择。
+        assert_eq!(map_reasoning_effort("ultra", None), Some("ultra"));
+        // 已知枚举的专用模式钳到自身最高合法档，而不是走 None 被静默丢弃。
+        assert_eq!(map_reasoning_effort("ultra", Some("deepseek")), Some("max"));
+        assert_eq!(
+            map_reasoning_effort("ultra", Some("low_high")),
+            Some("high")
+        );
+        assert_eq!(
+            map_reasoning_effort("ultra", Some("openrouter")),
+            Some("xhigh")
+        );
+        // 真正的未知值仍然丢弃，防上游 400。
+        assert_eq!(map_reasoning_effort("turbo", None), None);
     }
 
     #[test]
@@ -3799,6 +3834,64 @@ mod tests {
         let second = responses_to_chat_completions(input).unwrap();
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn chat_usage_to_responses_includes_required_input_token_details() {
+        let usage = json!({
+            "prompt_tokens": 13,
+            "completion_tokens": 245,
+            "total_tokens": 258,
+            "prompt_tokens_details": { "cached_tokens": 0 }
+        });
+
+        let converted = chat_usage_to_responses_usage(Some(&usage));
+        assert_eq!(
+            converted["input_tokens_details"],
+            json!({ "cached_tokens": 0 })
+        );
+
+        let fallback = chat_usage_to_responses_usage(None);
+        assert_eq!(
+            fallback["input_tokens_details"],
+            json!({ "cached_tokens": 0 })
+        );
+    }
+
+    #[test]
+    fn chat_usage_to_responses_resolves_cache_read_precedence() {
+        let direct_cache_usage = json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 5,
+            "prompt_tokens_details": { "cached_tokens": 0 },
+            "cache_read_input_tokens": 40
+        });
+        let converted = chat_usage_to_responses_usage(Some(&direct_cache_usage));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 40);
+        assert_eq!(converted["cache_read_input_tokens"], 40);
+
+        let direct_zero = json!({
+            "prompt_tokens_details": { "cached_tokens": 12 },
+            "cache_read_input_tokens": 0
+        });
+        let converted = chat_usage_to_responses_usage(Some(&direct_zero));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 0);
+        assert_eq!(converted["cache_read_input_tokens"], 0);
+
+        let invalid_direct = json!({
+            "prompt_tokens_details": { "cached_tokens": 12 },
+            "cache_read_input_tokens": "invalid"
+        });
+        let converted = chat_usage_to_responses_usage(Some(&invalid_direct));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 12);
+        assert!(converted.get("cache_read_input_tokens").is_none());
+
+        let invalid_prompt_details = json!({
+            "prompt_tokens_details": { "cached_tokens": "invalid" },
+            "input_tokens_details": { "cached_tokens": 7 }
+        });
+        let converted = chat_usage_to_responses_usage(Some(&invalid_prompt_details));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 7);
     }
 
     #[test]

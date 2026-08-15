@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
@@ -133,6 +133,21 @@ describe("OpenCodeFormFields", () => {
     expect(keyInput).toHaveValue("X-B");
   });
 
+  it("restores an existing header name when it is cleared", () => {
+    const onHeadersChange = vi.fn();
+    renderOpenCodeForm({
+      headers: { "X-Title": "CC Switch" },
+      onHeadersChange,
+    });
+
+    const keyInput = screen.getByDisplayValue("X-Title");
+    fireEvent.change(keyInput, { target: { value: "   " } });
+    fireEvent.blur(keyInput);
+
+    expect(onHeadersChange).not.toHaveBeenCalled();
+    expect(keyInput).toHaveValue("X-Title");
+  });
+
   it("surfaces provider options whose names start with option-", () => {
     renderOpenCodeForm({
       extraOptions: { "option-mode": "legacy" },
@@ -142,6 +157,39 @@ describe("OpenCodeFormFields", () => {
     expect(screen.getByDisplayValue("legacy")).toBeInTheDocument();
   });
 
+  it("shows extra options as an always-visible addable section", () => {
+    const onExtraOptionsChange = vi.fn();
+    renderOpenCodeForm({ onExtraOptionsChange });
+
+    const heading = screen.getByText("Extra SDK Options");
+    const section = heading.closest("div.border-l");
+    expect(section).not.toBeNull();
+    expect(
+      within(section as HTMLElement).getByText(
+        "No extra SDK options configured",
+      ),
+    ).toBeVisible();
+    expect(
+      within(section as HTMLElement).queryByRole("button", {
+        name: /Extra SDK Options/,
+      }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      within(section as HTMLElement).getByRole("button", { name: "Add" }),
+    );
+
+    const nextOptions = onExtraOptionsChange.mock.calls[0][0];
+    expect(Object.keys(nextOptions)[0]).toMatch(/^draft-option:/);
+  });
+
+  it("uses the family section divider for model configuration", () => {
+    renderOpenCodeForm();
+
+    const section = screen.getByText("Models").closest("div.border-l");
+    expect(section).toHaveClass("border-border-default", "pl-3");
+  });
+
   it("surfaces existing model token limits", () => {
     renderOpenCodeForm();
 
@@ -149,6 +197,42 @@ describe("OpenCodeFormFields", () => {
 
     expect(screen.getByLabelText("Context")).toHaveValue(1048576);
     expect(screen.getByLabelText("Output")).toHaveValue(131072);
+  });
+
+  it("keeps model name composition local until the IME commits", () => {
+    const onModelsChange = vi.fn();
+    const { rerender, props } = renderOpenCodeForm({ onModelsChange });
+    const modelNameInput = screen.getByDisplayValue("Kimi K2");
+
+    fireEvent.compositionStart(modelNameInput);
+    fireEvent.change(modelNameInput, {
+      target: { value: "mimomimo" },
+    });
+
+    expect(modelNameInput).toHaveValue("mimomimo");
+    expect(onModelsChange).not.toHaveBeenCalled();
+
+    // The parent still owns the last committed value while the platform IME
+    // owns the marked text. Re-rendering must not replace that marked text.
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} />
+      </FormShell>,
+    );
+    expect(modelNameInput).toHaveValue("mimomimo");
+
+    fireEvent.compositionEnd(modelNameInput, {
+      data: "mimomimo",
+      target: { value: "mimomimo" },
+    });
+
+    expect(onModelsChange).toHaveBeenCalledTimes(1);
+    expect(onModelsChange).toHaveBeenCalledWith({
+      "kimi-k2": {
+        name: "mimomimo",
+        limit: { context: 1048576, output: 131072 },
+      },
+    });
   });
 
   it("updates model token limits as structured numbers", () => {

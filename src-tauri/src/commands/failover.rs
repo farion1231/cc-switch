@@ -8,12 +8,33 @@ use crate::store::AppState;
 use std::str::FromStr;
 use tauri::Emitter;
 
+fn require_failover_app(app_type: &str) -> Result<(), String> {
+    let app = crate::app_config::AppType::from_str(app_type)
+        .map_err(|error| format!("无效的应用类型: {error}"))?;
+    if !app.supports_local_proxy() {
+        return Err(format!("{} 不支持故障转移", app.as_str()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_failover_app;
+
+    #[test]
+    fn failover_rejects_apps_without_a_proxy_data_plane() {
+        assert!(require_failover_app("claude").is_ok());
+        assert!(require_failover_app("pi").is_err());
+    }
+}
+
 /// 获取故障转移队列
 #[tauri::command]
 pub async fn get_failover_queue(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<Vec<FailoverQueueItem>, String> {
+    require_failover_app(&app_type)?;
     state
         .db
         .get_failover_queue(&app_type)
@@ -26,6 +47,7 @@ pub async fn get_available_providers_for_failover(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<Vec<Provider>, String> {
+    require_failover_app(&app_type)?;
     state
         .db
         .get_available_providers_for_failover(&app_type)
@@ -39,6 +61,7 @@ pub async fn add_to_failover_queue(
     app_type: String,
     provider_id: String,
 ) -> Result<(), String> {
+    require_failover_app(&app_type)?;
     state
         .db
         .add_to_failover_queue(&app_type, &provider_id)
@@ -52,6 +75,7 @@ pub async fn remove_from_failover_queue(
     app_type: String,
     provider_id: String,
 ) -> Result<(), String> {
+    require_failover_app(&app_type)?;
     state
         .db
         .remove_from_failover_queue(&app_type, &provider_id)
@@ -64,6 +88,7 @@ pub async fn get_auto_failover_enabled(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<bool, String> {
+    require_failover_app(&app_type)?;
     state
         .db
         .get_proxy_config_for_app(&app_type)
@@ -82,6 +107,7 @@ pub async fn set_auto_failover_enabled(
     app_type: String,
     enabled: bool,
 ) -> Result<(), String> {
+    require_failover_app(&app_type)?;
     log::info!(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );

@@ -230,7 +230,12 @@ async fn handle_messages_for_app(
     let response = result.response;
 
     // 检查是否需要格式转换（OpenRouter 等中转服务）
-    let adapter = get_adapter(&app_type);
+    let adapter = get_adapter(&app_type).ok_or_else(|| {
+        ProxyError::ConfigError(format!(
+            "{} does not support proxy routing",
+            app_type.as_str()
+        ))
+    })?;
     let needs_transform = adapter.needs_transform(&ctx.provider);
 
     // Claude 特有：格式转换处理

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { FormLabel } from "@/components/ui/form";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
@@ -20,6 +20,7 @@ import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProvider
 import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
 import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
+import type { PiProviderPreset } from "@/config/piProviderPresets";
 import type { ProviderCategory } from "@/types";
 import {
   universalProviderPresets,
@@ -44,7 +45,8 @@ export type AnyPreset =
   | ClaudeDesktopProviderPreset
   | OpenCodeProviderPreset
   | OpenClawProviderPreset
-  | HermesProviderPreset;
+  | HermesProviderPreset
+  | PiProviderPreset;
 
 export type PresetEntry = {
   id: string;
@@ -147,6 +149,7 @@ interface ProviderPresetSelectorProps {
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
   category?: ProviderCategory; // 当前选中的分类
+  categoryHint?: ReactNode;
 }
 
 export function ProviderPresetSelector({
@@ -157,6 +160,7 @@ export function ProviderPresetSelector({
   onUniversalPresetSelect,
   onManageUniversalProviders,
   category,
+  categoryHint,
 }: Readonly<ProviderPresetSelectorProps>) {
   const { t } = useTranslation();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -215,6 +219,7 @@ export function ProviderPresetSelector({
   );
 
   const getCategoryHint = (): ReactNode => {
+    if (categoryHint !== undefined) return categoryHint;
     switch (category) {
       case "official":
         return t("providerForm.officialHint", {
@@ -314,7 +319,7 @@ export function ProviderPresetSelector({
   return (
     <div ref={searchContainerRef} className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <FormLabel>{t("providerPreset.label")}</FormLabel>
+        <Label>{t("providerPreset.label")}</Label>
         <div className="flex items-center gap-2">
           {searchOpen && (
             <Input

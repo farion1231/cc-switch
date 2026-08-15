@@ -55,6 +55,7 @@ vi.mock("@/lib/query", () => ({
 
 const providersApiUpdateMock = vi.fn();
 const providersApiUpdateTrayMenuMock = vi.fn();
+const piApiUpdateProviderUsageScriptMock = vi.fn();
 const settingsApiGetMock = vi.fn();
 const settingsApiApplyMock = vi.fn();
 const openclawApiGetModelCatalogMock = vi.fn();
@@ -62,6 +63,10 @@ const openclawApiGetDefaultModelMock = vi.fn();
 const openclawApiSetDefaultModelMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
+  piApi: {
+    updateProviderUsageScript: (...args: unknown[]) =>
+      piApiUpdateProviderUsageScriptMock(...args),
+  },
   providersApi: {
     update: (...args: unknown[]) => providersApiUpdateMock(...args),
     updateTrayMenu: (...args: unknown[]) =>
@@ -113,6 +118,7 @@ beforeEach(() => {
   switchProviderMutateAsync.mockReset();
   providersApiUpdateMock.mockReset();
   providersApiUpdateTrayMenuMock.mockReset();
+  piApiUpdateProviderUsageScriptMock.mockReset();
   settingsApiGetMock.mockReset();
   settingsApiApplyMock.mockReset();
   openclawApiGetModelCatalogMock.mockReset();
@@ -639,6 +645,36 @@ describe("useProviderActions", () => {
     expect(toastErrorMock.mock.calls[0]?.[0]).toBe("Save failed");
   });
 
+  it("saves Pi usage metadata without updating the native provider config", async () => {
+    piApiUpdateProviderUsageScriptMock.mockResolvedValueOnce(true);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      settingsConfig: {
+        name: "Pi provider",
+        futureField: { preserve: true },
+      },
+    });
+    const script: UsageScript = {
+      enabled: true,
+      language: "javascript",
+      code: "return {}",
+    };
+
+    const { result } = renderHook(() => useProviderActions("pi"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.saveUsageScript(provider, script);
+    });
+
+    expect(piApiUpdateProviderUsageScriptMock).toHaveBeenCalledWith(
+      provider.id,
+      script,
+    );
+    expect(providersApiUpdateMock).not.toHaveBeenCalled();
+  });
+
   it("should use default error message when saveUsageScript fails without error message", async () => {
     providersApiUpdateMock.mockRejectedValueOnce(new Error(""));
     const { wrapper } = createWrapper();
@@ -720,7 +756,7 @@ describe("useProviderActions", () => {
     expect(result.current.isLoading).toBe(true);
   });
 
-  it("does not show backup details when setting OpenClaw default model", async () => {
+  it("sets the first OpenClaw model without inventing a fallback chain", async () => {
     openclawApiSetDefaultModelMock.mockResolvedValueOnce({
       backupPath: "/tmp/openclaw-backup.json5",
       warnings: [],
@@ -743,10 +779,41 @@ describe("useProviderActions", () => {
 
     expect(openclawApiSetDefaultModelMock).toHaveBeenCalledWith({
       primary: "provider-1/gpt-4.1",
-      fallbacks: ["provider-1/gpt-4.1-mini"],
     });
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
     expect(toastSuccessMock.mock.calls[0]?.[1]).toEqual({ closeButton: true });
+  });
+
+  it("sets the explicitly selected OpenClaw model and preserves existing fallbacks", async () => {
+    openclawApiGetDefaultModelMock.mockResolvedValueOnce({
+      primary: "other/old-primary",
+      fallbacks: ["provider-1/gpt-4.1-mini", "other/fallback"],
+      customPolicy: "preserve-me",
+    });
+    openclawApiSetDefaultModelMock.mockResolvedValueOnce({
+      warnings: [],
+    });
+
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      settingsConfig: {
+        models: [{ id: "gpt-4.1" }, { id: "gpt-4.1-mini" }],
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("openclaw"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.setAsDefaultModel(provider, "gpt-4.1-mini");
+    });
+
+    expect(openclawApiSetDefaultModelMock).toHaveBeenCalledWith({
+      primary: "provider-1/gpt-4.1-mini",
+      fallbacks: ["other/fallback"],
+      customPolicy: "preserve-me",
+    });
   });
 });
 it("clears loading flag when all mutations idle", () => {
