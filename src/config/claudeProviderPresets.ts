@@ -1516,4 +1516,19 @@ export const providerPresets: ProviderPreset[] = [
     icon: "jiekou",
     iconColor: "#000000",
   },
+  {
+    name: "unipaxtools",
+    websiteUrl: "https://us-proxy.unipaxtools.com",
+    apiKeyUrl: "https://us-proxy.unipaxtools.com/keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://us-proxy.unipaxtools.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://us-proxy.unipaxtools.com"],
+    icon: "unipaxtools",
+    iconColor: "#0FA37F",
+  },
 ];
