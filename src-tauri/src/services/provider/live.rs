@@ -868,6 +868,16 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    // `[desktop]` belongs to the live Codex/ChatGPT app, not to a provider.
+    // Keeping it in provider snapshots creates stale competing copies that can
+    // reset UI preferences when switching in the opposite direction.
+    if let Err(err) = crate::codex_config::strip_codex_desktop_from_settings(&mut settings) {
+        log::warn!(
+            "Failed to strip desktop state while backfilling '{}': {err}",
+            provider.id
+        );
+    }
+
     // MCP 服务器归 DB mcp_servers 表所有，live 里的 [mcp_servers] 是同步投影；
     // 回填时剥掉，否则已删除的服务器会随供应商快照复活（逐条 reconcile 清不掉孤儿）。
     if let Err(err) = crate::codex_config::strip_codex_mcp_servers_from_settings(&mut settings) {

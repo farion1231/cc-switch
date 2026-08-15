@@ -2953,6 +2953,11 @@ impl ProxyService {
                             auth, config_str,
                         )
                         .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                        let live_config = crate::codex_config::preserve_codex_desktop_live_state(
+                            Some(&live_config),
+                        )
+                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?
+                        .expect("a supplied Codex config remains present after preservation");
                         crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
                             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                         return Ok(());
@@ -3017,6 +3022,10 @@ impl ProxyService {
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?
             };
+            let live_config =
+                crate::codex_config::preserve_codex_desktop_live_state(Some(&live_config))
+                    .map_err(|e| format!("写入 Codex 配置失败: {e}"))?
+                    .expect("a supplied Codex config remains present after preservation");
             crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             return Ok(());
@@ -3060,6 +3069,9 @@ impl ProxyService {
             })
             .transpose()
             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+        let prepared_cfg =
+            crate::codex_config::preserve_codex_desktop_live_state(prepared_cfg.as_deref())
+                .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
 
         match (auth, prepared_cfg.as_deref()) {
             (Some(auth), Some(cfg)) => {
@@ -4218,13 +4230,30 @@ wire_api = "responses"
                 "access_token": "oauth-access"
             }
         });
-        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some("model = \"gpt-5.4\"\n"))
-            .expect("seed official live config");
+        crate::codex_config::write_codex_live_atomic(
+            &oauth_auth,
+            Some(
+                r#"model = "gpt-5.4"
+
+[desktop]
+mac-menu-bar-enabled = false
+conversationDetailMode = "expanded"
+"#,
+            ),
+        )
+        .expect("seed official live config");
 
         let mut official = Provider::with_id(
             "codex-official".to_string(),
             "OpenAI Official".to_string(),
-            json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
+            json!({
+                "auth": {},
+                "config": r#"model = "gpt-5.4"
+
+[desktop]
+mac-menu-bar-enabled = true
+"#
+            }),
             None,
         );
         official.category = Some("official".to_string());
@@ -4242,6 +4271,9 @@ wire_api = "responses"
 name = "RightCode"
 base_url = "https://rightcode.example/v1"
 wire_api = "responses"
+
+[desktop]
+mac-menu-bar-enabled = true
 "#
             }),
             None,
@@ -4271,6 +4303,8 @@ wire_api = "responses"
         ));
         assert!(official_live.contains("requires_openai_auth = true"));
         assert!(!official_live.contains(PROXY_TOKEN_PLACEHOLDER));
+        assert!(official_live.contains("mac-menu-bar-enabled = false"));
+        assert!(official_live.contains("conversationDetailMode = \"expanded\""));
 
         service
             .hot_switch_provider("codex", "rightcode")
@@ -4288,6 +4322,8 @@ wire_api = "responses"
         assert!(!crate::codex_config::codex_config_has_official_proxy_route(
             &third_party_live
         ));
+        assert!(third_party_live.contains("mac-menu-bar-enabled = false"));
+        assert!(third_party_live.contains("conversationDetailMode = \"expanded\""));
 
         service
             .hot_switch_provider("codex", "codex-official")
@@ -4304,12 +4340,18 @@ wire_api = "responses"
             &official_live
         ));
         assert!(!official_live.contains(PROXY_TOKEN_PLACEHOLDER));
+        assert!(official_live.contains("mac-menu-bar-enabled = false"));
+        assert!(official_live.contains("conversationDetailMode = \"expanded\""));
 
         service
             .set_takeover_for_app("codex", false)
             .await
             .expect("disable takeover");
         assert_eq!(read_auth(), oauth_auth);
+        let restored_live = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read restored config");
+        assert!(restored_live.contains("mac-menu-bar-enabled = false"));
+        assert!(restored_live.contains("conversationDetailMode = \"expanded\""));
     }
 
     #[test]

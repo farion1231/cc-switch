@@ -1756,8 +1756,53 @@ pub fn write_codex_provider_live_with_catalog(
     let prepared_config = config_text
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
         .transpose()?;
+    let prepared_config = preserve_codex_desktop_live_state(prepared_config.as_deref())?;
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+}
+
+/// Preserve Codex desktop-app preferences across provider-driven live writes.
+///
+/// `[desktop]` is owned by the running Codex/ChatGPT desktop app, not by a
+/// model provider. Provider snapshots can be stale (or omit newly introduced
+/// desktop keys entirely), so the current live table must replace the target
+/// snapshot's table immediately before every provider write. This also gives
+/// forward compatibility to desktop settings added by newer Codex releases.
+///
+/// If no live `config.toml` exists yet, the provider config is left unchanged:
+/// there is no live state to preserve on a first-time install/import.
+pub(crate) fn preserve_codex_desktop_live_state(
+    config_text: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    let target_text = config_text.unwrap_or("");
+    let config_path = get_codex_config_path();
+    if !config_path.exists() {
+        return Ok(config_text.map(str::to_string));
+    }
+
+    let live_text = read_and_validate_codex_config_text()?;
+    let live_doc = live_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid live Codex config.toml: {e}")))?;
+    let mut target_doc = if target_text.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        target_text
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid target Codex config.toml: {e}")))?
+    };
+
+    let live_desktop = live_doc.get("desktop");
+    if config_text.is_none() && live_desktop.is_none() {
+        return Ok(None);
+    }
+
+    target_doc.as_table_mut().remove("desktop");
+    if let Some(desktop) = live_desktop {
+        target_doc["desktop"] = desktop.clone();
+    }
+
+    Ok(Some(target_doc.to_string()))
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -2232,6 +2277,33 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
         }
     }
     if changed {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(doc.to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// Remove desktop-app-owned state before persisting a Codex provider snapshot.
+///
+/// Provider activation restores `[desktop]` from the current live config, so
+/// keeping another copy in each provider would create stale, competing owners.
+pub(crate) fn strip_codex_desktop_from_settings(settings: &mut Value) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    if !config_text.contains("desktop") {
+        return Ok(());
+    }
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    if doc.as_table_mut().remove("desktop").is_some() {
         if let Some(obj) = settings.as_object_mut() {
             obj.insert("config".to_string(), Value::String(doc.to_string()));
         }
@@ -2742,6 +2814,29 @@ requires_openai_auth = true
             Some(original),
             "config text must be byte-identical when nothing is stripped"
         );
+    }
+
+    #[test]
+    fn strip_desktop_from_settings_removes_only_desktop_table() {
+        let mut settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": r#"model = "gpt-5.5"
+
+[desktop]
+mac-menu-bar-enabled = false
+
+[features]
+js_repl = true
+"#,
+        });
+
+        strip_codex_desktop_from_settings(&mut settings).expect("strip desktop");
+        let config = settings["config"].as_str().expect("config text");
+        assert!(!config.contains("[desktop]"));
+        assert!(!config.contains("mac-menu-bar-enabled"));
+        assert!(config.contains("model = \"gpt-5.5\""));
+        assert!(config.contains("[features]"));
+        assert!(config.contains("js_repl = true"));
     }
 
     #[test]

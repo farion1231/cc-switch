@@ -1371,6 +1371,9 @@ experimental_bearer_token = "sk-live-secret"
 model_catalog_json = "cc-switch-model-catalog.json"
 web_search = "disabled"
 
+[desktop]
+mac-menu-bar-enabled = false
+
 [model_providers.azure]
 name = "Azure OpenAI"
 base_url = "https://azure.example/v1"
@@ -1432,6 +1435,10 @@ command = "legacy-cmd"
             !extracted.contains("web_search"),
             "should strip the cc-switch web_search disabled sentinel, got: {extracted}"
         );
+        assert!(
+            !extracted.contains("[desktop]") && !extracted.contains("mac-menu-bar-enabled"),
+            "desktop app state must not enter provider common config, got: {extracted}"
+        );
         // 真正可共享的键保留
         assert!(
             extracted.contains("disable_response_storage = true"),
@@ -1449,6 +1456,145 @@ command = "legacy-cmd"
             extracted.contains("web_search = \"enabled\""),
             "a user-set web_search value is a shareable preference, got: {extracted}"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_provider_switch_preserves_desktop_live_state_in_both_directions() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload test settings");
+
+            let mut third_party = Provider::with_id(
+                "third-party".into(),
+                "Third Party".into(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                    "config": r#"model_provider = "custom"
+
+[desktop]
+mac-menu-bar-enabled = true
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third-party.example/v1"
+wire_api = "responses"
+"#
+                }),
+                None,
+            );
+            third_party.category = Some("custom".into());
+
+            let mut official = Provider::with_id(
+                "codex-official".into(),
+                "OpenAI Official".into(),
+                json!({
+                    "auth": {},
+                    "config": r#"model_provider = "openai"
+
+[desktop]
+mac-menu-bar-enabled = true
+"#
+                }),
+                None,
+            );
+            official.category = Some("official".into());
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &third_party)
+                .expect("save third-party provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), &third_party.id)
+                .expect("set current third-party provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some(&third_party.id))
+                .expect("set local current provider");
+
+            let config_path = crate::codex_config::get_codex_config_path();
+            fs::create_dir_all(config_path.parent().expect("config parent"))
+                .expect("create codex config dir");
+            fs::write(
+                &config_path,
+                r#"model_provider = "custom"
+
+[desktop]
+mac-menu-bar-enabled = false
+conversationDetailMode = "STEPS_COMMANDS"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third-party.example/v1"
+wire_api = "responses"
+"#,
+            )
+            .expect("seed live codex config");
+
+            ProviderService::switch(state, AppType::Codex, &official.id)
+                .expect("switch third-party to official");
+            let official_live = fs::read_to_string(&config_path).expect("read official live");
+            let official_doc: toml::Value =
+                toml::from_str(&official_live).expect("parse official live");
+            assert_eq!(
+                official_doc
+                    .get("desktop")
+                    .and_then(|desktop| desktop.get("mac-menu-bar-enabled"))
+                    .and_then(|value| value.as_bool()),
+                Some(false),
+                "third-party -> official must preserve the explicit false desktop preference"
+            );
+            assert_eq!(
+                official_doc
+                    .get("desktop")
+                    .and_then(|desktop| desktop.get("conversationDetailMode"))
+                    .and_then(|value| value.as_str()),
+                Some("STEPS_COMMANDS"),
+                "unknown/new desktop keys must be preserved structurally"
+            );
+
+            let stored_third_party = state
+                .db
+                .get_provider_by_id(&third_party.id, AppType::Codex.as_str())
+                .expect("read stored third-party provider")
+                .expect("stored third-party provider exists");
+            assert!(
+                !stored_third_party.settings_config["config"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("[desktop]"),
+                "backfill must not persist live desktop state into provider snapshots"
+            );
+
+            ProviderService::switch(state, AppType::Codex, &third_party.id)
+                .expect("switch official to third-party");
+            let third_party_live = fs::read_to_string(&config_path).expect("read third-party live");
+            let third_party_doc: toml::Value =
+                toml::from_str(&third_party_live).expect("parse third-party live");
+            assert_eq!(
+                third_party_doc
+                    .get("desktop")
+                    .and_then(|desktop| desktop.get("mac-menu-bar-enabled"))
+                    .and_then(|value| value.as_bool()),
+                Some(false),
+                "official -> third-party must preserve the same live desktop preference"
+            );
+
+            let stored_official = state
+                .db
+                .get_provider_by_id(&official.id, AppType::Codex.as_str())
+                .expect("read stored official provider")
+                .expect("stored official provider exists");
+            assert!(
+                !stored_official.settings_config["config"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("[desktop]"),
+                "official backfill must also keep desktop state out of provider snapshots"
+            );
+        });
     }
 
     #[tokio::test]
@@ -3721,6 +3867,10 @@ impl ProviderService {
 
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
+
+        // Desktop UI preferences are live app state, not shared provider
+        // configuration. They are preserved centrally at provider-write time.
+        root.remove("desktop");
 
         // MCP 服务器归 DB mcp_servers 表所有：进了共享片段会绕过按应用的
         // 启用状态被合并进所有勾选通用配置的供应商，且在通用配置编辑框里
