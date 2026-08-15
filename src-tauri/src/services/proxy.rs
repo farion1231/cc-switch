@@ -14,6 +14,7 @@ use crate::services::provider::{
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
@@ -61,11 +62,105 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    /// models_cache 刷新线程的代际计数：每次启动代理自增并捕获当前值，
+    /// 停止时再自增使旧线程在下一轮醒来后退出，避免线程随启停累积泄漏。
+    codex_cache_refresher_generation: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HotSwitchOutcome {
     pub logical_target_changed: bool,
+}
+
+fn codex_cache_refresh_enabled(db: &Database) -> bool {
+    db.get_proxy_flags_sync(AppType::Codex.as_str()).0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexCacheRefresherAction {
+    Wait,
+    Refresh,
+}
+
+fn codex_cache_refresher_action(db: &Database) -> CodexCacheRefresherAction {
+    if codex_cache_refresh_enabled(db) {
+        CodexCacheRefresherAction::Refresh
+    } else {
+        CodexCacheRefresherAction::Wait
+    }
+}
+
+#[cfg(test)]
+async fn refresh_codex_models_cache_once(
+    db: &Arc<Database>,
+    switch_locks: &SwitchLockManager,
+) -> Result<bool, crate::error::AppError> {
+    refresh_codex_models_cache_once_inner(db, switch_locks, None).await
+}
+
+async fn refresh_codex_models_cache_once_for_generation(
+    db: &Arc<Database>,
+    switch_locks: &SwitchLockManager,
+    generation: &AtomicU64,
+    expected_generation: u64,
+) -> Result<bool, crate::error::AppError> {
+    refresh_codex_models_cache_once_inner(db, switch_locks, Some((generation, expected_generation)))
+        .await
+}
+
+async fn refresh_codex_models_cache_once_inner(
+    db: &Arc<Database>,
+    switch_locks: &SwitchLockManager,
+    generation: Option<(&AtomicU64, u64)>,
+) -> Result<bool, crate::error::AppError> {
+    let _guard = switch_locks.lock_for_app(AppType::Codex.as_str()).await;
+    if generation
+        .is_some_and(|(generation, expected)| generation.load(Ordering::Relaxed) != expected)
+    {
+        return Ok(false);
+    }
+    if !codex_cache_refresh_enabled(db) {
+        return Ok(false);
+    }
+    let db = Arc::clone(db);
+    // DB 读取与缓存写入（含探测 codex CLI 版本等子进程）是阻塞工作，挪到
+    // spawn_blocking，避免长时间占用 tokio worker 线程。
+    tokio::task::spawn_blocking(move || {
+        let Some(current_id) =
+            crate::settings::get_effective_current_provider(&db, &AppType::Codex)?
+        else {
+            return Ok(false);
+        };
+        let Some(provider) = db.get_provider_by_id(&current_id, AppType::Codex.as_str())? else {
+            return Ok(false);
+        };
+        // 优先读 live config.toml，与 /v1/models 聚合目录保持同一来源，保证
+        // context_window 一致；官方供应商 settings 里的 config 可能是空种子。
+        // 读不到时回退到供应商自己保存的 config。
+        let config_text = match crate::codex_config::read_codex_config_text() {
+            Ok(live) if !live.trim().is_empty() => live,
+            _ => provider
+                .settings_config
+                .get("config")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string(),
+        };
+        let resolve_provider = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
+                db.as_ref(),
+                provider_id,
+            )
+        };
+        crate::codex_config::write_codex_models_cache_for_provider(
+            &provider,
+            &config_text,
+            Some(&resolve_provider),
+        )?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::Message(format!("Codex 缓存刷新任务失败: {e}")))?
 }
 
 impl ProxyService {
@@ -75,6 +170,7 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            codex_cache_refresher_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -377,10 +473,20 @@ impl ProxyService {
         )
         .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
         if let Some(existing_live) = existing_live.as_ref() {
-            Self::preserve_toml_mcp_servers_from_existing_config(
-                &mut effective_settings,
-                existing_live,
-            )?;
+            if crate::proxy::providers::is_codex_official_provider(provider) {
+                // The built-in official provider intentionally stores an empty
+                // config snapshot. During takeover, keep the user's live TOML as
+                // the source of truth (sandbox, approvals, reasoning, features,
+                // etc.) while retaining aggregation-only fields from the DB row.
+                if let Some(config) = existing_live.get("config") {
+                    effective_settings["config"] = config.clone();
+                }
+            } else {
+                Self::preserve_toml_mcp_servers_from_existing_config(
+                    &mut effective_settings,
+                    existing_live,
+                )?;
+            }
         }
         let (_, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
@@ -391,7 +497,68 @@ impl ProxyService {
         )?;
 
         self.write_codex_takeover_live_for_provider(&effective_settings, Some(provider))?;
+        // 桌面端模型列表只认 models_cache.json：接管时同步重建缓存，否则它
+        // 读到的永远是过期条目（旧供应商的官方/自定义模型残留）并回退到
+        // 内置官方模型。
+        self.refresh_codex_models_cache_after_takeover(&effective_settings, provider);
         Ok(())
+    }
+
+    /// Codex 供应商接管/热切换后重建 `models_cache.json`（桌面端模型列表的来源）。
+    /// 失败只告警，不影响接管本身。
+    fn refresh_codex_models_cache_after_takeover(
+        &self,
+        effective_settings: &Value,
+        provider: &Provider,
+    ) {
+        let config_text = effective_settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let resolve_provider = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
+                self.db.as_ref(),
+                provider_id,
+            )
+        };
+        if let Err(e) = crate::codex_config::write_codex_models_cache_for_provider(
+            provider,
+            config_text,
+            Some(&resolve_provider),
+        ) {
+            log::warn!("[codex] 刷新 models_cache.json 失败: {e}");
+        }
+    }
+
+    /// 关闭 Codex 接管后恢复/清除 `models_cache.json`：接管期间写入的聚合/
+    /// 自定义条目会继续让桌面端显示，但请求已绕过代理，可能把绑定供应商的
+    /// 槽位直发到恢复后的供应商。恢复已捕获的官方基线，否则清除 cc-switch
+    /// 缓存让官方客户端重新拉取。失败只告警，不影响关闭接管。
+    fn refresh_codex_models_cache_after_takeover_disable() {
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        if let Err(e) =
+            crate::codex_config::restore_or_clear_codex_official_models_cache(&codex_dir)
+        {
+            log::warn!("[codex] 关闭接管后恢复 models_cache.json 失败: {e}");
+        }
+    }
+
+    fn codex_takeover_cache_cleanup_needed(&self) -> bool {
+        let provider_settings =
+            crate::settings::get_effective_current_provider(self.db.as_ref(), &AppType::Codex)
+                .ok()
+                .flatten()
+                .and_then(|provider_id| {
+                    self.db
+                        .get_provider_by_id(&provider_id, AppType::Codex.as_str())
+                        .ok()
+                        .flatten()
+                })
+                .map(|provider| provider.settings_config);
+        crate::codex_config::codex_models_cache_needs_takeover_cleanup(
+            &crate::codex_config::get_codex_config_dir(),
+            provider_settings.as_ref(),
+        )
     }
 
     pub async fn sync_grok_live_from_provider_while_proxy_active(
@@ -577,8 +744,67 @@ impl ProxyService {
         // 5. 保存服务器实例
         *self.server.write().await = Some(server);
 
+        // 每次启动捕获新的代际值：停止时自增会让上一次启动的线程退出，
+        // 避免启停多次后线程累积。
+        let generation = self
+            .codex_cache_refresher_generation
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        Self::spawn_codex_models_cache_refresher(
+            self.db.clone(),
+            self.switch_locks.clone(),
+            self.codex_cache_refresher_generation.clone(),
+            generation,
+        );
+
         log::info!("代理服务器已启动: {}:{}", info.address, info.port);
         Ok(info)
+    }
+
+    /// 代理运行期间定期刷新当前 Codex 供应商的 `models_cache.json`。桌面端
+    /// 模型列表按 300 秒 TTL 校验缓存，光在接管时写一次不够——用户开着 Codex
+    /// 超过 5 分钟再切模型菜单就会失效回退到内置官方模型。刷新器对任何当前
+    /// 供应商都生效：官方登录恢复/合并 clean baseline，聚合模式/普通供应商
+    /// 各自重建（见 `write_codex_models_cache_for_provider`）。
+    ///
+    /// 任务通过代际计数绑定服务器生命周期：`generation` 变化即停止代理或
+    /// 再次启动过，本任务在下一轮醒来后退出，不随启停累积。
+    fn spawn_codex_models_cache_refresher(
+        db: Arc<Database>,
+        switch_locks: SwitchLockManager,
+        generation: Arc<AtomicU64>,
+        my_generation: u64,
+    ) {
+        // 仅持有 Weak：刷新任务不应阻止 Database 随 ProxyService 释放，否则
+        // 后台任务会长期占用 DB 文件句柄（测试/停机后无法及时释放）。
+        // 每次刷新前短暂 upgrade，ProxyService 销毁后 upgrade 返回 None 即退出。
+        let db = Arc::downgrade(&db);
+        tokio::spawn(async move {
+            while generation.load(Ordering::Relaxed) == my_generation {
+                {
+                    let Some(db) = db.upgrade() else {
+                        break;
+                    };
+                    if codex_cache_refresher_action(&db) == CodexCacheRefresherAction::Refresh {
+                        if let Err(e) = refresh_codex_models_cache_once_for_generation(
+                            &db,
+                            &switch_locks,
+                            &generation,
+                            my_generation,
+                        )
+                        .await
+                        {
+                            log::warn!("[codex] 定时刷新 models_cache.json 失败: {e}");
+                        }
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(240)).await;
+                if generation.load(Ordering::Relaxed) != my_generation {
+                    break;
+                }
+            }
+        });
     }
 
     async fn persist_ephemeral_listen_port_if_needed(
@@ -879,8 +1105,15 @@ impl ProxyService {
         // 必须走 with_fallback 版本：备份 → SSOT → 清理占位符 的三层兜底。
         // 简版 restore_live_config_for_app 在备份缺失时会静默 Ok(())，
         // 留下接管时写入的占位符（代理地址/PROXY_MANAGED token），客户端无法工作。
+        let cleanup_codex_cache =
+            app == AppType::Codex && self.codex_takeover_cache_cleanup_needed();
         self.restore_live_config_for_app_with_fallback_inner(&app)
             .await?;
+
+        // 1.5) 关闭 Codex 接管：恢复/清除接管期间写入的 models_cache.json
+        if cleanup_codex_cache {
+            Self::refresh_codex_models_cache_after_takeover_disable();
+        }
 
         // 2) 删除该 app 的备份（避免长期存储敏感 Token）
         self.db
@@ -937,10 +1170,18 @@ impl ProxyService {
     /// 代理或程序退出时会自然停止。
     pub fn disable_takeover_for_app_sync(&self, app_type: &AppType) -> Result<(), String> {
         let app_type_str = app_type.as_str();
+        let _guard = futures::executor::block_on(self.switch_locks.lock_for_app(app_type_str));
+        let cleanup_codex_cache =
+            *app_type == AppType::Codex && self.codex_takeover_cache_cleanup_needed();
 
         // 1) 恢复原始 Live 配置（备份 → SSOT → 清理占位符 三层兜底）
         futures::executor::block_on(self.restore_live_config_for_app_with_fallback_inner(app_type))
             .map_err(|e| format!("恢复 {app_type_str} Live 配置失败: {e}"))?;
+
+        // 1.5) 关闭 Codex 接管：恢复/清除接管期间写入的 models_cache.json
+        if cleanup_codex_cache {
+            Self::refresh_codex_models_cache_after_takeover_disable();
+        }
 
         // 2) 删除该 app 的备份
         futures::executor::block_on(self.db.delete_live_backup(app_type_str))
@@ -1272,6 +1513,10 @@ impl ProxyService {
 
     /// 停止代理服务器
     pub async fn stop(&self) -> Result<(), String> {
+        // 自增代际使 models_cache 刷新线程在下一轮醒来后退出
+        self.codex_cache_refresher_generation
+            .fetch_add(1, Ordering::Relaxed);
+
         if let Some(server) = self.server.write().await.take() {
             server
                 .stop()
@@ -1572,15 +1817,14 @@ impl ProxyService {
         }
 
         // Codex: project the selected provider through the local Responses endpoint.
-        if let Ok(mut live_config) = self.read_codex_live() {
+        // 统一走供应商设置路径（与热切换一致）：磁盘 live 配置不含
+        // `codexCustomModels` 等 UI 态字段，直接用它构建接管配置会导致
+        // 官方聚合模式的模型目录不生成、`model_catalog_json` 被剥掉，
+        // 桌面端模型列表回退到内置官方模型。
+        if self.read_codex_live().is_ok() {
             let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
-            Self::apply_codex_takeover_fields_for_provider(
-                &mut live_config,
-                &proxy_codex_base_url,
-                &codex_provider,
-            )?;
-
-            self.write_codex_takeover_live_for_provider(&live_config, Some(&codex_provider))?;
+            self.sync_codex_live_from_provider_while_proxy_active(&codex_provider)
+                .await?;
             log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
         }
 
@@ -1634,15 +1878,9 @@ impl ProxyService {
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
             }
             AppType::Codex => {
-                let mut live_config = self.read_codex_live()?;
                 let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
-                Self::apply_codex_takeover_fields_for_provider(
-                    &mut live_config,
-                    &proxy_codex_base_url,
-                    &codex_provider,
-                )?;
-
-                self.write_codex_takeover_live_for_provider(&live_config, Some(&codex_provider))?;
+                self.sync_codex_live_from_provider_while_proxy_active(&codex_provider)
+                    .await?;
                 log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
             }
             AppType::Gemini => {
@@ -1683,7 +1921,7 @@ impl ProxyService {
 
     /// 接管指定应用的 Live 配置（尽力而为：配置不存在/读取失败则跳过）
     async fn takeover_live_config_best_effort(&self, app_type: &AppType) -> Result<(), String> {
-        let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
+        let (proxy_url, _proxy_codex_base_url) = self.build_proxy_urls().await?;
         let proxy_grok_base_url = format!("{}/grokbuild/v1", proxy_url.trim_end_matches('/'));
 
         match app_type {
@@ -1710,19 +1948,13 @@ impl ProxyService {
                     let _ = self.write_claude_live(&live_config);
                 }
             }
-            AppType::Codex => {
-                if let Ok(mut live_config) = self.read_codex_live() {
-                    let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
-                    Self::apply_codex_takeover_fields_for_provider(
-                        &mut live_config,
-                        &proxy_codex_base_url,
-                        &codex_provider,
-                    )?;
-
-                    self.write_codex_takeover_live_for_provider(
-                        &live_config,
-                        Some(&codex_provider),
-                    )?;
+            AppType::Codex if self.read_codex_live().is_ok() => {
+                let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
+                if let Err(err) = self
+                    .sync_codex_live_from_provider_while_proxy_active(&codex_provider)
+                    .await
+                {
+                    log::warn!("Codex Live 配置接管失败（尽力而为模式，继续启动代理）: {err}");
                 }
             }
             AppType::Gemini => {
@@ -1831,8 +2063,14 @@ impl ProxyService {
         app_type: &AppType,
     ) -> Result<(), String> {
         let _guard = self.switch_locks.lock_for_app(app_type.as_str()).await;
+        let cleanup_codex_cache =
+            *app_type == AppType::Codex && self.codex_takeover_cache_cleanup_needed();
         self.restore_live_config_for_app_with_fallback_inner(app_type)
-            .await
+            .await?;
+        if cleanup_codex_cache {
+            Self::refresh_codex_models_cache_after_takeover_disable();
+        }
+        Ok(())
     }
 
     pub(crate) async fn restore_live_config_for_app_with_fallback_inner(
@@ -2548,6 +2786,12 @@ impl ProxyService {
                 let config_str = effective_settings.get("config").and_then(|v| v.as_str());
                 let profile =
                     crate::proxy::providers::resolve_codex_catalog_tool_profile(&provider);
+                let resolve_provider = |provider_id: &str| {
+                    crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
+                        self.db.as_ref(),
+                        provider_id,
+                    )
+                };
 
                 crate::codex_config::write_codex_provider_live_with_catalog(
                     &effective_settings,
@@ -2555,6 +2799,7 @@ impl ProxyService {
                     auth,
                     config_str,
                     profile,
+                    Some(&resolve_provider),
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             }
@@ -2813,8 +3058,15 @@ impl ProxyService {
         provider: Option<&Provider>,
     ) -> Result<String, String> {
         if provider.is_some_and(crate::proxy::providers::is_codex_official_provider) {
-            return crate::codex_config::apply_codex_official_proxy_route(toml_str, proxy_url)
-                .map_err(|e| format!("生成 Codex 官方接管配置失败: {e}"));
+            let requires_openai_auth = provider
+                .map(|p| crate::codex_config::codex_official_login_enabled(&p.settings_config))
+                .unwrap_or(true);
+            return crate::codex_config::apply_codex_official_proxy_route_with_auth(
+                toml_str,
+                proxy_url,
+                requires_openai_auth,
+            )
+            .map_err(|e| format!("生成 Codex 官方接管配置失败: {e}"));
         }
 
         let updated = crate::codex_config::update_codex_toml_field(toml_str, "base_url", proxy_url)
@@ -2968,6 +3220,12 @@ impl ProxyService {
             .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
         let config_str = config.get("config").and_then(|v| v.as_str());
         let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+        let resolve_provider = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
+                self.db.as_ref(),
+                provider_id,
+            )
+        };
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             config,
@@ -2975,6 +3233,7 @@ impl ProxyService {
             auth,
             config_str,
             profile,
+            Some(&resolve_provider),
         )
         .map_err(|e| format!("写入 Codex 配置失败: {e}"))
     }
@@ -3003,9 +3262,18 @@ impl ProxyService {
             let profile = provider
                 .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
                 .unwrap_or(crate::codex_config::CodexCatalogToolProfile::ProxyChat);
+            let resolve_provider = |provider_id: &str| {
+                crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
+                    self.db.as_ref(),
+                    provider_id,
+                )
+            };
             let prepared_config =
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                    config, config_str, profile,
+                    config,
+                    config_str,
+                    profile,
+                    Some(&resolve_provider),
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             let live_config = if official_passthrough {
@@ -3052,10 +3320,17 @@ impl ProxyService {
         // limitation (restore-of-deleted-provider-backup only).
         let prepared_cfg = config_str
             .map(|cfg| {
+                let resolve_provider = |provider_id: &str| {
+                    crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
+                        self.db.as_ref(),
+                        provider_id,
+                    )
+                };
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
                     config,
                     cfg,
                     crate::codex_config::CodexCatalogToolProfile::ProxyChat,
+                    Some(&resolve_provider),
                 )
             })
             .transpose()
@@ -3300,6 +3575,8 @@ mod tests {
     use crate::provider::ProviderMeta;
     use serial_test::serial;
     use std::env;
+    use std::path::PathBuf;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     struct TempHome {
@@ -3359,6 +3636,439 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    async fn seed_codex_takeover_with_owned_cache(db: &Arc<Database>) -> PathBuf {
+        let original_config = r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+experimental_bearer_token = "deepseek-key"
+"#;
+        crate::codex_config::write_codex_live_atomic(&json!({}), Some(original_config))
+            .expect("seed original live config");
+        db.save_live_backup(
+            AppType::Codex.as_str(),
+            &serde_json::to_string(&json!({
+                "auth": json!({}),
+                "config": original_config
+            }))
+            .expect("serialize original backup"),
+        )
+        .await
+        .expect("seed original live backup");
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("mark Codex takeover enabled");
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let cache_path = codex_dir.join("models_cache.json");
+        std::fs::write(
+            &cache_path,
+            r#"{"client_version":"0.1.0","etag":"W/\"cc-switch-1750000000\"","models":[{"slug":"custom-slot"}]}"#,
+        )
+        .expect("seed cc-switch models cache");
+        cache_path
+    }
+
+    #[test]
+    fn codex_cache_refresh_enabled_follows_codex_takeover_flag() {
+        let db = Database::memory().expect("create in-memory database");
+
+        db.set_proxy_flags_sync(AppType::Claude.as_str(), true, false)
+            .expect("enable Claude takeover");
+        assert_eq!(
+            codex_cache_refresher_action(&db),
+            CodexCacheRefresherAction::Wait,
+            "another app's takeover must keep the refresher alive without writing Codex cache"
+        );
+
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("enable Codex takeover");
+        assert_eq!(
+            codex_cache_refresher_action(&db),
+            CodexCacheRefresherAction::Refresh,
+            "the same refresher must resume after Codex takeover is enabled"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_cache_publish_rechecks_takeover_before_write() {
+        let _home = TempHome::new();
+        let db = Database::memory().expect("create in-memory database");
+        let written = refresh_codex_models_cache_once(&Arc::new(db), &SwitchLockManager::new())
+            .await
+            .expect("skip disabled Codex cache publication");
+
+        assert!(!written, "disabled Codex takeover must skip publication");
+        assert!(
+            !crate::codex_config::get_codex_config_dir()
+                .join("models_cache.json")
+                .exists(),
+            "the final enabled check must happen before creating the cache file"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn codex_cache_publish_rechecks_state_after_waiting_for_switch_lock() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("enable Codex takeover");
+        let switch_locks = SwitchLockManager::new();
+        let guard = switch_locks.lock_for_app(AppType::Codex.as_str()).await;
+
+        let worker_db = db.clone();
+        let worker_locks = switch_locks.clone();
+        let worker = tokio::spawn(async move {
+            refresh_codex_models_cache_once(&worker_db, &worker_locks).await
+        });
+
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), false, false)
+            .expect("disable Codex while publication waits");
+        drop(guard);
+
+        let written = worker
+            .await
+            .expect("join refresh worker")
+            .expect("refresh after lock release");
+        assert!(
+            !written,
+            "publication must re-read enabled under the switch lock"
+        );
+        assert!(
+            !crate::codex_config::get_codex_config_dir()
+                .join("models_cache.json")
+                .exists(),
+            "a refresh queued before disable must not publish afterward"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn codex_sync_disable_waits_for_switch_lock() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        let service = Arc::new(ProxyService::new(db.clone()));
+        let _cache_path = seed_codex_takeover_with_owned_cache(&db).await;
+        let guard = service
+            .switch_locks
+            .lock_for_app(AppType::Codex.as_str())
+            .await;
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker_service = service.clone();
+        let worker = std::thread::spawn(move || {
+            let result = worker_service.disable_takeover_for_app_sync(&AppType::Codex);
+            done_tx.send(result).expect("report sync disable result");
+        });
+
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(250)).is_err(),
+            "sync disable must wait while a cache publication holds the Codex switch lock"
+        );
+        drop(guard);
+
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("sync disable should finish after the lock is released")
+            .expect("sync disable succeeds");
+        worker.join().expect("join sync disable worker");
+    }
+
+    #[test]
+    #[serial]
+    fn codex_sync_disable_after_takeover_started_preserves_unmodified_official_models_cache() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("record takeover start before cache publication");
+        let service = ProxyService::new(db);
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let cache_path = codex_dir.join("models_cache.json");
+        let official_cache = json!({
+            "client_version": "0.147.0",
+            "etag": "W/\"official-catalog\"",
+            "fetched_at": "2026-08-09T00:00:00Z",
+            "models": [{"slug": "gpt-5.5"}]
+        });
+        std::fs::write(
+            &cache_path,
+            serde_json::to_string(&official_cache).expect("serialize official cache"),
+        )
+        .expect("seed official models cache");
+
+        service
+            .disable_takeover_for_app_sync(&AppType::Codex)
+            .expect("sync disable without takeover succeeds");
+
+        let preserved: Value = serde_json::from_str(
+            &std::fs::read_to_string(&cache_path).expect("official cache must remain"),
+        )
+        .expect("parse preserved official cache");
+        assert_eq!(preserved, official_cache);
+        assert!(
+            !codex_dir
+                .join("cc-switch-official-models-cache.json")
+                .exists(),
+            "a no-op disable must not create cc-switch cache ownership state"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_sync_disable_preserves_official_cache_despite_expired_sidecar() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("record takeover start before cache publication");
+        let service = ProxyService::new(db);
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let cache_path = codex_dir.join("models_cache.json");
+        let official_cache = json!({
+            "client_version": "0.147.0",
+            "etag": "W/\"official-catalog\"",
+            "fetched_at": "2026-08-09T00:00:00Z",
+            "models": [{"slug": "gpt-5.5"}]
+        });
+        std::fs::write(
+            &cache_path,
+            serde_json::to_string(&official_cache).expect("serialize official cache"),
+        )
+        .expect("seed official models cache");
+        let mut expired_sidecar = official_cache.clone();
+        expired_sidecar
+            .as_object_mut()
+            .expect("sidecar object")
+            .insert(
+                "cc_switch_captured_at".to_string(),
+                Value::String("2026-08-01T00:00:00Z".to_string()),
+            );
+        std::fs::write(
+            codex_dir.join("cc-switch-official-models-cache.json"),
+            serde_json::to_string(&expired_sidecar).expect("serialize expired sidecar"),
+        )
+        .expect("seed expired sidecar");
+
+        service
+            .disable_takeover_for_app_sync(&AppType::Codex)
+            .expect("sync disable succeeds");
+
+        let preserved: Value = serde_json::from_str(
+            &std::fs::read_to_string(&cache_path).expect("official cache must remain"),
+        )
+        .expect("parse preserved official cache");
+        assert_eq!(preserved, official_cache);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_sync_disable_clears_unmarked_legacy_custom_models_cache() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        let mut provider = Provider::with_id(
+            "codex-official".to_string(),
+            "Codex Official".to_string(),
+            json!({
+                "config": "",
+                "enableOfficialLogin": true,
+                "codexCustomModels": [{
+                    "model": "gpt-5.2",
+                    "providerId": "deepseek",
+                    "upstreamModel": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash"
+                }]
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        db.save_provider(AppType::Codex.as_str(), &provider)
+            .expect("save official aggregation provider");
+        db.set_current_provider(AppType::Codex.as_str(), &provider.id)
+            .expect("set database current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id))
+            .expect("set local current provider");
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("record takeover state");
+        let service = ProxyService::new(db);
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let cache_path = codex_dir.join("models_cache.json");
+        let legacy_cache = json!({
+            "client_version": "0.147.0",
+            "etag": "W/\"official-etag-preserved-by-legacy-cc-switch\"",
+            "fetched_at": "2026-08-09T00:00:00Z",
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "DeepSeek V4 Flash"}
+            ]
+        });
+        std::fs::write(
+            &cache_path,
+            serde_json::to_string(&legacy_cache).expect("serialize legacy cache"),
+        )
+        .expect("seed unmarked legacy custom cache");
+
+        service
+            .disable_takeover_for_app_sync(&AppType::Codex)
+            .expect("sync disable succeeds");
+
+        assert!(
+            !cache_path.exists(),
+            "legacy custom entries must not survive after requests bypass the proxy"
+        );
+        crate::settings::set_current_provider(&AppType::Codex, None)
+            .expect("clear local current provider");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn stale_codex_cache_refresh_generation_skips_publish_after_lock_wait() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        let provider = Provider::with_id(
+            "provider-a".to_string(),
+            "Provider A".to_string(),
+            json!({ "config": "model = \"model-a\"\n" }),
+            None,
+        );
+        db.save_provider(AppType::Codex.as_str(), &provider)
+            .expect("save Codex provider");
+        db.set_current_provider(AppType::Codex.as_str(), &provider.id)
+            .expect("set database current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id))
+            .expect("set local current provider");
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("enable Codex takeover");
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let cache_path = codex_dir.join("models_cache.json");
+        std::fs::write(&cache_path, r#"{"client_version":"0.1.0"}"#)
+            .expect("seed client version cache");
+
+        let switch_locks = SwitchLockManager::new();
+        let guard = switch_locks.lock_for_app(AppType::Codex.as_str()).await;
+        let generation = Arc::new(AtomicU64::new(1));
+        let worker_db = db.clone();
+        let worker_locks = switch_locks.clone();
+        let worker_generation = generation.clone();
+        let worker = tokio::spawn(async move {
+            refresh_codex_models_cache_once_for_generation(
+                &worker_db,
+                &worker_locks,
+                &worker_generation,
+                1,
+            )
+            .await
+        });
+        tokio::task::yield_now().await;
+        generation.store(2, Ordering::Relaxed);
+        drop(guard);
+
+        let written = worker
+            .await
+            .expect("join stale refresh worker")
+            .expect("stale refresh returns cleanly");
+        assert!(!written, "stale refresh generation must not publish");
+        let cache: Value = serde_json::from_str(
+            &std::fs::read_to_string(&cache_path).expect("read untouched seed cache"),
+        )
+        .expect("parse untouched seed cache");
+        assert!(
+            cache.get("models").is_none(),
+            "a stale refresh queued before shutdown must not rewrite the cache"
+        );
+        crate::settings::set_current_provider(&AppType::Codex, None)
+            .expect("clear local current provider");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn codex_cache_publish_reads_current_provider_after_switch_lock() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "Provider A".to_string(),
+            json!({ "config": "model = \"model-a\"\n" }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "Provider B".to_string(),
+            json!({ "config": "model = \"model-b\"\n" }),
+            None,
+        );
+        db.save_provider(AppType::Codex.as_str(), &provider_a)
+            .expect("save provider A");
+        db.save_provider(AppType::Codex.as_str(), &provider_b)
+            .expect("save provider B");
+        db.set_current_provider(AppType::Codex.as_str(), "a")
+            .expect("set initial provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set initial local provider");
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("enable Codex takeover");
+
+        let switch_locks = SwitchLockManager::new();
+        let guard = switch_locks.lock_for_app(AppType::Codex.as_str()).await;
+        // 无 codex CLI 的环境下，写缓存依赖既有缓存的 client_version 回退：
+        // 预置一个带 client_version 的 models_cache.json，避免测试依赖真实 CLI。
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create temp codex dir");
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            r#"{"client_version": "0.1.0"}"#,
+        )
+        .expect("seed codex models cache with client_version");
+        let worker_db = db.clone();
+        let worker_locks = switch_locks.clone();
+        let worker = tokio::spawn(async move {
+            refresh_codex_models_cache_once(&worker_db, &worker_locks).await
+        });
+
+        db.set_current_provider(AppType::Codex.as_str(), "b")
+            .expect("switch database provider while publication waits");
+        crate::settings::set_current_provider(&AppType::Codex, Some("b"))
+            .expect("switch local provider while publication waits");
+        drop(guard);
+
+        assert!(
+            worker
+                .await
+                .expect("join refresh worker")
+                .expect("refresh after provider switch"),
+            "enabled publication should write the current provider"
+        );
+        let cache: Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                crate::codex_config::get_codex_config_dir().join("models_cache.json"),
+            )
+            .expect("read refreshed cache"),
+        )
+        .expect("parse refreshed cache");
+        assert_eq!(
+            cache.pointer("/models/0/slug").and_then(Value::as_str),
+            Some("model-b"),
+            "publication queued before a hot switch must not write the stale provider"
+        );
+        crate::settings::set_current_provider(&AppType::Codex, None)
+            .expect("clear local provider after test");
     }
 
     #[tokio::test]
@@ -4118,6 +4828,82 @@ wire_api = "responses"
 
     #[tokio::test]
     #[serial]
+    async fn codex_builtin_official_takeover_preserves_user_live_toml_settings() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access"
+            }
+        });
+        let user_live_config = r#"model = "gpt-5.4"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+model_reasoning_effort = "high"
+
+[features]
+goals = true
+experimental_resume = true
+"#;
+        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some(user_live_config))
+            .expect("seed official live config");
+
+        let mut official = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("codex", &official)
+            .expect("save official provider");
+        db.set_current_provider("codex", crate::database::CODEX_OFFICIAL_PROVIDER_ID)
+            .expect("set current provider");
+        crate::settings::set_current_provider(
+            &AppType::Codex,
+            Some(crate::database::CODEX_OFFICIAL_PROVIDER_ID),
+        )
+        .expect("set local current provider");
+
+        service
+            .takeover_live_config_strict(&AppType::Codex)
+            .await
+            .expect("enable official takeover");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read official takeover config");
+        let parsed: toml::Value = toml::from_str(&live_config).expect("parse takeover config");
+        assert_eq!(
+            parsed.get("approval_policy").and_then(|v| v.as_str()),
+            Some("never")
+        );
+        assert_eq!(
+            parsed.get("sandbox_mode").and_then(|v| v.as_str()),
+            Some("workspace-write")
+        );
+        assert_eq!(
+            parsed
+                .get("model_reasoning_effort")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+        assert_eq!(parsed["features"]["goals"].as_bool(), Some(true));
+        assert_eq!(
+            parsed["features"]["experimental_resume"].as_bool(),
+            Some(true)
+        );
+        assert!(crate::codex_config::codex_config_has_official_proxy_route(
+            &live_config
+        ));
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn codex_takeover_preserves_oauth_auth_json_even_when_provider_category_is_official() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -4868,6 +5654,139 @@ wire_api = "responses"
             .expect("disable Codex takeover");
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_disable_clears_cc_switch_models_cache() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let state = crate::store::AppState::new(db.clone());
+
+        let original_config = r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+experimental_bearer_token = "deepseek-key"
+"#;
+        crate::codex_config::write_codex_live_atomic(&json!({}), Some(original_config))
+            .expect("seed original live config");
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": json!({}),
+                "config": original_config
+            }))
+            .expect("serialize original backup"),
+        )
+        .await
+        .expect("seed original live backup");
+        let mut proxy_config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get Codex proxy config");
+        proxy_config.enabled = true;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("mark Codex takeover enabled");
+
+        // 模拟接管期间写入的 cc-switch 生成缓存（聚合/自定义条目）。
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let cache_path = codex_dir.join("models_cache.json");
+        std::fs::write(
+            &cache_path,
+            r#"{"client_version": "0.1.0", "etag": "W/\"cc-switch-1750000000\"", "models": [{"slug": "custom-slot"}]}"#,
+        )
+        .expect("seed cc-switch models cache");
+
+        state
+            .proxy_service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable Codex takeover");
+
+        assert!(
+            !cache_path.exists(),
+            "disabling takeover should restore/clear the cc-switch models cache"
+        );
+
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stop_with_restore_clears_cc_switch_models_cache() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let cache_path = seed_codex_takeover_with_owned_cache(&db).await;
+
+        service
+            .stop_with_restore()
+            .await
+            .expect("stop and restore takeover state");
+
+        assert!(
+            !cache_path.exists(),
+            "manual stop should restore or clear the cc-switch models cache"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stop_with_restore_keep_state_clears_cc_switch_models_cache() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let cache_path = seed_codex_takeover_with_owned_cache(&db).await;
+
+        service
+            .stop_with_restore_keep_state()
+            .await
+            .expect("stop and restore while preserving takeover state");
+
+        assert!(
+            !cache_path.exists(),
+            "normal exit should restore or clear the cc-switch models cache"
+        );
+        assert!(
+            db.get_proxy_config_for_app(AppType::Codex.as_str())
+                .await
+                .expect("read preserved Codex takeover state")
+                .enabled,
+            "keep-state shutdown must preserve the Codex enabled flag"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn recover_from_crash_clears_cc_switch_models_cache() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let cache_path = seed_codex_takeover_with_owned_cache(&db).await;
+
+        service
+            .recover_from_crash()
+            .await
+            .expect("recover takeover state after crash");
+
+        assert!(
+            !cache_path.exists(),
+            "crash recovery should restore or clear the cc-switch models cache"
+        );
     }
 
     #[tokio::test]

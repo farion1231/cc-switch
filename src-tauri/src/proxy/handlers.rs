@@ -73,14 +73,58 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// GET /v1/models — Codex model list (reachability check)
 ///
 /// Codex CLI probes this endpoint at startup and deserializes the response as a
-/// catalog with a top-level `models` field.  Return the cc-switch–managed model
-/// catalog file directly so the format always matches what the current version
-/// of Codex expects.
+/// catalog with a top-level `models` field.
 ///
-/// Only serves the catalog when the live config.toml still references the
-/// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
-/// Codex live-setting import.
-pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+/// 官方 Codex 路由：转发到 ChatGPT 后端，保留真实的登录门禁——未登录时 401
+/// 原样回传，Codex 会正常要求登录；登录成功后把官方模型列表与自定义模型
+/// 条目合并返回。其他供应商只在实时 config.toml 仍引用
+/// cc-switch 所有的 `model_catalog_json` 时返回模型目录。
+pub async fn handle_models(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
+) -> Result<axum::response::Response, ProxyError> {
+    log::info!(
+        "[models] GET {} auth={}",
+        uri.path_and_query().map(|pq| pq.as_str()).unwrap_or(""),
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    );
+    if let Some(official) = resolve_codex_official_provider(&state) {
+        // 聚合/合并目录的 context_window 取自真实 live config.toml，与
+        // models_cache.json 保持一致；读取失败时回退为空串。
+        let config_text = crate::codex_config::read_codex_config_text().unwrap_or_default();
+        if crate::codex_config::codex_official_login_enabled(&official.settings_config) {
+            return forward_codex_official_models(
+                state.db.as_ref(),
+                &official,
+                &headers,
+                uri.query(),
+                &config_text,
+            )
+            .await;
+        }
+        // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型
+        let resolve_provider = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
+                state.db.as_ref(),
+                provider_id,
+            )
+        };
+        let models = crate::codex_config::codex_custom_catalog_entries(
+            &official.settings_config,
+            &config_text,
+            crate::codex_config::CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .map_err(|error| ProxyError::Internal(error.to_string()))?;
+        return Ok(cc_switch_codex_models_response(json!({
+            "models": models
+        })));
+    }
+
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
         Ok(config_text) => {
@@ -107,7 +151,245 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    Ok(cc_switch_codex_models_response(catalog))
+}
+
+/// 当前 Codex 供应商是内置官方供应商时返回它。
+fn resolve_codex_official_provider(state: &ProxyState) -> Option<crate::provider::Provider> {
+    let current_id = crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+        .ok()
+        .flatten()
+        .or_else(|| state.db.get_current_provider("codex").ok().flatten())?;
+    let provider = state
+        .db
+        .get_provider_by_id(&current_id, "codex")
+        .ok()
+        .flatten()?;
+    crate::proxy::providers::is_codex_official_provider(&provider).then_some(provider)
+}
+
+/// 转发官方 Codex 的 /models 到 ChatGPT 后端；登录成功后在响应里合并自定义模型。
+async fn forward_codex_official_models(
+    db: &crate::database::Database,
+    official: &crate::provider::Provider,
+    headers: &axum::http::HeaderMap,
+    query: Option<&str>,
+    config_text: &str,
+) -> Result<axum::response::Response, ProxyError> {
+    use std::time::Duration;
+
+    let client = crate::proxy::http_client::get();
+    // 上游 /models 要求 `client_version` 查询参数（Codex 客户端通常会带）。
+    // 原样保留请求版本；缺失时探测当前 Codex，探测不到才复用可信缓存版本。
+    // 不得写死版本，否则升级后请求与缓存都会因版本不匹配而失效。
+    let mut url = format!("{}/models", super::providers::CHATGPT_CODEX_BASE_URL);
+    let effective_query = match codex_models_query(query, None) {
+        Ok(query) => query,
+        Err(_) => {
+            let version =
+                tokio::task::spawn_blocking(crate::codex_config::resolve_codex_client_version)
+                    .await
+                    .map_err(|e| ProxyError::Internal(format!("探测 Codex 版本失败: {e}")))?;
+            codex_models_query(query, version.as_deref())?
+        }
+    };
+    url.push('?');
+    url.push_str(&effective_query);
+    let builder =
+        forward_codex_models_headers(client.get(&url).timeout(Duration::from_secs(30)), headers);
+    let upstream = builder
+        .send()
+        .await
+        .map_err(|e| ProxyError::ForwardFailed(format!("转发 /models 到 ChatGPT 后端失败: {e}")))?;
+    let status = upstream.status();
+    log::info!("[models] forward chatgpt.com status={status} url={url}");
+    let content_type = upstream
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .cloned();
+    let upstream_etag = upstream
+        .headers()
+        .get(axum::http::header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let bytes = upstream
+        .bytes()
+        .await
+        .map_err(|e| ProxyError::ForwardFailed(format!("读取 ChatGPT /models 响应失败: {e}")))?;
+
+    if !status.is_success() {
+        // 原样回传（401 → Codex 正常要求登录）
+        let mut builder = axum::response::Response::builder().status(status);
+        if let Some(ct) = content_type {
+            builder = builder.header(axum::http::header::CONTENT_TYPE, ct);
+        }
+        return builder
+            .body(axum::body::Body::from(bytes))
+            .map_err(|e| ProxyError::Internal(e.to_string()));
+    }
+
+    let mut catalog: Value =
+        serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "models": [] }));
+    let mut clean_catalog = catalog.clone();
+    let resolve_provider = |provider_id: &str| {
+        crate::codex_config::resolve_codex_custom_catalog_provider_from_db(db, provider_id)
+    };
+    let custom_entries = crate::codex_config::codex_custom_catalog_entries(
+        &official.settings_config,
+        config_text,
+        crate::codex_config::CodexCatalogToolProfile::NativeResponses,
+        Some(&resolve_provider),
+    )
+    .map_err(|error| ProxyError::Internal(error.to_string()))?;
+    if merge_codex_official_models_catalog(&mut catalog, &official.settings_config, custom_entries)
+    {
+        let client_version = codex_models_client_version(&effective_query).ok_or_else(|| {
+            ProxyError::Internal("有效的 Codex client_version 在转发后丢失".to_string())
+        })?;
+        let captured = crate::codex_config::capture_forwarded_codex_official_models_baseline(
+            &clean_catalog,
+            client_version,
+            upstream_etag.as_deref(),
+        )
+        .map_err(|error| ProxyError::Internal(format!("保存官方模型基线失败: {error}")))?;
+        if !captured {
+            remove_cc_switch_codex_models_ownership(&mut clean_catalog);
+            return Ok(Json(clean_catalog).into_response());
+        }
+        return Ok(cc_switch_codex_models_response(catalog));
+    }
+    Ok(Json(catalog).into_response())
+}
+
+fn forward_codex_models_headers(
+    mut builder: reqwest::RequestBuilder,
+    headers: &axum::http::HeaderMap,
+) -> reqwest::RequestBuilder {
+    // 官方登录目录必须保留客户端身份以及多账号/workspace 选择，否则 ChatGPT
+    // 后端可能返回不同的模型 cohort，或因账号上下文缺失而拒绝请求。
+    for name in [
+        axum::http::header::AUTHORIZATION,
+        axum::http::HeaderName::from_static("chatgpt-account-id"),
+        axum::http::HeaderName::from_static("originator"),
+    ] {
+        if let Some(value) = headers.get(&name) {
+            builder = builder.header(name, value);
+        }
+    }
+    builder
+}
+
+fn merge_codex_official_models_catalog(
+    catalog: &mut Value,
+    settings: &Value,
+    custom_entries: Vec<Value>,
+) -> bool {
+    if !crate::codex_config::codex_custom_models_nonempty(settings) {
+        return false;
+    }
+
+    // 上游 /models 响应的数组键可能是 `models` 或 `data`：优先合并到
+    // 已存在的数组，都不存在时仅为可用的自定义条目创建 `models`。
+    let key = if catalog.get("models").is_some_and(Value::is_array) {
+        "models"
+    } else if catalog.get("data").is_some_and(Value::is_array) {
+        "data"
+    } else if custom_entries.is_empty() {
+        return false;
+    } else {
+        "models"
+    };
+    if !catalog.get(key).is_some_and(Value::is_array) {
+        catalog[key] = json!([]);
+    }
+    if let Some(models) = catalog
+        .get_mut(key)
+        .and_then(|models| models.as_array_mut())
+    {
+        return crate::codex_config::merge_codex_custom_catalog_entries(
+            models,
+            settings,
+            custom_entries,
+        );
+    }
+    false
+}
+
+fn cc_switch_codex_models_response(mut catalog: Value) -> axum::response::Response {
+    let etag = mark_codex_models_catalog_as_cc_switch_merged(&mut catalog);
+    let mut response = Json(catalog).into_response();
+    response.headers_mut().insert(
+        axum::http::header::ETAG,
+        etag.parse()
+            .expect("generated cc-switch ETag must be valid"),
+    );
+    response
+}
+
+fn mark_codex_models_catalog_as_cc_switch_merged(catalog: &mut Value) -> String {
+    let etag = format!("W/\"cc-switch-merged-{}\"", chrono::Utc::now().timestamp());
+    if let Some(object) = catalog.as_object_mut() {
+        object.insert(
+            crate::codex_config::CODEX_OFFICIAL_MODELS_MERGED_KEY.to_string(),
+            Value::Bool(true),
+        );
+        object.insert("etag".to_string(), Value::String(etag.clone()));
+    }
+    etag
+}
+
+fn remove_cc_switch_codex_models_ownership(catalog: &mut Value) {
+    let Some(object) = catalog.as_object_mut() else {
+        return;
+    };
+    object.remove(crate::codex_config::CODEX_OFFICIAL_MODELS_MERGED_KEY);
+    let has_cc_switch_etag = object
+        .get("etag")
+        .and_then(Value::as_str)
+        .is_some_and(|etag| etag.starts_with("W/\"cc-switch-"));
+    if has_cc_switch_etag {
+        object.remove("etag");
+    }
+}
+
+fn codex_models_query(
+    query: Option<&str>,
+    fallback_client_version: Option<&str>,
+) -> Result<String, ProxyError> {
+    let query = query.unwrap_or("");
+    if codex_models_client_version(query).is_some() {
+        return Ok(query.to_string());
+    }
+
+    let version = fallback_client_version
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            ProxyError::InvalidRequest(
+                "缺少 client_version，且无法检测当前 Codex 客户端版本".to_string(),
+            )
+        })?;
+    let mut parts = query
+        .split('&')
+        .filter(|part| {
+            !part.is_empty()
+                && part
+                    .split_once('=')
+                    .map(|(key, _)| key != "client_version")
+                    .unwrap_or(true)
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    parts.push(format!("client_version={version}"));
+    Ok(parts.join("&"))
+}
+
+fn codex_models_client_version(query: &str) -> Option<&str> {
+    query.split('&').find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        let value = value.trim();
+        (key == "client_version" && !value.is_empty()).then_some(value)
+    })
 }
 
 // ============================================================================
@@ -2667,11 +2949,183 @@ async fn log_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, responses_sse_to_response_value,
+        body_looks_like_sse, cc_switch_codex_models_response, chat_sse_to_response_value,
+        classify_body_for_diagnostics, codex_models_client_version, codex_models_query,
+        codex_proxy_error_json, forward_codex_models_headers,
+        mark_codex_models_catalog_as_cc_switch_merged, merge_codex_official_models_catalog,
+        remove_cc_switch_codex_models_ownership, responses_sse_to_response_value,
         should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
+    use serde_json::json;
+
+    #[test]
+    fn codex_models_query_preserves_client_version_or_uses_verified_fallback() {
+        assert_eq!(
+            codex_models_query(Some("client_version=0.147.3&foo=bar"), None)
+                .expect("preserve query version"),
+            "client_version=0.147.3&foo=bar"
+        );
+        assert_eq!(
+            codex_models_query(Some("foo=bar"), Some("0.148.1")).expect("append detected version"),
+            "foo=bar&client_version=0.148.1"
+        );
+        assert!(codex_models_query(None, None).is_err());
+    }
+
+    #[test]
+    fn codex_models_client_version_can_follow_other_query_parameters() {
+        assert_eq!(
+            codex_models_client_version("foo=bar&client_version=0.148.1"),
+            Some("0.148.1")
+        );
+        assert_eq!(codex_models_client_version("client_version=&foo=bar"), None);
+    }
+
+    #[test]
+    fn official_models_forwarding_preserves_the_client_originator() {
+        let mut incoming = axum::http::HeaderMap::new();
+        incoming.insert("originator", "codex_cli_rs".parse().expect("originator"));
+
+        let request = forward_codex_models_headers(
+            reqwest::Client::new().get("https://example.invalid/models"),
+            &incoming,
+        )
+        .build()
+        .expect("build forwarded request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("originator")
+                .and_then(|value| value.to_str().ok()),
+            Some("codex_cli_rs")
+        );
+    }
+
+    #[test]
+    fn official_models_fallback_removes_cc_switch_ownership_markers() {
+        let mut catalog = json!({
+            "cc_switch_merged": true,
+            "etag": "W/\"cc-switch-merged-1\"",
+            "models": [{"slug": "gpt-5.5"}]
+        });
+
+        remove_cc_switch_codex_models_ownership(&mut catalog);
+
+        assert!(catalog.get("cc_switch_merged").is_none());
+        assert!(catalog.get("etag").is_none());
+        assert_eq!(catalog["models"], json!([{"slug": "gpt-5.5"}]));
+    }
+
+    #[test]
+    fn proxy_merged_codex_catalog_is_marked_for_cache_ownership() {
+        let mut catalog = json!({"models": [{"slug": "gpt-5.5"}]});
+
+        mark_codex_models_catalog_as_cc_switch_merged(&mut catalog);
+
+        assert_eq!(
+            catalog
+                .get(crate::codex_config::CODEX_OFFICIAL_MODELS_MERGED_KEY)
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(catalog
+            .get("etag")
+            .and_then(|value| value.as_str())
+            .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")));
+    }
+
+    #[test]
+    fn cc_switch_codex_catalog_response_sets_cache_ownership_header() {
+        let response = cc_switch_codex_models_response(json!({
+            "models": [{"slug": "custom-slot"}]
+        }));
+
+        assert!(response
+            .headers()
+            .get(axum::http::header::ETAG)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")));
+    }
+
+    #[test]
+    fn cc_switch_codex_catalog_response_marks_non_object_without_panicking() {
+        let response = cc_switch_codex_models_response(json!([]));
+
+        assert!(response
+            .headers()
+            .get(axum::http::header::ETAG)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")));
+    }
+
+    #[test]
+    fn official_models_merge_omits_slot_with_missing_custom_provider() {
+        let mut catalog = json!({
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "GPT-5.2"}
+            ]
+        });
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deleted-provider",
+                "upstreamModel": "deepseek-v4-flash"
+            }]
+        });
+
+        let merged = merge_codex_official_models_catalog(&mut catalog, &settings, Vec::new());
+
+        assert!(
+            merged,
+            "configured custom slots must mark the response as merged"
+        );
+        assert_eq!(
+            catalog["models"],
+            json!([{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]),
+            "an unresolved custom mapping must suppress the colliding official row"
+        );
+
+        let mut data_catalog = json!({
+            "data": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "GPT-5.2"}
+            ]
+        });
+        assert!(merge_codex_official_models_catalog(
+            &mut data_catalog,
+            &settings,
+            Vec::new()
+        ));
+        assert_eq!(
+            data_catalog["data"],
+            json!([{"slug": "gpt-5.5", "display_name": "GPT-5.5"}])
+        );
+    }
+
+    #[test]
+    fn official_models_merge_is_noop_for_missing_noncolliding_provider() {
+        let mut catalog = json!({
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        let original = catalog.clone();
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "custom-only-slot",
+                "providerId": "deleted-provider"
+            }]
+        });
+
+        let merged = merge_codex_official_models_catalog(&mut catalog, &settings, Vec::new());
+
+        assert!(
+            !merged,
+            "an unchanged official response must keep its ownership"
+        );
+        assert_eq!(catalog, original);
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {

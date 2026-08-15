@@ -10,19 +10,73 @@ use std::time::Duration;
 const CODEX_OAUTH_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
 const CODEX_OAUTH_FETCH_TIMEOUT_SECS: u64 = 15;
 const ERROR_BODY_MAX_CHARS: usize = 512;
-const CODEX_OAUTH_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+async fn resolve_codex_client_version_for_request() -> Result<String, String> {
+    tokio::task::spawn_blocking(crate::codex_config::resolve_codex_client_version)
+        .await
+        .map_err(|error| format!("Failed to resolve Codex client version: {error}"))?
+        .ok_or_else(|| {
+            "Unable to determine Codex client version; install Codex or provide a valid models_cache.json"
+                .to_string()
+        })
+}
 
 pub async fn fetch_models_with_token(
     token: &str,
     account_id: &str,
 ) -> Result<Vec<FetchedModel>, String> {
+    let client_version = resolve_codex_client_version_for_request().await?;
     let client = crate::proxy::http_client::get();
     let response = client
         .get(CODEX_OAUTH_MODELS_URL)
-        .query(&[("client_version", CODEX_OAUTH_CLIENT_VERSION)])
+        .query(&[("client_version", client_version.as_str())])
         .header("Authorization", format!("Bearer {token}"))
         .header("originator", "cc-switch")
         .header("chatgpt-account-id", account_id)
+        .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = truncate_body(response.text().await.unwrap_or_default());
+        return Err(format!("HTTP {status}: {body}"));
+    }
+
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+    Ok(parse_models(value))
+}
+
+fn build_official_models_request(
+    client: &reqwest::Client,
+    token: &str,
+    account_id: Option<&str>,
+    client_version: &str,
+) -> reqwest::RequestBuilder {
+    let request = client
+        .get(CODEX_OAUTH_MODELS_URL)
+        .query(&[("client_version", client_version)])
+        .header("Authorization", format!("Bearer {token}"))
+        .header("originator", "cc-switch");
+    match account_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => request.header("chatgpt-account-id", id),
+        None => request,
+    }
+}
+
+/// 使用 ChatGPT 登录凭据（auth.json）拉取官方 Codex 模型列表。
+pub async fn fetch_official_models_with_token(
+    token: &str,
+    account_id: Option<&str>,
+) -> Result<Vec<FetchedModel>, String> {
+    let client_version = resolve_codex_client_version_for_request().await?;
+    let client = crate::proxy::http_client::get();
+    let response = build_official_models_request(&client, token, account_id, &client_version)
         .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS))
         .send()
         .await
@@ -187,6 +241,54 @@ mod tests {
         assert_eq!(
             models.into_iter().map(|model| model.id).collect::<Vec<_>>(),
             vec!["gpt-5.4".to_string(), "gpt-5.5".to_string()]
+        );
+    }
+
+    #[test]
+    fn official_models_request_forwards_account_id_when_present() {
+        let client = reqwest::Client::new();
+        let request = build_official_models_request(
+            &client,
+            "official-token",
+            Some("workspace-123"),
+            "0.147.0",
+        )
+        .build()
+        .expect("build official models request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("chatgpt-account-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("workspace-123")
+        );
+    }
+
+    #[test]
+    fn official_models_request_omits_account_id_when_absent() {
+        let client = reqwest::Client::new();
+        let request = build_official_models_request(&client, "official-token", None, "0.147.0")
+            .build()
+            .expect("build official models request");
+
+        assert!(!request.headers().contains_key("chatgpt-account-id"));
+    }
+
+    #[test]
+    fn official_models_request_uses_codex_client_version() {
+        let client = reqwest::Client::new();
+        let request = build_official_models_request(&client, "official-token", None, "0.147.0")
+            .build()
+            .expect("build official models request");
+
+        assert_eq!(
+            request
+                .url()
+                .query_pairs()
+                .find(|(key, _)| key == "client_version")
+                .map(|(_, value)| value.into_owned()),
+            Some("0.147.0".to_string())
         );
     }
 }

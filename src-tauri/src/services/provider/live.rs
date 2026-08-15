@@ -718,7 +718,7 @@ pub(crate) fn write_live_with_common_config(
         return Ok(());
     }
 
-    write_live_snapshot(app_type, &effective_provider)
+    write_live_snapshot(db, app_type, &effective_provider)
 }
 
 pub(crate) fn strip_common_config_from_live_settings(
@@ -1017,7 +1017,11 @@ impl LiveSnapshot {
 }
 
 /// Write live configuration snapshot for a provider
-pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+pub(crate) fn write_live_snapshot(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
@@ -1046,6 +1050,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             // providers keep the default tool set. Uses the same Anthropic detection as
             // the proxy router (apiFormat meta/settings + TOML wire_api).
             let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+            let resolve_provider = |provider_id: &str| {
+                crate::codex_config::resolve_codex_custom_catalog_provider_from_db(db, provider_id)
+            };
 
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &provider.settings_config,
@@ -1053,6 +1060,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 auth,
                 config_str,
                 profile,
+                Some(&resolve_provider),
             )?;
         }
         AppType::Gemini => {
