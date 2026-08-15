@@ -258,7 +258,10 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
-        let mut retry_index = 0u32;
+        // 每条命中规则独立计数：连续错误匹配到不同规则时，
+        // 各规则仍享有自己完整的重试预算和从第一步开始的退避序列。
+        let mut rule_attempts: std::collections::HashMap<usize, u32> =
+            std::collections::HashMap::new();
         loop {
             match self
                 .forward(
@@ -268,30 +271,32 @@ impl RequestForwarder {
             {
                 Ok(result) => return Ok(result),
                 Err(error) => {
-                    let Some(rule) = matching_retry_rule(&self.retry_rules, &error) else {
+                    let Some((rule_index, rule)) = matching_retry_rule(&self.retry_rules, &error)
+                    else {
                         return Err(error);
                     };
-                    if retry_index >= rule.retry_count {
+                    let Some(attempt) =
+                        take_rule_retry_attempt(&mut rule_attempts, rule_index, rule.retry_count)
+                    else {
                         log::warn!(
                             "{}",
                             build_retry_rule_exhausted_log(
                                 app_type,
                                 &provider.name,
-                                retry_index,
+                                rule.retry_count,
                                 &error
                             )
                         );
                         return Err(error);
-                    }
+                    };
 
-                    retry_index += 1;
-                    let delay = retry_delay(rule, retry_index);
+                    let delay = retry_delay(rule, attempt);
                     log::warn!(
                         "[{}] 特定错误规则命中，{}ms 后重试当前 Provider {} ({}/{})：{}",
                         app_type.as_str(),
                         delay.as_millis(),
                         provider.name,
-                        retry_index,
+                        attempt,
                         rule.retry_count,
                         error
                     );
@@ -2791,7 +2796,7 @@ impl RequestForwarder {
 fn matching_retry_rule<'a>(
     rules: &'a [ProxyRetryRule],
     error: &ProxyError,
-) -> Option<&'a ProxyRetryRule> {
+) -> Option<(usize, &'a ProxyRetryRule)> {
     let (status, body) = match error {
         ProxyError::UpstreamError { status, body } => (Some(*status), body.as_deref()),
         _ => (None, None),
@@ -2801,8 +2806,21 @@ fn matching_retry_rule<'a>(
         .map(str::to_owned)
         .unwrap_or_else(|| error.to_string())
         .to_lowercase();
+    // message_contains 只针对错误消息本身匹配，避免命中 error.code、
+    // request_id、model 等元数据而架空同规则的 AND 语义。
+    let message_searchable = match body {
+        Some(text) => match extract_upstream_error_message(text) {
+            Some(message) => message,
+            // JSON body 缺少 message 字段时不存在可匹配的错误消息；
+            // 非 JSON body 本身就是纯文本错误消息。
+            None if serde_json::from_str::<Value>(text).is_ok() => String::new(),
+            None => text.to_string(),
+        },
+        None => error.to_string(),
+    }
+    .to_lowercase();
 
-    rules.iter().find(|rule| {
+    rules.iter().enumerate().find(|(_, rule)| {
         if !rule.enabled || rule.retry_count == 0 {
             return false;
         }
@@ -2827,7 +2845,7 @@ fn matching_retry_rule<'a>(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .is_none_or(|value| searchable.contains(&value.to_lowercase()))
+                .is_none_or(|value| message_searchable.contains(&value.to_lowercase()))
     })
 }
 
@@ -2840,6 +2858,35 @@ fn extract_upstream_error_code(body: &str) -> Option<String> {
         .or_else(|| {
             value
                 .pointer("/response/error/code")
+                .and_then(Value::as_str)
+        })
+        .map(str::to_string)
+}
+
+/// 记录并返回指定规则本次的重试序号；该规则预算耗尽时返回 None。
+/// 每条规则独立计数，保证连续错误匹配到不同规则时互不影响预算和退避序列。
+fn take_rule_retry_attempt(
+    rule_attempts: &mut std::collections::HashMap<usize, u32>,
+    rule_index: usize,
+    retry_count: u32,
+) -> Option<u32> {
+    let attempts = rule_attempts.entry(rule_index).or_insert(0);
+    if *attempts >= retry_count {
+        return None;
+    }
+    *attempts += 1;
+    Some(*attempts)
+}
+
+fn extract_upstream_error_message(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    value
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("message").and_then(Value::as_str))
+        .or_else(|| {
+            value
+                .pointer("/response/error/message")
                 .and_then(Value::as_str)
         })
         .map(str::to_string)
@@ -3856,7 +3903,7 @@ mod tests {
         };
 
         assert_eq!(
-            matching_retry_rule(&rules, &error).map(|rule| rule.retry_count),
+            matching_retry_rule(&rules, &error).map(|(_, rule)| rule.retry_count),
             Some(3)
         );
     }
@@ -3919,6 +3966,86 @@ mod tests {
         };
 
         assert!(matching_retry_rule(&rules, &error).is_none());
+    }
+
+    #[test]
+    fn retry_rule_message_condition_ignores_error_code_metadata() {
+        // code 与 message 条件相同时，仅 error.code 命中不应满足 message 条件
+        let rules = vec![ProxyRetryRule {
+            enabled: true,
+            status_codes: Vec::new(),
+            error_codes: vec!["server_is_overloaded".to_string()],
+            message_contains: Some("server_is_overloaded".to_string()),
+            retry_count: 1,
+            backoff_strategy: RetryBackoffStrategy::Exponential,
+            max_delay_seconds: 15,
+        }];
+        let error = ProxyError::UpstreamError {
+            status: 503,
+            body: Some(
+                r#"{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(matching_retry_rule(&rules, &error).is_none());
+    }
+
+    #[test]
+    fn retry_rule_message_condition_matches_structured_message() {
+        let rules = vec![ProxyRetryRule {
+            enabled: true,
+            status_codes: Vec::new(),
+            error_codes: Vec::new(),
+            message_contains: Some("currently overloaded".to_string()),
+            retry_count: 1,
+            backoff_strategy: RetryBackoffStrategy::Exponential,
+            max_delay_seconds: 15,
+        }];
+        let error = ProxyError::UpstreamError {
+            status: 503,
+            body: Some(
+                r#"{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(matching_retry_rule(&rules, &error).is_some());
+    }
+
+    #[test]
+    fn retry_rule_message_condition_ignores_request_id_metadata() {
+        let rules = vec![ProxyRetryRule {
+            enabled: true,
+            status_codes: Vec::new(),
+            error_codes: Vec::new(),
+            message_contains: Some("req-abc-123".to_string()),
+            retry_count: 1,
+            backoff_strategy: RetryBackoffStrategy::Exponential,
+            max_delay_seconds: 15,
+        }];
+        let error = ProxyError::UpstreamError {
+            status: 500,
+            body: Some(
+                r#"{"error":{"message":"internal error"},"request_id":"req-abc-123"}"#.to_string(),
+            ),
+        };
+
+        assert!(matching_retry_rule(&rules, &error).is_none());
+    }
+
+    #[test]
+    fn retry_budget_is_tracked_per_rule() {
+        let mut attempts = std::collections::HashMap::new();
+
+        // 规则 0 用掉唯一一次预算后，规则 1 仍拥有完整预算且退避从第一步开始
+        assert_eq!(take_rule_retry_attempt(&mut attempts, 0, 1), Some(1));
+        assert_eq!(take_rule_retry_attempt(&mut attempts, 1, 3), Some(1));
+        assert_eq!(take_rule_retry_attempt(&mut attempts, 1, 3), Some(2));
+        // 规则 0 预算耗尽，不影响规则 1 继续使用剩余预算
+        assert_eq!(take_rule_retry_attempt(&mut attempts, 0, 1), None);
+        assert_eq!(take_rule_retry_attempt(&mut attempts, 1, 3), Some(3));
+        assert_eq!(take_rule_retry_attempt(&mut attempts, 1, 3), None);
     }
 
     #[test]
