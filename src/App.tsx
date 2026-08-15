@@ -55,6 +55,7 @@ import {
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
+import { supportsProviderSpecificTerminal } from "@/utils/providerCapabilities";
 import { cn } from "@/lib/utils";
 import {
   isWindows,
@@ -915,6 +916,20 @@ function App() {
   }, [activeApp, confirmAction, piCurrentState?.defaultProviderId, t]);
 
   const handleOpenTerminal = async (provider: Provider) => {
+    const showRoutingRequired = () =>
+      toast.error(
+        t("provider.terminalRequiresRouting", {
+          defaultValue:
+            "此供应商必须通过 Claude Code 本地路由使用。请启用代理接管并切换到该供应商，然后在常规终端中运行 claude。",
+        }),
+        { duration: 6000 },
+      );
+
+    if (!supportsProviderSpecificTerminal(activeApp, provider)) {
+      showRoutingRequired();
+      return;
+    }
+
     try {
       const selectedDir = await settingsApi.pickDirectory();
       if (!selectedDir) {
@@ -932,6 +947,10 @@ function App() {
     } catch (error) {
       console.error("[App] Failed to open terminal", error);
       const errorMessage = extractErrorMessage(error);
+      if (errorMessage?.includes("CLAUDE_PROVIDER_TERMINAL_REQUIRES_ROUTING")) {
+        showRoutingRequired();
+        return;
+      }
       toast.error(
         t("provider.terminalOpenFailed", {
           defaultValue: "打开终端失败",

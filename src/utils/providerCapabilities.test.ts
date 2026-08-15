@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
-import { providerNeedsRouting } from "@/utils/providerCapabilities";
+import {
+  providerNeedsRouting,
+  supportsProviderSpecificTerminal,
+} from "@/utils/providerCapabilities";
 
 function mkProvider(overrides: Partial<Provider> = {}): Provider {
   return { id: "p1", name: "Test", settingsConfig: {}, ...overrides };
@@ -55,6 +58,21 @@ describe("providerNeedsRouting", () => {
         providerNeedsRouting(
           "claude",
           mkProvider({ meta: { providerType: "codex_oauth" } }),
+        ),
+      ).toBe(true);
+    });
+
+    it("Claude 下仅保留旧 Codex 地址的历史配置仍需路由", () => {
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({
+            settingsConfig: {
+              env: {
+                ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex",
+              },
+            },
+          }),
         ),
       ).toBe(true);
     });
@@ -125,6 +143,39 @@ describe("providerNeedsRouting", () => {
           mkProvider({ meta: { apiFormat: "openai_responses" } }),
         ),
       ).toBe(true);
+    });
+
+    it("旧版 settings_config.api_format 仍按转换格式判定", () => {
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({ settingsConfig: { api_format: "gemini_native" } }),
+        ),
+      ).toBe(true);
+    });
+
+    it("旧版 openrouter_compat_mode 仍需路由", () => {
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({ settingsConfig: { openrouter_compat_mode: " 1 " } }),
+        ),
+      ).toBe(true);
+    });
+
+    it("meta.apiFormat 优先于旧版格式字段", () => {
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({
+            meta: { apiFormat: "anthropic" },
+            settingsConfig: {
+              api_format: "openai_responses",
+              openrouter_compat_mode: true,
+            },
+          }),
+        ),
+      ).toBe(false);
     });
   });
 
@@ -203,5 +254,29 @@ describe("providerNeedsRouting", () => {
         ).toBe(true);
       },
     );
+  });
+});
+
+describe("supportsProviderSpecificTerminal", () => {
+  it("拒绝为必须经过路由的 Claude 供应商生成直连终端配置", () => {
+    const provider = mkProvider({ meta: { providerType: "codex_oauth" } });
+    expect(supportsProviderSpecificTerminal("claude", provider)).toBe(false);
+  });
+
+  it("保留原生 Claude 直连供应商的终端行为", () => {
+    const provider = mkProvider({ meta: { apiFormat: "anthropic" } });
+    expect(supportsProviderSpecificTerminal("claude", provider)).toBe(true);
+  });
+
+  it("拒绝旧版兼容模式生成直连终端配置", () => {
+    const provider = mkProvider({
+      settingsConfig: { openrouter_compat_mode: true },
+    });
+    expect(supportsProviderSpecificTerminal("claude", provider)).toBe(false);
+  });
+
+  it("不改变其他应用的终端能力", () => {
+    const provider = mkProvider({ meta: { providerType: "codex_oauth" } });
+    expect(supportsProviderSpecificTerminal("codex", provider)).toBe(true);
   });
 });
