@@ -75,6 +75,10 @@ struct ChatToResponsesState {
     reasoning: ReasoningItemState,
     inline_think: InlineThinkState,
     tools: BTreeMap<usize, ToolCallState>,
+    /// Current owner of each raw upstream Chat tool-call index.
+    ///
+    /// Values are internal `tools` keys only; this map never drives output ordering.
+    raw_index_to_key: BTreeMap<usize, usize>,
     next_tool_index_to_add: usize,
     output_items: Vec<(u32, Value)>,
     latest_usage: Option<Value>,
@@ -97,6 +101,7 @@ impl Default for ChatToResponsesState {
             reasoning: ReasoningItemState::default(),
             inline_think: InlineThinkState::default(),
             tools: BTreeMap::new(),
+            raw_index_to_key: BTreeMap::new(),
             next_tool_index_to_add: 0,
             output_items: Vec::new(),
             latest_usage: None,
@@ -363,43 +368,76 @@ impl ChatToResponsesState {
 
     /// 将上游的原始 `index` 与稳定的非空调用 ID 统一解析成内部 key。
     ///
-    /// 非空 ID 是更强的身份信号：已知 ID 永远回到原状态；显式 index 只有在空闲、
-    /// 对应状态尚无 ID、或 ID 相同时才复用。不同非空 ID 冲突时必须另行分配 key。
-    /// 对于既没有可用 ID、又缺少 index 的续帧，继续保守地归入最后一个已知调用。
+    /// 非空 ID 是更强的身份信号，raw index 只能经显式 alias 访问内部状态。不同
+    /// 非空 ID 复用 raw index 时会重绑该 alias，但旧状态仍可通过 ID 找回。
     fn resolve_tool_key(
-        &self,
+        &mut self,
         explicit_index: Option<usize>,
         call_id: Option<&str>,
     ) -> Option<usize> {
         let call_id = call_id.filter(|id| !id.is_empty());
 
         if let Some(call_id) = call_id {
-            if let Some((key, _)) = self
+            let existing_key = self
                 .tools
                 .iter()
-                .find(|(_, state)| state.call_id == call_id)
-            {
-                return Some(*key);
+                .find_map(|(key, state)| (state.call_id == call_id).then_some(*key));
+            if let Some(internal_key) = existing_key {
+                if let Some(raw_index) = explicit_index {
+                    self.raw_index_to_key.insert(raw_index, internal_key);
+                }
+                return Some(internal_key);
             }
         }
 
-        let Some(explicit_index) = explicit_index else {
+        let Some(raw_index) = explicit_index else {
             return match call_id {
                 Some(_) => self.next_available_tool_key(),
                 None => Some(self.tools.keys().next_back().copied().unwrap_or(0)),
             };
         };
 
-        match self.tools.get(&explicit_index) {
-            None => Some(explicit_index),
-            Some(state) => match call_id {
-                None => Some(explicit_index),
-                Some(call_id) if state.call_id.is_empty() || state.call_id == call_id => {
-                    Some(explicit_index)
+        if let Some(internal_key) = self.raw_index_to_key.get(&raw_index).copied() {
+            let can_reuse = match call_id {
+                None => {
+                    // Once a raw index is reused, ID-less frames are irreducibly ambiguous.
+                    // The latest ID-bearing owner is the only deterministic continuation.
+                    true
                 }
-                Some(_) => self.next_available_tool_key(),
-            },
+                Some(call_id) => self
+                    .tools
+                    .get(&internal_key)
+                    .map(|state| state.call_id.is_empty() || state.call_id == call_id)
+                    .unwrap_or(true),
+            };
+            if can_reuse {
+                return Some(internal_key);
+            }
+
+            let internal_key = self.next_available_tool_key()?;
+            self.raw_index_to_key.insert(raw_index, internal_key);
+            return Some(internal_key);
         }
+
+        // Preserve late-identity compatibility only for an anonymous state that was created
+        // without any raw-index alias. Numeric equality alone never establishes identity.
+        let can_adopt_unaliased_anonymous = self
+            .tools
+            .get(&raw_index)
+            .map(|state| state.call_id.is_empty())
+            .unwrap_or(false)
+            && !self
+                .raw_index_to_key
+                .values()
+                .any(|internal_key| *internal_key == raw_index);
+        let internal_key = if can_adopt_unaliased_anonymous || !self.tools.contains_key(&raw_index)
+        {
+            raw_index
+        } else {
+            self.next_available_tool_key()?
+        };
+        self.raw_index_to_key.insert(raw_index, internal_key);
+        Some(internal_key)
     }
 
     fn push_tool_call_delta(&mut self, tool_call: &Value, reasoning: Option<&str>) -> Vec<Bytes> {
@@ -407,11 +445,8 @@ impl ChatToResponsesState {
             .get("id")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        let explicit_index = tool_call
-            .get("index")
-            .and_then(|v| v.as_u64())
-            .and_then(|index| usize::try_from(index).ok());
-        let Some(chat_index) = self.resolve_tool_key(explicit_index, id_delta.as_deref()) else {
+        let explicit_index = chat_tool_index(tool_call);
+        let Some(internal_key) = self.resolve_tool_key(explicit_index, id_delta.as_deref()) else {
             // 所有 usize key 都被占用时无法再隔离身份；拒绝改写已有状态比混合调用安全。
             return Vec::new();
         };
@@ -431,7 +466,7 @@ impl ChatToResponsesState {
         let current_name: String;
 
         {
-            let state = self.tools.entry(chat_index).or_default();
+            let state = self.tools.entry(internal_key).or_default();
             if let Some(ref id) = id_delta {
                 if !id.is_empty() {
                     state.call_id.clone_from(id);
@@ -478,7 +513,7 @@ impl ChatToResponsesState {
     }
 
     fn flush_ready_tool_calls(&mut self) -> Vec<Bytes> {
-        // Release consecutive Chat indexes so late identity fragments cannot reorder calls.
+        // Release consecutive internal keys so late identity fragments cannot reorder calls.
         let mut events = Vec::new();
         loop {
             let key = self.next_tool_index_to_add;
@@ -486,7 +521,10 @@ impl ChatToResponsesState {
                 break;
             };
             if state.added || state.done {
-                self.next_tool_index_to_add += 1;
+                let Some(next_key) = self.next_tool_index_to_add.checked_add(1) else {
+                    break;
+                };
+                self.next_tool_index_to_add = next_key;
                 continue;
             }
             if state.call_id.is_empty() || state.name.is_empty() {
@@ -526,7 +564,10 @@ impl ChatToResponsesState {
                     &state.arguments,
                 ));
             }
-            self.next_tool_index_to_add += 1;
+            let Some(next_key) = self.next_tool_index_to_add.checked_add(1) else {
+                break;
+            };
+            self.next_tool_index_to_add = next_key;
         }
 
         events
@@ -814,6 +855,18 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
 }
 
+/// Parse the optional wire index without allowing a narrowing conversion to wrap.
+///
+/// Chat JSON numbers are decoded as `u64` here because negative and fractional values
+/// are not valid tool-call indices. `try_from` deliberately keeps an index that cannot
+/// be represented by this host on the same conservative path as an omitted index.
+fn chat_tool_index(tool_call: &Value) -> Option<usize> {
+    tool_call
+        .get("index")
+        .and_then(Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+}
+
 enum ThinkPrefixDecision {
     NeedMore,
     Reasoning,
@@ -986,14 +1039,189 @@ mod tests {
         String::from_utf8(bytes.concat()).unwrap()
     }
 
-    fn parse_sse_events(output: &str) -> Vec<Value> {
+    fn parse_sse_records(output: &str) -> Vec<(String, Value)> {
         output
             .split("\n\n")
-            .filter_map(|block| {
-                let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
-                serde_json::from_str(data).ok()
+            .filter(|block| !block.trim().is_empty())
+            .map(|block| {
+                let event = block
+                    .lines()
+                    .find_map(|line| line.strip_prefix("event: "))
+                    .unwrap_or_else(|| panic!("SSE block has no event label: {block:?}"));
+                let data = block
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data: "))
+                    .unwrap_or_else(|| panic!("SSE block has no data field: {block:?}"));
+                let value: Value = serde_json::from_str(data)
+                    .unwrap_or_else(|error| panic!("invalid SSE JSON ({error}): {data:?}"));
+                assert_eq!(
+                    value["type"].as_str(),
+                    Some(event),
+                    "SSE event label and payload type diverged"
+                );
+                (event.to_string(), value)
             })
             .collect()
+    }
+
+    fn parse_sse_events(output: &str) -> Vec<Value> {
+        parse_sse_records(output)
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect()
+    }
+
+    fn completed_items(events: &[Value]) -> &[Value] {
+        let created_pos = events
+            .iter()
+            .position(|event| event["type"] == "response.created")
+            .expect("response.created is required");
+        let in_progress_pos = events
+            .iter()
+            .position(|event| event["type"] == "response.in_progress")
+            .expect("response.in_progress is required");
+        let completed_pos = events
+            .iter()
+            .position(|event| event["type"] == "response.completed")
+            .expect("response.completed is required");
+        assert!(created_pos < in_progress_pos);
+        assert!(in_progress_pos < completed_pos);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["type"] == "response.completed")
+                .count(),
+            1,
+            "expected exactly one response.completed event"
+        );
+        events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap()["response"]["output"]
+            .as_array()
+            .unwrap()
+    }
+
+    fn assert_function_item(
+        item: &Value,
+        item_id: &str,
+        call_id: &str,
+        name: &str,
+        arguments: Value,
+    ) {
+        assert_eq!(item["type"], "function_call");
+        assert_eq!(item["id"], item_id);
+        assert_eq!(item["call_id"], call_id);
+        assert_eq!(item["name"], name);
+        assert_eq!(
+            serde_json::from_str::<Value>(item["arguments"].as_str().unwrap()).unwrap(),
+            arguments
+        );
+    }
+
+    fn assert_tool_lifecycle(
+        events: &[Value],
+        item_id: &str,
+        output_index: u64,
+        delta_type: &str,
+        done_type: &str,
+    ) {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["type"] == "response.completed")
+                .count(),
+            1,
+            "expected exactly one response.completed event"
+        );
+        let added_pos = events
+            .iter()
+            .position(|event| {
+                event["type"] == "response.output_item.added" && event["item"]["id"] == item_id
+            })
+            .unwrap_or_else(|| panic!("missing output_item.added for {item_id}"));
+        let delta_pos = events
+            .iter()
+            .position(|event| event["type"] == delta_type && event["item_id"] == item_id)
+            .unwrap_or_else(|| panic!("missing {delta_type} for {item_id}"));
+        let done_pos = events
+            .iter()
+            .position(|event| event["type"] == done_type && event["item_id"] == item_id)
+            .unwrap_or_else(|| panic!("missing {done_type} for {item_id}"));
+        let item_done_pos = events
+            .iter()
+            .position(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["id"] == item_id
+            })
+            .unwrap_or_else(|| panic!("missing output_item.done for {item_id}"));
+        let completed_pos = events
+            .iter()
+            .position(|event| event["type"] == "response.completed")
+            .unwrap();
+
+        assert!(added_pos < delta_pos);
+        assert!(delta_pos < done_pos);
+        assert!(done_pos < item_done_pos);
+        assert!(item_done_pos < completed_pos);
+        assert_eq!(events[added_pos]["output_index"], output_index);
+        assert_eq!(events[delta_pos]["output_index"], output_index);
+        assert_eq!(events[done_pos]["output_index"], output_index);
+        assert_eq!(events[item_done_pos]["output_index"], output_index);
+        assert_eq!(events[added_pos]["item"]["status"], "in_progress");
+        assert_eq!(events[item_done_pos]["item"]["status"], "completed");
+    }
+
+    fn assert_tool_search_lifecycle(
+        events: &[Value],
+        call_id: &str,
+        item_id: &str,
+        output_index: u64,
+    ) {
+        let added_pos = events
+            .iter()
+            .position(|event| {
+                event["type"] == "response.output_item.added"
+                    && event["item"]["type"] == "tool_search_call"
+                    && event["item"]["call_id"] == call_id
+            })
+            .unwrap_or_else(|| panic!("missing tool-search output_item.added for {call_id}"));
+        let delta_pos = events
+            .iter()
+            .position(|event| {
+                event["type"] == "response.function_call_arguments.delta"
+                    && event["item_id"] == item_id
+            })
+            .unwrap_or_else(|| panic!("missing tool-search argument delta for {call_id}"));
+        let done_pos = events
+            .iter()
+            .position(|event| {
+                event["type"] == "response.function_call_arguments.done"
+                    && event["item_id"] == item_id
+            })
+            .unwrap_or_else(|| panic!("missing tool-search argument done for {call_id}"));
+        let item_done_pos = events
+            .iter()
+            .position(|event| {
+                event["type"] == "response.output_item.done"
+                    && event["item"]["type"] == "tool_search_call"
+                    && event["item"]["call_id"] == call_id
+            })
+            .unwrap_or_else(|| panic!("missing tool-search output_item.done for {call_id}"));
+        let completed_pos = events
+            .iter()
+            .position(|event| event["type"] == "response.completed")
+            .unwrap();
+
+        assert!(added_pos < delta_pos);
+        assert!(delta_pos < done_pos);
+        assert!(done_pos < item_done_pos);
+        assert!(item_done_pos < completed_pos);
+        assert_eq!(events[added_pos]["output_index"], output_index);
+        assert_eq!(events[delta_pos]["output_index"], output_index);
+        assert_eq!(events[done_pos]["output_index"], output_index);
+        assert_eq!(events[item_done_pos]["output_index"], output_index);
+        assert_eq!(events[added_pos]["item"]["status"], "in_progress");
+        assert_eq!(events[item_done_pos]["item"]["status"], "completed");
     }
 
     #[tokio::test]
@@ -1125,11 +1353,7 @@ mod tests {
             .iter()
             .filter(|event| event["type"] == "response.output_item.added")
             .collect::<Vec<_>>();
-        let completed = events
-            .iter()
-            .find(|event| event["type"] == "response.completed")
-            .unwrap();
-        let items = completed["response"]["output"].as_array().unwrap();
+        let items = completed_items(&events);
 
         assert_eq!(added.len(), 2);
         assert_eq!(added[0]["output_index"], 0);
@@ -1327,6 +1551,261 @@ mod tests {
         assert!(!output.contains(r#"{"command":"dir a"}{"command":"dir b"}"#));
     }
 
+    /// P1: a synthetic internal key must never become addressable as a later raw index.
+    #[tokio::test]
+    async fn p1_four_frame_real_index_alias_repro() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"a\\\":1}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\",\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_c\",\"type\":\"function\",\"function\":{\"name\":\"tool_c\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"c\\\":3}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .collect::<Vec<_>>();
+        let items = completed_items(&events);
+        let expected = [
+            ("fc_call_a", "call_a", "tool_a", json!({ "a": 1 })),
+            ("fc_call_b", "call_b", "tool_b", json!({ "b": 2 })),
+            ("fc_call_c", "call_c", "tool_c", json!({ "c": 3 })),
+        ];
+
+        assert_eq!(added.len(), expected.len());
+        assert_eq!(done.len(), expected.len());
+        assert_eq!(items.len(), expected.len());
+        let raw_arguments = items
+            .iter()
+            .map(|item| item["arguments"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            raw_arguments,
+            vec![r#"{"a":1}"#, r#"{"b":2}"#, r#"{"c":3}"#]
+        );
+        for (index, (item_id, call_id, name, arguments)) in expected.into_iter().enumerate() {
+            let item = &items[index];
+            assert_tool_lifecycle(
+                &events,
+                item_id,
+                index as u64,
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.done",
+            );
+            assert_eq!(added[index]["output_index"], index as u64);
+            assert_eq!(added[index]["item"]["id"], item_id);
+            assert_eq!(added[index]["item"]["call_id"], call_id);
+            assert_eq!(added[index]["item"]["name"], name);
+            assert_eq!(done[index]["output_index"], index as u64);
+            assert_eq!(done[index]["item"], *item);
+            assert_eq!(item["type"], "function_call");
+            assert_eq!(item["id"], item_id);
+            assert_eq!(item["call_id"], call_id);
+            assert_eq!(item["name"], name);
+            assert_eq!(
+                serde_json::from_str::<Value>(item["arguments"].as_str().unwrap()).unwrap(),
+                arguments
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn idless_continuation_follows_latest_reused_raw_index_owner() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_owner\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"owner\\\":\\\"a\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_owner\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\",\"arguments\":\"{\\\"owner\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_owner\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\"\\\"b\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .collect::<Vec<_>>();
+        let items = completed_items(&events);
+
+        assert_eq!(added.len(), 2);
+        assert_eq!(done.len(), 2);
+        assert_eq!(items.len(), 2);
+        assert_eq!(added[0]["item"]["id"], "fc_call_a");
+        assert_eq!(added[1]["item"]["id"], "fc_call_b");
+        assert_eq!(done[0]["item"], items[0]);
+        assert_eq!(done[1]["item"], items[1]);
+        assert_function_item(
+            &items[0],
+            "fc_call_a",
+            "call_a",
+            "tool_a",
+            json!({ "owner": "a" }),
+        );
+        assert_function_item(
+            &items[1],
+            "fc_call_b",
+            "call_b",
+            "tool_b",
+            json!({ "owner": "b" }),
+        );
+    }
+
+    #[tokio::test]
+    async fn known_id_moves_and_rebinds_raw_owner_back_to_itself() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_move\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"parts\\\":[\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_move\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":7,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"1\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_move\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":7,\"type\":\"function\",\"function\":{\"arguments\":\",2\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_move\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\",\"arguments\":\"{\\\"owner\\\":\\\"b\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_move\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\",3\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_move\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\",4\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_move\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":7,\"type\":\"function\",\"function\":{\"arguments\":\"]}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .collect::<Vec<_>>();
+
+        assert_eq!(added.len(), 2);
+        assert_eq!(done.len(), 2);
+        assert_eq!(items.len(), 2);
+        for (index, (item_id, call_id, name)) in [
+            ("fc_call_a", "call_a", "tool_a"),
+            ("fc_call_b", "call_b", "tool_b"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(added[index]["output_index"], index as u64);
+            assert_eq!(added[index]["item"]["id"], item_id);
+            assert_eq!(added[index]["item"]["call_id"], call_id);
+            assert_eq!(added[index]["item"]["name"], name);
+            assert_eq!(done[index]["output_index"], index as u64);
+            assert_eq!(done[index]["item"], items[index]);
+        }
+        assert_function_item(
+            &items[0],
+            "fc_call_a",
+            "call_a",
+            "tool_a",
+            json!({ "parts": [1, 2, 3, 4] }),
+        );
+        assert_function_item(
+            &items[1],
+            "fc_call_b",
+            "call_b",
+            "tool_b",
+            json!({ "owner": "b" }),
+        );
+    }
+
+    #[tokio::test]
+    async fn same_batch_collisions_and_split_fragments_keep_arrival_order() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_batch\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"a\\\":1}\"}},{\"index\":0,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\",\"arguments\":\"{\\\"b\\\":\"}},{\"index\":1,\"id\":\"call_c\",\"type\":\"function\",\"function\":{\"name\":\"tool_c\",\"arguments\":\"{\\\"c\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_batch\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"type\":\"function\",\"function\":{\"arguments\":\"3}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_batch\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\"2}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .collect::<Vec<_>>();
+
+        assert_eq!(added.len(), 3);
+        assert_eq!(done.len(), 3);
+        assert_eq!(items.len(), 3);
+        for (index, (item_id, call_id, name)) in [
+            ("fc_call_a", "call_a", "tool_a"),
+            ("fc_call_b", "call_b", "tool_b"),
+            ("fc_call_c", "call_c", "tool_c"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(added[index]["output_index"], index as u64);
+            assert_eq!(added[index]["item"]["id"], item_id);
+            assert_eq!(added[index]["item"]["call_id"], call_id);
+            assert_eq!(added[index]["item"]["name"], name);
+            assert_eq!(done[index]["output_index"], index as u64);
+            assert_eq!(done[index]["item"], items[index]);
+        }
+        assert_function_item(
+            &items[0],
+            "fc_call_a",
+            "call_a",
+            "tool_a",
+            json!({ "a": 1 }),
+        );
+        assert_function_item(
+            &items[1],
+            "fc_call_b",
+            "call_b",
+            "tool_b",
+            json!({ "b": 2 }),
+        );
+        assert_function_item(
+            &items[2],
+            "fc_call_c",
+            "call_c",
+            "tool_c",
+            json!({ "c": 3 }),
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_ids_follow_alias_while_whitespace_ids_remain_identity() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_ids\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ids\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\",\"type\":\"function\",\"function\":{\"arguments\":\"1}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ids\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\" \",\"type\":\"function\",\"function\":{\"name\":\"tool_space\",\"arguments\":\"{\\\"space\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ids\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"type\":\"function\",\"function\":{\"arguments\":\"true}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+
+        assert_eq!(items.len(), 2);
+        assert_function_item(
+            &items[0],
+            "fc_call_a",
+            "call_a",
+            "tool_a",
+            json!({ "a": 1 }),
+        );
+        assert_function_item(
+            &items[1],
+            "fc_ ",
+            " ",
+            "tool_space",
+            json!({ "space": true }),
+        );
+    }
+
     #[tokio::test]
     async fn repeated_id_with_changed_explicit_index_stays_in_one_call() {
         let output = collect(vec![
@@ -1371,6 +1850,136 @@ mod tests {
             state.resolve_tool_key(Some(usize::MAX), Some("call_new")),
             Some(1)
         );
+        assert_eq!(state.raw_index_to_key.get(&usize::MAX), Some(&1));
+    }
+
+    #[test]
+    fn max_internal_tool_key_flush_and_finalize_do_not_overflow_cursor() {
+        let mut state = ChatToResponsesState {
+            next_tool_index_to_add: usize::MAX,
+            ..ChatToResponsesState::default()
+        };
+        state.tools.insert(
+            usize::MAX,
+            ToolCallState {
+                call_id: "call_max".to_string(),
+                name: "tool_max".to_string(),
+                arguments: "{}".to_string(),
+                ..ToolCallState::default()
+            },
+        );
+
+        let events = state.flush_ready_tool_calls();
+        assert!(!events.is_empty());
+        assert_eq!(state.next_tool_index_to_add, usize::MAX);
+        assert!(state.tools[&usize::MAX].added);
+
+        // The already-added branch must also terminate safely at the boundary.
+        assert!(state.flush_ready_tool_calls().is_empty());
+        let final_events = state.finalize_tools();
+        assert!(!final_events.is_empty());
+        assert!(state.tools[&usize::MAX].done);
+    }
+
+    #[test]
+    fn resolver_rebinds_raw_owner_between_known_ids() {
+        let mut state = ChatToResponsesState::default();
+        state.tools.insert(
+            0,
+            ToolCallState {
+                call_id: "call_a".to_string(),
+                ..ToolCallState::default()
+            },
+        );
+        state.tools.insert(
+            1,
+            ToolCallState {
+                call_id: "call_b".to_string(),
+                ..ToolCallState::default()
+            },
+        );
+        state.raw_index_to_key.insert(0, 0);
+
+        assert_eq!(state.resolve_tool_key(Some(0), Some("call_b")), Some(1));
+        assert_eq!(state.resolve_tool_key(Some(0), None), Some(1));
+        assert_eq!(state.resolve_tool_key(Some(0), Some("call_a")), Some(0));
+        assert_eq!(state.resolve_tool_key(Some(0), None), Some(0));
+    }
+
+    #[test]
+    fn resolver_adopts_only_unaliased_anonymous_matching_state() {
+        let mut unaliased = ChatToResponsesState::default();
+        unaliased.tools.insert(0, ToolCallState::default());
+
+        assert_eq!(
+            unaliased.resolve_tool_key(Some(0), Some("call_late")),
+            Some(0)
+        );
+        assert_eq!(unaliased.raw_index_to_key.get(&0), Some(&0));
+
+        let mut already_aliased = ChatToResponsesState::default();
+        already_aliased.tools.insert(1, ToolCallState::default());
+        already_aliased.raw_index_to_key.insert(7, 1);
+
+        assert_eq!(
+            already_aliased.resolve_tool_key(Some(1), Some("call_new")),
+            Some(2)
+        );
+        assert_eq!(already_aliased.raw_index_to_key.get(&1), Some(&2));
+        assert_eq!(already_aliased.raw_index_to_key.get(&7), Some(&1));
+    }
+
+    #[test]
+    fn resolver_preserves_empty_whitespace_and_missing_identity_contracts() {
+        let mut state = ChatToResponsesState::default();
+        state.tools.insert(
+            2,
+            ToolCallState {
+                call_id: "call_a".to_string(),
+                ..ToolCallState::default()
+            },
+        );
+        state.tools.insert(
+            9,
+            ToolCallState {
+                call_id: " ".to_string(),
+                ..ToolCallState::default()
+            },
+        );
+        state.tools.insert(
+            12,
+            ToolCallState {
+                call_id: "call_greatest".to_string(),
+                ..ToolCallState::default()
+            },
+        );
+        state.raw_index_to_key.insert(2, 2);
+
+        assert_eq!(state.resolve_tool_key(Some(2), Some("")), Some(2));
+        assert_eq!(state.resolve_tool_key(Some(7), Some(" ")), Some(9));
+        assert_eq!(state.raw_index_to_key.get(&7), Some(&9));
+        assert_eq!(state.resolve_tool_key(Some(2), Some("call_a")), Some(2));
+        // The most recently addressed key is 2, but the documented no-signal fallback
+        // remains the greatest internal key rather than an inferred active owner.
+        assert_eq!(state.resolve_tool_key(None, None), Some(12));
+    }
+
+    #[test]
+    fn wire_tool_index_conversion_is_checked() {
+        assert_eq!(chat_tool_index(&json!({ "index": 0 })), Some(0));
+        assert_eq!(chat_tool_index(&json!({ "index": -1 })), None);
+
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(
+            chat_tool_index(&json!({ "index": u64::from(u32::MAX) + 1 })),
+            None
+        );
+
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            chat_tool_index(&json!({ "index": u64::MAX })),
+            Some(usize::MAX)
+        );
     }
 
     /// 上游省略 `index` 时，不带 id 的 arguments 续帧必须归入同一个调用，
@@ -1395,6 +2004,77 @@ mod tests {
         assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
     }
 
+    #[tokio::test]
+    async fn explicit_index_adopts_an_unaliased_anonymous_late_identity() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_late_identity\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"name\":\"tool_late\",\"arguments\":\"{\\\"value\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_late_identity\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_late\",\"type\":\"function\",\"function\":{\"arguments\":\"1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+
+        assert_eq!(items.len(), 1);
+        assert_function_item(
+            &items[0],
+            "fc_call_late",
+            "call_late",
+            "tool_late",
+            json!({ "value": 1 }),
+        );
+    }
+
+    #[tokio::test]
+    async fn mapped_anonymous_index_adopts_late_id_without_splitting_state() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_mapped_late\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":5,\"type\":\"function\",\"function\":{\"name\":\"tool_late\",\"arguments\":\"{\\\"value\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mapped_late\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":5,\"id\":\"call_late\",\"type\":\"function\",\"function\":{\"arguments\":\"1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+
+        assert_eq!(items.len(), 1);
+        assert_function_item(
+            &items[0],
+            "fc_call_late",
+            "call_late",
+            "tool_late",
+            json!({ "value": 1 }),
+        );
+    }
+
+    #[tokio::test]
+    async fn identified_unaliased_state_is_not_adopted_by_numeric_index() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_nonanonymous\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"a\\\":1}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_nonanonymous\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\",\"arguments\":\"{\\\"b\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_nonanonymous\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\"2}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+
+        assert_eq!(items.len(), 2);
+        assert_function_item(
+            &items[0],
+            "fc_call_a",
+            "call_a",
+            "tool_a",
+            json!({ "a": 1 }),
+        );
+        assert_function_item(
+            &items[1],
+            "fc_call_b",
+            "call_b",
+            "tool_b",
+            json!({ "b": 2 }),
+        );
+    }
+
     /// 上游省略 `index` 且重复下发同一个 id（部分网关每帧重复整个头部）时，
     /// 不得被判成新调用。
     #[tokio::test]
@@ -1415,6 +2095,35 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["call_id"], "call_a");
         assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
+    }
+
+    #[tokio::test]
+    async fn oversized_wire_index_uses_missing_index_fallback_without_aliasing() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_bigidx\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_bigidx\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":18446744073709551616,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\",\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_bigidx\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\"1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+
+        assert_eq!(items.len(), 2);
+        assert_function_item(
+            &items[0],
+            "fc_call_a",
+            "call_a",
+            "tool_a",
+            json!({ "a": 1 }),
+        );
+        assert_function_item(
+            &items[1],
+            "fc_call_b",
+            "call_b",
+            "tool_b",
+            json!({ "b": 2 }),
+        );
     }
 
     #[tokio::test]
@@ -1467,6 +2176,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_tool_inputs_survive_raw_index_alias_collisions() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{ "type": "custom", "name": "exec" }]
+        });
+        let context =
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+        let output = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_custom_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"custom_a\",\"type\":\"function\",\"function\":{\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"A\\\"}\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_custom_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"ordinary_b\",\"type\":\"function\",\"function\":{\"name\":\"normal_tool\",\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_custom_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"custom_c\",\"type\":\"function\",\"function\":{\"name\":\"exec\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_custom_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"input\\\":\\\"C\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            context,
+        )
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .collect::<Vec<_>>();
+        let custom_deltas = events
+            .iter()
+            .filter(|event| event["type"] == "response.custom_tool_call_input.delta")
+            .collect::<Vec<_>>();
+        let custom_dones = events
+            .iter()
+            .filter(|event| event["type"] == "response.custom_tool_call_input.done")
+            .collect::<Vec<_>>();
+        let function_deltas = events
+            .iter()
+            .filter(|event| event["type"] == "response.function_call_arguments.delta")
+            .collect::<Vec<_>>();
+        let function_dones = events
+            .iter()
+            .filter(|event| event["type"] == "response.function_call_arguments.done")
+            .collect::<Vec<_>>();
+
+        assert_eq!(added.len(), 3);
+        assert_eq!(done.len(), 3);
+        assert_eq!(custom_deltas.len(), 2);
+        assert_eq!(custom_dones.len(), 2);
+        assert_eq!(function_deltas.len(), 1);
+        assert_eq!(function_dones.len(), 1);
+        for (index, (item_id, call_id, name)) in [
+            ("ctc_custom_a", "custom_a", "exec"),
+            ("fc_ordinary_b", "ordinary_b", "normal_tool"),
+            ("ctc_custom_c", "custom_c", "exec"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(added[index]["output_index"], index as u64);
+            assert_eq!(added[index]["item"]["id"], item_id);
+            assert_eq!(added[index]["item"]["call_id"], call_id);
+            assert_eq!(added[index]["item"]["name"], name);
+            assert_eq!(done[index]["output_index"], index as u64);
+            assert_eq!(done[index]["item"], items[index]);
+        }
+        for (event, item_id, output_index, delta) in [
+            (&custom_deltas[0], "ctc_custom_a", 0, "A"),
+            (&custom_deltas[1], "ctc_custom_c", 2, "C"),
+        ] {
+            assert_eq!(event["item_id"], item_id);
+            assert_eq!(event["output_index"], output_index);
+            assert_eq!(event["delta"], delta);
+        }
+        for (event, item_id, output_index, input) in [
+            (&custom_dones[0], "ctc_custom_a", 0, "A"),
+            (&custom_dones[1], "ctc_custom_c", 2, "C"),
+        ] {
+            assert_eq!(event["item_id"], item_id);
+            assert_eq!(event["output_index"], output_index);
+            assert_eq!(event["input"], input);
+        }
+        assert_eq!(function_deltas[0]["item_id"], "fc_ordinary_b");
+        assert_eq!(function_deltas[0]["output_index"], 1);
+        assert_eq!(function_deltas[0]["delta"], r#"{"b":2}"#);
+        assert_eq!(function_dones[0]["item_id"], "fc_ordinary_b");
+        assert_eq!(function_dones[0]["output_index"], 1);
+        assert_eq!(function_dones[0]["arguments"], r#"{"b":2}"#);
+        assert_tool_lifecycle(
+            &events,
+            "ctc_custom_a",
+            0,
+            "response.custom_tool_call_input.delta",
+            "response.custom_tool_call_input.done",
+        );
+        assert_tool_lifecycle(
+            &events,
+            "fc_ordinary_b",
+            1,
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
+        );
+        assert_tool_lifecycle(
+            &events,
+            "ctc_custom_c",
+            2,
+            "response.custom_tool_call_input.delta",
+            "response.custom_tool_call_input.done",
+        );
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["id"], "ctc_custom_a");
+        assert_eq!(items[0]["type"], "custom_tool_call");
+        assert_eq!(items[0]["call_id"], "custom_a");
+        assert_eq!(items[0]["input"], "A");
+        assert_eq!(items[1]["id"], "fc_ordinary_b");
+        assert_function_item(
+            &items[1],
+            "fc_ordinary_b",
+            "ordinary_b",
+            "normal_tool",
+            json!({ "b": 2 }),
+        );
+        assert_eq!(items[2]["id"], "ctc_custom_c");
+        assert_eq!(items[2]["type"], "custom_tool_call");
+        assert_eq!(items[2]["call_id"], "custom_c");
+        assert_eq!(items[2]["input"], "C");
+    }
+
+    #[tokio::test]
     async fn canonicalizes_streamed_tool_call_arguments_on_done_events() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_args\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\"}}]}}]}\n\n",
@@ -1511,6 +2349,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reasoning_metadata_survives_raw_index_alias_collisions() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_reason_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Plan. \"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_reason_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Later.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_reason_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"a\\\":1}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_reason_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\",\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_reason_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_c\",\"type\":\"function\",\"function\":{\"name\":\"tool_c\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_reason_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"c\\\":3}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_reason_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+        let reasoning_part_added = events
+            .iter()
+            .position(|event| event["type"] == "response.reasoning_summary_part.added")
+            .unwrap();
+        let reasoning_deltas = events
+            .iter()
+            .filter(|event| event["type"] == "response.reasoning_summary_text.delta")
+            .collect::<Vec<_>>();
+        let reasoning_text_done = events
+            .iter()
+            .position(|event| event["type"] == "response.reasoning_summary_text.done")
+            .unwrap();
+        let reasoning_part_done = events
+            .iter()
+            .position(|event| event["type"] == "response.reasoning_summary_part.done")
+            .unwrap();
+        let reasoning_item_done = events
+            .iter()
+            .position(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["type"] == "reasoning"
+            })
+            .unwrap();
+        let first_tool_added = events
+            .iter()
+            .position(|event| {
+                event["type"] == "response.output_item.added"
+                    && event["item"]["type"] == "function_call"
+            })
+            .unwrap();
+
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0]["type"], "reasoning");
+        assert_eq!(items[0]["summary"][0]["text"], "Plan. Later.");
+        assert_eq!(reasoning_deltas.len(), 2);
+        assert_eq!(reasoning_deltas[0]["delta"], "Plan. ");
+        assert_eq!(reasoning_deltas[1]["delta"], "Later.");
+        assert!(reasoning_part_added < reasoning_text_done);
+        assert!(reasoning_text_done < reasoning_part_done);
+        assert!(reasoning_part_done < reasoning_item_done);
+        assert!(reasoning_item_done < first_tool_added);
+        for (offset, (item_id, call_id, name, arguments)) in [
+            ("fc_call_a", "call_a", "tool_a", json!({ "a": 1 })),
+            ("fc_call_b", "call_b", "tool_b", json!({ "b": 2 })),
+            ("fc_call_c", "call_c", "tool_c", json!({ "c": 3 })),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let item = &items[offset + 1];
+            assert_function_item(item, item_id, call_id, name, arguments);
+            assert_eq!(item["reasoning_content"], "Plan. Later.");
+        }
+    }
+
+    #[tokio::test]
     async fn restores_namespace_on_streamed_tool_call_items() {
         let request = json!({
             "model": "gpt-5.4",
@@ -1548,6 +2455,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn namespace_metadata_survives_raw_index_alias_collisions() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "call_tool_search_1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__codex_apps__gmail",
+                    "tools": [{
+                        "type": "function",
+                        "name": "_search_emails",
+                        "description": "Search Gmail.",
+                        "parameters": {"type": "object"}
+                    }]
+                }]
+            }]
+        });
+        let context =
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+        let output = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_namespace_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"mcp__codex_apps__gmail___search_emails\",\"arguments\":\"{\\\"query\\\":\\\"a\\\"}\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_namespace_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"mcp__codex_apps__gmail___search_emails\",\"arguments\":\"{\\\"query\\\":\\\"b\\\"}\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_namespace_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_c\",\"type\":\"function\",\"function\":{\"name\":\"mcp__codex_apps__gmail___search_emails\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_namespace_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"query\\\":\\\"c\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            context,
+        )
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .collect::<Vec<_>>();
+        let argument_deltas = events
+            .iter()
+            .filter(|event| event["type"] == "response.function_call_arguments.delta")
+            .collect::<Vec<_>>();
+        let argument_dones = events
+            .iter()
+            .filter(|event| event["type"] == "response.function_call_arguments.done")
+            .collect::<Vec<_>>();
+
+        assert_eq!(added.len(), 3);
+        assert_eq!(done.len(), 3);
+        assert_eq!(argument_deltas.len(), 3);
+        assert_eq!(argument_dones.len(), 3);
+        assert_eq!(items.len(), 3);
+        for (index, (item_id, call_id, query)) in [
+            ("fc_call_a", "call_a", "a"),
+            ("fc_call_b", "call_b", "b"),
+            ("fc_call_c", "call_c", "c"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let item = &items[index];
+            assert_tool_lifecycle(
+                &events,
+                item_id,
+                index as u64,
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.done",
+            );
+            assert_eq!(added[index]["output_index"], index as u64);
+            assert_eq!(added[index]["item"]["id"], item_id);
+            assert_eq!(added[index]["item"]["call_id"], call_id);
+            assert_eq!(added[index]["item"]["name"], "_search_emails");
+            assert_eq!(added[index]["item"]["type"], "function_call");
+            assert_eq!(added[index]["item"]["namespace"], "mcp__codex_apps__gmail");
+            assert_eq!(done[index]["output_index"], index as u64);
+            assert_eq!(done[index]["item"], *item);
+            assert_eq!(argument_deltas[index]["item_id"], item_id);
+            assert_eq!(argument_deltas[index]["output_index"], index as u64);
+            assert_eq!(
+                argument_deltas[index]["delta"],
+                format!(r#"{{"query":"{query}"}}"#)
+            );
+            assert_eq!(argument_dones[index]["item_id"], item_id);
+            assert_eq!(argument_dones[index]["output_index"], index as u64);
+            assert_eq!(
+                argument_dones[index]["arguments"],
+                format!(r#"{{"query":"{query}"}}"#)
+            );
+            assert_eq!(item["id"], item_id);
+            assert_eq!(item["type"], "function_call");
+            assert_eq!(item["call_id"], call_id);
+            assert_eq!(item["namespace"], "mcp__codex_apps__gmail");
+            assert_eq!(item["name"], "_search_emails");
+            assert_eq!(
+                serde_json::from_str::<Value>(item["arguments"].as_str().unwrap()).unwrap(),
+                json!({ "query": query })
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn restores_tool_search_on_streamed_tool_call_items() {
         let request = json!({
             "model": "gpt-5.4",
@@ -1570,6 +2581,79 @@ mod tests {
         assert!(output.contains("\"execution\":\"client\""));
         assert!(output.contains("\"call_id\":\"call_tool_search_1\""));
         assert!(output.contains("\"query\":\"Gmail search emails\""));
+    }
+
+    #[tokio::test]
+    async fn tool_search_metadata_survives_raw_index_alias_collisions() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "tool_search"}],
+            "input": "Search for tools."
+        });
+        let context =
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+        let output = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_search_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"a\\\"}\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_search_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"b\\\"}\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_search_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"search_c\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_search_alias\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"query\\\":\\\"c\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            context,
+        )
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_items(&events);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .collect::<Vec<_>>();
+        let argument_deltas = events
+            .iter()
+            .filter(|event| event["type"] == "response.function_call_arguments.delta")
+            .collect::<Vec<_>>();
+        let argument_dones = events
+            .iter()
+            .filter(|event| event["type"] == "response.function_call_arguments.done")
+            .collect::<Vec<_>>();
+
+        assert_eq!(added.len(), 3);
+        assert_eq!(done.len(), 3);
+        assert_eq!(argument_deltas.len(), 3);
+        assert_eq!(argument_dones.len(), 3);
+        assert_eq!(items.len(), 3);
+        for (index, (call_id, query)) in [("search_a", "a"), ("search_b", "b"), ("search_c", "c")]
+            .into_iter()
+            .enumerate()
+        {
+            let item = &items[index];
+            let item_id = format!("fc_{call_id}");
+            let arguments = format!(r#"{{"query":"{query}"}}"#);
+            assert_tool_search_lifecycle(&events, call_id, &item_id, index as u64);
+            assert_eq!(added[index]["output_index"], index as u64);
+            assert_eq!(added[index]["item"]["type"], "tool_search_call");
+            assert!(added[index]["item"].get("id").is_none());
+            assert_eq!(added[index]["item"]["execution"], "client");
+            assert_eq!(added[index]["item"]["call_id"], call_id);
+            assert_eq!(done[index]["output_index"], index as u64);
+            assert_eq!(done[index]["item"], *item);
+            assert_eq!(argument_deltas[index]["item_id"], item_id);
+            assert_eq!(argument_deltas[index]["output_index"], index as u64);
+            assert_eq!(argument_deltas[index]["delta"], arguments);
+            assert_eq!(argument_dones[index]["item_id"], item_id);
+            assert_eq!(argument_dones[index]["output_index"], index as u64);
+            assert_eq!(argument_dones[index]["arguments"], arguments);
+            assert_eq!(item["type"], "tool_search_call");
+            assert_eq!(item["call_id"], call_id);
+            assert_eq!(item["status"], "completed");
+            assert_eq!(item["execution"], "client");
+            assert_eq!(item["arguments"], json!({ "query": query }));
+        }
     }
 
     #[tokio::test]
