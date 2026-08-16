@@ -1840,8 +1840,25 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://opencode.ai/zen/go/v1"],
     apiFormat: "openai_chat",
+    // OpenCode Zen 网关：统一接受顶层 reasoning_effort（其自家客户端同款参数），
+    // 但合法档位逐模型（见各条目 reasoningLevels，镜像 models.dev；opencode
+    // 客户端同样严格按模型声明发值）——代理转换层按表钳制，未声明 effort 的
+    // 模型（toggle 型如 glm-5.1）不发该字段。不发厂商原生 thinking 字段。
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "zen",
+      outputFormat: "reasoning_content",
+    },
     modelCatalog: modelCatalog([
-      { model: "glm-5.2", displayName: "GLM 5.2", contextWindow: 204800 },
+      {
+        model: "glm-5.2",
+        displayName: "GLM 5.2",
+        contextWindow: 204800,
+        reasoningLevels: ["high", "max"],
+      },
       { model: "glm-5.1", displayName: "GLM 5.1", contextWindow: 204800 },
       {
         model: "kimi-k2.7-code",
@@ -1852,11 +1869,13 @@ requires_openai_auth = true`,
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
         contextWindow: 1048576,
+        reasoningLevels: ["high", "max"],
       },
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
       },
       {
         model: "mimo-v2.5-pro",

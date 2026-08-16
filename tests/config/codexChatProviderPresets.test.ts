@@ -242,4 +242,29 @@ describe("Codex Chat provider presets", () => {
       expect(preset?.codexChatReasoning).toBeUndefined();
     }
   });
+
+  it("ships per-model reasoningLevels for OpenCode Go mirroring models.dev", () => {
+    // Zen 网关的合法 effort 档位是逐模型的（models.dev reasoning_options，
+    // 2026-08）：统一并集映射会把 Codex 默认的 medium 发给只声明 high|max 的
+    // glm-5.2（默认路径），此测试锁住逐模型表，防回退。
+    const preset = codexProviderPresets.find((item) => item.name === "OpenCode Go");
+
+    expect(preset, "OpenCode Go preset").toBeDefined();
+    expect(preset?.codexChatReasoning?.effortValueMode).toBe("zen");
+    expect(
+      Object.fromEntries(
+        (preset?.modelCatalog ?? []).map((model) => [
+          model.model,
+          model.reasoningLevels ?? null,
+        ]),
+      ),
+    ).toEqual({
+      "glm-5.2": ["high", "max"],
+      "glm-5.1": null, // toggle 型，无 effort 声明
+      "kimi-k2.7-code": null,
+      "deepseek-v4-pro": ["high", "max"],
+      "deepseek-v4-flash": ["low", "high", "max"],
+      "mimo-v2.5-pro": null,
+    });
+  });
 });
