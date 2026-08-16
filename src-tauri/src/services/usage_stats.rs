@@ -11,7 +11,7 @@ use crate::services::sql_helpers::{
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::LazyLock;
 
@@ -337,6 +337,49 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       OR LOWER({log_alias}.model) = 'unknown'
                   )
             )
+    )"
+    )
+}
+
+/// Filter used by the session-retention boundary (T01 DAO).  The ordinary
+/// usage filter above intentionally keeps direct-session rows available to
+/// global usage summaries.  Before inserting into the canonical session table,
+/// however, a source-owned canonical bucket must win over its matching raw
+/// compatibility rows; otherwise pruning adds the same direct bucket twice.
+///
+/// This helper is deliberately separate so changing the retention boundary
+/// cannot silently remove direct-session rows from existing global queries.
+/// Raw rows with no per-request marker remain eligible and therefore preserve
+/// historical/failed source data, including partial facts whose source leaves
+/// one token component unknown. Adapters must write the marker in the same
+/// transaction as their canonical bucket; an aggregate bucket alone cannot
+/// prove request coverage.
+pub(crate) fn effective_session_usage_log_filter(log_alias: &str) -> String {
+    let base_filter = effective_usage_log_filter(log_alias);
+    let data_source = data_source_expr(log_alias);
+    format!(
+        "({base_filter})
+         AND NOT (
+            (
+                {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'grok_session', 'opencode_session', 'pi_session')
+                AND EXISTS (
+                    SELECT 1
+                    FROM agent_session_canonical_coverage canonical_coverage
+                    WHERE canonical_coverage.app_type = {log_alias}.app_type
+                      AND canonical_coverage.data_source = {data_source}
+                      AND canonical_coverage.request_id = {log_alias}.request_id
+                )
+            )
+            OR (
+                {data_source} = 'proxy'
+                AND EXISTS (
+                    SELECT 1
+                    FROM agent_session_canonical_coverage canonical_coverage
+                    WHERE canonical_coverage.app_type = {log_alias}.app_type
+                      AND canonical_coverage.data_source = 'proxy'
+                      AND canonical_coverage.request_id = {log_alias}.request_id
+                )
+            )
         )"
     )
 }
@@ -356,22 +399,91 @@ pub(crate) struct DedupKey<'a> {
     pub created_at: i64,
 }
 
-/// session 日志写入前的统一去重判定。
+/// Identity of the proxy row which won a cross-source deduplication match.
 ///
-/// 命中以下任一条件即跳过插入：① `request_id` 已存在；② 时间窗口内存在
-/// 与 `key` 匹配的 proxy 日志（指纹去重）。
+/// The app type is retained alongside the request id because Claude session
+/// events may match the Desktop gateway's `claude-desktop` rows.  Coverage
+/// markers use the stored app type as part of their key, so dropping this
+/// dimension would leave the proxy row visible to retention/global filters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MatchingProxyUsageLog {
+    pub request_id: String,
+    pub app_type: String,
+}
+
+/// Outcome of the pre-insert arbitration used by session-log adapters.
+///
+/// `MatchedProxy` is deliberately richer than the historical bool helper:
+/// callers can retain the proxy request identity and let the native event own
+/// canonical session attribution without inserting a duplicate compatibility
+/// raw row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SessionInsertOutcome {
+    Insert,
+    ExistingRequest,
+    MatchedProxy(MatchingProxyUsageLog),
+}
+
+/// Return the full pre-insert arbitration outcome for a session event.
+///
+/// The request-id check is kept ahead of the fingerprint lookup so an exact
+/// same-source replay remains a cheap/idempotent no-op.  A fingerprint match
+/// returns the proxy row identity instead of collapsing to a bool; Claude can
+/// then transfer canonical ownership to the transcript while retaining the
+/// proxy row as the global request record.
+pub(crate) fn session_insert_outcome(
+    conn: &Connection,
+    request_id: &str,
+    key: &DedupKey,
+) -> Result<SessionInsertOutcome, AppError> {
+    session_insert_outcome_excluding_claimed(conn, request_id, key, &HashSet::new())
+}
+
+/// Return the pre-insert arbitration outcome while excluding proxy rows that
+/// have already been claimed by an earlier native event in the current batch.
+///
+/// The durable coverage marker is written only when the batch transaction
+/// flushes.  Without this in-memory exclusion, two same-fingerprint native
+/// events would both observe the same unmarked proxy row and the second event
+/// could not reach a distinct matching row that is still available.
+pub(crate) fn session_insert_outcome_excluding_claimed(
+    conn: &Connection,
+    request_id: &str,
+    key: &DedupKey,
+    claimed_proxy_request_ids: &HashSet<String>,
+) -> Result<SessionInsertOutcome, AppError> {
+    if has_proxy_request_id(conn, request_id)? {
+        return Ok(SessionInsertOutcome::ExistingRequest);
+    }
+    let matched = find_matching_proxy_usage_log_details_excluding_claimed(
+        conn,
+        key,
+        claimed_proxy_request_ids,
+    )?;
+    if let Some(proxy) = matched {
+        return Ok(SessionInsertOutcome::MatchedProxy(proxy));
+    }
+    // No unclaimed proxy remains, so the native event owns its own raw and
+    // canonical record.  This preserves distinct transcript messages even
+    // when their fingerprints collide with a proxy row already claimed in
+    // this batch.
+    Ok(SessionInsertOutcome::Insert)
+}
+
+/// Compatibility bool wrapper retained for non-Claude adapters whose caller
+/// only needs to know whether a raw insert should be skipped.
 pub(crate) fn should_skip_session_insert(
     conn: &Connection,
     request_id: &str,
     key: &DedupKey,
 ) -> Result<bool, AppError> {
-    if proxy_request_id_exists(conn, request_id)? {
-        return Ok(true);
-    }
-    has_matching_proxy_usage_log(conn, key)
+    Ok(!matches!(
+        session_insert_outcome(conn, request_id, key)?,
+        SessionInsertOutcome::Insert
+    ))
 }
 
-fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, AppError> {
+pub(crate) fn has_proxy_request_id(conn: &Connection, request_id: &str) -> Result<bool, AppError> {
     conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)")
         .and_then(|mut stmt| stmt.query_row(params![request_id], |row| row.get::<_, bool>(0)))
         .map_err(|e| AppError::Database(format!("查询 request_id 失败: {e}")))
@@ -379,11 +491,164 @@ fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, 
 
 // 会话重导每个 token 事件都要跑一次这条查询；SQL 文本静态化让
 // prepare_cached 稳定命中，也省掉每行的 format! 分配。
-static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
+fn matching_proxy_usage_log_sql(include_coverage: bool) -> String {
     let l_data_source = data_source_expr("l");
     let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    let coverage_filter = if include_coverage {
+        "AND NOT EXISTS (
+               SELECT 1
+               FROM agent_session_canonical_coverage coverage
+               WHERE coverage.app_type = l.app_type
+                 AND coverage.data_source = 'proxy'
+                 AND coverage.request_id = l.request_id
+           )"
+    } else {
+        ""
+    };
     format!(
-        "SELECT EXISTS (
+        "SELECT l.request_id, l.app_type
+         FROM proxy_request_logs l
+         WHERE {l_data_source} = 'proxy'
+           AND {app_type_match}
+           AND l.status_code >= 200
+           AND l.status_code < 300
+           AND l.input_tokens = ?3
+           AND l.output_tokens = ?4
+           AND l.cache_read_tokens = ?5
+           AND (l.cache_creation_tokens = ?6 OR ?9 = 1)
+           AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
+           AND (
+               LOWER(l.model) = LOWER(?2)
+               OR LOWER(l.model) = 'unknown'
+               OR LOWER(?2) = 'unknown'
+           )
+           {coverage_filter}
+         ORDER BY ABS(l.created_at - ?7), l.request_id
+         LIMIT 1"
+    )
+}
+
+static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> =
+    LazyLock::new(|| matching_proxy_usage_log_sql(true));
+static MATCHING_PROXY_USAGE_LOG_SQL_LEGACY: LazyLock<String> =
+    LazyLock::new(|| matching_proxy_usage_log_sql(false));
+
+/// Find one unclaimed successful proxy row whose token fingerprint and event
+/// time exactly match a session event.  The request id/order make the choice
+/// deterministic when duplicate fingerprints occur in the ten-minute window;
+/// the proxy coverage marker makes the match one-to-one across replay passes.
+pub(crate) fn find_matching_proxy_usage_log(
+    conn: &Connection,
+    key: &DedupKey,
+) -> Result<Option<String>, AppError> {
+    Ok(find_matching_proxy_usage_log_details(conn, key)?.map(|matched| matched.request_id))
+}
+
+/// Find one unclaimed successful proxy row and retain the stored app type.
+///
+/// This is the detail-bearing sibling of [`find_matching_proxy_usage_log`].
+/// Keep the public(crate) string helper above for existing provider adapters;
+/// Claude's takeover path uses this richer form to write a correctly keyed
+/// proxy coverage marker, including `claude-desktop` matches.
+pub(crate) fn find_matching_proxy_usage_log_details(
+    conn: &Connection,
+    key: &DedupKey,
+) -> Result<Option<MatchingProxyUsageLog>, AppError> {
+    find_matching_proxy_usage_log_details_excluding_claimed(conn, key, &HashSet::new())
+}
+
+/// Find one matching proxy row while skipping rows already claimed by native
+/// transcript events in the current source batch.
+pub(crate) fn find_matching_proxy_usage_log_details_excluding_claimed(
+    conn: &Connection,
+    key: &DedupKey,
+    claimed_proxy_request_ids: &HashSet<String>,
+) -> Result<Option<MatchingProxyUsageLog>, AppError> {
+    let allow_missing_cache_creation =
+        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+
+    let coverage_table_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'agent_session_canonical_coverage'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(format!("查询规范覆盖表失败: {e}")))?;
+    let sql = if coverage_table_exists {
+        &*MATCHING_PROXY_USAGE_LOG_SQL
+    } else {
+        &*MATCHING_PROXY_USAGE_LOG_SQL_LEGACY
+    };
+
+    // The cached matcher intentionally limits to one row.  For a batch with
+    // prior claims we need the full ordered candidate set so a later native
+    // event can claim the next available proxy row instead of being skipped
+    // after observing the already-claimed first row.
+    let sql = if claimed_proxy_request_ids.is_empty() {
+        sql.to_string()
+    } else {
+        sql.replace("LIMIT 1", "")
+    };
+    let mut statement = conn
+        .prepare(&sql)
+        .map_err(|e| AppError::Database(format!("准备重复代理用量日志查询失败: {e}")))?;
+    let rows = statement
+        .query_map(
+            params![
+                key.app_type,
+                key.model,
+                key.input_tokens as i64,
+                key.output_tokens as i64,
+                key.cache_read_tokens as i64,
+                key.cache_creation_tokens as i64,
+                key.created_at,
+                SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                allow_missing_cache_creation as i64,
+            ],
+            |row| {
+                Ok(MatchingProxyUsageLog {
+                    request_id: row.get(0)?,
+                    app_type: row.get(1)?,
+                })
+            },
+        )
+        .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))?;
+    for row in rows {
+        let matched =
+            row.map_err(|e| AppError::Database(format!("读取重复代理用量日志失败: {e}")))?;
+        if !claimed_proxy_request_ids.contains(&matched.request_id) {
+            return Ok(Some(matched));
+        }
+    }
+    Ok(None)
+}
+
+/// Check whether the *current* session event is already represented by a
+/// proxy coverage marker for the same canonical session.
+///
+/// This is intentionally separate from [`find_matching_proxy_usage_log`]:
+/// takeover matching excludes covered proxy rows so a new source event cannot
+/// claim them again, whereas replay repair must recognize the exact covered
+/// proxy row that belongs to this message.  Matching the full fingerprint and
+/// event-time window prevents an unrelated takeover in the same session from
+/// suppressing a missing native raw row.
+pub(crate) fn has_matching_proxy_usage_coverage_for_session(
+    conn: &Connection,
+    key: &DedupKey,
+    canonical_session_id: &str,
+) -> Result<bool, AppError> {
+    if canonical_session_id.trim().is_empty() {
+        return Ok(false);
+    }
+    let allow_missing_cache_creation =
+        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+    let l_data_source = data_source_expr("l");
+    let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    let sql = format!(
+        "SELECT EXISTS(
             SELECT 1
             FROM proxy_request_logs l
             WHERE {l_data_source} = 'proxy'
@@ -400,18 +665,71 @@ static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
                   OR LOWER(l.model) = 'unknown'
                   OR LOWER(?2) = 'unknown'
               )
-        )"
-    )
-});
+              AND EXISTS(
+                  SELECT 1
+                  FROM agent_session_canonical_coverage coverage
+                  WHERE coverage.app_type = l.app_type
+                    AND coverage.data_source = 'proxy'
+                    AND coverage.request_id = l.request_id
+                    AND coverage.canonical_session_id = ?10
+              )
+         )"
+    );
+    conn.prepare_cached(&sql)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    key.app_type,
+                    key.model,
+                    key.input_tokens as i64,
+                    key.output_tokens as i64,
+                    key.cache_read_tokens as i64,
+                    key.cache_creation_tokens as i64,
+                    key.created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                    allow_missing_cache_creation as i64,
+                    canonical_session_id,
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|e| AppError::Database(format!("查询代理覆盖指纹失败: {e}")))
+}
 
-pub(crate) fn has_matching_proxy_usage_log(
+/// Replay variant of [`find_matching_proxy_usage_log`].  The replay generation
+/// lives in shadow tables, so its coverage markers must be checked there rather
+/// than against the published generation.  Proxy rows themselves remain in the
+/// live request log and keep their normal `codex` app type.
+pub(crate) fn find_matching_proxy_usage_log_for_coverage_source(
     conn: &Connection,
     key: &DedupKey,
-) -> Result<bool, AppError> {
-    let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
-
-    conn.prepare_cached(&MATCHING_PROXY_USAGE_LOG_SQL)
+) -> Result<Option<String>, AppError> {
+    let allow_missing_cache_creation = key.cache_creation_tokens == 0;
+    let sql = "SELECT l.request_id
+        FROM proxy_request_logs l
+        WHERE COALESCE(l.data_source, 'proxy') = 'proxy'
+          AND l.app_type = 'codex'
+          AND l.status_code >= 200
+          AND l.status_code < 300
+          AND l.input_tokens = ?3
+          AND l.output_tokens = ?4
+          AND l.cache_read_tokens = ?5
+          AND (l.cache_creation_tokens = ?6 OR ?9 = 1)
+          AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
+          AND (
+              LOWER(l.model) = LOWER(?2)
+              OR LOWER(l.model) = 'unknown'
+              OR LOWER(?2) = 'unknown'
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM codex_replay_coverage coverage
+              WHERE coverage.app_type = 'codex_replay'
+                AND coverage.data_source = 'proxy_replay'
+                AND coverage.request_id = l.request_id
+          )
+        ORDER BY ABS(l.created_at - ?7), l.request_id
+        LIMIT 1";
+    conn.prepare_cached(sql)
         .and_then(|mut stmt| {
             stmt.query_row(
                 params![
@@ -425,10 +743,19 @@ pub(crate) fn has_matching_proxy_usage_log(
                     SESSION_PROXY_DEDUP_WINDOW_SECONDS,
                     allow_missing_cache_creation as i64,
                 ],
-                |row| row.get::<_, bool>(0),
+                |row| row.get::<_, String>(0),
             )
+            .optional()
         })
-        .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
+        .map_err(|e| AppError::Database(format!("查询重放代理用量日志失败: {e}")))
+}
+
+#[cfg(test)]
+pub(crate) fn has_matching_proxy_usage_log(
+    conn: &Connection,
+    key: &DedupKey,
+) -> Result<bool, AppError> {
+    Ok(find_matching_proxy_usage_log(conn, key)?.is_some())
 }
 
 /// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
@@ -463,6 +790,54 @@ pub(crate) fn has_recent_grokbuild_proxy_activity(
         |row| row.get::<_, bool>(0),
     )
     .map_err(|e| AppError::Database(format!("查询 Grok 接管活动失败: {e}")))
+}
+
+/// Central Cowork transcript-versus-gateway arbitration.  Cowork transcript
+/// records use the actual `claude-desktop` app entry; only a successful proxy
+/// row with the same model, all four token components, and event-time window
+/// shadows that transcript event.  In particular, cache-token differences are
+/// not treated as a match and no generic fingerprint is shared with Grok's
+/// face-value `turn_completed` events.
+pub(crate) fn has_matching_cowork_proxy_usage(
+    conn: &Connection,
+    model: &str,
+    created_at: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    cache_creation_tokens: i64,
+) -> Result<bool, AppError> {
+    conn.prepare_cached(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM proxy_request_logs
+            WHERE COALESCE(data_source, 'proxy') = 'proxy'
+              AND app_type = 'claude-desktop'
+              AND status_code >= 200
+              AND status_code < 300
+              AND input_tokens = ?1
+              AND output_tokens = ?2
+              AND cache_read_tokens = ?3
+              AND cache_creation_tokens = ?4
+              AND created_at BETWEEN ?5 - ?6 AND ?5 + ?6
+              AND LOWER(model) = LOWER(?7)
+        )",
+    )
+    .and_then(|mut statement| {
+        statement.query_row(
+            params![
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                created_at,
+                SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                model,
+            ],
+            |row| row.get::<_, bool>(0),
+        )
+    })
+    .map_err(|error| AppError::Database(format!("查询 Cowork 网关重复用量失败: {error}")))
 }
 
 static SUSPECTED_CODEX_DUPLICATE_SQL: LazyLock<String> = LazyLock::new(|| {
@@ -2042,6 +2417,28 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
         })
 }
 
+/// Resolve a model using only the normalized candidate keys that are present
+/// verbatim in `model_pricing`.  Unlike `find_model_pricing`, this deliberately
+/// does not use prefix matching because query-time cost estimates must not
+/// silently apply one model's price to another model.
+pub(crate) fn find_exact_model_pricing(
+    conn: &Connection,
+    model_id: &str,
+) -> Option<(String, ModelPricing)> {
+    model_pricing_candidates(model_id)
+        .into_iter()
+        .find_map(|candidate| {
+            query_model_pricing_exact(conn, &candidate)
+                .ok()
+                .flatten()
+                .and_then(|(input, output, cache_read, cache_creation)| {
+                    ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation)
+                        .ok()
+                        .map(|pricing| (candidate, pricing))
+                })
+        })
+}
+
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
@@ -2528,6 +2925,49 @@ mod tests {
     }
 
     #[test]
+    fn test_cowork_gateway_arbitration_requires_exact_cache_tokens() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES ('cowork-proxy', 'claude-desktop', 'claude-sonnet-4-5',
+                      100, 20, 10, 5, 200, 1000, 'proxy')",
+            [],
+        )?;
+
+        assert!(has_matching_cowork_proxy_usage(
+            &conn,
+            "claude-sonnet-4-5",
+            1060,
+            100,
+            20,
+            10,
+            5,
+        )?);
+        assert!(!has_matching_cowork_proxy_usage(
+            &conn,
+            "claude-sonnet-4-5",
+            1060,
+            100,
+            20,
+            10,
+            6,
+        )?);
+        assert!(!has_matching_cowork_proxy_usage(
+            &conn,
+            "claude-sonnet-4-5",
+            1060,
+            100,
+            20,
+            11,
+            5,
+        )?);
+        Ok(())
+    }
+
+    #[test]
     fn test_effective_filter_dedups_claude_session_against_desktop_proxy() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         create_legacy_nullable_logs_table(&conn)?;
@@ -2548,6 +2988,164 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(request_ids, vec!["desktop-proxy"]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_keeps_session_when_cache_read_differs() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES
+                ('proxy-cache-mismatch', 'gemini', 'gemini-model', 10, 2, 99, 0, 200, 1000, 'proxy'),
+                ('gemini-session-cache-mismatch', 'gemini', 'gemini-model', 10, 2, 1, 0, 200, 1060, 'gemini_session');",
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let ids: Vec<String> = conn
+            .prepare(&format!(
+                "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+            ))?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            ids,
+            vec![
+                "gemini-session-cache-mismatch".to_string(),
+                "proxy-cache-mismatch".to_string(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_does_not_token_dedup_grok_face_value_turns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES
+                ('grok-proxy', 'grokbuild', 'grok-model', 10, 2, 1, 0, 200, 1000, 'proxy'),
+                ('grok-session', 'grokbuild', 'grok-model', 10, 2, 1, 0, 200, 1060, 'grok_session');",
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let count: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM proxy_request_logs l WHERE {filter}"),
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            count, 2,
+            "Grok turn_completed must not use generic token dedup"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_retention_filter_holds_raw_when_coverage_marker_exists() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model, pricing_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, latency_ms, status_code, created_at, session_id, data_source
+            ) VALUES ('session-raw', '_gemini_session', 'gemini', 'fixture-model',
+                      'fixture-model', 'fixture-model', 10, 2, 1, 0,
+                      '0.01', 0, 200, 1000, 'session-a', 'gemini_session')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO agent_session_usage_rollups (
+                date, app_type, session_id, provider_id, model, request_model,
+                pricing_model, data_source, precision, time_semantics,
+                request_count_semantics, request_count, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, total_cost_usd
+            ) VALUES ('1970-01-01', 'gemini', 'session-a', '_gemini_session',
+                      'fixture-model', 'fixture-model', 'fixture-model', 'gemini_session',
+                      'request_exact', 'event_time', 'assistant_message', 1, 10, 2, 1, 0, '0.01')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO agent_session_canonical_coverage (
+                app_type, data_source, request_id, canonical_session_id, marked_at
+             ) VALUES ('gemini', 'gemini_session', 'session-raw', 'session-a', 1000)",
+            [],
+        )?;
+
+        let held_filter = effective_session_usage_log_filter("l");
+        let held: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM proxy_request_logs l WHERE {held_filter}"),
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(held, 0, "coverage marker owns matching direct raw row");
+
+        conn.execute("DELETE FROM agent_session_canonical_coverage", [])?;
+        let retained: i64 = conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM proxy_request_logs l WHERE {}",
+                effective_session_usage_log_filter("l")
+            ),
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(retained, 1, "unmarked raw history remains eligible");
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_retention_filter_keeps_unmarked_codex_partial_fact() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, latency_ms, status_code, created_at, session_id, data_source
+            ) VALUES ('codex-legacy', '_codex_session', 'codex', 'fixture-model',
+                      'fixture-model', 10, 2, 1, 0, '0', 0, 200, 1000,
+                      'codex-session', 'codex_session')",
+            [],
+        )?;
+
+        let retained_for_session_rollup: i64 = conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM proxy_request_logs l WHERE {}",
+                effective_session_usage_log_filter("l")
+            ),
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            retained_for_session_rollup, 1,
+            "the marker-only filter must retain an unmarked Codex row"
+        );
+
+        // A source-owned marker, rather than the token value, is the sole
+        // exclusion boundary. This row is then ineligible for reaggregation.
+        conn.execute(
+            "INSERT INTO agent_session_canonical_coverage (
+                app_type, data_source, request_id, canonical_session_id, marked_at
+             ) VALUES ('codex', 'codex_session', 'codex-legacy', 'codex-session', 1000)",
+            [],
+        )?;
+        let covered: i64 = conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM proxy_request_logs l WHERE {}",
+                effective_session_usage_log_filter("l")
+            ),
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(covered, 0, "only the exact marker suppresses the raw row");
         Ok(())
     }
 

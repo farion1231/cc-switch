@@ -89,8 +89,17 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "provider_health",
     "proxy_live_backup",
     "usage_daily_rollups",
+    "agent_session_nodes",
+    "agent_session_usage_rollups",
+    "agent_session_usage_snapshots",
+    "agent_session_canonical_coverage",
     "session_log_sync",
     "session_usage_dedup",
+    "codex_replay_nodes",
+    "codex_replay_rollups",
+    "codex_replay_coverage",
+    "codex_replay_session_logs",
+    "codex_replay_sync",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -100,9 +109,29 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "stream_check_logs",
     "proxy_live_backup",
     "usage_daily_rollups",
+    "agent_session_nodes",
+    "agent_session_usage_rollups",
+    "agent_session_usage_snapshots",
+    "agent_session_canonical_coverage",
     "session_log_sync",
     "session_usage_dedup",
+    "codex_replay_nodes",
+    "codex_replay_rollups",
+    "codex_replay_coverage",
+    "codex_replay_session_logs",
+    "codex_replay_sync",
 ];
+
+/// Settings rows that carry Codex replay progress are local to one device.
+/// Keep the ordinary settings rows syncable while preventing a remote replay
+/// from hiding or replacing the local published/staging generation.
+const SYNC_SKIP_SETTINGS_KEYS: &[&str] = &[
+    "codex_usage_canonical_replay_v1",
+    "codex_usage_canonical_replay_v2",
+    "codex_usage_canonical_replay_v3",
+];
+
+const SYNC_PRESERVE_SETTINGS_KEYS: &[&str] = SYNC_SKIP_SETTINGS_KEYS;
 
 /// A database backup entry for the UI
 #[derive(Debug, serde::Serialize)]
@@ -123,7 +152,7 @@ impl Database {
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
     pub fn export_sql_string_for_sync(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, SYNC_SKIP_TABLES)
+        Self::dump_sql_with_filters(&snapshot, SYNC_SKIP_TABLES, SYNC_SKIP_SETTINGS_KEYS)
     }
 
     /// 导出为 SQLite 兼容的 SQL 文本
@@ -159,7 +188,12 @@ impl Database {
     /// Import SQL generated for sync, then restore local-only tables from the
     /// current live database before replacing it.
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
+        self.import_sql_string_inner_with_policy(
+            sql_raw,
+            SYNC_PRESERVE_TABLES,
+            SYNC_PRESERVE_SETTINGS_KEYS,
+            || Ok(()),
+        )
     }
 
     fn import_sql_string_inner(
@@ -167,13 +201,27 @@ impl Database {
         sql_raw: &str,
         preserve_tables: &[&str],
     ) -> Result<String, AppError> {
-        self.import_sql_string_inner_with_hook(sql_raw, preserve_tables, || Ok(()))
+        self.import_sql_string_inner_with_policy(sql_raw, preserve_tables, &[], || Ok(()))
     }
 
+    #[cfg(test)]
     fn import_sql_string_inner_with_hook<F>(
         &self,
         sql_raw: &str,
         preserve_tables: &[&str],
+        on_staging_ready: F,
+    ) -> Result<String, AppError>
+    where
+        F: FnOnce() -> Result<(), AppError>,
+    {
+        self.import_sql_string_inner_with_policy(sql_raw, preserve_tables, &[], on_staging_ready)
+    }
+
+    fn import_sql_string_inner_with_policy<F>(
+        &self,
+        sql_raw: &str,
+        preserve_tables: &[&str],
+        preserve_settings_keys: &[&str],
         on_staging_ready: F,
     ) -> Result<String, AppError>
     where
@@ -232,8 +280,13 @@ impl Database {
             let mut main_conn = lock_conn!(self.conn);
             let backup_path =
                 Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
-            if !preserve_tables.is_empty() {
-                Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
+            if !preserve_tables.is_empty() || !preserve_settings_keys.is_empty() {
+                Self::restore_tables_with_settings(
+                    &main_conn,
+                    &temp_conn,
+                    preserve_tables,
+                    preserve_settings_keys,
+                )?;
             }
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
@@ -291,10 +344,20 @@ impl Database {
         ))
     }
 
+    #[cfg(test)]
     fn restore_tables(
         source_conn: &Connection,
         target_conn: &Connection,
         tables: &[&str],
+    ) -> Result<(), AppError> {
+        Self::restore_tables_with_settings(source_conn, target_conn, tables, &[])
+    }
+
+    fn restore_tables_with_settings(
+        source_conn: &Connection,
+        target_conn: &Connection,
+        tables: &[&str],
+        preserve_settings_keys: &[&str],
     ) -> Result<(), AppError> {
         // 整批复原放进一个事务：旧实现每行一条隐式自动提交的 INSERT，
         // 目标是磁盘上的暂存库，等于每行一次 fsync——2.6 万行实测 119 秒。
@@ -304,7 +367,12 @@ impl Database {
             .unchecked_transaction()
             .map_err(|e| AppError::Database(format!("开启恢复事务失败: {e}")))?;
 
-        for table in tables {
+        let mut tables_to_restore = tables.to_vec();
+        if !preserve_settings_keys.is_empty() && !tables_to_restore.contains(&"settings") {
+            tables_to_restore.push("settings");
+        }
+
+        for table in tables_to_restore.iter().copied() {
             if !Self::table_exists(source_conn, table)? || !Self::table_exists(&tx, table)? {
                 continue;
             }
@@ -321,8 +389,36 @@ impl Database {
                 .collect::<Vec<_>>()
                 .join(", ");
 
-            tx.execute(&format!("DELETE FROM {quoted_table}"), [])
-                .map_err(|e| AppError::Database(format!("清空表 {table} 失败: {e}")))?;
+            let filtered_settings = table == "settings" && !preserve_settings_keys.is_empty();
+            let settings_key_index = if filtered_settings {
+                Some(
+                    columns
+                        .iter()
+                        .position(|column| column.eq_ignore_ascii_case("key"))
+                        .ok_or_else(|| {
+                            AppError::Database(
+                                "settings 表缺少 key 列，无法保留本机 Codex 重放状态".to_string(),
+                            )
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            if filtered_settings {
+                for key in preserve_settings_keys {
+                    tx.execute(
+                        &format!("DELETE FROM {quoted_table} WHERE \"key\" = ?1"),
+                        [*key],
+                    )
+                    .map_err(|e| {
+                        AppError::Database(format!("清理本机 settings 键 {key} 失败: {e}"))
+                    })?;
+                }
+            } else {
+                tx.execute(&format!("DELETE FROM {quoted_table}"), [])
+                    .map_err(|e| AppError::Database(format!("清空表 {table} 失败: {e}")))?;
+            }
 
             let placeholders = (1..=columns.len())
                 .map(|idx| format!("?{idx}"))
@@ -344,6 +440,21 @@ impl Database {
                 .map_err(|e| AppError::Database(format!("查询表 {table} 数据失败: {e}")))?;
 
             while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+                if let Some(key_index) = settings_key_index {
+                    let key_value = row
+                        .get_ref(key_index)
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                    let is_preserved_key = match key_value {
+                        ValueRef::Text(value) => preserve_settings_keys
+                            .iter()
+                            .any(|key| value == key.as_bytes()),
+                        _ => false,
+                    };
+                    if !is_preserved_key {
+                        continue;
+                    }
+                }
+
                 let mut values = Vec::with_capacity(columns.len());
                 for idx in 0..columns.len() {
                     values.push(
@@ -358,7 +469,7 @@ impl Database {
             }
         }
 
-        Self::restore_sqlite_sequences(source_conn, &tx, tables)?;
+        Self::restore_sqlite_sequences(source_conn, &tx, &tables_to_restore)?;
 
         tx.commit()
             .map_err(|e| AppError::Database(format!("提交恢复事务失败: {e}")))?;
@@ -705,6 +816,14 @@ impl Database {
 
     /// 导出数据库为 SQL 文本
     fn dump_sql(conn: &Connection, skip_tables: &[&str]) -> Result<String, AppError> {
+        Self::dump_sql_with_filters(conn, skip_tables, &[])
+    }
+
+    fn dump_sql_with_filters(
+        conn: &Connection,
+        skip_tables: &[&str],
+        skip_settings_keys: &[&str],
+    ) -> Result<String, AppError> {
         let mut output = String::new();
         let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let user_version: i64 = conn
@@ -777,6 +896,20 @@ impl Database {
                 .collect::<Vec<_>>()
                 .join(", ");
             let insert_prefix = format!("INSERT INTO {quoted_table} ({quoted_columns}) VALUES ");
+            let settings_key_index = if table == "settings" && !skip_settings_keys.is_empty() {
+                Some(
+                    columns
+                        .iter()
+                        .position(|column| column.eq_ignore_ascii_case("key"))
+                        .ok_or_else(|| {
+                            AppError::Database(
+                                "settings 表缺少 key 列，无法过滤本机 Codex 重放状态".to_string(),
+                            )
+                        })?,
+                )
+            } else {
+                None
+            };
 
             let mut stmt = conn
                 .prepare(&format!("SELECT {quoted_columns} FROM {quoted_table}"))
@@ -788,6 +921,21 @@ impl Database {
             let mut pending_rows = 0usize;
             let mut batch = String::new();
             while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+                if let Some(key_index) = settings_key_index {
+                    let key_value = row
+                        .get_ref(key_index)
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                    let is_skipped_key = match key_value {
+                        ValueRef::Text(value) => {
+                            skip_settings_keys.iter().any(|key| value == key.as_bytes())
+                        }
+                        _ => false,
+                    };
+                    if is_skipped_key {
+                        continue;
+                    }
+                }
+
                 let mut values = Vec::with_capacity(columns.len());
                 for idx in 0..columns.len() {
                     let value = row
@@ -1320,6 +1468,215 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(name, "Provider One");
+        Ok(())
+    }
+
+    #[test]
+    fn sql_backup_manifest_contains_agent_session_tables() -> Result<(), AppError> {
+        let source = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute(
+                "INSERT INTO agent_session_nodes (
+                    app_type, session_id, root_session_id, node_kind,
+                    relation_confidence, title, last_synced_at
+                 ) VALUES ('claude', 'anonymous-session', 'anonymous-session',
+                           'standalone', 'unavailable', 'Anonymous fixture', 42)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO agent_session_usage_rollups (
+                    date, app_type, session_id, provider_id, model,
+                    data_source, precision, time_semantics,
+                    request_count_semantics, input_token_semantics,
+                    source_identity, profile_id, database_identity,
+                    base_url_digest, billing_mode, task, source_version,
+                    sync_window_start, sync_window_end, request_count,
+                    api_call_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, cache_write_tokens,
+                    reasoning_tokens,
+                    total_cost_usd, cost_status, cost_source, cost_delta_kind
+                 ) VALUES ('2026-08-01', 'claude', 'anonymous-session', 'p1',
+                           'fixture-model', 'fixture', 'sync_window', 'source_event_time',
+                           'assistant_message', 2, 'fixture-source', 'profile-fixture',
+                           'db-fixture', 'sha256:fixture-base', 'actual', 'task-fixture',
+                           'v1', 100, 200, NULL, 3, 10, 5, 1, NULL, 6, NULL,
+                           NULL, 'unknown', 'fixture', 'normal')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO agent_session_usage_snapshots (
+                    app_type, source_identity, profile_id, database_identity,
+                    session_id, model, provider_id, base_url_digest, billing_mode,
+                    task, data_source, source_version, api_call_count, input_tokens,
+                    output_tokens, cache_read_tokens, cache_write_tokens,
+                    reasoning_tokens, last_synced_at, estimated_cost_usd,
+                    actual_cost_usd, cost_status, cost_source
+                 ) VALUES (
+                    'hermes', 'hermes:fixture:v1', 'profile-a', 'db-a',
+                    'snapshot-session', 'fixture-model', 'fixture-provider',
+                    'sha256:fixture-base', 'actual', 'task-null', 'fixture', '1',
+                    3, 10, 5, 1, 2, 0, 42, NULL, NULL, NULL, NULL
+                 )",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO agent_session_canonical_coverage (
+                    app_type, data_source, request_id, canonical_session_id, marked_at
+                 ) VALUES ('claude', 'session_log', 'session:coverage-1',
+                           'anonymous-session', 44)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO agent_session_usage_snapshots (
+                    app_type, source_identity, profile_id, database_identity,
+                    session_id, model, provider_id, base_url_digest, billing_mode,
+                    task, data_source, source_version, api_call_count, input_tokens,
+                    output_tokens, cache_read_tokens, cache_write_tokens,
+                    reasoning_tokens, last_synced_at, estimated_cost_usd,
+                    actual_cost_usd, cost_status, cost_source
+                 ) VALUES (
+                    'hermes', 'hermes:fixture:v1', 'profile-a', 'db-a',
+                    'snapshot-session', 'fixture-model', 'fixture-provider',
+                    'sha256:fixture-base', 'actual', 'task-zero', 'fixture', '1',
+                    4, 12, 6, 2, 3, 1, 43, '0', '0', 'actual', 'fixture'
+                 )",
+                [],
+            )?;
+        }
+        let sql = source.export_sql_string()?;
+        assert!(sql.contains("CREATE TABLE agent_session_nodes"));
+        assert!(sql.contains("CREATE TABLE agent_session_usage_rollups"));
+        assert!(sql.contains("CREATE TABLE agent_session_usage_snapshots"));
+        assert!(sql.contains("CREATE TABLE agent_session_canonical_coverage"));
+
+        let restored = Database::memory()?;
+        restored.import_sql_string(&sql)?;
+        let conn = crate::database::lock_conn!(restored.conn);
+        let node_table: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_session_nodes'",
+            [],
+            |row| row.get(0),
+        )?;
+        let usage_table: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_session_usage_rollups'",
+            [],
+            |row| row.get(0),
+        )?;
+        let snapshot_table: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_session_usage_snapshots'",
+            [],
+            |row| row.get(0),
+        )?;
+        let coverage_table: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_session_canonical_coverage'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            (node_table, usage_table, snapshot_table, coverage_table),
+            (1, 1, 1, 1)
+        );
+        let node: (String, String, String, i64) = conn.query_row(
+            "SELECT session_id, node_kind, title, last_synced_at
+             FROM agent_session_nodes WHERE session_id = 'anonymous-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(
+            node,
+            (
+                "anonymous-session".to_string(),
+                "standalone".to_string(),
+                "Anonymous fixture".to_string(),
+                42,
+            )
+        );
+        let usage: (
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+        ) = conn.query_row(
+            "SELECT source_identity, profile_id, database_identity, task,
+                    source_version, sync_window_start, sync_window_end,
+                    cache_creation_tokens, cache_write_tokens, total_cost_usd, cost_delta_kind
+             FROM agent_session_usage_rollups
+             WHERE session_id = 'anonymous-session'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                    row.get(10)?,
+                ))
+            },
+        )?;
+        assert_eq!(
+            usage,
+            (
+                "fixture-source".to_string(),
+                "profile-fixture".to_string(),
+                "db-fixture".to_string(),
+                "task-fixture".to_string(),
+                "v1".to_string(),
+                100,
+                200,
+                None,
+                Some(6),
+                None,
+                Some("normal".to_string()),
+            )
+        );
+        let snapshot_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_session_usage_snapshots
+             WHERE source_identity = 'hermes:fixture:v1' AND session_id = 'snapshot-session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(snapshot_rows, 2);
+        let nullable_cost: (Option<String>, Option<String>) = conn.query_row(
+            "SELECT estimated_cost_usd, actual_cost_usd
+             FROM agent_session_usage_snapshots
+             WHERE task = 'task-null'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(nullable_cost, (None, None));
+        let explicit_zero: (Option<String>, Option<String>) = conn.query_row(
+            "SELECT estimated_cost_usd, actual_cost_usd
+             FROM agent_session_usage_snapshots
+             WHERE task = 'task-zero'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(explicit_zero, (Some("0".into()), Some("0".into())));
+        let coverage: (String, String, i64) = conn.query_row(
+            "SELECT request_id, canonical_session_id, marked_at
+             FROM agent_session_canonical_coverage
+             WHERE app_type = 'claude' AND data_source = 'session_log'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            coverage,
+            ("session:coverage-1".into(), "anonymous-session".into(), 44)
+        );
         Ok(())
     }
 
@@ -2158,6 +2515,211 @@ mod tests {
                 "本地保留表 {table} 也必须从远端 payload 中排除"
             );
         }
+    }
+
+    #[test]
+    #[serial]
+    fn sync_isolates_codex_replay_tables_and_state_but_syncs_other_settings() -> Result<(), AppError>
+    {
+        let _test_home = TestHomeGuard::new();
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute_batch(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}');
+                 INSERT OR REPLACE INTO settings (key, value)
+                 VALUES ('theme', 'remote-theme'),
+                        ('codex_usage_canonical_replay_v1', 'remote-replaying'),
+                        ('codex_usage_canonical_replay_v2', 'remote-replaying'),
+                        ('codex_usage_canonical_replay_v3', 'remote-replaying');
+                 INSERT INTO codex_replay_nodes (
+                     app_type, session_id, root_session_id, node_kind,
+                     relation_confidence, last_synced_at
+                 ) VALUES ('codex_replay', 'remote-replay-only', 'remote-replay-only',
+                           'root', 'exact', 1);
+                 INSERT INTO codex_replay_rollups (
+                     date, app_type, session_id
+                 ) VALUES ('2099-01-01', 'codex_replay', 'remote-replay-only');
+                 INSERT INTO codex_replay_coverage (
+                     app_type, data_source, request_id, marked_at
+                 ) VALUES ('codex_replay', 'codex_session_replay',
+                           'remote-replay-only', 1);
+                 INSERT INTO codex_replay_session_logs (
+                     request_id, provider_id, app_type, model,
+                     latency_ms, status_code, created_at
+                 ) VALUES ('remote-replay-only', 'remote-provider', 'codex',
+                           'remote-model', 1, 200, 1);
+                 INSERT INTO codex_replay_sync (
+                     file_path, last_modified, last_synced_at
+                 ) VALUES ('remote-replay-only.jsonl', 1, 1);",
+            )?;
+        }
+
+        let sync_sql = remote_db.export_sql_string_for_sync()?;
+        assert!(
+            !sync_sql.contains("remote-replay-only"),
+            "sync payload must not contain remote Codex replay rows"
+        );
+        assert!(
+            !sync_sql.contains("remote-replaying"),
+            "sync payload must not contain remote Codex replay settings"
+        );
+
+        let full_sql = remote_db.export_sql_string()?;
+        assert!(
+            full_sql.contains("remote-replay-only"),
+            "full backups must retain Codex replay rows"
+        );
+        assert!(
+            full_sql.contains("remote-replaying"),
+            "full backups must retain Codex replay settings"
+        );
+        let full_target = Database::memory()?;
+        full_target.import_sql_string(&full_sql)?;
+        {
+            let conn = crate::database::lock_conn!(full_target.conn);
+            let replay_table_counts: (i64, i64, i64, i64, i64) = conn.query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM codex_replay_nodes
+                      WHERE session_id = 'remote-replay-only'),
+                     (SELECT COUNT(*) FROM codex_replay_rollups
+                      WHERE session_id = 'remote-replay-only'),
+                     (SELECT COUNT(*) FROM codex_replay_coverage
+                      WHERE request_id = 'remote-replay-only'),
+                     (SELECT COUNT(*) FROM codex_replay_session_logs
+                      WHERE request_id = 'remote-replay-only'),
+                     (SELECT COUNT(*) FROM codex_replay_sync
+                      WHERE file_path = 'remote-replay-only.jsonl')",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )?;
+            assert_eq!(
+                replay_table_counts,
+                (1, 1, 1, 1, 1),
+                "full imports must retain every Codex replay table row"
+            );
+            let replay_state_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM settings
+                 WHERE key IN (
+                     'codex_usage_canonical_replay_v1',
+                     'codex_usage_canonical_replay_v2',
+                     'codex_usage_canonical_replay_v3'
+                 )",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                replay_state_count, 3,
+                "full imports must retain all Codex replay state rows"
+            );
+        }
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute_batch(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('local-provider', 'claude', 'Local Provider', '{}', '{}');
+                 INSERT OR REPLACE INTO settings (key, value)
+                 VALUES ('theme', 'local-theme'),
+                        ('codex_usage_canonical_replay_v1', 'local-pending'),
+                        ('codex_usage_canonical_replay_v2', 'local-replaying'),
+                        ('codex_usage_canonical_replay_v3', 'local-complete');
+                 INSERT INTO codex_replay_nodes (
+                     app_type, session_id, root_session_id, node_kind,
+                     relation_confidence, last_synced_at
+                 ) VALUES ('codex_replay', 'local-replay-only', 'local-replay-only',
+                           'root', 'exact', 2);
+                 INSERT INTO codex_replay_rollups (
+                     date, app_type, session_id
+                 ) VALUES ('2026-01-01', 'codex_replay', 'local-replay-only');
+                 INSERT INTO codex_replay_coverage (
+                     app_type, data_source, request_id, marked_at
+                 ) VALUES ('codex_replay', 'codex_session_replay',
+                           'local-replay-only', 2);
+                 INSERT INTO codex_replay_session_logs (
+                     request_id, provider_id, app_type, model,
+                     latency_ms, status_code, created_at
+                 ) VALUES ('local-replay-only', 'local-provider', 'codex',
+                           'local-model', 2, 200, 2);
+                 INSERT INTO codex_replay_sync (
+                     file_path, last_modified, last_synced_at
+                 ) VALUES ('local-replay-only.jsonl', 2, 2);",
+            )?;
+        }
+
+        local_db.import_sql_string_for_sync(&sync_sql)?;
+
+        let conn = crate::database::lock_conn!(local_db.conn);
+        let provider_id: String =
+            conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?;
+        assert_eq!(provider_id, "remote-provider");
+        let theme: String = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'theme'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(theme, "remote-theme");
+        let replay_states: (String, String, String) = conn.query_row(
+            "SELECT
+                 (SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v1'),
+                 (SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v2'),
+                 (SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v3')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            replay_states,
+            (
+                "local-pending".into(),
+                "local-replaying".into(),
+                "local-complete".into()
+            )
+        );
+
+        let replay_counts: (i64, i64, i64, i64, i64) = conn.query_row(
+            "SELECT
+                 (SELECT COUNT(*) FROM codex_replay_nodes),
+                 (SELECT COUNT(*) FROM codex_replay_rollups),
+                 (SELECT COUNT(*) FROM codex_replay_coverage),
+                 (SELECT COUNT(*) FROM codex_replay_session_logs),
+                 (SELECT COUNT(*) FROM codex_replay_sync)",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(replay_counts, (1, 1, 1, 1, 1));
+        let local_replay_row_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM codex_replay_nodes
+             WHERE session_id = 'local-replay-only'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(local_replay_row_count, 1);
+        let remote_replay_row_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM codex_replay_nodes
+             WHERE session_id = 'remote-replay-only'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(remote_replay_row_count, 0);
+        Ok(())
     }
 
     #[test]

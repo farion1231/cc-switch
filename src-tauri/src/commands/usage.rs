@@ -1,10 +1,53 @@
 //! 使用统计相关命令
 
 use crate::error::AppError;
+use crate::services::agent_session_usage::{
+    AgentSessionUsageRequest, AgentSessionUsageSummary, AgentTaskUsageFilter,
+    AgentTaskUsageFilterOptions, AgentTaskUsageFilterOptionsRequest, AgentTaskUsagePage,
+    AgentUsageCapability,
+};
 use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
+use crate::services::session_usage_rebuild::{
+    AgentUsageRebuildApp, RebuildAgentSessionUsageRequest, RebuildAgentSessionUsageResult,
+};
 use crate::services::usage_stats::*;
 use crate::store::AppState;
 use tauri::State;
+
+/// 获取规范化 Agent 会话自身、全部后代及派生任务总量。
+#[tauri::command]
+pub fn get_agent_session_usage(
+    state: State<'_, AppState>,
+    request: AgentSessionUsageRequest,
+) -> Result<AgentSessionUsageSummary, AppError> {
+    crate::services::agent_session_usage::get_agent_session_usage(&state.db, &request)
+}
+
+/// 分页获取根/独立 Agent 任务用量。子代理只参与根任务聚合，不作为默认行返回。
+#[tauri::command]
+pub fn list_agent_task_usage(
+    state: State<'_, AppState>,
+    filter: AgentTaskUsageFilter,
+) -> Result<AgentTaskUsagePage, AppError> {
+    crate::services::agent_session_usage::list_agent_task_usage(&state.db, &filter)
+}
+
+/// 获取任务统计筛选器的完整原生标题/项目候选项。
+#[tauri::command]
+pub fn get_agent_task_usage_filter_options(
+    state: State<'_, AppState>,
+    request: AgentTaskUsageFilterOptionsRequest,
+) -> Result<AgentTaskUsageFilterOptions, AppError> {
+    crate::services::agent_session_usage::get_agent_task_usage_filter_options(&state.db, &request)
+}
+
+/// 获取统一的九个受管理 Agent 会话用量能力注册表。
+#[tauri::command]
+pub fn get_agent_usage_capabilities(
+    _state: State<'_, AppState>,
+) -> Result<Vec<AgentUsageCapability>, AppError> {
+    Ok(crate::services::agent_session_usage::get_agent_usage_capabilities())
+}
 
 /// 获取使用量汇总
 #[tauri::command]
@@ -282,13 +325,41 @@ pub async fn rebuild_codex_usage(
         .lock()
         .await;
     tauri::async_runtime::spawn_blocking(move || {
-        db.backup_database_file()?;
-        db.reset_codex_usage()?;
-        let result = crate::services::session_usage_codex::sync_codex_usage(&db);
-        finish_codex_rebuild(result)
+        let request = RebuildAgentSessionUsageRequest {
+            app_types: vec![AgentUsageRebuildApp::Codex],
+        };
+        match crate::services::session_usage_rebuild::rebuild_agent_session_usage_without_event(
+            &db, &request,
+        ) {
+            Ok(result) => {
+                let provider_result = result.providers.into_iter().next().ok_or_else(|| {
+                    AppError::Message("Codex provider rebuild returned no result".to_string())
+                });
+                finish_codex_rebuild(provider_result.map(|provider| provider.sync_result))
+            }
+            Err(error) => finish_codex_rebuild(Err(error)),
+        }
     })
     .await
     .map_err(|error| AppError::Message(format!("Codex 用量重建任务失败: {error}")))?
+}
+
+/// 显式按 provider 重建历史会话用量。每个 provider 独立暂存并发布，
+/// 失败只保留该 provider 的已发布 generation，不影响同次其它选择。
+#[tauri::command]
+pub async fn rebuild_agent_session_usage(
+    state: State<'_, AppState>,
+    request: RebuildAgentSessionUsageRequest,
+) -> Result<RebuildAgentSessionUsageResult, AppError> {
+    let db = state.db.clone();
+    let _guard = crate::services::session_usage::session_sync_mutex()
+        .lock()
+        .await;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::session_usage_rebuild::rebuild_agent_session_usage(&db, &request)
+    })
+    .await
+    .map_err(|error| AppError::Message(format!("Agent 用量重建任务失败: {error}")))?
 }
 
 /// 获取数据来源分布

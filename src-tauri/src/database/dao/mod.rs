@@ -2,6 +2,7 @@
 //!
 //! Database access operations for each domain
 
+pub mod agent_session_usage;
 pub mod failover;
 pub mod mcp;
 pub mod profiles;

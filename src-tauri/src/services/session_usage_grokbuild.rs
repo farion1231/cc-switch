@@ -6,7 +6,8 @@
 //!
 //! ## 数据流
 //! ```text
-//! updates.jsonl（逐轮 turn_completed） → 沉降窗/接管守卫 → 费用计算 → proxy_request_logs
+//! updates.jsonl（逐轮 turn_completed） → 沉降窗/接管守卫 → 费用计算 →
+//! proxy_request_logs + canonical session nodes/rollups
 //! ```
 //!
 //! ## 事件口径（2026-07-23 单进程双 prompt 实测 + CLI 二进制逆向双重确证）
@@ -23,19 +24,34 @@
 //! - `costUsdTicks`（1 tick = 1e-10 USD）是 CLI 自报的本轮精确成本，6 个实测
 //!   样本与本地定价 grok-4.5-build 2/6/0.30 分毫不差。**有自报且完整时
 //!   total_cost 以自报为准**（回填只补 total<=0 的行、不修正错价，入账后无
-//!   修复路径，所以定价漂移窗口不能押在本地价上）；本地定价负责分项成本与
-//!   漂移告警。`costIsPartial` 标记自报为下界：有本地价回退本地全额复算并
-//!   抑制漂移告警，无价才用下界入账（分项记 0）。
+//!   修复路径，所以定价漂移窗口不能押在本地价上）；本地定价负责 legacy
+//!   raw compatibility 分项成本与漂移告警。`costIsPartial` 标记自报为下界：
+//!   raw compatibility 可按既有规则回退本地价，但 v20 canonical fact 只接受
+//!   完整自报 ticks；partial 或未报告成本保持 `NULL` 并记录 cost_status，明确
+//!   报告的零 tick 才写入精确字符串 `"0"`。cache creation 未被 Grok source
+//!   证明，canonical fact 始终为 `NULL`，因此即使 cost 完整仍是 partial usage。
 //! - 防接管态双算不用指纹去重：接管态下 CLI 照写 updates.jsonl，但轮事件是
 //!   聚合值（多 loop 求和），与代理逐请求行结构性不相等。改用「沉降窗 +
 //!   接管活动时间窗守卫」：只导入足够旧的事件（届时接管态的代理行必已
 //!   落库），插入前按事件时刻查询附近是否存在代理直录行（见
 //!   `has_recent_grokbuild_proxy_activity`）。
+//! - 每个 `turn_completed × model` 以 `RequestExact` / `EventTime` / `AgentCall`
+//!   写入 canonical bucket；先按完整日期/模型/source key 聚合，不能逐 turn
+//!   覆盖同桶。`modelCalls` 仅保留上游 metadata，绝不冒充 HTTP 请求数。
+//! - durable session ID 只有在 `summary.json.info.id == updates` 目录名时才
+//!   接受；所有 Grok 节点都是 self-only/standalone。缺失或冲突的 summary
+//!   fail closed，避免不同 cwd 的目录被误合并。
 
-use crate::database::{lock_conn, Database};
+use crate::database::{lock_conn, AgentSessionCanonicalCoverageMarker, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
+use crate::services::agent_session_usage::{
+    normalize_session_relations, write_agent_session_node,
+    write_agent_session_usage_rollup_fact_on_conn, NormalizedUsageRollupFact,
+    RequestCountSemantics, SessionNodeMetadata, SessionRelationClaim, TimeSemantics,
+    UsagePrecision,
+};
 use crate::services::session_usage::{
     get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
@@ -43,10 +59,17 @@ use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
     find_model_pricing, has_recent_grokbuild_proxy_activity, SESSION_PROXY_DEDUP_WINDOW_SECONDS,
 };
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::SystemTime;
+
+const GROK_APP_TYPE: &str = "grokbuild";
+const GROK_SESSION_DATA_SOURCE: &str = "grok_session";
+const GROK_SESSION_PROVIDER_ID: &str = "_grok_session";
 
 /// 事件沉降窗：只导入早于「现在 − 窗口」的事件。
 ///
@@ -63,21 +86,29 @@ struct GrokCounters {
     input: u64,
     output: u64,
     cached: u64,
+    /// `reasoningTokens` is a source-provided subset of output.  Preserve it
+    /// independently when present, but never add it to output or totals.
+    reasoning: Option<u64>,
     api_ms: u64,
     model_calls: u64,
-    /// CLI 自报本轮成本，1 tick = 1e-10 USD；0 = 上游未提供
+    /// CLI 自报本轮成本，1 tick = 1e-10 USD；是否报告由 `cost_reported`
+    /// 区分，因而可以保留明确报告的零成本。
     cost_ticks: u64,
+    /// Whether `costUsdTicks` was present in the source payload.  A reported
+    /// zero is meaningful (`Some("0")` in canonical buckets), whereas a
+    /// missing field must remain `None`.
+    cost_reported: bool,
     /// 上游标记 cost_ticks 只是部分费用（`costIsPartial`）：此时它是下界
     cost_partial: bool,
+    /// Durable buckets require all token components to be present.  The raw
+    /// legacy table cannot represent unknown token components without
+    /// fabricating zeros, so such a model entry is skipped entirely.
+    tokens_known: bool,
 }
 
 impl GrokCounters {
-    fn is_zero(&self) -> bool {
-        self.input == 0 && self.output == 0 && self.cached == 0
-    }
-
     fn reported_cost_usd(&self) -> Option<Decimal> {
-        (self.cost_ticks > 0)
+        self.cost_reported
             .then(|| Decimal::from(self.cost_ticks) / Decimal::from(10_000_000_000u64))
     }
 }
@@ -90,6 +121,570 @@ struct GrokUsageEvent {
     /// 事件级 `costIsPartial`（顶层 usage 上观测到的位置；对本事件全部模型生效）
     cost_is_partial: bool,
     per_model: Vec<(String, GrokCounters)>,
+}
+
+/// Summary metadata is the only accepted proof that an updates directory name
+/// is the stable Grok session ID.  Without it the adapter fails closed rather
+/// than merging similarly named directories from different projects.
+#[derive(Debug, Clone)]
+struct GrokSessionIdentity {
+    session_id: String,
+    project_dir: Option<String>,
+    title: Option<String>,
+    created_at: Option<i64>,
+    last_active_at: Option<i64>,
+    summary_path: PathBuf,
+}
+
+/// All dimensions that participate in a canonical bucket key.  Keeping the
+/// key explicit prevents a later source/precision change from accidentally
+/// replacing a different bucket through the T03 upsert bridge.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GrokRollupKey {
+    date: String,
+    app_type: String,
+    session_id: String,
+    provider_id: String,
+    model: String,
+    request_model: String,
+    pricing_model: String,
+    data_source: String,
+    precision: String,
+    time_semantics: String,
+    request_count_semantics: String,
+}
+
+#[derive(Debug, Clone)]
+struct GrokRollupAccumulator {
+    key: GrokRollupKey,
+    /// Stable admitted request IDs represented by this full bucket.  They are
+    /// carried alongside the aggregate so retention coverage can be marked
+    /// only after the matching canonical upsert succeeds.
+    request_ids: Vec<String>,
+    request_count: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    reasoning_tokens: Option<i64>,
+    total_cost_usd: Option<Decimal>,
+    cost_is_complete: bool,
+    cost_has_partial: bool,
+    first_event_at: i64,
+    last_event_at: i64,
+}
+
+/// Durable request evidence retained in `proxy_request_logs`.  This is the
+/// source of truth for canonical request identity when an updates.jsonl
+/// rewrite no longer contains a previously imported prompt.
+#[derive(Debug, Clone)]
+struct GrokDurableRawRow {
+    request_id: String,
+    model: String,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    total_cost_usd: Option<Decimal>,
+    created_at: i64,
+}
+
+impl GrokRollupAccumulator {
+    fn add(&mut self, turn: &GrokCounters, cost_is_partial: bool, created_at: i64) {
+        self.request_count = self.request_count.saturating_add(1);
+        self.input_tokens = self.input_tokens.saturating_add(clamp_i64(turn.input));
+        self.output_tokens = self.output_tokens.saturating_add(clamp_i64(turn.output));
+        self.cache_read_tokens = self
+            .cache_read_tokens
+            .saturating_add(clamp_i64(turn.cached));
+        self.reasoning_tokens = match (self.reasoning_tokens, turn.reasoning.map(clamp_i64)) {
+            (Some(existing), Some(incoming)) => Some(existing.saturating_add(incoming)),
+            _ => None,
+        };
+        self.first_event_at = self.first_event_at.min(created_at);
+        self.last_event_at = self.last_event_at.max(created_at);
+
+        let incoming_cost = (!cost_is_partial && turn.cost_reported)
+            .then(|| Decimal::from(turn.cost_ticks) / Decimal::from(10_000_000_000u64));
+        if cost_is_partial {
+            self.cost_has_partial = true;
+        }
+
+        if let Some(cost) = incoming_cost {
+            // A raw fallback may already have made this bucket partial while
+            // retaining an explicitly stored legacy total.  Preserve that
+            // sum when possible; once any cost is unknown, keep it unknown.
+            if let Some(total) = self.total_cost_usd.as_mut() {
+                *total += cost;
+            }
+        } else {
+            // The canonical bucket has no independent per-request cost
+            // quality field.  A single missing/partial source value therefore
+            // makes the exact total unavailable instead of claiming a sum.
+            self.total_cost_usd = None;
+            self.cost_is_complete = false;
+        }
+    }
+
+    /// Add a durable compatibility raw row when the current source rewrite no
+    /// longer contains its prompt.  The raw row proves request identity and
+    /// token/time values, and may carry a legacy total cost, but it does not
+    /// prove the original Grok cost-report or reasoning-token metadata.  Keep
+    /// the preserved total marked partial and never claim missing detail.
+    fn add_durable_raw(&mut self, row: &GrokDurableRawRow) {
+        self.request_count = self.request_count.saturating_add(1);
+        self.input_tokens = self.input_tokens.saturating_add(row.input_tokens.max(0));
+        self.output_tokens = self.output_tokens.saturating_add(row.output_tokens.max(0));
+        self.cache_read_tokens = self
+            .cache_read_tokens
+            .saturating_add(row.cache_read_tokens.max(0));
+        // Raw compatibility rows do not carry reasoning-token metadata.
+        self.reasoning_tokens = None;
+        self.first_event_at = self.first_event_at.min(row.created_at);
+        self.last_event_at = self.last_event_at.max(row.created_at);
+        self.cost_has_partial = true;
+        self.cost_is_complete = false;
+        match (&mut self.total_cost_usd, row.total_cost_usd.as_ref()) {
+            (Some(total), Some(cost)) => *total += cost,
+            _ => self.total_cost_usd = None,
+        }
+    }
+
+    fn into_fact(self) -> NormalizedUsageRollupFact {
+        let cost_status = if self.cost_is_complete {
+            "complete"
+        } else if self.cost_has_partial {
+            "partial"
+        } else {
+            "unknown"
+        };
+        NormalizedUsageRollupFact {
+            date: self.key.date,
+            app_type: self.key.app_type,
+            session_id: self.key.session_id,
+            provider_id: self.key.provider_id,
+            model: self.key.model,
+            request_model: self.key.request_model,
+            pricing_model: self.key.pricing_model,
+            data_source: self.key.data_source,
+            precision: UsagePrecision::RequestExact,
+            time_semantics: TimeSemantics::EventTime,
+            request_count_semantics: RequestCountSemantics::AgentCall,
+            input_token_semantics: INPUT_TOKEN_SEMANTICS_TOTAL,
+            // Grok session logs expose no independent profile/database/endpoint
+            // or sync-window identity. Empty values preserve that absence
+            // instead of inventing dimensions or splitting migrated buckets.
+            source_identity: String::new(),
+            profile_id: String::new(),
+            database_identity: String::new(),
+            base_url_digest: String::new(),
+            billing_mode: String::new(),
+            task: String::new(),
+            source_version: String::new(),
+            sync_window_start: 0,
+            sync_window_end: 0,
+            request_count: Some(self.request_count),
+            // modelCalls is source metadata, not an HTTP/API request count.
+            api_call_count: None,
+            input_tokens: Some(self.input_tokens),
+            output_tokens: Some(self.output_tokens),
+            cache_read_tokens: Some(self.cache_read_tokens),
+            cache_creation_tokens: None,
+            cache_write_tokens: None,
+            reasoning_tokens: self.reasoning_tokens,
+            total_cost_usd: self.total_cost_usd.map(|value| value.to_string()),
+            cost_status: Some(cost_status.to_string()),
+            cost_source: Some(GROK_SESSION_DATA_SOURCE.to_string()),
+            cost_delta_kind: None,
+            correction_state: None,
+            first_event_at: Some(self.first_event_at),
+            last_event_at: Some(self.last_event_at),
+        }
+    }
+}
+
+fn clamp_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+
+fn local_event_date(created_at: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(created_at, 0)
+        .map(|utc| utc.with_timezone(&chrono::Local).date_naive().to_string())
+        .unwrap_or_else(|| "1970-01-01".to_string())
+}
+
+fn grok_rollup_key(session_id: &str, model: &str, created_at: i64) -> GrokRollupKey {
+    GrokRollupKey {
+        date: local_event_date(created_at),
+        app_type: GROK_APP_TYPE.to_string(),
+        session_id: session_id.to_string(),
+        provider_id: GROK_SESSION_PROVIDER_ID.to_string(),
+        model: model.to_string(),
+        request_model: model.to_string(),
+        pricing_model: String::new(),
+        data_source: GROK_SESSION_DATA_SOURCE.to_string(),
+        precision: UsagePrecision::RequestExact.as_str().to_string(),
+        time_semantics: TimeSemantics::EventTime.as_str().to_string(),
+        request_count_semantics: RequestCountSemantics::AgentCall.as_str().to_string(),
+    }
+}
+
+fn add_grok_rollup(
+    buckets: &mut HashMap<GrokRollupKey, GrokRollupAccumulator>,
+    session_id: &str,
+    model: &str,
+    request_id: &str,
+    turn: &GrokCounters,
+    cost_is_partial: bool,
+    created_at: i64,
+) {
+    let key = grok_rollup_key(session_id, model, created_at);
+    let entry = buckets
+        .entry(key.clone())
+        .or_insert_with(|| GrokRollupAccumulator {
+            key,
+            request_ids: Vec::new(),
+            request_count: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            // Start with a known zero so the first source-provided reasoning value
+            // is retained; any turn that omits reasoning flips the aggregate to
+            // `None` and keeps it unknown thereafter.
+            reasoning_tokens: Some(0),
+            total_cost_usd: Some(Decimal::ZERO),
+            cost_is_complete: true,
+            cost_has_partial: false,
+            first_event_at: created_at,
+            last_event_at: created_at,
+        });
+    if !entry.request_ids.iter().any(|id| id == request_id) {
+        entry.request_ids.push(request_id.to_string());
+    }
+    entry.add(turn, cost_is_partial, created_at);
+}
+
+fn load_grok_durable_raw_rows(
+    db: &Database,
+    session_id: &str,
+) -> Result<Vec<GrokDurableRawRow>, AppError> {
+    let conn = lock_conn!(db.conn);
+    let mut statement = conn
+        .prepare(
+            "SELECT request_id, model, input_tokens, output_tokens,
+                    cache_read_tokens, total_cost_usd, created_at
+             FROM proxy_request_logs
+             WHERE app_type = ?1 AND data_source = ?2 AND provider_id = ?3
+               AND session_id = ?4
+             ORDER BY request_id",
+        )
+        .map_err(|error| AppError::Database(format!("读取 Grok durable raw rows 失败: {error}")))?;
+    let rows = statement
+        .query_map(
+            rusqlite::params![
+                GROK_APP_TYPE,
+                GROK_SESSION_DATA_SOURCE,
+                GROK_SESSION_PROVIDER_ID,
+                session_id
+            ],
+            |row| {
+                let total_cost = row
+                    .get::<_, Option<String>>(5)?
+                    .and_then(|value| Decimal::from_str(&value).ok());
+                Ok(GrokDurableRawRow {
+                    request_id: row.get(0)?,
+                    model: row.get(1)?,
+                    input_tokens: row.get(2)?,
+                    output_tokens: row.get(3)?,
+                    cache_read_tokens: row.get(4)?,
+                    total_cost_usd: total_cost,
+                    created_at: row.get(6)?,
+                })
+            },
+        )
+        .map_err(|error| AppError::Database(format!("读取 Grok durable raw rows 失败: {error}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppError::Database(format!("解析 Grok durable raw rows 失败: {error}")))?;
+    Ok(rows)
+}
+
+fn add_grok_durable_raw_rollup(
+    buckets: &mut HashMap<GrokRollupKey, GrokRollupAccumulator>,
+    session_id: &str,
+    row: &GrokDurableRawRow,
+) {
+    let key = grok_rollup_key(session_id, &row.model, row.created_at);
+    let entry = buckets
+        .entry(key.clone())
+        .or_insert_with(|| GrokRollupAccumulator {
+            key,
+            request_ids: Vec::new(),
+            request_count: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            reasoning_tokens: Some(0),
+            total_cost_usd: Some(Decimal::ZERO),
+            cost_is_complete: true,
+            cost_has_partial: false,
+            first_event_at: row.created_at,
+            last_event_at: row.created_at,
+        });
+    if !entry.request_ids.iter().any(|id| id == &row.request_id) {
+        entry.request_ids.push(row.request_id.clone());
+    }
+    entry.add_durable_raw(row);
+}
+
+fn write_grok_rollups(
+    db: &Database,
+    session_id: &str,
+    admitted_turns: HashMap<String, (GrokCounters, bool)>,
+    marked_at: i64,
+) -> Result<(), AppError> {
+    // The current updates.jsonl scan is not a durable history boundary: a
+    // source rewind can remove an already imported prompt while appending a
+    // new one.  Rebuild every canonical bucket from all retained provider raw
+    // rows, using current events only for richer per-request metadata.
+    let durable_rows = load_grok_durable_raw_rows(db, session_id)?;
+    if durable_rows.is_empty() {
+        // Do not erase an older canonical generation when the compatibility
+        // raw rows have already been pruned; there is no evidence to rebuild
+        // it from in this sync pass.
+        return Ok(());
+    }
+
+    let mut buckets: HashMap<GrokRollupKey, GrokRollupAccumulator> = HashMap::new();
+    for row in &durable_rows {
+        if let Some((turn, cost_is_partial)) = admitted_turns.get(&row.request_id) {
+            add_grok_rollup(
+                &mut buckets,
+                session_id,
+                &row.model,
+                &row.request_id,
+                turn,
+                *cost_is_partial,
+                row.created_at,
+            );
+        } else {
+            // Historical rows still prove request/token/time identity, but do
+            // not prove source reasoning or cost-report quality.  The raw
+            // fallback preserves any stored legacy total while marking the
+            // resulting bucket partial.
+            add_grok_durable_raw_rollup(&mut buckets, session_id, row);
+            log::warn!(
+                "[GROK-SYNC] canonical rebuild uses durable raw fallback for request_id={}",
+                row.request_id
+            );
+        }
+    }
+
+    // Sorting is not required for correctness, but makes writes deterministic
+    // and keeps fixture diagnostics stable across HashMap iteration orders.
+    let mut values: Vec<_> = buckets.into_values().collect();
+    values.sort_by(|left, right| {
+        left.key
+            .date
+            .cmp(&right.key.date)
+            .then_with(|| left.key.model.cmp(&right.key.model))
+    });
+    let conn = lock_conn!(db.conn);
+    let tx = conn.unchecked_transaction().map_err(|error| {
+        AppError::Database(format!("开启 Grok canonical 覆盖事务失败: {error}"))
+    })?;
+
+    // This is a full source-scoped replacement, not an additive update.  The
+    // durable raw rows above are the complete retained request identity set;
+    // deleting the prior source/session buckets prevents an old model/date
+    // bucket from surviving a prompt or source rewrite.
+    tx.execute(
+        "DELETE FROM agent_session_usage_rollups
+         WHERE app_type = ?1 AND session_id = ?2 AND data_source = ?3",
+        rusqlite::params![GROK_APP_TYPE, session_id, GROK_SESSION_DATA_SOURCE],
+    )
+    .map_err(|error| AppError::Database(format!("清理 Grok canonical 桶失败: {error}")))?;
+
+    for accumulator in values {
+        let request_ids = accumulator.request_ids.clone();
+        let fact = accumulator.into_fact();
+        write_agent_session_usage_rollup_fact_on_conn(&tx, &fact)?;
+
+        // Marker writes intentionally follow the canonical upsert in the same
+        // transaction.  If either the fact or any marker fails, the
+        // transaction is rolled back and retention has no false coverage proof.
+        for request_id in request_ids {
+            let marker = AgentSessionCanonicalCoverageMarker {
+                app_type: fact.app_type.clone(),
+                data_source: fact.data_source.clone(),
+                request_id,
+                canonical_session_id: Some(fact.session_id.clone()),
+                marked_at,
+            };
+            Database::upsert_agent_session_canonical_coverage_on_conn(&tx, &marker)?;
+        }
+    }
+
+    tx.commit().map_err(|error| {
+        AppError::Database(format!("提交 Grok canonical 覆盖事务失败: {error}"))
+    })?;
+    Ok(())
+}
+
+fn parse_summary_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
+    parse_event_timestamp(value)
+}
+
+fn read_grok_session_identity(file_path: &Path) -> Result<Option<GrokSessionIdentity>, AppError> {
+    let Some(session_dir) = file_path.parent() else {
+        return Ok(None);
+    };
+    let Some(folder_id) = session_dir.file_name().and_then(|name| name.to_str()) else {
+        return Ok(None);
+    };
+    if folder_id.trim().is_empty() {
+        return Ok(None);
+    }
+    let summary_path = session_dir.join("summary.json");
+    let text = match fs::read_to_string(&summary_path) {
+        Ok(text) => text,
+        Err(error) => {
+            log::warn!(
+                "[GROK-SYNC] 缺少或无法读取 summary.json，跳过未证明的会话 {}: {error}",
+                session_dir.display()
+            );
+            return Ok(None);
+        }
+    };
+    let summary: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!(
+                "[GROK-SYNC] summary.json 解析失败，跳过未证明的会话 {}: {error}",
+                summary_path.display()
+            );
+            return Ok(None);
+        }
+    };
+    let Some(summary_id) = summary
+        .get("info")
+        .and_then(|info| info.get("id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        log::warn!(
+            "[GROK-SYNC] summary.info.id 缺失，跳过未证明的会话 {}",
+            summary_path.display()
+        );
+        return Ok(None);
+    };
+    if summary_id != folder_id {
+        log::warn!(
+            "[GROK-SYNC] summary.info.id 与 updates 目录不一致，跳过会话: folder={} summary={}",
+            folder_id,
+            summary_id
+        );
+        return Ok(None);
+    }
+
+    let project_dir = summary
+        .get("info")
+        .and_then(|info| info.get("cwd"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let title = summary
+        .get("generated_title")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            summary
+                .get("session_summary")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+        })
+        .map(str::to_string);
+    let created_at = parse_summary_timestamp(summary.get("created_at"));
+    let last_active_at = summary
+        .get("last_active_at")
+        .or_else(|| summary.get("updated_at"))
+        .and_then(|value| parse_summary_timestamp(Some(value)));
+
+    Ok(Some(GrokSessionIdentity {
+        session_id: folder_id.to_string(),
+        project_dir,
+        title,
+        created_at,
+        last_active_at,
+        summary_path,
+    }))
+}
+
+fn grok_identity_conflicts(
+    db: &Database,
+    identity: &GrokSessionIdentity,
+) -> Result<bool, AppError> {
+    let conn = lock_conn!(db.conn);
+    let existing: Option<Option<String>> = conn
+        .query_row(
+            "SELECT project_dir FROM agent_session_nodes
+             WHERE app_type = ?1 AND session_id = ?2",
+            rusqlite::params![GROK_APP_TYPE, &identity.session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| AppError::Database(format!("读取 Grok 会话节点身份失败: {error}")))?;
+    Ok(match (existing, identity.project_dir.as_deref()) {
+        // No durable node exists yet, so this is the first observation and
+        // cannot conflict with a prior source identity.
+        (None, _) => false,
+        (Some(Some(existing)), Some(incoming)) => existing.as_str() != incoming,
+        (Some(None), None) => false,
+        // If an existing node has only one side of cwd evidence, identity
+        // cannot be proven equivalent; fail closed instead of folding the
+        // sessions together.
+        (Some(None), Some(_)) | (Some(Some(_)), None) => true,
+    })
+}
+
+fn write_grok_session_node(
+    db: &Database,
+    identity: &GrokSessionIdentity,
+    synced_at: i64,
+) -> Result<bool, AppError> {
+    if grok_identity_conflicts(db, identity)? {
+        log::warn!(
+            "[GROK-SYNC] 相同 session ID 出现不同 cwd，拒绝跨项目合并: {}",
+            identity.session_id
+        );
+        return Ok(false);
+    }
+
+    let mut claim = SessionRelationClaim::standalone(GROK_APP_TYPE, &identity.session_id);
+    claim.metadata = SessionNodeMetadata {
+        title: identity.title.clone(),
+        project_dir: identity.project_dir.clone(),
+        source_path: Some(identity.summary_path.to_string_lossy().to_string()),
+        created_at: identity.created_at,
+        last_active_at: identity.last_active_at,
+        last_synced_at: synced_at,
+    };
+    let mut nodes = normalize_session_relations(&[claim])?;
+    let node = nodes
+        .pop()
+        .ok_or_else(|| AppError::InvalidInput("Grok 会话节点规范化结果为空".into()))?;
+    write_agent_session_node(db, &node)?;
+    Ok(true)
+}
+
+fn grok_raw_row_exists(db: &Database, request_id: &str) -> Result<bool, AppError> {
+    let conn = lock_conn!(db.conn);
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM proxy_request_logs
+            WHERE request_id = ?1 AND app_type = ?2 AND data_source = ?3
+        )",
+        rusqlite::params![request_id, GROK_APP_TYPE, GROK_SESSION_DATA_SOURCE],
+        |row| row.get(0),
+    )
+    .map_err(|error| AppError::Database(format!("读取 Grok raw 行状态失败: {error}")))
 }
 
 /// 同步 Grok Build 使用数据（从 updates.jsonl 会话日志）
@@ -197,6 +792,13 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
         return Ok(SessionSyncResult::default());
     }
 
+    let Some(identity) = read_grok_session_identity(file_path)? else {
+        // A matching summary.info.id is required before any raw or canonical
+        // row is written; otherwise two similarly named project directories
+        // could be merged under one durable session ID.
+        return Ok(SessionSyncResult::default());
+    };
+
     // 文件变更时全量重读：UPSERT 幂等使重读无害，且沉降窗延后的事件本就
     // 依赖下一轮重读补入。事件已是逐轮独立值，改 offset 增量读在正确性上
     // 可行（无差分基线依赖），但需另行处理延后事件的 offset 回退，收益
@@ -205,23 +807,22 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
         .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
     let events = parse_grok_usage_events(&content);
 
-    // 会话 ID = 会话目录名（与 summary.json 的 info.id 一致）。request_id
-    // 唯一性押在该 UUIDv7 全局唯一上：同 ID 的归档/活跃副本经 UPSERT 幂等
-    // 收敛（有意），不同 <enc-cwd> 下撞 ID 视为不可能。
-    let session_id = file_path
-        .parent()
-        .and_then(|dir| dir.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
+    if !write_grok_session_node(db, &identity, now)? {
+        return Ok(SessionSyncResult::default());
+    }
+
     let mut result = SessionSyncResult::default();
     let mut deferred = false;
+    // Keep the latest admitted value for each stable prompt×model key.  The
+    // raw UPSERT has the same last-value semantics for a (rare) duplicate
+    // turn_completed prompt; aggregating directly while iterating would count
+    // that replacement twice in the canonical bucket.
+    let mut admitted_turns: HashMap<String, (GrokCounters, bool)> = HashMap::new();
 
     for (idx, event) in events.iter().enumerate() {
         // 沉降窗：事件按 append 顺序时间单调，遇到第一条未沉降的事件即停，
@@ -242,7 +843,10 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
         };
 
         for (model, turn) in &event.per_model {
-            if turn.is_zero() {
+            if !turn.tokens_known {
+                // Canonical durable buckets require all token components; do
+                // not turn an absent field into a fabricated zero.
+                result.skipped += 1;
                 continue;
             }
             if takeover_active {
@@ -265,25 +869,57 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
             } else {
                 event.prompt_id.clone()
             };
-            let request_id = format!("grok_session:{session_id}:{turn_key}:{model}");
-            match insert_grok_session_entry(
+            let request_id = format!(
+                "{GROK_SESSION_DATA_SOURCE}:{}:{turn_key}:{model}",
+                identity.session_id
+            );
+            let raw_write_ok = match insert_grok_session_entry(
                 db,
                 &request_id,
                 turn,
                 event.cost_is_partial || turn.cost_partial,
                 model,
-                &session_id,
+                &identity.session_id,
                 event.created_at,
             ) {
-                Ok(true) => result.imported += 1,
-                Ok(false) => result.skipped += 1,
+                Ok(true) => {
+                    result.imported += 1;
+                    true
+                }
+                Ok(false) => {
+                    result.skipped += 1;
+                    // `changes() == 0` is normally an idempotent Grok row,
+                    // but can also mean a request_id collision with another
+                    // data source rejected by the UPSERT guard.  Only the
+                    // former is admitted for canonical coverage.
+                    grok_raw_row_exists(db, &request_id)?
+                }
                 Err(e) => {
                     log::warn!("[GROK-SYNC] 插入失败 ({request_id}): {e}");
                     result.skipped += 1;
+                    false
+                }
+            };
+
+            // Aggregate all settled turn×model values after the scan crosses
+            // the duplicate-key boundary.  One turn is one AgentCall
+            // regardless of `modelCalls`; that field remains source metadata.
+            if raw_write_ok {
+                if let Some(existing) = admitted_turns.get_mut(&request_id) {
+                    // Raw UPSERT keeps created_at from the first insert even
+                    // when a duplicate prompt later replaces token values.
+                    *existing = (*turn, event.cost_is_partial || turn.cost_partial);
+                } else {
+                    admitted_turns.insert(
+                        request_id,
+                        (*turn, event.cost_is_partial || turn.cost_partial),
+                    );
                 }
             }
         }
     }
+
+    write_grok_rollups(db, &identity.session_id, admitted_turns, now)?;
 
     if deferred {
         // 不落同步状态：下一轮重读整个文件，把沉降后的事件补入。
@@ -311,14 +947,13 @@ fn parse_grok_usage_events(content: &str) -> Vec<GrokUsageEvent> {
             continue;
         }
         let update = record.get("params").and_then(|p| p.get("update"));
-        // 只认 turn_completed（实测全体带 usage 的事件均为此类；判别字段是
-        // sessionUpdate，serde internally-tagged）。字段缺失时向后兼容放行，
-        // 但显式标为其它类型的事件即使带 usage 也不导入——中途快照若与轮末
-        // 事件并存，双导会双算。
+        // 只认明确标记为 turn_completed 的事件（判别字段是 sessionUpdate，
+        // serde internally-tagged）。字段缺失或显式标为其它类型的事件即使
+        // 带 usage 也不导入——中途快照若与轮末事件并存，双导会双算。
         let kind = update
             .and_then(|u| u.get("sessionUpdate"))
             .and_then(|v| v.as_str());
-        if kind.is_some() && kind != Some("turn_completed") {
+        if kind != Some("turn_completed") {
             continue;
         }
         let Some(usage) = update
@@ -343,7 +978,14 @@ fn parse_grok_usage_events(content: &str) -> Vec<GrokUsageEvent> {
             .and_then(|m| m.as_object())
             .map(|map| {
                 map.iter()
-                    .map(|(model, counters)| (model.clone(), parse_grok_counters(counters)))
+                    .map(|(model, counters)| {
+                        let model = if model.trim().is_empty() {
+                            "unknown".to_string()
+                        } else {
+                            model.clone()
+                        };
+                        (model, parse_grok_counters(counters))
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -370,18 +1012,28 @@ fn parse_grok_usage_events(content: &str) -> Vec<GrokUsageEvent> {
 }
 
 fn parse_grok_counters(value: &serde_json::Value) -> GrokCounters {
-    let get = |key: &str| value.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+    let get = |key: &str| value.get(key).and_then(|v| v.as_u64());
+    let input = get("inputTokens");
+    let output = get("outputTokens");
+    let cached = get("cachedReadTokens");
+    let reasoning = get("reasoningTokens");
+    let api_ms = get("apiDurationMs");
+    let model_calls = get("modelCalls");
+    let cost_ticks = get("costUsdTicks");
     GrokCounters {
-        input: get("inputTokens"),
-        output: get("outputTokens"),
-        cached: get("cachedReadTokens"),
-        api_ms: get("apiDurationMs"),
-        model_calls: get("modelCalls"),
-        cost_ticks: get("costUsdTicks"),
+        input: input.unwrap_or(0),
+        output: output.unwrap_or(0),
+        cached: cached.unwrap_or(0),
+        reasoning,
+        api_ms: api_ms.unwrap_or(0),
+        model_calls: model_calls.unwrap_or(0),
+        cost_ticks: cost_ticks.unwrap_or(0),
+        cost_reported: cost_ticks.is_some(),
         cost_partial: value
             .get("costIsPartial")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        tokens_known: input.is_some() && output.is_some() && cached.is_some(),
     }
 }
 
@@ -411,6 +1063,11 @@ fn insert_grok_session_entry(
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
+    // `proxy_request_logs` predates the canonical nullable-cost contract and
+    // keeps non-null legacy pricing/zero values.  Canonical rollups below use
+    // the source `costUsdTicks` presence/partial state instead of copying this
+    // compatibility representation.
+
     let clamp = |v: u64| v.min(u32::MAX as u64) as u32;
     let usage = TokenUsage {
         input_tokens: clamp(turn.input),
@@ -438,7 +1095,7 @@ fn insert_grok_session_entry(
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
     {
         Some(p) => {
-            let cost = CostCalculator::calculate_for_app("grokbuild", &usage, &p, multiplier);
+            let cost = CostCalculator::calculate_for_app(GROK_APP_TYPE, &usage, &p, multiplier);
             let total = match reported {
                 Some(reported) if !cost_is_partial => {
                     // 偏差超 1%（微额下限 1e-6）即本地定价漂移——xAI 调价时
@@ -529,12 +1186,13 @@ fn insert_grok_session_entry(
           AND (input_tokens != excluded.input_tokens
            OR output_tokens != excluded.output_tokens
            OR cache_read_tokens != excluded.cache_read_tokens
+           OR total_cost_usd != excluded.total_cost_usd
            OR latency_ms != excluded.latency_ms
            OR model != excluded.model)",
         rusqlite::params![
             request_id,
-            "_grok_session",     // provider_id
-            "grokbuild",         // app_type
+            GROK_SESSION_PROVIDER_ID, // provider_id
+            GROK_APP_TYPE,            // app_type
             model,
             model,               // request_model = model
             usage.input_tokens,
@@ -551,11 +1209,11 @@ fn insert_grok_session_entry(
             200i64,              // status_code
             Option::<String>::None, // error_message
             session_id,
-            Some("grok_session"), // provider_type
+            Some(GROK_SESSION_DATA_SOURCE), // provider_type
             1i64,                // is_streaming
             "1.0",               // cost_multiplier
             created_at,
-            "grok_session",      // data_source
+            GROK_SESSION_DATA_SOURCE, // data_source
             INPUT_TOKEN_SEMANTICS_TOTAL,
         ],
     )
@@ -612,14 +1270,51 @@ mod tests {
         calls: u64,
         ticks: u64,
     ) -> String {
+        let cost = if ticks == 0 {
+            String::new()
+        } else {
+            format!(",\"costUsdTicks\":{ticks}")
+        };
         format!(
-            r#""{model}":{{"inputTokens":{input},"outputTokens":{output},"cachedReadTokens":{cached},"reasoningTokens":0,"modelCalls":{calls},"apiDurationMs":1000,"costUsdTicks":{ticks}}}"#
+            r#""{model}":{{"inputTokens":{input},"outputTokens":{output},"cachedReadTokens":{cached},"reasoningTokens":0,"modelCalls":{calls},"apiDurationMs":1000{cost}}}"#
+        )
+    }
+
+    fn model_counters_with_reasoning(
+        model: &str,
+        input: u64,
+        output: u64,
+        cached: u64,
+        reasoning: u64,
+        calls: u64,
+    ) -> String {
+        format!(
+            r#""{model}":{{"inputTokens":{input},"outputTokens":{output},"cachedReadTokens":{cached},"reasoningTokens":{reasoning},"modelCalls":{calls},"apiDurationMs":1000}}"#
+        )
+    }
+
+    fn model_counters_with_explicit_zero_cost(
+        model: &str,
+        input: u64,
+        output: u64,
+        cached: u64,
+        calls: u64,
+    ) -> String {
+        format!(
+            r#""{model}":{{"inputTokens":{input},"outputTokens":{output},"cachedReadTokens":{cached},"reasoningTokens":0,"modelCalls":{calls},"apiDurationMs":1000,"costUsdTicks":0}}"#
         )
     }
 
     fn write_session_file(dir: &Path, session_id: &str, lines: &[String]) -> PathBuf {
         let session_dir = dir.join("sessions").join("enc-project").join(session_id);
         std::fs::create_dir_all(&session_dir).expect("create session dir");
+        std::fs::write(
+            session_dir.join("summary.json"),
+            format!(
+                r#"{{"info":{{"id":"{session_id}","cwd":"C:/fixture"}},"generated_title":"fixture Grok session","created_at":"2023-11-14T22:13:20Z","last_active_at":"2023-11-14T22:13:20Z"}}"#
+            ),
+        )
+        .expect("write summary.json");
         let path = session_dir.join("updates.jsonl");
         let mut file = std::fs::File::create(&path).expect("create updates.jsonl");
         for line in lines {
@@ -671,11 +1366,98 @@ mod tests {
         Ok(rows)
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    struct CanonicalGrokRow {
+        date: String,
+        session_id: String,
+        model: String,
+        request_count: Option<i64>,
+        input_tokens: i64,
+        output_tokens: i64,
+        cache_read_tokens: i64,
+        cache_creation_tokens: Option<i64>,
+        reasoning_tokens: Option<i64>,
+        input_token_semantics: i64,
+        total_cost_usd: Option<String>,
+        cost_status: Option<String>,
+        cost_source: Option<String>,
+        precision: String,
+        time_semantics: String,
+        request_count_semantics: String,
+    }
+
+    fn query_canonical_rows(db: &Database) -> Result<Vec<CanonicalGrokRow>, AppError> {
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT date, session_id, model, request_count, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens,
+                    reasoning_tokens, input_token_semantics, total_cost_usd,
+                    cost_status, cost_source, precision, time_semantics,
+                    request_count_semantics
+             FROM agent_session_usage_rollups
+             WHERE app_type = 'grokbuild' AND data_source = 'grok_session'
+             ORDER BY date, session_id, model",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(CanonicalGrokRow {
+                    date: row.get(0)?,
+                    session_id: row.get(1)?,
+                    model: row.get(2)?,
+                    request_count: row.get(3)?,
+                    input_tokens: row.get(4)?,
+                    output_tokens: row.get(5)?,
+                    cache_read_tokens: row.get(6)?,
+                    cache_creation_tokens: row.get(7)?,
+                    reasoning_tokens: row.get(8)?,
+                    input_token_semantics: row.get(9)?,
+                    total_cost_usd: row.get(10)?,
+                    cost_status: row.get(11)?,
+                    cost_source: row.get(12)?,
+                    precision: row.get(13)?,
+                    time_semantics: row.get(14)?,
+                    request_count_semantics: row.get(15)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn query_coverage_markers(db: &Database) -> Result<Vec<(String, Option<String>)>, AppError> {
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT request_id, canonical_session_id
+             FROM agent_session_canonical_coverage
+             WHERE app_type = 'grokbuild' AND data_source = 'grok_session'
+             ORDER BY request_id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn query_node(
+        db: &Database,
+        session_id: &str,
+    ) -> Result<(String, String, Option<String>), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.query_row(
+            "SELECT node_kind, root_session_id, parent_session_id
+             FROM agent_session_nodes WHERE app_type = 'grokbuild' AND session_id = ?1",
+            [session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|error| AppError::Database(format!("读取 Grok fixture 节点失败: {error}")))
+    }
+
     #[test]
     fn parses_turn_completed_and_ignores_noise_and_other_kinds() {
         let content = concat!(
             "{\"timestamp\":\"2026-07-20T13:26:10Z\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{}}}}\n",
             "not json at all\n",
+            // 缺少 sessionUpdate 的 usage 事件也不接受，必须显式 turn_completed
+            "{\"timestamp\":\"2026-07-20T13:26:22Z\",\"method\":\"_x.ai/session/update\",\"params\":{\"update\":{\"prompt_id\":\"missing-kind\",\"usage\":{\"inputTokens\":9999,\"outputTokens\":9,\"cachedReadTokens\":0}}}}\n",
             // 显式标为非 turn_completed 却带 usage：防中途快照双算，不得导入
             "{\"timestamp\":\"2026-07-20T13:26:20Z\",\"method\":\"_x.ai/session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"usage_snapshot\",\"prompt_id\":\"px\",\"usage\":{\"inputTokens\":9999,\"outputTokens\":9,\"cachedReadTokens\":0}}}}\n",
             "{\"timestamp\":\"2026-07-20T13:26:24Z\",\"method\":\"_x.ai/session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"turn_completed\",\"prompt_id\":\"p1\",\"usage\":{\"inputTokens\":16632,\"outputTokens\":104,\"cachedReadTokens\":0,\"modelUsage\":{\"grok-4.5-build\":{\"inputTokens\":16632,\"outputTokens\":104,\"cachedReadTokens\":0,\"apiDurationMs\":5342,\"costUsdTicks\":338880000}}}}}}\n",
@@ -691,25 +1473,49 @@ mod tests {
                 input: 16632,
                 output: 104,
                 cached: 0,
+                reasoning: None,
                 api_ms: 5342,
                 model_calls: 0,
                 cost_ticks: 338_880_000,
+                cost_reported: true,
                 cost_partial: false,
+                tokens_known: true,
             }
         );
     }
 
     #[test]
     fn missing_model_usage_falls_back_to_top_level_counters() {
-        // 同时覆盖：sessionUpdate 字段缺失时向后兼容放行
+        // 顶层 usage 缺少 modelUsage 时退回未知模型；事件仍须明确是
+        // turn_completed，避免把中途快照误当成一轮。
         let line = format!(
-            r#"{{"timestamp":"{}","method":"_x.ai/session/update","params":{{"update":{{"prompt_id":"p1","usage":{{"inputTokens":100,"outputTokens":10,"cachedReadTokens":5}}}}}}}}"#,
+            r#"{{"timestamp":"{}","method":"_x.ai/session/update","params":{{"update":{{"sessionUpdate":"turn_completed","prompt_id":"p1","usage":{{"inputTokens":100,"outputTokens":10,"cachedReadTokens":5}}}}}}}}"#,
             epoch_to_rfc3339(OLD_EPOCH)
         );
         let events = parse_grok_usage_events(&line);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].per_model[0].0, "unknown");
         assert_eq!(events[0].per_model[0].1.input, 100);
+    }
+
+    #[test]
+    fn top_level_usage_imports_as_unknown_model_without_fabricating_cost() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let line = format!(
+            r#"{{"timestamp":{},"method":"_x.ai/session/update","params":{{"update":{{"sessionUpdate":"turn_completed","prompt_id":"unknown-model","usage":{{"inputTokens":100,"outputTokens":10,"cachedReadTokens":5}}}}}}}}"#,
+            OLD_EPOCH
+        );
+        let path = write_session_file(temp.path(), "sess-unknown-model", &[line]);
+
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 1);
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].model, "unknown");
+        assert_eq!(canonical[0].total_cost_usd, None);
+        assert_eq!(canonical[0].reasoning_tokens, None);
+        assert_eq!(canonical[0].cache_creation_tokens, None);
+        Ok(())
     }
 
     #[test]
@@ -753,6 +1559,26 @@ mod tests {
         let expected2 = Decimal::from(56_540_000u64) / Decimal::from(10_000_000_000u64);
         assert_eq!(Decimal::from_str(&costs[0].1).expect("decimal"), expected1);
         assert_eq!(Decimal::from_str(&costs[1].1).expect("decimal"), expected2);
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].request_count, Some(2));
+        let expected_total = (expected1 + expected2).to_string();
+        assert_eq!(
+            canonical[0].total_cost_usd.as_deref(),
+            Some(expected_total.as_str())
+        );
+        assert_eq!(canonical[0].cost_status.as_deref(), Some("complete"));
+        assert_eq!(canonical[0].cost_source.as_deref(), Some("grok_session"));
+        assert_eq!(canonical[0].cache_creation_tokens, None);
+        assert_eq!(
+            canonical[0].input_token_semantics,
+            INPUT_TOKEN_SEMANTICS_TOTAL
+        );
+        let markers = query_coverage_markers(&db)?;
+        assert_eq!(markers.len(), 2, "one marker per admitted turn×model");
+        assert!(markers
+            .iter()
+            .all(|(_, session_id)| { session_id.as_deref() == Some("sess-two-turns") }));
         Ok(())
     }
 
@@ -810,6 +1636,35 @@ mod tests {
         let result = sync_single_grok_file(&db, &path)?;
         assert_eq!(result.imported, 2, "相同数值的两轮都是真实用量");
         assert_eq!(query_rows(&db)?.len(), 2);
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(
+            canonical.len(),
+            1,
+            "同一日/模型应聚合为一个 canonical bucket"
+        );
+        assert_eq!(canonical[0].request_count, Some(2));
+        assert_eq!(
+            (
+                canonical[0].input_tokens,
+                canonical[0].output_tokens,
+                canonical[0].cache_read_tokens
+            ),
+            (200, 20, 0)
+        );
+        assert_eq!(canonical[0].total_cost_usd, None);
+        assert_eq!(canonical[0].cost_status.as_deref(), Some("unknown"));
+        assert_eq!(canonical[0].cache_creation_tokens, None);
+        assert_eq!(
+            canonical[0].input_token_semantics,
+            INPUT_TOKEN_SEMANTICS_TOTAL
+        );
+        assert_eq!(canonical[0].precision, "request_exact");
+        assert_eq!(canonical[0].time_semantics, "event_time");
+        assert_eq!(canonical[0].request_count_semantics, "agent_call");
+        assert_eq!(
+            query_node(&db, "sess-identical")?,
+            ("standalone".to_string(), "sess-identical".to_string(), None)
+        );
         Ok(())
     }
 
@@ -830,6 +1685,41 @@ mod tests {
         let rows = query_rows(&db)?;
         assert!(rows[0].0.ends_with(":grok-4.3"));
         assert!(rows[1].0.ends_with(":grok-4.5-build"));
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 2);
+        assert!(canonical.iter().all(|row| row.request_count == Some(1)));
+        assert_eq!(query_coverage_markers(&db)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn reasoning_tokens_are_preserved_without_inflating_output() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let path = write_session_file(
+            temp.path(),
+            "sess-reasoning",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "reasoning-turn",
+                &model_counters_with_reasoning("grok-4.5-build", 100, 20, 3, 17, 4),
+            )],
+        );
+
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 1);
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].input_tokens, 100);
+        assert_eq!(
+            canonical[0].output_tokens, 20,
+            "reasoning is an output subset"
+        );
+        assert_eq!(canonical[0].reasoning_tokens, Some(17));
+        assert_eq!(canonical[0].cache_creation_tokens, None);
+        assert_eq!(
+            canonical[0].input_token_semantics,
+            INPUT_TOKEN_SEMANTICS_TOTAL
+        );
         Ok(())
     }
 
@@ -856,6 +1746,7 @@ mod tests {
         assert_eq!(result.imported, 1);
         assert_eq!(result.deferred_files, 1);
         assert_eq!(query_rows(&db)?.len(), 1);
+        assert_eq!(query_coverage_markers(&db)?.len(), 1);
 
         let (last_modified, _) = get_sync_state(&db, &path.to_string_lossy())?;
         assert_eq!(last_modified, 0, "延后时不得记录同步状态");
@@ -866,6 +1757,7 @@ mod tests {
         assert_eq!(rerun.skipped, 1);
         assert_eq!(rerun.deferred_files, 1);
         assert_eq!(query_rows(&db)?.len(), 1);
+        assert_eq!(query_coverage_markers(&db)?.len(), 1);
         Ok(())
     }
 
@@ -922,6 +1814,13 @@ mod tests {
         let rows = query_rows(&db)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1, 250, "守卫外事件按本轮面值入账");
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].request_count, Some(1));
+        assert_eq!(canonical[0].input_tokens, 250);
+        let markers = query_coverage_markers(&db)?;
+        assert_eq!(markers.len(), 1, "proxy-taken-over turn has no marker");
+        assert!(markers[0].0.contains(":p2:"));
         Ok(())
     }
 
@@ -945,6 +1844,7 @@ mod tests {
 
         let first = sync_single_grok_file(&db, &path)?;
         assert_eq!(first.imported, 2);
+        assert_eq!(query_coverage_markers(&db)?.len(), 2);
 
         // mtime 未变 → 短路
         let second = sync_single_grok_file(&db, &path)?;
@@ -959,6 +1859,7 @@ mod tests {
         assert_eq!(third.imported, 0);
         assert_eq!(third.skipped, 2);
         assert_eq!(query_rows(&db)?.len(), 2);
+        assert_eq!(query_coverage_markers(&db)?.len(), 2);
         Ok(())
     }
 
@@ -1006,6 +1907,176 @@ mod tests {
         let p3: Vec<_> = rows.iter().filter(|r| r.0.contains(":p3:")).collect();
         assert_eq!(p3.len(), 1);
         assert_eq!(p3[0].1, 300);
+        assert_eq!(query_canonical_rows(&db)?[0].request_count, Some(3));
+        assert_eq!(
+            query_coverage_markers(&db)?.len(),
+            3,
+            "rewind skip adds no marker"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_rebuild_retains_durable_rows_across_rewind_and_update() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let full = vec![
+            usage_event_line(
+                OLD_EPOCH,
+                "p1",
+                &model_counters("grok-4.5-build", 100, 10, 0, 1),
+            ),
+            usage_event_line(
+                OLD_EPOCH + 60,
+                "p2",
+                &model_counters("grok-4.5-build", 200, 20, 0, 1),
+            ),
+            usage_event_line(
+                OLD_EPOCH + 120,
+                "p3",
+                &model_counters("grok-4.5-build", 300, 30, 0, 1),
+            ),
+        ];
+        let path = write_session_file(temp.path(), "sess-durable-rewind", &full);
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 3);
+
+        // The source rewinds away p2 while appending p4.  The current scan has
+        // three prompts again, but durable raw rows prove four unique IDs.
+        let rewritten = vec![
+            full[0].clone(),
+            full[2].clone(),
+            usage_event_line(
+                OLD_EPOCH + 180,
+                "p4",
+                &model_counters("grok-4.5-build", 400, 40, 0, 1),
+            ),
+        ];
+        write_session_file(temp.path(), "sess-durable-rewind", &rewritten);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 1);
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].request_count, Some(4));
+        assert_eq!(
+            (
+                canonical[0].input_tokens,
+                canonical[0].output_tokens,
+                canonical[0].cache_read_tokens
+            ),
+            (1000, 100, 0),
+            "p2 remains counted and new p4 is included"
+        );
+        assert_eq!(
+            canonical[0].reasoning_tokens, None,
+            "raw fallback does not claim unsupported reasoning metadata"
+        );
+        assert_eq!(canonical[0].cost_status.as_deref(), Some("partial"));
+        assert_eq!(query_coverage_markers(&db)?.len(), 4);
+
+        // Updating p3 replaces its durable raw contribution; it must not add
+        // a fifth request to the rebuilt canonical bucket.
+        let updated = vec![
+            full[0].clone(),
+            usage_event_line(
+                OLD_EPOCH + 120,
+                "p3",
+                &model_counters("grok-4.5-build", 350, 35, 0, 1),
+            ),
+            rewritten[2].clone(),
+        ];
+        write_session_file(temp.path(), "sess-durable-rewind", &updated);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 1);
+
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].request_count, Some(4));
+        assert_eq!(
+            (canonical[0].input_tokens, canonical[0].output_tokens),
+            (1050, 105),
+            "updating p3 replaces its contribution without increasing count"
+        );
+        assert_eq!(query_coverage_markers(&db)?.len(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn durable_raw_refreshes_cost_only_updates_before_rewind() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let initial = vec![
+            usage_event_line(
+                OLD_EPOCH,
+                "p1",
+                &model_counters_with_ticks("grok-4.5-build", 100, 10, 0, 1, 1_000),
+            ),
+            usage_event_line(
+                OLD_EPOCH + 60,
+                "p2",
+                &model_counters_with_ticks("grok-4.5-build", 200, 20, 0, 1, 2_000),
+            ),
+            usage_event_line(
+                OLD_EPOCH + 120,
+                "p3",
+                &model_counters_with_ticks("grok-4.5-build", 300, 30, 0, 1, 3_000),
+            ),
+        ];
+        let path = write_session_file(temp.path(), "sess-cost-rewind", &initial);
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 3);
+
+        // Keep p3's token/latency fields identical but change only its source
+        // reported cost.  The durable compatibility row must refresh too.
+        let cost_updated = vec![
+            initial[0].clone(),
+            initial[1].clone(),
+            usage_event_line(
+                OLD_EPOCH + 120,
+                "p3",
+                &model_counters_with_ticks("grok-4.5-build", 300, 30, 0, 1, 9_000),
+            ),
+        ];
+        write_session_file(temp.path(), "sess-cost-rewind", &cost_updated);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 1);
+
+        let p3_request_id = "grok_session:sess-cost-rewind:p3:grok-4.5-build";
+        let refreshed_cost: String = {
+            let conn = lock_conn!(db.conn);
+            conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = ?1",
+                [p3_request_id],
+                |row| row.get(0),
+            )?
+        };
+        let expected_cost = Decimal::from(9_000u64) / Decimal::from(10_000_000_000u64);
+        assert_eq!(
+            Decimal::from_str(&refreshed_cost).expect("decimal"),
+            expected_cost
+        );
+
+        // Rewind away p3.  Its fallback must use the refreshed durable cost,
+        // while the request still contributes exactly one historical count.
+        write_session_file(temp.path(), "sess-cost-rewind", &cost_updated[..2]);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 0);
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].request_count, Some(3));
+        assert_eq!(canonical[0].reasoning_tokens, None);
+        assert_eq!(canonical[0].cost_status.as_deref(), Some("partial"));
         Ok(())
     }
 
@@ -1185,6 +2256,239 @@ mod tests {
     }
 
     #[test]
+    fn canonical_cost_preserves_partial_unknown_and_explicit_zero() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let lines = vec![
+            usage_event_line_partial(
+                OLD_EPOCH,
+                "partial",
+                &model_counters_with_ticks("grok-4.5-build", 10, 2, 1, 4, 1_000),
+            ),
+            usage_event_line(
+                OLD_EPOCH + 60,
+                "unknown-cost",
+                &model_counters("grok-4.5-build", 10, 2, 1, 9),
+            ),
+            usage_event_line(
+                OLD_EPOCH + 120,
+                "explicit-zero",
+                &model_counters_with_explicit_zero_cost("grok-4.5-build", 10, 2, 1, 3),
+            ),
+        ];
+        let path = write_session_file(temp.path(), "sess-cost-states", &lines);
+
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 3);
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].request_count, Some(3));
+        assert_eq!(
+            canonical[0].total_cost_usd, None,
+            "partial/missing cost is not exact"
+        );
+        assert_eq!(canonical[0].cost_status.as_deref(), Some("partial"));
+        assert_eq!(canonical[0].cache_creation_tokens, None);
+        assert_eq!(
+            canonical[0].input_token_semantics,
+            INPUT_TOKEN_SEMANTICS_TOTAL
+        );
+        assert_eq!(query_coverage_markers(&db)?.len(), 3);
+
+        // A bucket containing only a source-reported zero is distinguishable
+        // from an unknown cost and is persisted as Some("0").
+        let db_zero = Database::memory()?;
+        let temp_zero = tempdir().expect("tempdir");
+        let zero_path = write_session_file(
+            temp_zero.path(),
+            "sess-explicit-zero",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "zero",
+                &model_counters_with_explicit_zero_cost("grok-4.5-build", 10, 2, 1, 1),
+            )],
+        );
+        assert_eq!(sync_single_grok_file(&db_zero, &zero_path)?.imported, 1);
+        let canonical_zero = query_canonical_rows(&db_zero)?;
+        let zero = &canonical_zero[0];
+        assert_eq!(zero.total_cost_usd, Some("0".into()));
+        assert_eq!(zero.cost_status.as_deref(), Some("complete"));
+        assert_eq!(zero.cache_creation_tokens, None);
+        assert_eq!(query_coverage_markers(&db_zero)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_skips_unknown_token_components() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let unknown_tokens = format!(
+            r#""grok-4.5-build":{{"inputTokens":10,"outputTokens":2,"modelCalls":1,"apiDurationMs":1000}}"#
+        );
+        let path = write_session_file(
+            temp.path(),
+            "sess-unknown-token",
+            &[usage_event_line(OLD_EPOCH, "unknown", &unknown_tokens)],
+        );
+
+        let result = sync_single_grok_file(&db, &path)?;
+        assert_eq!(result.imported, 0);
+        assert!(query_rows(&db)?.is_empty());
+        assert!(query_canonical_rows(&db)?.is_empty());
+        assert!(query_coverage_markers(&db)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn summary_id_mismatch_fails_closed_without_cross_cwd_merge() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let path = write_session_file(
+            temp.path(),
+            "folder-id",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "p1",
+                &model_counters("grok-4.5-build", 100, 10, 0, 1),
+            )],
+        );
+        let summary_path = path.parent().expect("session dir").join("summary.json");
+        std::fs::write(
+            summary_path,
+            r#"{"info":{"id":"different-id","cwd":"C:/fixture"}}"#,
+        )
+        .expect("rewrite mismatched summary");
+
+        let result = sync_single_grok_file(&db, &path)?;
+        assert_eq!(result.imported, 0);
+        assert!(query_rows(&db)?.is_empty());
+        assert!(query_canonical_rows(&db)?.is_empty());
+        assert!(query_coverage_markers(&db)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn same_id_with_different_summary_cwd_is_not_merged() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let first = write_session_file(
+            temp.path(),
+            "stable-id",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "p1",
+                &model_counters("grok-4.5-build", 100, 10, 0, 1),
+            )],
+        );
+        assert_eq!(sync_single_grok_file(&db, &first)?.imported, 1);
+
+        let second_dir = temp
+            .path()
+            .join("sessions")
+            .join("enc-other")
+            .join("stable-id");
+        std::fs::create_dir_all(&second_dir).expect("create second session dir");
+        std::fs::write(
+            second_dir.join("summary.json"),
+            r#"{"info":{"id":"stable-id","cwd":"C:/other-project"}}"#,
+        )
+        .expect("write second summary");
+        let second = second_dir.join("updates.jsonl");
+        std::fs::write(
+            &second,
+            format!(
+                "{}\n",
+                usage_event_line(
+                    OLD_EPOCH + 60,
+                    "p2",
+                    &model_counters("grok-4.5-build", 200, 20, 0, 1)
+                )
+            ),
+        )
+        .expect("write second updates");
+
+        assert_eq!(sync_single_grok_file(&db, &second)?.imported, 0);
+        assert_eq!(query_rows(&db)?.len(), 1);
+        assert_eq!(query_canonical_rows(&db)?[0].request_count, Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_rescan_does_not_drift_or_count_model_calls_as_requests() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let path = write_session_file(
+            temp.path(),
+            "sess-model-calls",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "p1",
+                    &model_counters("grok-4.5-build", 100, 10, 0, 17),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 60,
+                    "p2",
+                    &model_counters("grok-4.5-build", 100, 10, 0, 23),
+                ),
+            ],
+        );
+
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 2);
+        let first = query_canonical_rows(&db)?;
+        assert_eq!(first[0].request_count, Some(2));
+        assert_eq!((first[0].input_tokens, first[0].output_tokens), (200, 20));
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 0);
+        assert_eq!(query_canonical_rows(&db)?, first);
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_prompt_turn_uses_latest_value_once() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let path = write_session_file(
+            temp.path(),
+            "sess-duplicate-prompt",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "same-prompt",
+                    &model_counters("grok-4.5-build", 100, 10, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 60,
+                    "same-prompt",
+                    &model_counters("grok-4.5-build", 250, 25, 5, 4),
+                ),
+            ],
+        );
+
+        assert_eq!(sync_single_grok_file(&db, &path)?.imported, 2);
+        assert_eq!(
+            query_rows(&db)?.len(),
+            1,
+            "raw prompt UPSERT keeps latest value"
+        );
+        let canonical = query_canonical_rows(&db)?;
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].request_count, Some(1));
+        assert_eq!(
+            (
+                canonical[0].input_tokens,
+                canonical[0].output_tokens,
+                canonical[0].cache_read_tokens
+            ),
+            (250, 25, 5)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn oversized_updates_jsonl_is_skipped_without_reading_into_memory() {
         let db = Database::memory().expect("memory db");
         let temp = tempdir().expect("tempdir");
@@ -1217,7 +2521,13 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&enc, sub.join("cycle")).expect("symlink");
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")).expect("symlink");
+        if let Err(error) = std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")) {
+            if error.raw_os_error() == Some(1314) {
+                eprintln!("skipping symlink cycle test: Windows symlink privilege is unavailable");
+                return;
+            }
+            panic!("symlink: {error}");
+        }
 
         // 也放一个真实的目标文件，确认正常遍历仍工作
         std::fs::write(enc.join("updates.jsonl"), b"{}\n").expect("write real file");

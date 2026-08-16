@@ -4,7 +4,7 @@
 
 use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -343,6 +343,185 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 20. Agent Session Nodes 表（会话父子关系与长期节点元数据）
+        // 节点本身长期保留；外部 Agent 会话文件消失时不删除历史节点。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_session_nodes (
+                app_type TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                parent_session_id TEXT,
+                root_session_id TEXT NOT NULL,
+                node_kind TEXT NOT NULL,
+                relation_confidence TEXT NOT NULL,
+                title TEXT,
+                project_dir TEXT,
+                source_path TEXT,
+                created_at INTEGER,
+                last_active_at INTEGER,
+                last_synced_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, session_id)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_nodes_root
+             ON agent_session_nodes(app_type, root_session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_nodes_parent
+             ON agent_session_nodes(app_type, parent_session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 21. Agent Session Usage Rollups 表（日 + 会话 + 真实来源/聚合维度）
+        // Token components and cost stay nullable when a source does not prove
+        // them.  Source/profile/database/endpoint/billing/task/window fields
+        // remain part of the durable identity instead of being flattened into
+        // model or session strings.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_session_usage_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT '',
+                precision TEXT NOT NULL DEFAULT 'request_exact',
+                time_semantics TEXT NOT NULL DEFAULT 'event_time',
+                request_count_semantics TEXT NOT NULL DEFAULT 'http_request',
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                source_identity TEXT NOT NULL DEFAULT '',
+                profile_id TEXT NOT NULL DEFAULT '',
+                database_identity TEXT NOT NULL DEFAULT '',
+                base_url_digest TEXT NOT NULL DEFAULT '',
+                billing_mode TEXT NOT NULL DEFAULT '',
+                task TEXT NOT NULL DEFAULT '',
+                source_version TEXT NOT NULL DEFAULT '',
+                sync_window_start INTEGER NOT NULL DEFAULT 0,
+                sync_window_end INTEGER NOT NULL DEFAULT 0,
+                request_count INTEGER,
+                api_call_count INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_creation_tokens INTEGER,
+                cache_write_tokens INTEGER,
+                reasoning_tokens INTEGER,
+                total_cost_usd TEXT,
+                cost_status TEXT,
+                cost_source TEXT,
+                cost_delta_kind TEXT,
+                correction_state TEXT,
+                first_event_at INTEGER,
+                last_event_at INTEGER,
+                PRIMARY KEY (
+                    date, app_type, session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision,
+                    time_semantics, request_count_semantics,
+                    input_token_semantics, source_identity, profile_id,
+                    database_identity, base_url_digest, billing_mode, task,
+                    source_version, sync_window_start, sync_window_end
+                )
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_usage_rollups_session
+             ON agent_session_usage_rollups(app_type, session_id, date)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_usage_rollups_root_lookup
+             ON agent_session_usage_rollups(app_type, date, session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 22. Agent Session Usage Snapshots 表（来源累计快照基线）
+        // 该表保存来源数据库给出的最近一次累计值，供同步窗口计算增量；
+        // 它不是用户用量桶，也不参与 rollup_and_prune。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_session_usage_snapshots (
+                app_type TEXT NOT NULL,
+                source_identity TEXT NOT NULL,
+                profile_id TEXT NOT NULL DEFAULT '',
+                database_identity TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                provider_id TEXT NOT NULL DEFAULT '',
+                base_url_digest TEXT NOT NULL DEFAULT '',
+                billing_mode TEXT NOT NULL DEFAULT '',
+                task TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT '',
+                source_version TEXT NOT NULL DEFAULT '',
+                api_call_count INTEGER NOT NULL DEFAULT 0 CHECK (api_call_count >= 0),
+                input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+                output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0),
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0),
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0 CHECK (reasoning_tokens >= 0),
+                first_seen INTEGER,
+                last_seen INTEGER,
+                last_synced_at INTEGER NOT NULL,
+                estimated_cost_usd TEXT,
+                actual_cost_usd TEXT,
+                cost_status TEXT,
+                cost_source TEXT,
+                correction_state TEXT,
+                PRIMARY KEY (
+                    app_type, source_identity, profile_id, database_identity,
+                    session_id, model, provider_id, base_url_digest,
+                    billing_mode, task, data_source, source_version
+                )
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_usage_snapshots_lookup
+             ON agent_session_usage_snapshots(
+                 app_type, source_identity, profile_id, database_identity, session_id
+             )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 23. Canonical coverage markers for raw session-log retention.
+        // A marker is written atomically with a successful direct canonical
+        // bucket write.  It contains only stable request identity and small
+        // cleanup/debug metadata; request payloads never enter this table.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_session_canonical_coverage (
+                app_type TEXT NOT NULL,
+                data_source TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                canonical_session_id TEXT,
+                marked_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, data_source, request_id)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_canonical_coverage_session
+             ON agent_session_canonical_coverage(app_type, data_source, canonical_session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Codex replay staging tables.  A replay writes here first and publishes
+        // the complete generation atomically, so readers never observe a
+        // partially rebuilt set of nodes, rollups, or coverage markers.
+        Self::create_codex_replay_tables_on_conn(conn)?;
+
         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
         if conn
@@ -535,6 +714,41 @@ impl Database {
                         log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（持久化 Agent 会话节点与用量桶）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（持久化来源累计快照基线）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（持久化逐请求规范覆盖标记）");
+                        Self::migrate_v19_to_v20(conn)?;
+                        Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!("迁移数据库从 v20 到 v21（会话用量部分字段与来源维度）");
+                        Self::migrate_v20_to_v21(conn)?;
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        log::info!("迁移数据库从 v21 到 v22（标记 Codex 会话用量规范化重放）");
+                        Self::migrate_v21_to_v22(conn)?;
+                        Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        log::info!("迁移数据库从 v22 到 v23（修复 Codex 代理去重与本地日桶）");
+                        Self::migrate_v22_to_v23(conn)?;
+                        Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        log::info!("迁移数据库从 v23 到 v24（隔离 Codex 规范化重放）");
+                        Self::migrate_v23_to_v24(conn)?;
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1562,6 +1776,689 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+
+        Ok(())
+    }
+
+    /// v17 -> v18：建立长期会话节点和会话维度日用量桶。
+    ///
+    /// 两张表均使用 IF NOT EXISTS，兼容已由 create_tables_on_conn 预建的
+    /// 新库；调用方的 schema savepoint 保证任一建表失败都不会留下半成品。
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_session_nodes (
+                app_type TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                parent_session_id TEXT,
+                root_session_id TEXT NOT NULL,
+                node_kind TEXT NOT NULL,
+                relation_confidence TEXT NOT NULL,
+                title TEXT,
+                project_dir TEXT,
+                source_path TEXT,
+                created_at INTEGER,
+                last_active_at INTEGER,
+                last_synced_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, session_id)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!("v17 -> v18 创建 agent_session_nodes 失败: {e}"))
+        })?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_nodes_root
+             ON agent_session_nodes(app_type, root_session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v17 -> v18 创建会话根索引失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_nodes_parent
+             ON agent_session_nodes(app_type, parent_session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v17 -> v18 创建会话父索引失败: {e}")))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_session_usage_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT '',
+                precision TEXT NOT NULL DEFAULT 'request_exact',
+                time_semantics TEXT NOT NULL DEFAULT 'event_time',
+                request_count_semantics TEXT NOT NULL DEFAULT 'http_request',
+                request_count INTEGER,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT,
+                first_event_at INTEGER,
+                last_event_at INTEGER,
+                PRIMARY KEY (
+                    date, app_type, session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision,
+                    time_semantics, request_count_semantics
+                )
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "v17 -> v18 创建 agent_session_usage_rollups 失败: {e}"
+            ))
+        })?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_usage_rollups_session
+             ON agent_session_usage_rollups(app_type, session_id, date)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v17 -> v18 创建会话用量索引失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_usage_rollups_root_lookup
+             ON agent_session_usage_rollups(app_type, date, session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v17 -> v18 创建会话日期索引失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v18 -> v19：建立来源累计快照基线表。
+    ///
+    /// 快照是来源数据库的同步基线，不是用户用量桶；独立保存可让
+    /// Hermes 等累计来源在应用重启后安全计算窗口增量。迁移由外层
+    /// schema savepoint 包裹，任何索引冲突都会回滚整张表及版本标记。
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_session_usage_snapshots (
+                app_type TEXT NOT NULL,
+                source_identity TEXT NOT NULL,
+                profile_id TEXT NOT NULL DEFAULT '',
+                database_identity TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                provider_id TEXT NOT NULL DEFAULT '',
+                base_url_digest TEXT NOT NULL DEFAULT '',
+                billing_mode TEXT NOT NULL DEFAULT '',
+                task TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT '',
+                source_version TEXT NOT NULL DEFAULT '',
+                api_call_count INTEGER NOT NULL DEFAULT 0 CHECK (api_call_count >= 0),
+                input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+                output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0),
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0),
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0 CHECK (reasoning_tokens >= 0),
+                first_seen INTEGER,
+                last_seen INTEGER,
+                last_synced_at INTEGER NOT NULL,
+                estimated_cost_usd TEXT,
+                actual_cost_usd TEXT,
+                cost_status TEXT,
+                cost_source TEXT,
+                correction_state TEXT,
+                PRIMARY KEY (
+                    app_type, source_identity, profile_id, database_identity,
+                    session_id, model, provider_id, base_url_digest,
+                    billing_mode, task, data_source, source_version
+                )
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "v18 -> v19 创建 agent_session_usage_snapshots 失败: {e}"
+            ))
+        })?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_usage_snapshots_lookup
+             ON agent_session_usage_snapshots(
+                 app_type, source_identity, profile_id, database_identity, session_id
+             )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v18 -> v19 创建来源累计快照索引失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v19 -> v20：建立逐请求规范覆盖标记表。
+    ///
+    /// 该表只记录 canonical app/source/request identity。外层 schema
+    /// savepoint 保证建表后索引冲突会完整回滚，不留下半成品或版本推进。
+    fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_session_canonical_coverage (
+                app_type TEXT NOT NULL,
+                data_source TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                canonical_session_id TEXT,
+                marked_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, data_source, request_id)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "v19 -> v20 创建 agent_session_canonical_coverage 失败: {e}"
+            ))
+        })?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_session_canonical_coverage_session
+             ON agent_session_canonical_coverage(app_type, data_source, canonical_session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v19 -> v20 创建规范覆盖索引失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v20 -> v21：重建会话用量桶，使来源缺失的 token component 保持
+    /// NULL，并把 Hermes 所需的完整来源/窗口维度纳入唯一键。
+    ///
+    /// SQLite 无法直接把既有 NOT NULL 列改成可空或扩展复合主键，因此
+    /// 在同一个外层 schema savepoint 内复制到临时表、替换旧表并重建索引。
+    /// 旧的 Gemini/Grok/Codex 0 cache-creation 仅是“未知”占位，迁移为
+    /// NULL；Claude/OpenCode/Cowork 等来源的真实 0 保持不变。
+    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+        // Fresh databases are created at the latest shape before the generic
+        // migration loop runs (their user_version starts at 0).  Treat that
+        // already-upgraded table as a no-op so bootstrapping does not rebuild
+        // it through the historical v17→v20 steps.
+        if Self::table_exists(conn, "agent_session_usage_rollups")?
+            && Self::has_column(conn, "agent_session_usage_rollups", "source_identity")?
+            && Self::has_column(conn, "agent_session_usage_rollups", "cost_delta_kind")?
+        {
+            return Ok(());
+        }
+        let temp_table = "agent_session_usage_rollups_v21";
+        Self::validate_identifier(temp_table, "表名")?;
+        conn.execute(
+            &format!(
+                "CREATE TABLE {temp_table} (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT '',
+                precision TEXT NOT NULL DEFAULT 'request_exact',
+                time_semantics TEXT NOT NULL DEFAULT 'event_time',
+                request_count_semantics TEXT NOT NULL DEFAULT 'http_request',
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                source_identity TEXT NOT NULL DEFAULT '',
+                profile_id TEXT NOT NULL DEFAULT '',
+                database_identity TEXT NOT NULL DEFAULT '',
+                base_url_digest TEXT NOT NULL DEFAULT '',
+                billing_mode TEXT NOT NULL DEFAULT '',
+                task TEXT NOT NULL DEFAULT '',
+                source_version TEXT NOT NULL DEFAULT '',
+                sync_window_start INTEGER NOT NULL DEFAULT 0,
+                sync_window_end INTEGER NOT NULL DEFAULT 0,
+                request_count INTEGER,
+                api_call_count INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_creation_tokens INTEGER,
+                cache_write_tokens INTEGER,
+                reasoning_tokens INTEGER,
+                total_cost_usd TEXT,
+                cost_status TEXT,
+                cost_source TEXT,
+                cost_delta_kind TEXT,
+                correction_state TEXT,
+                first_event_at INTEGER,
+                last_event_at INTEGER,
+                PRIMARY KEY (
+                    date, app_type, session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision,
+                    time_semantics, request_count_semantics,
+                    input_token_semantics, source_identity, profile_id,
+                    database_identity, base_url_digest, billing_mode, task,
+                    source_version, sync_window_start, sync_window_end
+                )
+            );"
+            ),
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v20 -> v21 创建临时会话用量表失败: {e}")))?;
+
+        conn.execute(
+            &format!(
+                "INSERT INTO {temp_table} (
+                    date, app_type, session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision,
+                    time_semantics, request_count_semantics,
+                    input_token_semantics, source_identity, profile_id,
+                    database_identity, base_url_digest, billing_mode, task,
+                    source_version, sync_window_start, sync_window_end,
+                    request_count, api_call_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, cache_write_tokens, reasoning_tokens,
+                    total_cost_usd, cost_status, cost_source, cost_delta_kind, correction_state,
+                    first_event_at, last_event_at
+                )
+                SELECT
+                    date, app_type, session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision,
+                    time_semantics, request_count_semantics,
+                    CASE WHEN data_source = 'grok_session' THEN 1 ELSE 0 END,
+                    '', '', '', '', '', '', '', 0, 0,
+                    request_count, NULL, input_tokens, output_tokens,
+                    cache_read_tokens,
+                    CASE WHEN data_source IN ('gemini_session', 'grok_session', 'codex_session')
+                              AND cache_creation_tokens = 0
+                         THEN NULL ELSE cache_creation_tokens END,
+                    NULL, NULL, total_cost_usd, NULL, NULL, NULL, NULL,
+                    first_event_at, last_event_at
+                FROM agent_session_usage_rollups;"
+            ),
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v20 -> v21 复制会话用量数据失败: {e}")))?;
+
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_agent_session_usage_rollups_session;
+             DROP INDEX IF EXISTS idx_agent_session_usage_rollups_root_lookup;
+             DROP TABLE agent_session_usage_rollups;",
+        )
+        .map_err(|e| AppError::Database(format!("v20 -> v21 删除旧会话用量表失败: {e}")))?;
+        conn.execute(
+            &format!("ALTER TABLE {temp_table} RENAME TO agent_session_usage_rollups;"),
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v20 -> v21 替换会话用量表失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX idx_agent_session_usage_rollups_session
+             ON agent_session_usage_rollups(app_type, session_id, date)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v20 -> v21 创建会话用量索引失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX idx_agent_session_usage_rollups_root_lookup
+             ON agent_session_usage_rollups(app_type, date, session_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v20 -> v21 创建会话日期索引失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v21 -> v22：旧版本可能已经把 Codex rollout cursor 推进到文件末尾，
+    /// 但没有写入长期会话规范化事实。只设置一次性重放标记，实际备份、清理
+    /// 和导入由启动同步在 session-sync mutex 下执行，避免迁移阶段留下空数据。
+    fn migrate_v21_to_v22(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("补齐 settings 表失败: {e}")))?;
+        let has_codex_rows: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM proxy_request_logs WHERE data_source = 'codex_session'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        let has_codex_rollups: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM agent_session_usage_rollups
+                    WHERE app_type = 'codex'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        let has_codex_cursor: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM session_log_sync
+                    WHERE file_path LIKE '%/sessions/%/rollout-%'
+                       OR file_path LIKE '%\\sessions\\%\\rollout-%'
+                       OR file_path LIKE '%/archived_sessions/rollout-%'
+                       OR file_path LIKE '%\\archived_sessions\\rollout-%'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        let legacy_replay_incomplete: bool = conn
+            .query_row(
+                "SELECT COALESCE(
+                    (SELECT value <> 'complete'
+                     FROM settings
+                     WHERE key = 'codex_usage_canonical_replay_v1'), 0
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        let state = if has_codex_rows
+            || has_codex_rollups
+            || has_codex_cursor
+            || legacy_replay_incomplete
+        {
+            "pending"
+        } else {
+            "complete"
+        };
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value)
+             VALUES ('codex_usage_canonical_replay_v1', ?1)",
+            [state],
+        )
+        .map_err(|e| AppError::Database(format!("写入 Codex 重放状态失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v22 -> v23：Codex 规范化重放需要重新认领与代理请求精确匹配的
+    /// 事件，并把 rollup 日桶改为本地日历日期。只设置状态，实际备份、
+    /// 清理和导入仍由后台同步状态机执行。
+    fn migrate_v22_to_v23(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("补齐 settings 表失败: {e}")))?;
+        let has_codex_rows: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM proxy_request_logs
+                    WHERE COALESCE(data_source, 'proxy') IN ('codex_session', 'proxy')
+                      AND app_type = 'codex'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        let has_codex_rollups: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM agent_session_usage_rollups
+                    WHERE app_type = 'codex'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        let has_codex_cursor: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM session_log_sync
+                    WHERE file_path LIKE '%/sessions/%/rollout-%'
+                       OR file_path LIKE '%\\sessions\\%\\rollout-%'
+                       OR file_path LIKE '%/archived_sessions/rollout-%'
+                       OR file_path LIKE '%\\archived_sessions\\rollout-%'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        let state = if has_codex_rows || has_codex_rollups || has_codex_cursor {
+            "pending"
+        } else {
+            "complete"
+        };
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value)
+             VALUES ('codex_usage_canonical_replay_v2', ?1)",
+            [state],
+        )
+        .map_err(|e| AppError::Database(format!("写入 Codex v2 重放状态失败: {e}")))?;
+        Ok(())
+    }
+
+    fn create_codex_replay_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS codex_replay_nodes (
+                app_type TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                parent_session_id TEXT,
+                root_session_id TEXT NOT NULL,
+                node_kind TEXT NOT NULL,
+                relation_confidence TEXT NOT NULL,
+                title TEXT,
+                project_dir TEXT,
+                source_path TEXT,
+                created_at INTEGER,
+                last_active_at INTEGER,
+                last_synced_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, session_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_codex_replay_nodes_root
+                ON codex_replay_nodes(app_type, root_session_id);
+            CREATE INDEX IF NOT EXISTS idx_codex_replay_nodes_parent
+                ON codex_replay_nodes(app_type, parent_session_id);
+            CREATE TABLE IF NOT EXISTS codex_replay_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT '',
+                precision TEXT NOT NULL DEFAULT 'request_exact',
+                time_semantics TEXT NOT NULL DEFAULT 'event_time',
+                request_count_semantics TEXT NOT NULL DEFAULT 'http_request',
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                source_identity TEXT NOT NULL DEFAULT '',
+                profile_id TEXT NOT NULL DEFAULT '',
+                database_identity TEXT NOT NULL DEFAULT '',
+                base_url_digest TEXT NOT NULL DEFAULT '',
+                billing_mode TEXT NOT NULL DEFAULT '',
+                task TEXT NOT NULL DEFAULT '',
+                source_version TEXT NOT NULL DEFAULT '',
+                sync_window_start INTEGER NOT NULL DEFAULT 0,
+                sync_window_end INTEGER NOT NULL DEFAULT 0,
+                request_count INTEGER,
+                api_call_count INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_creation_tokens INTEGER,
+                cache_write_tokens INTEGER,
+                reasoning_tokens INTEGER,
+                total_cost_usd TEXT,
+                cost_status TEXT,
+                cost_source TEXT,
+                cost_delta_kind TEXT,
+                correction_state TEXT,
+                first_event_at INTEGER,
+                last_event_at INTEGER,
+                PRIMARY KEY (
+                    date, app_type, session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision,
+                    time_semantics, request_count_semantics,
+                    input_token_semantics, source_identity, profile_id,
+                    database_identity, base_url_digest, billing_mode, task,
+                    source_version, sync_window_start, sync_window_end
+                )
+            );
+            CREATE INDEX IF NOT EXISTS idx_codex_replay_rollups_session
+                ON codex_replay_rollups(app_type, session_id, date);
+            CREATE INDEX IF NOT EXISTS idx_codex_replay_rollups_root_lookup
+                ON codex_replay_rollups(app_type, date, session_id);
+            CREATE TABLE IF NOT EXISTS codex_replay_coverage (
+                app_type TEXT NOT NULL,
+                data_source TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                canonical_session_id TEXT,
+                marked_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, data_source, request_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_codex_replay_coverage_session
+                ON codex_replay_coverage(app_type, data_source, canonical_session_id);
+            CREATE TABLE IF NOT EXISTS codex_replay_session_logs (
+                request_id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                model TEXT NOT NULL,
+                request_model TEXT,
+                pricing_model TEXT,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_cost_usd TEXT NOT NULL DEFAULT '0',
+                output_cost_usd TEXT NOT NULL DEFAULT '0',
+                cache_read_cost_usd TEXT NOT NULL DEFAULT '0',
+                cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                latency_ms INTEGER NOT NULL,
+                first_token_ms INTEGER,
+                duration_ms INTEGER,
+                status_code INTEGER NOT NULL,
+                error_message TEXT,
+                session_id TEXT,
+                provider_type TEXT,
+                is_streaming INTEGER NOT NULL DEFAULT 0,
+                cost_multiplier TEXT NOT NULL DEFAULT '1.0',
+                created_at INTEGER NOT NULL,
+                data_source TEXT NOT NULL DEFAULT 'codex_session',
+                input_token_semantics INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS codex_replay_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL
+            );",
+        )
+        .map_err(|e| AppError::Database(format!("创建 Codex 重放影子表失败: {e}")))
+    }
+
+    /// v23 -> v24: move an interrupted in-place replay into the staging
+    /// generation.  A pending replay keeps the published generation intact;
+    /// the background sync initializes the empty staging generation later.
+    fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+        Self::create_codex_replay_tables_on_conn(conn)?;
+        let v2_state: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v2'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("读取 Codex v23 重放状态失败: {e}")))?;
+        let state = v2_state.as_deref().unwrap_or("complete");
+        if state == "replaying" {
+            conn.execute_batch(
+                "DELETE FROM codex_replay_nodes;
+                 DELETE FROM codex_replay_rollups;
+                 DELETE FROM codex_replay_coverage;
+                 DELETE FROM codex_replay_session_logs;
+                 DELETE FROM codex_replay_sync;",
+            )?;
+            conn.execute(
+                "INSERT INTO codex_replay_nodes (
+                    app_type, session_id, parent_session_id, root_session_id,
+                    node_kind, relation_confidence, title, project_dir, source_path,
+                    created_at, last_active_at, last_synced_at
+                 ) SELECT 'codex_replay', session_id, parent_session_id, root_session_id,
+                    node_kind, relation_confidence, title, project_dir, source_path,
+                    created_at, last_active_at, last_synced_at
+                 FROM agent_session_nodes WHERE app_type = 'codex'",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO codex_replay_rollups (
+                    date, app_type, session_id, provider_id, model, request_model,
+                    pricing_model, data_source, precision, time_semantics,
+                    request_count_semantics, input_token_semantics, source_identity,
+                    profile_id, database_identity, base_url_digest, billing_mode, task,
+                    source_version, sync_window_start, sync_window_end, request_count,
+                    api_call_count, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, cache_write_tokens, reasoning_tokens,
+                    total_cost_usd, cost_status, cost_source, cost_delta_kind,
+                    correction_state, first_event_at, last_event_at
+                 ) SELECT date, 'codex_replay', session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision, time_semantics,
+                    request_count_semantics, input_token_semantics, source_identity,
+                    profile_id, database_identity, base_url_digest, billing_mode, task,
+                    source_version, sync_window_start, sync_window_end, request_count,
+                    api_call_count, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, cache_write_tokens, reasoning_tokens,
+                    total_cost_usd, cost_status, cost_source, cost_delta_kind,
+                    correction_state, first_event_at, last_event_at
+                 FROM agent_session_usage_rollups WHERE app_type = 'codex'",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO codex_replay_coverage (
+                    app_type, data_source, request_id, canonical_session_id, marked_at
+                 ) SELECT 'codex_replay', data_source || '_replay', request_id,
+                    canonical_session_id, marked_at
+                 FROM agent_session_canonical_coverage
+                 WHERE app_type = 'codex' AND data_source IN ('codex_session', 'proxy')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO codex_replay_session_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    pricing_model, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, input_cost_usd, output_cost_usd,
+                    cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                    latency_ms, first_token_ms, duration_ms, status_code, error_message,
+                    session_id, provider_type, is_streaming, cost_multiplier, created_at,
+                    data_source, input_token_semantics
+                 ) SELECT request_id, provider_id, app_type, model, request_model,
+                    pricing_model, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, input_cost_usd, output_cost_usd,
+                    cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                    latency_ms, first_token_ms, duration_ms, status_code, error_message,
+                    session_id, provider_type, is_streaming, cost_multiplier, created_at,
+                    data_source, input_token_semantics
+                 FROM proxy_request_logs
+                 WHERE app_type = 'codex' AND data_source = 'codex_session'",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO codex_replay_sync
+                    (file_path, last_modified, last_line_offset, last_synced_at)
+                 SELECT file_path, last_modified, last_line_offset, last_synced_at
+                 FROM session_log_sync
+                 WHERE file_path LIKE '%/sessions/%/rollout-%'
+                    OR file_path LIKE '%\\sessions\\%\\rollout-%'
+                    OR file_path LIKE '%/archived_sessions/rollout-%'
+                    OR file_path LIKE '%\\archived_sessions\\rollout-%'",
+                [],
+            )?;
+            conn.execute("DELETE FROM proxy_request_logs WHERE app_type = 'codex' AND data_source = 'codex_session'", [])?;
+            conn.execute(
+                "DELETE FROM agent_session_usage_rollups WHERE app_type = 'codex'",
+                [],
+            )?;
+            conn.execute(
+                "DELETE FROM agent_session_nodes WHERE app_type = 'codex'",
+                [],
+            )?;
+            conn.execute("DELETE FROM agent_session_canonical_coverage WHERE app_type = 'codex' AND data_source IN ('codex_session', 'proxy')", [])?;
+            conn.execute(
+                "DELETE FROM session_log_sync WHERE file_path LIKE '%/sessions/%/rollout-%'
+                    OR file_path LIKE '%\\sessions\\%\\rollout-%'
+                    OR file_path LIKE '%/archived_sessions/rollout-%'
+                    OR file_path LIKE '%\\archived_sessions\\rollout-%'",
+                [],
+            )?;
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value)
+             VALUES ('codex_usage_canonical_replay_v3', ?1)",
+            [state],
+        )?;
         Ok(())
     }
 
@@ -3297,6 +4194,506 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 1, 0, 1));
+        assert!(Database::table_exists(&conn, "agent_session_nodes")?);
+        assert!(Database::table_exists(
+            &conn,
+            "agent_session_usage_rollups"
+        )?);
+        assert!(Database::table_exists(
+            &conn,
+            "agent_session_usage_snapshots"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_creates_session_tables_without_touching_existing_rows(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        // Simulate an actual v17 database: create_tables_on_conn is also used
+        // on current databases, so remove the v18 objects before setting the
+        // legacy user_version and exercising the migration itself.
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_agent_session_nodes_root;
+             DROP INDEX IF EXISTS idx_agent_session_nodes_parent;
+             DROP TABLE IF EXISTS agent_session_nodes;
+             DROP INDEX IF EXISTS idx_agent_session_usage_rollups_session;
+             DROP INDEX IF EXISTS idx_agent_session_usage_rollups_root_lookup;
+             DROP TABLE IF EXISTS agent_session_usage_rollups;
+             DROP INDEX IF EXISTS idx_agent_session_usage_snapshots_lookup;
+             DROP TABLE IF EXISTS agent_session_usage_snapshots;
+             DROP INDEX IF EXISTS idx_agent_session_canonical_coverage_session;
+             DROP TABLE IF EXISTS agent_session_canonical_coverage;",
+        )?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES ('p1', 'claude', 'Provider', '{}', '{}')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens,
+                output_tokens, latency_ms, status_code, created_at, session_id
+             ) VALUES ('raw-1', 'p1', 'claude', 'claude-3', 10, 5, 1, 200, 1, 'root-1')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO usage_daily_rollups
+                (date, app_type, provider_id, model, request_count, input_tokens)
+             VALUES ('2026-01-01', 'claude', 'p1', 'claude-3', 1, 10)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "agent_session_nodes")?);
+        assert!(Database::table_exists(
+            &conn,
+            "agent_session_usage_rollups"
+        )?);
+        assert!(Database::table_exists(
+            &conn,
+            "agent_session_usage_snapshots"
+        )?);
+        let counts: (i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM providers),
+                (SELECT COUNT(*) FROM proxy_request_logs),
+                (SELECT COUNT(*) FROM usage_daily_rollups)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(counts, (1, 1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_rolls_back_all_new_objects_on_failure() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_agent_session_nodes_root;
+             DROP INDEX IF EXISTS idx_agent_session_nodes_parent;
+             DROP TABLE IF EXISTS agent_session_nodes;
+             DROP INDEX IF EXISTS idx_agent_session_usage_rollups_session;
+             DROP INDEX IF EXISTS idx_agent_session_usage_rollups_root_lookup;
+             DROP TABLE IF EXISTS agent_session_usage_rollups;
+             DROP INDEX IF EXISTS idx_agent_session_usage_snapshots_lookup;
+             DROP TABLE IF EXISTS agent_session_usage_snapshots;
+             DROP INDEX IF EXISTS idx_agent_session_canonical_coverage_session;
+             DROP TABLE IF EXISTS agent_session_canonical_coverage;
+             CREATE TABLE idx_agent_session_nodes_root (marker INTEGER NOT NULL);",
+        )?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES ('p1', 'claude', 'Provider', '{}', '{}')",
+            [],
+        )?;
+        Database::set_user_version(&conn, 17)?;
+
+        let error = Database::apply_schema_migrations_on_conn(&conn)
+            .expect_err("conflicting index name should fail v18 migration");
+        assert!(
+            error.to_string().contains("idx_agent_session_nodes_root")
+                || error.to_string().contains("already exists"),
+            "unexpected migration error: {error}"
+        );
+        assert_eq!(Database::get_user_version(&conn)?, 17);
+        assert!(!Database::table_exists(&conn, "agent_session_nodes")?);
+        assert!(!Database::table_exists(
+            &conn,
+            "agent_session_usage_rollups"
+        )?);
+        assert!(!Database::table_exists(
+            &conn,
+            "agent_session_usage_snapshots"
+        )?);
+        assert!(Database::table_exists(
+            &conn,
+            "idx_agent_session_nodes_root"
+        )?);
+        let provider_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers WHERE id = 'p1' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(provider_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_creates_snapshot_table_without_touching_existing_rows(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_agent_session_usage_snapshots_lookup;
+             DROP TABLE IF EXISTS agent_session_usage_snapshots;
+             DROP INDEX IF EXISTS idx_agent_session_canonical_coverage_session;
+             DROP TABLE IF EXISTS agent_session_canonical_coverage;",
+        )?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES ('p-v17', 'hermes', 'Hermes Provider', '{}', '{}')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens,
+                output_tokens, latency_ms, status_code, created_at, session_id
+             ) VALUES ('raw-v17', 'p-v17', 'hermes', 'hermes-model', 7, 4, 1, 200, 1, 'session-v17')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO usage_daily_rollups
+                (date, app_type, provider_id, model, request_count, input_tokens)
+             VALUES ('2026-02-01', 'hermes', 'p-v17', 'hermes-model', 1, 7)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 18)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(
+            &conn,
+            "agent_session_usage_snapshots"
+        )?);
+        assert!(Database::table_exists(
+            &conn,
+            "agent_session_canonical_coverage"
+        )?);
+        let index_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_agent_session_usage_snapshots_lookup'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(index_count, 1);
+        let counts: (i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM providers WHERE id = 'p-v17'),
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'raw-v17'),
+                (SELECT COUNT(*) FROM usage_daily_rollups WHERE provider_id = 'p-v17')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(counts, (1, 1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_rolls_back_snapshot_table_on_index_conflict() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_agent_session_usage_snapshots_lookup;
+             DROP TABLE IF EXISTS agent_session_usage_snapshots;
+             DROP INDEX IF EXISTS idx_agent_session_canonical_coverage_session;
+             DROP TABLE IF EXISTS agent_session_canonical_coverage;
+             CREATE TABLE idx_agent_session_usage_snapshots_lookup (marker INTEGER NOT NULL);",
+        )?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES ('p-v17-fail', 'hermes', 'Hermes Provider', '{}', '{}')",
+            [],
+        )?;
+        Database::set_user_version(&conn, 18)?;
+
+        let error = Database::apply_schema_migrations_on_conn(&conn)
+            .expect_err("conflicting snapshot index should fail v19 migration");
+        assert!(
+            error
+                .to_string()
+                .contains("idx_agent_session_usage_snapshots_lookup")
+                || error.to_string().contains("already exists"),
+            "unexpected migration error: {error}"
+        );
+        assert_eq!(Database::get_user_version(&conn)?, 18);
+        assert!(!Database::table_exists(
+            &conn,
+            "agent_session_usage_snapshots"
+        )?);
+        assert!(Database::table_exists(
+            &conn,
+            "idx_agent_session_usage_snapshots_lookup"
+        )?);
+        let provider_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers WHERE id = 'p-v17-fail' AND app_type = 'hermes'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(provider_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_creates_coverage_table_without_touching_existing_rows(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_agent_session_canonical_coverage_session;
+             DROP TABLE IF EXISTS agent_session_canonical_coverage;",
+        )?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES ('p-v18', 'claude', 'Claude Provider', '{}', '{}')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens,
+                output_tokens, latency_ms, status_code, created_at, session_id
+             ) VALUES ('raw-v18', 'p-v18', 'claude', 'claude-model', 4, 2, 1, 200, 1, 'session-v18')",
+            [],
+        )?;
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(
+            &conn,
+            "agent_session_canonical_coverage"
+        )?);
+        let index_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_agent_session_canonical_coverage_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(index_count, 1);
+        let counts: (i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM providers WHERE id = 'p-v18'),
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'raw-v18')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(counts, (1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_rolls_back_coverage_table_on_index_conflict() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_agent_session_canonical_coverage_session;
+             DROP TABLE IF EXISTS agent_session_canonical_coverage;
+             CREATE TABLE idx_agent_session_canonical_coverage_session (marker INTEGER NOT NULL);",
+        )?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES ('p-v18-fail', 'claude', 'Claude Provider', '{}', '{}')",
+            [],
+        )?;
+        Database::set_user_version(&conn, 19)?;
+
+        let error = Database::apply_schema_migrations_on_conn(&conn)
+            .expect_err("conflicting coverage index should fail v20 migration");
+        assert!(
+            error
+                .to_string()
+                .contains("idx_agent_session_canonical_coverage_session")
+                || error.to_string().contains("already exists"),
+            "unexpected migration error: {error}"
+        );
+        assert_eq!(Database::get_user_version(&conn)?, 19);
+        assert!(!Database::table_exists(
+            &conn,
+            "agent_session_canonical_coverage"
+        )?);
+        assert!(Database::table_exists(
+            &conn,
+            "idx_agent_session_canonical_coverage_session"
+        )?);
+        let provider_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers WHERE id = 'p-v18-fail' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(provider_count, 1);
+        Ok(())
+    }
+
+    fn create_v20_rollup_fixture(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_agent_session_usage_rollups_session;
+             DROP INDEX IF EXISTS idx_agent_session_usage_rollups_root_lookup;
+             DROP TABLE IF EXISTS agent_session_usage_rollups;
+             CREATE TABLE agent_session_usage_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT '',
+                precision TEXT NOT NULL DEFAULT 'request_exact',
+                time_semantics TEXT NOT NULL DEFAULT 'event_time',
+                request_count_semantics TEXT NOT NULL DEFAULT 'http_request',
+                request_count INTEGER,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT,
+                first_event_at INTEGER,
+                last_event_at INTEGER,
+                PRIMARY KEY (
+                    date, app_type, session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision,
+                    time_semantics, request_count_semantics
+                )
+             );
+             CREATE INDEX idx_agent_session_usage_rollups_session
+                ON agent_session_usage_rollups(app_type, session_id, date);
+             CREATE INDEX idx_agent_session_usage_rollups_root_lookup
+                ON agent_session_usage_rollups(app_type, date, session_id);",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_preserves_partial_components_and_real_zero() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        create_v20_rollup_fixture(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO agent_session_usage_rollups (
+                date, app_type, session_id, provider_id, model, data_source,
+                request_count, input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, total_cost_usd
+             ) VALUES
+                ('2026-08-01', 'gemini', 'gemini-session', 'p-gemini', 'gemini-2',
+                 'gemini_session', 2, 70, 12, 3, 0, NULL),
+                ('2026-08-01', 'grokbuild', 'grok-session', 'p-grok', 'grok-2',
+                 'grok_session', 2, 50, 8, 2, 0, NULL),
+                ('2026-08-01', 'codex', 'codex-session', 'p-codex', 'gpt-5',
+                 'codex_session', 1, 100, 20, 5, 0, NULL),
+                ('2026-08-01', 'claude', 'claude-session', 'p-claude', 'claude-3',
+                 'session_log', 1, 10, 5, 0, 0, NULL);",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mut stmt = conn.prepare(
+            "SELECT data_source, input_token_semantics, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens
+             FROM agent_session_usage_rollups ORDER BY data_source",
+        )?;
+        let rows: Vec<(String, i64, i64, i64, i64, Option<i64>)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                ("codex_session".into(), 0, 100, 20, 5, None),
+                ("gemini_session".into(), 0, 70, 12, 3, None),
+                ("grok_session".into(), 1, 50, 8, 2, None),
+                ("session_log".into(), 0, 10, 5, 0, Some(0)),
+            ]
+        );
+        // A new truthful Grok fact uses TOTAL input semantics and the same
+        // blank/default dimensions as the migrated generic row.  INSERT OR
+        // REPLACE must hit that exact v21 key instead of leaving two buckets.
+        conn.execute(
+            "INSERT OR REPLACE INTO agent_session_usage_rollups (
+                date, app_type, session_id, provider_id, model, data_source,
+                input_token_semantics, request_count, input_tokens,
+                output_tokens, cache_read_tokens, cache_creation_tokens
+             ) VALUES ('2026-08-01', 'grokbuild', 'grok-session', 'p-grok',
+                       'grok-2', 'grok_session', 1, 9, 999, 88, 7, NULL)",
+            [],
+        )?;
+        let grok_replaced: (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), MAX(input_tokens)
+             FROM agent_session_usage_rollups
+             WHERE data_source = 'grok_session'
+               AND app_type = 'grokbuild'
+               AND session_id = 'grok-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(grok_replaced, (1, 999));
+        let nullable_columns: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('agent_session_usage_rollups')
+             WHERE name IN ('input_tokens', 'output_tokens', 'cache_read_tokens',
+                            'cache_creation_tokens', 'reasoning_tokens')
+               AND \"notnull\" = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(nullable_columns, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_rolls_back_rebuilt_table_on_index_conflict() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        create_v20_rollup_fixture(&conn)?;
+        conn.execute("DROP INDEX idx_agent_session_usage_rollups_root_lookup", [])?;
+        conn.execute(
+            "CREATE TABLE idx_agent_session_usage_rollups_root_lookup (marker INTEGER NOT NULL)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO agent_session_usage_rollups (
+                date, app_type, session_id, provider_id, model, data_source,
+                request_count, input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens
+             ) VALUES ('2026-08-01', 'gemini', 'rollback-session', 'p', 'm',
+                       'gemini_session', 1, 7, 3, 2, 0)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        let error = Database::apply_schema_migrations_on_conn(&conn)
+            .expect_err("conflicting v21 index should fail migration");
+        assert!(
+            error
+                .to_string()
+                .contains("idx_agent_session_usage_rollups_root_lookup")
+                || error.to_string().contains("already exists"),
+            "unexpected migration error: {error}"
+        );
+        assert_eq!(Database::get_user_version(&conn)?, 20);
+        assert!(Database::table_exists(
+            &conn,
+            "agent_session_usage_rollups"
+        )?);
+        assert!(!Database::table_exists(
+            &conn,
+            "agent_session_usage_rollups_v21"
+        )?);
+        assert!(Database::table_exists(
+            &conn,
+            "idx_agent_session_usage_rollups_root_lookup"
+        )?);
+        let legacy_cache_creation: i64 = conn.query_row(
+            "SELECT cache_creation_tokens FROM agent_session_usage_rollups
+             WHERE session_id = 'rollback-session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(legacy_cache_creation, 0);
         Ok(())
     }
 
@@ -3315,6 +4712,221 @@ mod tests {
              VALUES ('pi_session', 'request', 'semantic', 1)",
             [],
         )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v21_to_v22_marks_codex_replay_only_when_history_exists() -> Result<(), AppError> {
+        let fresh = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&fresh)?;
+        Database::set_user_version(&fresh, 21)?;
+        Database::apply_schema_migrations_on_conn(&fresh)?;
+        assert_eq!(
+            fresh.query_row(
+                "SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v1'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?,
+            "complete"
+        );
+
+        let legacy = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&legacy)?;
+        legacy.execute(
+            "INSERT INTO proxy_request_logs
+                (request_id, provider_id, app_type, model, latency_ms,
+                 status_code, created_at, data_source)
+             VALUES ('codex-legacy-row', '_codex_session', 'codex', 'gpt-5.6-sol',
+                     0, 200, 1, 'codex_session')",
+            [],
+        )?;
+        Database::set_user_version(&legacy, 21)?;
+        Database::apply_schema_migrations_on_conn(&legacy)?;
+        assert_eq!(
+            legacy.query_row(
+                "SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v1'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?,
+            "pending"
+        );
+
+        let cursor_only = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&cursor_only)?;
+        cursor_only.execute(
+            "INSERT INTO session_log_sync
+                (file_path, last_modified, last_line_offset, last_synced_at)
+             VALUES (?1, 1, 1, 1)",
+            [r"C:\Users\admin\.codex\sessions\2026\08\rollout-2026-08-15T00-00-00-00000000-0000-4000-8000-000000000001.jsonl"],
+        )?;
+        Database::set_user_version(&cursor_only, 21)?;
+        Database::apply_schema_migrations_on_conn(&cursor_only)?;
+        assert_eq!(
+            cursor_only.query_row(
+                "SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v1'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?,
+            "pending"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v22_to_v23_marks_replay_for_codex_history_only() -> Result<(), AppError> {
+        let fresh = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&fresh)?;
+        Database::set_user_version(&fresh, 22)?;
+        Database::apply_schema_migrations_on_conn(&fresh)?;
+        assert_eq!(
+            fresh.query_row(
+                "SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v2'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?,
+            "complete"
+        );
+        assert_eq!(Database::get_user_version(&fresh)?, SCHEMA_VERSION);
+
+        let legacy = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&legacy)?;
+        legacy.execute(
+            "INSERT INTO proxy_request_logs
+                (request_id, provider_id, app_type, model, latency_ms,
+                 status_code, created_at, data_source)
+             VALUES ('codex-proxy-history', 'openai', 'codex', 'gpt-5.6-sol',
+                     0, 200, 1, 'proxy')",
+            [],
+        )?;
+        Database::set_user_version(&legacy, 22)?;
+        Database::apply_schema_migrations_on_conn(&legacy)?;
+        assert_eq!(
+            legacy.query_row(
+                "SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v2'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?,
+            "pending"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v23_to_v24_moves_interrupted_codex_replay_into_shadow_tables() -> Result<(), AppError>
+    {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute(
+            "INSERT INTO settings (key, value)
+             VALUES ('codex_usage_canonical_replay_v2', 'replaying')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO agent_session_nodes (
+                app_type, session_id, root_session_id, node_kind,
+                relation_confidence, last_synced_at
+             ) VALUES ('codex', 'root', 'root', 'root', 'explicit', 1)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO agent_session_usage_rollups (
+                date, app_type, session_id, provider_id, model, data_source,
+                request_count
+             ) VALUES ('2026-08-15', 'codex', 'root', '_codex_session',
+                       'gpt-5.6-sol', 'codex_session', 1)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, latency_ms,
+                status_code, created_at, data_source
+             ) VALUES ('codex-session-row', '_codex_session', 'codex',
+                       'gpt-5.6-sol', 0, 200, 1, 'codex_session')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_log_sync (
+                file_path, last_modified, last_line_offset, last_synced_at
+             ) VALUES ('C:/sessions/2026/08/rollout-one.jsonl', 1, 2, 3)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, 24);
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v3'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?,
+            "replaying"
+        );
+        let staged: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM codex_replay_nodes),
+                (SELECT COUNT(*) FROM codex_replay_rollups),
+                (SELECT COUNT(*) FROM codex_replay_session_logs),
+                (SELECT COUNT(*) FROM codex_replay_sync)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(staged, (1, 1, 1, 1));
+        let published: (i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM agent_session_nodes WHERE app_type = 'codex'),
+                (SELECT COUNT(*) FROM agent_session_usage_rollups WHERE app_type = 'codex'),
+                (SELECT COUNT(*) FROM proxy_request_logs
+                 WHERE app_type = 'codex' AND data_source = 'codex_session')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(published, (0, 0, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v23_to_v24_pending_keeps_published_codex_snapshot() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute(
+            "INSERT INTO settings (key, value)
+             VALUES ('codex_usage_canonical_replay_v2', 'pending')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO agent_session_nodes (
+                app_type, session_id, root_session_id, node_kind,
+                relation_confidence, last_synced_at
+             ) VALUES ('codex', 'root', 'root', 'root', 'explicit', 1)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'codex_usage_canonical_replay_v3'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?,
+            "pending"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM agent_session_nodes WHERE app_type = 'codex'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?,
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM codex_replay_nodes", [], |row| {
+                row.get::<_, i64>(0)
+            })?,
+            0
+        );
         Ok(())
     }
 }

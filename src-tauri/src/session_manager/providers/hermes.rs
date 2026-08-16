@@ -6,6 +6,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::hermes_config::get_hermes_dir;
+use crate::services::session_usage_hermes::{canonical_session_id, source_file_identity};
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
@@ -94,9 +95,16 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
     };
 
     let db_source = format!("sqlite:{}", db_path.display());
+    // The importer namespaces facts by the replacement-safe database identity
+    // and the default Hermes profile. Reuse its crate-local helpers so the
+    // Session Manager can query the same canonical node while retaining the
+    // raw session ID/source path for message reads and deletion.
+    let database_identity = source_file_identity(&db_path).ok();
 
     for row_result in rows.flatten() {
-        if let Some(meta) = sqlite_row_to_session_meta(&row_result, &db_source) {
+        if let Some(meta) =
+            sqlite_row_to_session_meta(&row_result, &db_source, database_identity.as_deref())
+        {
             sessions.push(meta);
         }
     }
@@ -104,7 +112,11 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
     sessions
 }
 
-fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMeta> {
+fn sqlite_row_to_session_meta(
+    row: &Value,
+    db_source: &str,
+    database_identity: Option<&str>,
+) -> Option<SessionMeta> {
     let obj = row.as_object()?;
 
     let session_id = obj.get("id").and_then(Value::as_str)?.to_string();
@@ -136,6 +148,8 @@ fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMet
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
+        usage_session_id: database_identity
+            .map(|identity| canonical_session_id("default", identity, &session_id)),
         session_id,
         title,
         summary: None,
@@ -417,6 +431,7 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
+        usage_session_id: None,
         session_id,
         title: title.or_else(|| first_user_msg.clone()),
         summary: first_user_msg,
@@ -514,6 +529,28 @@ mod tests {
         assert!(parse_sqlite_source("not-sqlite").is_none());
         assert!(parse_sqlite_source("sqlite:").is_none());
         assert!(parse_sqlite_source("sqlite:/path#").is_none());
+    }
+
+    #[test]
+    fn sqlite_metadata_carries_importer_canonical_usage_identity() {
+        let row = serde_json::json!({
+            "id": "raw-hermes-session",
+            "title": "Hermes task",
+            "cwd": "/workspace/hermes",
+            "started_at": 1_700_000_000_i64,
+            "ended_at": 1_700_000_100_i64
+        });
+        let meta =
+            sqlite_row_to_session_meta(&row, "sqlite:/tmp/state.db", Some("database-identity"))
+                .expect("sqlite metadata");
+
+        assert_eq!(meta.session_id, "raw-hermes-session");
+        let expected_usage_id =
+            canonical_session_id("default", "database-identity", "raw-hermes-session");
+        assert_eq!(
+            meta.usage_session_id.as_deref(),
+            Some(expected_usage_id.as_str())
+        );
     }
 
     #[test]
