@@ -55,8 +55,27 @@ pub fn get_opencode_dir() -> PathBuf {
         .join("opencode")
 }
 
+/// OpenCode 在全局配置目录里认三个文件名，`globalConfigFile()` 按这个顺序取第一个
+/// 存在的，全都不存在时新建 `opencode.jsonc`，见
+/// https://github.com/sst/opencode/blob/dev/packages/opencode/src/config/config.ts
+///
+/// 读取侧它三个都读并 `mergeDeep`，后合并的覆盖先合并的，所以 `opencode.jsonc`
+/// 优先级最高：写进 `opencode.json` 的同名键会被它静默盖掉。
+const OPENCODE_CONFIG_FILE_NAMES: [&str; 3] = ["opencode.jsonc", "opencode.json", "config.json"];
+
 pub fn get_opencode_config_path() -> PathBuf {
-    get_opencode_dir().join("opencode.json")
+    let dir = get_opencode_dir();
+
+    for name in OPENCODE_CONFIG_FILE_NAMES {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    // 一个都不存在时保持建 `opencode.json`：OpenCode 读取时会一并合并它，
+    // 之后 `globalConfigFile()` 也会选中它，行为与本函数此前一致。
+    dir.join("opencode.json")
 }
 
 /// 获取 OpenCode SQLite 数据库路径
@@ -371,9 +390,122 @@ mod tests {
     }
 
     fn write_config(home: &std::path::Path, content: &str) {
+        write_config_named(home, "opencode.json", content);
+    }
+
+    fn write_config_named(home: &std::path::Path, file_name: &str, content: &str) {
         let dir = home.join(".config").join("opencode");
         std::fs::create_dir_all(&dir).expect("create config dir");
-        std::fs::write(dir.join("opencode.json"), content).expect("write config");
+        std::fs::write(dir.join(file_name), content).expect("write config");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn config_path_prefers_existing_jsonc_over_json() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        write_config_named(temp.path(), "config.json", "{}");
+        assert_eq!(
+            get_opencode_config_path().file_name().unwrap(),
+            "config.json",
+            "legacy config.json is used when it is the only file present"
+        );
+
+        write_config_named(temp.path(), "opencode.json", "{}");
+        assert_eq!(
+            get_opencode_config_path().file_name().unwrap(),
+            "opencode.json",
+            "opencode.json outranks the legacy config.json"
+        );
+
+        write_config_named(temp.path(), "opencode.jsonc", "{}");
+        assert_eq!(
+            get_opencode_config_path().file_name().unwrap(),
+            "opencode.jsonc",
+            "opencode.jsonc outranks both, matching OpenCode's globalConfigFile()"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn config_path_falls_back_to_json_when_no_config_exists() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        assert_eq!(
+            get_opencode_config_path().file_name().unwrap(),
+            "opencode.json",
+            "a fresh install keeps creating opencode.json"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn config_path_ignores_a_directory_named_like_a_config_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        let dir = temp.path().join(".config").join("opencode");
+        std::fs::create_dir_all(dir.join("opencode.jsonc")).expect("create decoy dir");
+
+        assert_eq!(
+            get_opencode_config_path().file_name().unwrap(),
+            "opencode.json",
+            "a directory must not be mistaken for a config file"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn set_provider_updates_existing_jsonc_instead_of_creating_a_second_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // OpenCode 新装时建的就是 opencode.jsonc，且允许注释。
+        write_config_named(
+            temp.path(),
+            "opencode.jsonc",
+            "{\n  // user config\n  \"model\": \"keep-me\"\n}",
+        );
+
+        set_provider("acme", json!({"npm": "@ai-sdk/openai-compatible"}))
+            .expect("set_provider must succeed");
+
+        let dir = temp.path().join(".config").join("opencode");
+        assert!(
+            !dir.join("opencode.json").exists(),
+            "writing must not create a second config file next to opencode.jsonc"
+        );
+
+        let config = read_opencode_config().expect("reload");
+        assert_eq!(
+            config["provider"]["acme"]["npm"], "@ai-sdk/openai-compatible",
+            "the provider must land in the file OpenCode actually reads last"
+        );
+        assert_eq!(
+            config["model"], "keep-me",
+            "unrelated user config must be preserved"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_sees_providers_declared_only_in_jsonc() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        write_config_named(
+            temp.path(),
+            "opencode.jsonc",
+            "{\n  // trailing commas and comments are valid JSONC\n  \"provider\": {\n    \"acme\": { \"npm\": \"@ai-sdk/openai-compatible\" },\n  },\n}",
+        );
+
+        let providers = get_providers().expect("providers must load");
+        assert!(
+            providers.contains_key("acme"),
+            "providers declared in opencode.jsonc must be visible"
+        );
     }
 
     #[test]
