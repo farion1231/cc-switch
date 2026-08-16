@@ -38,7 +38,8 @@ export function useUpdateSessionRoutingConfig() {
       toast.success(t("sessionRoutes.configUpdated"));
     },
     onError: (error) => {
-      toast.error(extractErrorMessage(error));
+      console.error("[SessionRoutes] 更新配置失败:", error);
+      toast.error(`更新配置失败: ${extractErrorMessage(error)}`);
     },
   });
 }

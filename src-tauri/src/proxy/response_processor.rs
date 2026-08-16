@@ -1026,6 +1026,7 @@ mod tests {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            session_router: Arc::new(crate::proxy::session_router::SessionRouter::new(db.clone())),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,

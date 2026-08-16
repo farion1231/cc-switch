@@ -220,3 +220,22 @@ impl SessionRouter {
         Ok(count)
     }
 }
+#[cfg(test)]
+mod serde_tests {
+    use super::*;
+
+    #[test]
+    fn frontend_round_trip() {
+        // 模拟前端 get 返回后，再原样发回 update 的 JSON
+        let frontend_json = r#"{"enabled":true,"strategy":"round_robin","sessionTtlSeconds":3600,"maxSessionsPerProvider":0}"#;
+        let cfg: SessionRoutingConfig = serde_json::from_str(frontend_json).expect("deserialize");
+        assert!(cfg.enabled);
+        assert_eq!(cfg.strategy, RoutingStrategy::RoundRobin);
+        assert_eq!(cfg.session_ttl_seconds, 3600);
+        // 序列化回去
+        let out = serde_json::to_string(&cfg).unwrap();
+        println!("round-trip json: {}", out);
+        assert!(out.contains("sessionTtlSeconds"));
+        assert!(out.contains("round_robin"));
+    }
+}

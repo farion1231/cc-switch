@@ -10,7 +10,6 @@ import {
   Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -140,14 +139,12 @@ export function SessionRoutingPage() {
           ) : config ? (
             <>
               <ToggleRow
-                label={t("sessionRoutes.enable")}
+                icon={<Route className="w-4 h-4" />}
+                title={t("sessionRoutes.enable")}
                 description={t("sessionRoutes.enableDesc")}
-              >
-                <Switch
-                  checked={config.enabled}
-                  onCheckedChange={handleToggle}
-                />
-              </ToggleRow>
+                checked={config.enabled}
+                onCheckedChange={handleToggle}
+              />
 
               <div className="flex items-center justify-between">
                 <div>
@@ -229,7 +226,7 @@ export function SessionRoutingPage() {
                   className="flex items-center justify-between"
                 >
                   <div className="flex items-center gap-2">
-                    <ProviderIcon providerId={providerId} />
+                    <ProviderIcon name={providerId} size={24} />
                     <span className="text-sm">{providerId}</span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -297,7 +294,7 @@ export function SessionRoutingPage() {
                     className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50 transition-colors"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <ProviderIcon providerId={route.providerId} />
+                      <ProviderIcon name={route.providerName || route.providerId} size={24} />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium truncate max-w-[120px]">

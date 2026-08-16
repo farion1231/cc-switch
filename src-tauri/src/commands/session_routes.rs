@@ -25,6 +25,13 @@ pub async fn update_session_routing_config(
     app_type: String,
     config: SessionRoutingConfig,
 ) -> Result<(), String> {
+    log::info!(
+        "[SessionRoutes] 更新配置: app={} enabled={} strategy={} ttl={}",
+        app_type,
+        config.enabled,
+        config.strategy.as_str(),
+        config.session_ttl_seconds,
+    );
     state
         .db
         .update_session_routing_config(&app_type, &config)
