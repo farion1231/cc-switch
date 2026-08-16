@@ -1061,7 +1061,12 @@
     "contextWindowInvalid": "コンテキストウィンドウは正の整数で指定してください",
     "profile": "クライアントモデルプロファイル",
     "rawConfig": "config.toml",
-    "invalidToml": "config.toml の形式が不正です: {{error}}"
+    "invalidToml": "config.toml の形式が不正です: {{error}}",
+    "defaultModelPlaceholder": "例: grok-4.5",
+    "defaultModelHint": "Grok Build がデフォルトでリクエストするモデルです。プリセットの更新を待たずにいつでも変更できます。",
+    "advancedSectionHint": "上流フォーマット、思考機能、カスタム User-Agent の設定を含みます。Chat Completions / Anthropic Messages プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
+    "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、リクエストの reasoning effort を上流の Chat パラメータに変換します。",
+    "maxOutputTokensHint": "デフォルト上限 8192 では長い回答や深い思考時に切り詰められることがあります（stop_reason=max_tokens）。この値は Anthropic 経路で max_tokens を上書きします。モデル／ゲートウェイの実際の出力上限を超えると 400 になる場合があります。空欄でデフォルトの 8192 を使用します。"
   },
   "sessionManager": {
     "title": "セッション管理",
