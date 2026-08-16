@@ -107,7 +107,7 @@ describe("GrokBuildProviderForm", () => {
     expect(screen.getByText("上游格式")).toBeInTheDocument();
   });
 
-  it("keeps the Grok client on Responses when the upstream uses Chat", async () => {
+  it("keeps the stored api_backend when the upstream uses Chat", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     const configToml = `[models]
@@ -144,9 +144,95 @@ context_window = 500000
     const config = parseToml(settings.config) as any;
     expect(submitted.meta.apiFormat).toBe("openai_chat");
     const selected = config.model[config.models.default];
-    expect(selected.api_backend).toBe("responses");
+    // 上游协议选择走 meta.apiFormat + 代理转换；表单不得改写 TOML 里存下的 api_backend
+    expect(selected.api_backend).toBe("chat_completions");
     expect(selected.model).toBe("grok-4.5");
     expect(selected.base_url).toBe("https://relay.example.com/v1");
+  });
+
+  it("preserves a non-default api_backend when editing an existing provider", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const configToml = `[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://relay.example.com/v1"
+name = "Messages Relay"
+api_key = "secret-key"
+api_backend = "messages"
+context_window = 500000
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="messages-relay"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Messages Relay",
+          category: "custom",
+          settingsConfig: { config: configToml },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    const settings = JSON.parse(submitted.settingsConfig);
+    expect(settings.config).toContain('api_backend = "messages"');
+    const config = parseToml(settings.config) as any;
+    expect(config.model[config.models.default].api_backend).toBe("messages");
+  });
+
+  it("keeps an api_backend typed into the raw TOML editor", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const initialToml = `[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://relay.example.com/v1"
+name = "Raw Edit Relay"
+api_key = "secret-key"
+api_backend = "responses"
+context_window = 500000
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="raw-edit-relay"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Raw Edit Relay",
+          category: "custom",
+          settingsConfig: { config: initialToml },
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("raw-config"), {
+      target: {
+        value: initialToml.replace(
+          'api_backend = "responses"',
+          'api_backend = "chat_completions"',
+        ),
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    const settings = JSON.parse(submitted.settingsConfig);
+    const config = parseToml(settings.config) as any;
+    expect(config.model[config.models.default].api_backend).toBe(
+      "chat_completions",
+    );
   });
 
   it("renders localized validation feedback for malformed TOML", async () => {
