@@ -57,6 +57,8 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexReasoningEffortMapping,
+  CodexReasoningLevel,
   PromptCacheRoutingMode,
   ProviderCategory,
 } from "@/types";
@@ -150,8 +152,8 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.baseInstructions
       ? { baseInstructions: seed.baseInstructions }
       : {}),
-    ...(seed?.reasoningLevels && seed.reasoningLevels.length > 0
-      ? { reasoningLevels: seed.reasoningLevels }
+    ...(seed?.reasoningEffortMappings && seed.reasoningEffortMappings.length > 0
+      ? { reasoningEffortMappings: seed.reasoningEffortMappings }
       : {}),
     ...(seed?.defaultReasoningLevel
       ? { defaultReasoningLevel: seed.defaultReasoningLevel }
@@ -180,61 +182,79 @@ function catalogRowsMatchModels(
       (row.baseInstructions ?? "") === (incoming.baseInstructions ?? "") &&
       JSON.stringify(row.inputModalities ?? []) ===
         JSON.stringify(incoming.inputModalities ?? []) &&
-      JSON.stringify(row.reasoningLevels ?? []) ===
-        JSON.stringify(incoming.reasoningLevels ?? []) &&
+      JSON.stringify(row.reasoningEffortMappings ?? []) ===
+        JSON.stringify(incoming.reasoningEffortMappings ?? []) &&
       (row.defaultReasoningLevel ?? "") ===
         (incoming.defaultReasoningLevel ?? "")
     );
   });
 }
 
-// Reasoning effort levels Codex understands, in ascending depth order. The
-// backend drops unknown values, so the UI only offers canonical ones.
-const CODEX_REASONING_LEVELS = [
-  "none",
-  "minimal",
+// Codex Desktop currently renders these catalog efforts as Light, Medium, High,
+// and Extra High. Provider-native values are configured separately below.
+const CODEX_REASONING_LEVELS: readonly CodexReasoningLevel[] = [
   "low",
   "medium",
   "high",
   "xhigh",
-  "max",
-  "ultra",
-] as const;
+];
 
 // Sentinel for the default-level Select: Radix Select forbids empty item
 // values, so "back to Auto" needs a non-empty value mapped to undefined.
 const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
 
 function ReasoningLevelsEditor({
-  levels,
+  mappings,
   defaultLevel,
-  onLevelsChange,
+  onMappingsChange,
   onDefaultLevelChange,
 }: {
-  levels?: string[];
-  defaultLevel?: string;
-  onLevelsChange: (levels: string[] | undefined) => void;
-  onDefaultLevelChange: (level: string | undefined) => void;
+  mappings?: CodexReasoningEffortMapping[];
+  defaultLevel?: CodexReasoningLevel;
+  onMappingsChange: (
+    mappings: CodexReasoningEffortMapping[] | undefined,
+  ) => void;
+  onDefaultLevelChange: (level: CodexReasoningLevel | undefined) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const selected = (levels ?? []).filter((level) =>
-    (CODEX_REASONING_LEVELS as readonly string[]).includes(level),
+  const byLevel = new Map(
+    (mappings ?? [])
+      .filter((mapping) => CODEX_REASONING_LEVELS.includes(mapping.level))
+      .map((mapping) => [mapping.level, mapping]),
   );
+  const selected = CODEX_REASONING_LEVELS.filter((level) => byLevel.has(level));
 
-  const toggleLevel = (level: string) => {
-    const picked = selected.includes(level)
-      ? selected.filter((item) => item !== level)
-      : [...selected, level];
-    // Store in canonical ascending-depth order (not click order): the Codex
-    // picker and the generated catalog both follow array order.
-    const next = (CODEX_REASONING_LEVELS as readonly string[]).filter((item) =>
-      picked.includes(item),
-    );
-    onLevelsChange(next.length > 0 ? next : undefined);
-    if (defaultLevel && !next.includes(defaultLevel)) {
+  const commit = (
+    nextByLevel: Map<CodexReasoningLevel, CodexReasoningEffortMapping>,
+  ) => {
+    const next = CODEX_REASONING_LEVELS.flatMap((level) => {
+      const mapping = nextByLevel.get(level);
+      return mapping ? [mapping] : [];
+    });
+    onMappingsChange(next.length > 0 ? next : undefined);
+    if (defaultLevel && !nextByLevel.has(defaultLevel)) {
       onDefaultLevelChange(undefined);
     }
+  };
+
+  const toggleLevel = (level: CodexReasoningLevel) => {
+    const next = new Map(byLevel);
+    if (next.has(level)) {
+      next.delete(level);
+    } else {
+      next.set(level, { level });
+    }
+    commit(next);
+  };
+
+  const updateMapping = (
+    level: CodexReasoningLevel,
+    patch: Partial<CodexReasoningEffortMapping>,
+  ) => {
+    const next = new Map(byLevel);
+    next.set(level, { ...(next.get(level) ?? { level }), ...patch, level });
+    commit(next);
   };
 
   const triggerLabel =
@@ -266,11 +286,11 @@ function ReasoningLevelsEditor({
       </PopoverTrigger>
       <PopoverContent
         side="bottom"
-        align="start"
+        align="end"
         sideOffset={6}
         avoidCollisions
         collisionPadding={8}
-        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
+        className="z-[1000] w-[min(620px,calc(100vw-24px))] p-0 border-border-default"
       >
         <Command>
           <CommandInput
@@ -305,6 +325,85 @@ function ReasoningLevelsEditor({
         </Command>
         {selected.length > 0 && (
           <div className="border-t border-border-default p-2">
+            <div className="mb-1 grid grid-cols-[64px_minmax(0,0.8fr)_minmax(0,1.2fr)] gap-1.5 px-1 text-[10px] text-muted-foreground">
+              <span>
+                {t("codexConfig.reasoningMappingLevel", {
+                  defaultValue: "Codex",
+                })}
+              </span>
+              <span>
+                {t("codexConfig.reasoningMappingUpstream", {
+                  defaultValue: "Upstream value",
+                })}
+              </span>
+              <span>
+                {t("codexConfig.reasoningMappingDescription", {
+                  defaultValue: "Description",
+                })}
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              {selected.map((level) => {
+                const mapping = byLevel.get(level)!;
+                return (
+                  <div
+                    key={level}
+                    className="grid grid-cols-[64px_minmax(0,0.8fr)_minmax(0,1.2fr)] items-center gap-1.5"
+                  >
+                    <span className="px-1 font-mono text-xs">{level}</span>
+                    <Input
+                      value={mapping.upstreamValue ?? ""}
+                      onChange={(event) =>
+                        updateMapping(level, {
+                          upstreamValue: event.target.value,
+                        })
+                      }
+                      placeholder={level}
+                      className="h-8 font-mono text-xs"
+                      aria-label={t(
+                        "codexConfig.reasoningMappingUpstreamAria",
+                        {
+                          defaultValue: `${level} upstream value`,
+                          level,
+                        },
+                      )}
+                    />
+                    <Input
+                      value={mapping.description ?? ""}
+                      onChange={(event) =>
+                        updateMapping(level, {
+                          description: event.target.value,
+                        })
+                      }
+                      placeholder={t(
+                        "codexConfig.reasoningMappingDescriptionPlaceholder",
+                        {
+                          defaultValue: "Use Codex default",
+                        },
+                      )}
+                      className="h-8 text-xs"
+                      aria-label={t(
+                        "codexConfig.reasoningMappingDescriptionAria",
+                        {
+                          defaultValue: `${level} description`,
+                          level,
+                        },
+                      )}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+              {t("codexConfig.reasoningMappingHint", {
+                defaultValue:
+                  "Codex shows the fixed levels above. Upstream values are applied only when requests pass through CC Switch routing; leave blank to forward the same value.",
+              })}
+            </p>
+          </div>
+        )}
+        {selected.length > 0 && (
+          <div className="border-t border-border-default p-2">
             <span className="text-xs text-muted-foreground">
               {t("codexConfig.defaultReasoningLevelLabel", {
                 defaultValue: "Default level",
@@ -314,7 +413,9 @@ function ReasoningLevelsEditor({
               value={defaultLevel ?? AUTO_DEFAULT_REASONING_LEVEL}
               onValueChange={(value) =>
                 onDefaultLevelChange(
-                  value === AUTO_DEFAULT_REASONING_LEVEL ? undefined : value,
+                  value === AUTO_DEFAULT_REASONING_LEVEL
+                    ? undefined
+                    : (value as CodexReasoningLevel),
                 )
               }
             >
@@ -326,9 +427,6 @@ function ReasoningLevelsEditor({
                   )}
                 />
               </SelectTrigger>
-              {/* Must render above the enclosing z-[1000] popover: the
-                  default SelectContent z-[100] would hide the menu behind
-                  the panel when it flips upward. */}
               <SelectContent className="z-[1100]">
                 <SelectItem value={AUTO_DEFAULT_REASONING_LEVEL}>
                   {t("codexConfig.defaultReasoningLevelPlaceholder", {
@@ -1234,11 +1332,11 @@ export function CodexFormFields({
                           })}
                         />
                         <ReasoningLevelsEditor
-                          levels={row.reasoningLevels}
+                          mappings={row.reasoningEffortMappings}
                           defaultLevel={row.defaultReasoningLevel}
-                          onLevelsChange={(levels) =>
+                          onMappingsChange={(mappings) =>
                             handleUpdateCatalogRow(index, {
-                              reasoningLevels: levels,
+                              reasoningEffortMappings: mappings,
                             })
                           }
                           onDefaultLevelChange={(level) =>

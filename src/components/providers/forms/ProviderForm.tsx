@@ -21,6 +21,8 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexReasoningEffortMapping,
+  CodexReasoningLevel,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
 } from "@/types";
@@ -161,10 +163,56 @@ export const normalizeCodexCatalogModelsForSave = (
     );
 
     const baseInstructions = item.baseInstructions?.trim();
-    const reasoningLevels = item.reasoningLevels?.filter(
-      (level) => typeof level === "string" && level.trim(),
+    const canonicalReasoningLevels: readonly CodexReasoningLevel[] = [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ];
+    const rawMappings: Array<{
+      level: unknown;
+      upstreamValue?: unknown;
+      description?: unknown;
+    }> = item.reasoningEffortMappings
+      ? item.reasoningEffortMappings
+      : (item.reasoningLevels ?? []).map((level) => ({ level }));
+    const mappingByLevel = new Map<
+      CodexReasoningLevel,
+      CodexReasoningEffortMapping
+    >();
+    for (const mapping of rawMappings) {
+      const level = String(mapping.level).trim().toLowerCase();
+      if (!(canonicalReasoningLevels as readonly string[]).includes(level)) {
+        continue;
+      }
+      const upstreamValue =
+        typeof mapping.upstreamValue === "string"
+          ? mapping.upstreamValue.trim()
+          : undefined;
+      const description =
+        typeof mapping.description === "string"
+          ? mapping.description.trim()
+          : undefined;
+      mappingByLevel.set(level as CodexReasoningLevel, {
+        level: level as CodexReasoningLevel,
+        ...(upstreamValue ? { upstreamValue } : {}),
+        ...(description ? { description } : {}),
+      });
+    }
+    const reasoningEffortMappings = canonicalReasoningLevels.flatMap(
+      (level) => {
+        const mapping = mappingByLevel.get(level);
+        return mapping ? [mapping] : [];
+      },
     );
-    const defaultReasoningLevel = item.defaultReasoningLevel?.trim();
+    const defaultReasoningLevel = String(item.defaultReasoningLevel ?? "")
+      .trim()
+      .toLowerCase();
+    const normalizedDefaultReasoningLevel = mappingByLevel.has(
+      defaultReasoningLevel as CodexReasoningLevel,
+    )
+      ? (defaultReasoningLevel as CodexReasoningLevel)
+      : undefined;
 
     normalized.push({
       model,
@@ -178,10 +226,12 @@ export const normalizeCodexCatalogModelsForSave = (
         ? { inputModalities }
         : {}),
       ...(baseInstructions ? { baseInstructions } : {}),
-      ...(reasoningLevels && reasoningLevels.length > 0
-        ? { reasoningLevels }
+      ...(reasoningEffortMappings.length > 0
+        ? { reasoningEffortMappings }
         : {}),
-      ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
+      ...(normalizedDefaultReasoningLevel
+        ? { defaultReasoningLevel: normalizedDefaultReasoningLevel }
+        : {}),
     });
   }
 

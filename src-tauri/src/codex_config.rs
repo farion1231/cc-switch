@@ -548,11 +548,10 @@ fn codex_catalog_input_modalities(
     modalities.iter().map(|item| (*item).to_string()).collect()
 }
 
-/// Canonical reasoning effort levels Codex understands, with the same
-/// descriptions the official gpt-5.5 template uses. `none` disables thinking.
+/// Stable reasoning levels currently rendered by Codex Desktop for custom
+/// catalog entries. Provider-native values are kept in CC Switch settings and
+/// are never written into `supported_reasoning_levels`.
 const CODEX_REASONING_LEVEL_DESCRIPTIONS: &[(&str, &str)] = &[
-    ("none", "Disable Thinking"),
-    ("minimal", "Minimal reasoning"),
     ("low", "Fast responses with lighter reasoning"),
     (
         "medium",
@@ -560,8 +559,6 @@ const CODEX_REASONING_LEVEL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     ("high", "Greater reasoning depth for complex problems"),
     ("xhigh", "Extra high reasoning depth for complex problems"),
-    ("max", "Maximum reasoning depth for the hardest problems"),
-    ("ultra", "Ultra reasoning depth"),
 ];
 
 fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
@@ -571,61 +568,64 @@ fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
         .map(|(_, description)| *description)
 }
 
-/// User-declared levels reduced to the canonical efforts Codex understands,
-/// in canonical (lowest → highest) order regardless of declaration order.
-/// Unknown efforts are dropped so a typo can never produce an entry Codex
-/// would reject.
-fn codex_canonical_efforts(levels: &[String]) -> Vec<&str> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexReasoningEffortMappingSpec {
+    level: String,
+    upstream_value: Option<String>,
+    description: Option<String>,
+}
+
+fn codex_canonical_reasoning_mappings(
+    mappings: &[CodexReasoningEffortMappingSpec],
+) -> Vec<&CodexReasoningEffortMappingSpec> {
     CODEX_REASONING_LEVEL_DESCRIPTIONS
         .iter()
-        .filter(|(effort, _)| levels.iter().any(|candidate| candidate == effort))
-        .map(|(effort, _)| *effort)
+        .filter_map(|(level, _)| mappings.iter().find(|mapping| mapping.level == *level))
         .collect()
 }
 
-/// Build a `supported_reasoning_levels` array from user-declared effort values.
-fn codex_supported_reasoning_levels(levels: &[String]) -> Value {
-    let entries: Vec<Value> = codex_canonical_efforts(levels)
+fn codex_supported_reasoning_levels(mappings: &[CodexReasoningEffortMappingSpec]) -> Value {
+    let entries: Vec<Value> = codex_canonical_reasoning_mappings(mappings)
         .into_iter()
-        .map(|effort| {
-            let description = codex_reasoning_level_description(effort)
-                .expect("canonical effort always has a description");
-            json!({ "effort": effort, "description": description })
+        .map(|mapping| {
+            let description = mapping.description.as_deref().unwrap_or_else(|| {
+                codex_reasoning_level_description(&mapping.level)
+                    .expect("canonical effort always has a description")
+            });
+            json!({ "effort": mapping.level, "description": description })
         })
         .collect();
     json!(entries)
 }
 
-/// Apply a per-model reasoning-level override onto a catalog entry. Returns
-/// true when the override was applied (so callers can skip further work).
-/// `template_default` is the base entry's `default_reasoning_level` (from the
-/// profile template or an official vendor entry) used as the fallback when the
-/// user did not declare one explicitly.
+/// Apply a per-model reasoning-level override onto a catalog entry. The catalog
+/// exposes only Codex's stable picker levels. Provider-native values are applied
+/// separately by the local proxy and deliberately do not leak into this file.
 fn apply_codex_reasoning_level_override(
     entry_obj: &mut serde_json::Map<String, Value>,
     template_default: Option<&str>,
     spec: &CodexCatalogModelSpec,
 ) -> bool {
-    let Some(levels) = spec.reasoning_levels.as_deref() else {
+    let Some(mappings) = spec.reasoning_effort_mappings.as_deref() else {
         return false;
     };
-    let canonical = codex_canonical_efforts(levels);
+    let canonical = codex_canonical_reasoning_mappings(mappings);
     if canonical.is_empty() {
         return false;
     }
-    let supported = codex_supported_reasoning_levels(levels);
-    entry_obj.insert("supported_reasoning_levels".to_string(), supported);
+    entry_obj.insert(
+        "supported_reasoning_levels".to_string(),
+        codex_supported_reasoning_levels(mappings),
+    );
 
-    // Default: explicit user value wins; otherwise keep the base default when
-    // it is still supported; otherwise fall back to the highest supported
-    // level in canonical order. All candidates are validated against the
-    // canonical set so the default can never reference a dropped effort.
     let default_level = spec
         .default_reasoning_level
         .as_deref()
-        .filter(|level| canonical.contains(level))
-        .or_else(|| template_default.filter(|level| canonical.contains(level)))
-        .or_else(|| canonical.last().copied());
+        .filter(|level| canonical.iter().any(|mapping| mapping.level == **level))
+        .or_else(|| {
+            template_default.filter(|level| canonical.iter().any(|mapping| mapping.level == *level))
+        })
+        .or_else(|| canonical.last().map(|mapping| mapping.level.as_str()));
     if let Some(default_level) = default_level {
         entry_obj.insert("default_reasoning_level".to_string(), json!(default_level));
     }
@@ -737,14 +737,12 @@ struct CodexCatalogModelSpec {
     /// back to the template default when absent. Only consulted for
     /// `NativeResponses`.
     base_instructions: Option<String>,
-    /// Per-row override for the generated catalog's `supported_reasoning_levels`
-    /// (e.g. ["none", "low", "medium", "high", "xhigh", "max"]). When omitted
-    /// the template's conservative default (none/high) is kept. Consulted for
-    /// every profile; the vendor-catalog path applies it on top of the
-    /// official entry.
-    reasoning_levels: Option<Vec<String>>,
+    /// Per-row Codex-level declarations plus optional provider-native values
+    /// and user-authored descriptions. Only the stable Codex `level` and
+    /// description are written to the generated catalog.
+    reasoning_effort_mappings: Option<Vec<CodexReasoningEffortMappingSpec>>,
     /// Per-row override for the generated catalog's `default_reasoning_level`.
-    /// Only meaningful together with `reasoning_levels`; when absent the
+    /// Only meaningful together with `reasoning_effort_mappings`; when absent the
     /// template default is kept if it is still in the list, otherwise the last
     /// (highest) declared level wins.
     default_reasoning_level: Option<String>,
@@ -814,20 +812,66 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             .filter(|text| !text.is_empty())
             .map(str::to_string);
 
-        let reasoning_levels = model_config
-            .get("reasoningLevels")
-            .or_else(|| model_config.get("reasoning_levels"))
+        let reasoning_effort_mappings = model_config
+            .get("reasoningEffortMappings")
+            .or_else(|| model_config.get("reasoning_effort_mappings"))
             .and_then(|value| value.as_array())
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|item| item.as_str())
-                    .map(str::trim)
-                    .filter(|level| !level.is_empty())
-                    .map(str::to_string)
+                    .filter_map(|item| {
+                        let level = item
+                            .get("level")
+                            .and_then(Value::as_str)?
+                            .trim()
+                            .to_ascii_lowercase();
+                        if codex_reasoning_level_description(&level).is_none() {
+                            return None;
+                        }
+                        let upstream_value = item
+                            .get("upstreamValue")
+                            .or_else(|| item.get("upstream_value"))
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string);
+                        let description = item
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string);
+                        Some(CodexReasoningEffortMappingSpec {
+                            level,
+                            upstream_value,
+                            description,
+                        })
+                    })
                     .collect::<Vec<_>>()
             })
-            .filter(|levels| !levels.is_empty());
+            .filter(|mappings| !mappings.is_empty())
+            .or_else(|| {
+                // Backward-compatible migration for providers saved by #6228.
+                model_config
+                    .get("reasoningLevels")
+                    .or_else(|| model_config.get("reasoning_levels"))
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::trim)
+                            .map(str::to_ascii_lowercase)
+                            .filter(|level| codex_reasoning_level_description(level).is_some())
+                            .map(|level| CodexReasoningEffortMappingSpec {
+                                level,
+                                upstream_value: None,
+                                description: None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|mappings| !mappings.is_empty())
+            });
         let default_reasoning_level = model_config
             .get("defaultReasoningLevel")
             .or_else(|| model_config.get("default_reasoning_level"))
@@ -843,7 +887,7 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
-            reasoning_levels,
+            reasoning_effort_mappings,
             default_reasoning_level,
         });
     }
@@ -3363,7 +3407,7 @@ base_url = "https://production.api/v1"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
-            reasoning_levels: None,
+            reasoning_effort_mappings: None,
             default_reasoning_level: None,
         }];
         let catalog = codex_model_catalog_from_specs(
@@ -3485,34 +3529,23 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
-    fn native_responses_catalog_honors_per_model_reasoning_levels() {
-        // The native template only declares none/high. A per-model
-        // reasoningLevels override must replace supported_reasoning_levels and
-        // pick a sensible default_reasoning_level.
+    fn native_responses_catalog_honors_reasoning_effort_mappings_and_descriptions() {
         let settings = json!({
             "modelCatalog": {
                 "models": [
                     {
                         "model": "deepseek-v4-flash",
-                        "reasoningLevels": ["none", "low", "medium", "high", "xhigh", "max"],
+                        "reasoningEffortMappings": [
+                            { "level": "xhigh", "upstreamValue": "max", "description": "Maximum provider reasoning" },
+                            { "level": "low", "upstreamValue": "light", "description": "Fast provider reasoning" },
+                            { "level": "medium" },
+                            { "level": "bogus", "upstreamValue": "turbo" }
+                        ],
                         "defaultReasoningLevel": "xhigh"
                     },
                     {
-                        "model": "no-default-model",
-                        "reasoningLevels": ["low", "medium", "high"]
-                    },
-                    {
-                        "model": "template-default-model",
-                        "reasoningLevels": ["none", "high", "xhigh"]
-                    },
-                    {
-                        "model": "dirty-levels",
-                        "reasoningLevels": ["none", "bogus", "high", ""]
-                    },
-                    {
-                        "model": "unordered-model",
-                        "reasoningLevels": ["xhigh", "low", "bogus", "low"],
-                        "defaultReasoningLevel": "bogus"
+                        "model": "legacy-model",
+                        "reasoningLevels": ["none", "low", "high", "max"]
                     }
                 ]
             }
@@ -3527,80 +3560,56 @@ base_url = "https://production.api/v1"
         .expect("non-empty modelCatalog must yield a catalog");
 
         let models = catalog["models"].as_array().expect("models array");
-        let efforts = |index: usize| -> Vec<String> {
+        let efforts = |index: usize| -> Vec<&str> {
             models[index]["supported_reasoning_levels"]
                 .as_array()
                 .expect("supported_reasoning_levels array")
                 .iter()
-                .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
-                .map(str::to_string)
+                .filter_map(|level| level.get("effort").and_then(Value::as_str))
                 .collect()
         };
+        assert_eq!(efforts(0), vec!["low", "medium", "xhigh"]);
+        assert_eq!(
+            models[0]["supported_reasoning_levels"][0]["description"],
+            "Fast provider reasoning"
+        );
+        assert_eq!(
+            models[0]["supported_reasoning_levels"][1]["description"],
+            "Balances speed and reasoning depth for everyday tasks"
+        );
+        assert_eq!(
+            models[0]["supported_reasoning_levels"][2]["description"],
+            "Maximum provider reasoning"
+        );
+        assert_eq!(models[0]["default_reasoning_level"], "xhigh");
+        for entry in models[0]["supported_reasoning_levels"]
+            .as_array()
+            .expect("supported reasoning entries")
+        {
+            assert!(entry.get("upstreamValue").is_none());
+            assert!(entry.get("upstream_value").is_none());
+            assert_ne!(entry.get("effort").and_then(Value::as_str), Some("light"));
+            assert_ne!(entry.get("effort").and_then(Value::as_str), Some("max"));
+        }
 
-        // Explicit default wins.
-        assert_eq!(
-            efforts(0),
-            vec!["none", "low", "medium", "high", "xhigh", "max"]
-        );
-        assert_eq!(
-            models[0]
-                .get("default_reasoning_level")
-                .and_then(|v| v.as_str()),
-            Some("xhigh")
-        );
-
-        // No explicit default: falls back to the last (highest) declared level.
-        assert_eq!(efforts(1), vec!["low", "medium", "high"]);
-        assert_eq!(
-            models[1]
-                .get("default_reasoning_level")
-                .and_then(|v| v.as_str()),
-            Some("high")
-        );
-
-        // Template default ("high") is kept when it is still in the list.
-        assert_eq!(efforts(2), vec!["none", "high", "xhigh"]);
-        assert_eq!(
-            models[2]
-                .get("default_reasoning_level")
-                .and_then(|v| v.as_str()),
-            Some("high")
-        );
-
-        // Unknown / empty efforts are dropped; the default still resolves to
-        // a supported level (the template default, "high").
-        assert_eq!(efforts(3), vec!["none", "high"]);
-        assert_eq!(
-            models[3]
-                .get("default_reasoning_level")
-                .and_then(|v| v.as_str()),
-            Some("high")
-        );
-
-        // Declaration order is normalized to canonical order, duplicates and
-        // an unknown explicit default are dropped, and the fallback picks the
-        // highest supported level in canonical order (not the last declared
-        // one, and never an unknown effort).
-        assert_eq!(efforts(4), vec!["low", "xhigh"]);
-        assert_eq!(
-            models[4]
-                .get("default_reasoning_level")
-                .and_then(|v| v.as_str()),
-            Some("xhigh")
-        );
+        // Existing #6228 data migrates to the stable levels that Codex Desktop
+        // actually renders for custom models.
+        assert_eq!(efforts(1), vec!["low", "high"]);
+        assert_eq!(models[1]["default_reasoning_level"], "high");
     }
 
     #[test]
-    fn vendor_catalog_honors_per_model_reasoning_levels() {
-        // The DeepSeek official catalog declares low/high/max; a per-model
-        // override must win over the official entry.
+    fn vendor_catalog_honors_reasoning_effort_mappings() {
         let settings = json!({
             "modelCatalog": {
                 "models": [
                     {
                         "model": "deepseek-v4-flash",
-                        "reasoningLevels": ["none", "low", "medium", "high", "xhigh", "max"],
-                        "defaultReasoningLevel": "xhigh"
+                        "reasoningEffortMappings": [
+                            { "level": "low", "upstreamValue": "minimal", "description": "Quick" },
+                            { "level": "high", "upstreamValue": "max", "description": "Deep" }
+                        ],
+                        "defaultReasoningLevel": "high"
                     }
                 ]
             }
@@ -3619,18 +3628,18 @@ base_url = "https://production.api/v1"
             .as_array()
             .expect("supported_reasoning_levels array")
             .iter()
-            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .filter_map(|level| level.get("effort").and_then(Value::as_str))
             .collect();
+        assert_eq!(efforts, vec!["low", "high"]);
         assert_eq!(
-            efforts,
-            vec!["none", "low", "medium", "high", "xhigh", "max"]
+            entry["supported_reasoning_levels"][0]["description"],
+            "Quick"
         );
         assert_eq!(
-            entry
-                .get("default_reasoning_level")
-                .and_then(|v| v.as_str()),
-            Some("xhigh")
+            entry["supported_reasoning_levels"][1]["description"],
+            "Deep"
         );
+        assert_eq!(entry["default_reasoning_level"], "high");
     }
 
     #[test]
@@ -3720,7 +3729,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
-                reasoning_levels: None,
+                reasoning_effort_mappings: None,
                 default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
@@ -3730,7 +3739,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
-                reasoning_levels: None,
+                reasoning_effort_mappings: None,
                 default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
@@ -3740,7 +3749,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
-                reasoning_levels: None,
+                reasoning_effort_mappings: None,
                 default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
@@ -3750,7 +3759,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
-                reasoning_levels: None,
+                reasoning_effort_mappings: None,
                 default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
@@ -3760,7 +3769,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
-                reasoning_levels: None,
+                reasoning_effort_mappings: None,
                 default_reasoning_level: None,
             },
         ];
@@ -4032,7 +4041,7 @@ wire_api = "responses"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
-            reasoning_levels: None,
+            reasoning_effort_mappings: None,
             default_reasoning_level: None,
         }];
         // Using a gpt-5.5-shaped template under ProxyChat must NOT strip

@@ -92,11 +92,29 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
                 : typeof item?.base_instructions === "string"
                   ? item.base_instructions
                   : undefined;
-            const reasoningLevels = Array.isArray(item?.reasoningLevels)
+            const rawReasoningMappings = Array.isArray(
+              item?.reasoningEffortMappings,
+            )
+              ? item.reasoningEffortMappings
+              : Array.isArray(item?.reasoning_effort_mappings)
+                ? item.reasoning_effort_mappings
+                : undefined;
+            const legacyReasoningLevels = Array.isArray(item?.reasoningLevels)
               ? item.reasoningLevels
               : Array.isArray(item?.reasoning_levels)
                 ? item.reasoning_levels
                 : undefined;
+            const reasoningEffortMappings = rawReasoningMappings
+              ? rawReasoningMappings
+              : legacyReasoningLevels
+                  ?.filter((level: unknown) =>
+                    ["low", "medium", "high", "xhigh"].includes(
+                      String(level).trim().toLowerCase(),
+                    ),
+                  )
+                  .map((level: unknown) => ({
+                    level: String(level).trim().toLowerCase(),
+                  }));
             const defaultReasoningLevel =
               typeof item?.defaultReasoningLevel === "string"
                 ? item.defaultReasoningLevel
@@ -124,10 +142,19 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
                 : {}),
               ...(inputModalities ? { inputModalities } : {}),
               ...(baseInstructions ? { baseInstructions } : {}),
-              ...(reasoningLevels && reasoningLevels.length > 0
-                ? { reasoningLevels }
+              ...(reasoningEffortMappings && reasoningEffortMappings.length > 0
+                ? { reasoningEffortMappings }
                 : {}),
-              ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
+              ...(defaultReasoningLevel &&
+              ["low", "medium", "high", "xhigh"].includes(
+                defaultReasoningLevel.trim().toLowerCase(),
+              )
+                ? {
+                    defaultReasoningLevel: defaultReasoningLevel
+                      .trim()
+                      .toLowerCase(),
+                  }
+                : {}),
             };
           })
           .filter((item: CodexCatalogModel) => item.model.trim()),

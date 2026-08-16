@@ -258,6 +258,18 @@ export type ClaudeApiFormat =
 // - "anthropic": native Anthropic Messages format, needs local routing to convert to Responses
 export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
 
+export type CodexReasoningLevel = "low" | "medium" | "high" | "xhigh";
+
+export interface CodexReasoningEffortMapping {
+  // Stable effort exposed by the Codex model picker.
+  level: CodexReasoningLevel;
+  // Optional provider-native value written by CC Switch while proxying. When
+  // omitted, the Codex level is forwarded unchanged.
+  upstreamValue?: string;
+  // Optional catalog description shown by Codex surfaces that render it.
+  description?: string;
+}
+
 export interface CodexCatalogModel {
   model: string;
   displayName?: string;
@@ -271,14 +283,17 @@ export interface CodexCatalogModel {
   // Codex requires this field in every catalog entry; when omitted the backend
   // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
   baseInstructions?: string;
-  // Per-model reasoning effort levels exposed in the generated Codex catalog
-  // (e.g. ["none", "low", "medium", "high", "xhigh", "max"]). When omitted the
-  // backend keeps the template's conservative none/high default.
+  // Per-model mappings from Codex's stable picker levels to provider-native
+  // values. The catalog always exposes the Codex `level`; `upstreamValue` is
+  // applied only while requests pass through CC Switch's local routing.
+  reasoningEffortMappings?: CodexReasoningEffortMapping[];
+  // Legacy field written by CC Switch 3.19.2 / PR #6228. It remains readable so
+  // existing providers can migrate without data loss, but new saves use
+  // reasoningEffortMappings.
   reasoningLevels?: string[];
-  // Per-model default reasoning effort. Only meaningful together with
-  // reasoningLevels; when omitted the backend keeps the template default if it
-  // is still in the list, otherwise the highest declared level.
-  defaultReasoningLevel?: string;
+  // Per-model default Codex reasoning level. Only meaningful together with the
+  // configured mappings.
+  defaultReasoningLevel?: CodexReasoningLevel;
 }
 
 // Claude 认证字段类型

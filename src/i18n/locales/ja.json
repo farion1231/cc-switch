@@ -1540,7 +1540,14 @@
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
     "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
-    "noCommonConfigToApply": "共通設定スニペットが空か、書き込む内容がありません"
+    "noCommonConfigToApply": "共通設定スニペットが空か、書き込む内容がありません",
+    "reasoningMappingLevel": "Codex レベル",
+    "reasoningMappingUpstream": "上流の値",
+    "reasoningMappingDescription": "説明",
+    "reasoningMappingDescriptionPlaceholder": "Codex の既定説明を使用",
+    "reasoningMappingUpstreamAria": "{{level}} の上流値",
+    "reasoningMappingDescriptionAria": "{{level}} の説明",
+    "reasoningMappingHint": "Codex には上記の固定レベルが表示されます。上流値はリクエストが CC Switch ルーティングを通る場合のみ適用され、空欄の場合は Codex の値をそのまま転送します。"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",

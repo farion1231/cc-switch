@@ -50,30 +50,42 @@ describe("ProviderForm Codex catalog helpers", () => {
     ]);
   });
 
-  it("preserves per-model reasoning levels and default level", () => {
+  it("normalizes Codex effort mappings, descriptions, and defaults", () => {
     expect(
       normalizeCodexCatalogModelsForSave([
         {
           model: "deepseek-v4-flash",
           displayName: "DeepSeek V4 Flash",
-          reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
-          defaultReasoningLevel: " xhigh ",
+          reasoningEffortMappings: [
+            { level: "xhigh", upstreamValue: " max ", description: " Deep " },
+            { level: "low", upstreamValue: " light " },
+            { level: "medium", description: " Balanced " },
+            { level: "low", upstreamValue: "duplicate" },
+          ],
+          defaultReasoningLevel: "xhigh",
         },
-        // empty levels / whitespace default are dropped
         {
-          model: "plain-model",
-          reasoningLevels: [],
-          defaultReasoningLevel: "   ",
+          model: "legacy-model",
+          reasoningLevels: ["none", "low", "high", "max"],
+          defaultReasoningLevel: "high",
         },
       ]),
     ).toEqual([
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
-        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        reasoningEffortMappings: [
+          { level: "low", upstreamValue: "duplicate" },
+          { level: "medium", description: "Balanced" },
+          { level: "xhigh", upstreamValue: "max", description: "Deep" },
+        ],
         defaultReasoningLevel: "xhigh",
       },
-      { model: "plain-model" },
+      {
+        model: "legacy-model",
+        reasoningEffortMappings: [{ level: "low" }, { level: "high" }],
+        defaultReasoningLevel: "high",
+      },
     ]);
   });
 });

@@ -1540,7 +1540,14 @@
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
     "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
-    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容"
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
+    "reasoningMappingLevel": "Codex 档位",
+    "reasoningMappingUpstream": "上游值",
+    "reasoningMappingDescription": "描述",
+    "reasoningMappingDescriptionPlaceholder": "使用 Codex 默认描述",
+    "reasoningMappingUpstreamAria": "{{level}} 上游值",
+    "reasoningMappingDescriptionAria": "{{level}} 描述",
+    "reasoningMappingHint": "Codex 固定显示以上档位。请求经过 CC Switch 路由时才会应用上游值；留空则原样传递 Codex 档位。"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",

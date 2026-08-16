@@ -1177,6 +1177,16 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
+        // Map Codex's stable picker effort to a provider-native value for
+        // native Responses passthrough and the Anthropic bridge. Chat conversion
+        // applies the mapping after it has selected the provider's parameter shape.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            super::providers::apply_codex_reasoning_effort_mapping(provider, &mut mapped_body);
+        }
+
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
         // the optional Responses -> Chat/Anthropic bridge.
@@ -1448,10 +1458,17 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+            let source_body = mapped_body.clone();
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
             )?;
+            super::providers::apply_codex_chat_reasoning_effort_mapping(
+                provider,
+                &source_body,
+                &mut chat_body,
+                reasoning_config.as_ref(),
+            );
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
@@ -1486,11 +1503,17 @@ impl RequestForwarder {
             // accepted by every current Claude model and virtually all gateways. The
             // transform clamps any thinking budget below this value.
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
+            let source_body = mapped_body.clone();
             let mut anthropic_body =
                 super::providers::transform_codex_anthropic::responses_request_to_anthropic(
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
                 )?;
+            super::providers::apply_codex_anthropic_reasoning_effort_mapping(
+                provider,
+                &source_body,
+                &mut anthropic_body,
+            );
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
             // added. apply_codex_upstream_model may have just written back a model

@@ -1540,7 +1540,14 @@
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
     "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled.",
-    "noCommonConfigToApply": "The common config snippet is empty or contains nothing to write"
+    "noCommonConfigToApply": "The common config snippet is empty or contains nothing to write",
+    "reasoningMappingLevel": "Codex",
+    "reasoningMappingUpstream": "Upstream value",
+    "reasoningMappingDescription": "Description",
+    "reasoningMappingDescriptionPlaceholder": "Use Codex default",
+    "reasoningMappingUpstreamAria": "{{level}} upstream value",
+    "reasoningMappingDescriptionAria": "{{level}} description",
+    "reasoningMappingHint": "Codex shows the fixed levels above. Upstream values are applied only when requests pass through CC Switch routing; leave blank to forward the same value."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",

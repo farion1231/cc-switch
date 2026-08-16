@@ -327,19 +327,151 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexReasoningEffortMapping {
+    upstream_value: Option<String>,
+}
+
+fn codex_reasoning_effort_mapping_for_request(
+    provider: &Provider,
+    body: &JsonValue,
+) -> Option<CodexReasoningEffortMapping> {
+    let model = body.get("model")?.as_str()?.trim();
+    let level = body.pointer("/reasoning/effort")?.as_str()?.trim();
+    let models = provider
+        .settings_config
+        .get("modelCatalog")?
+        .get("models")?
+        .as_array()?;
+    let model_config = models.iter().find(|item| {
+        item.get("model")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|candidate| candidate.trim() == model)
+    })?;
+    let mappings = model_config
+        .get("reasoningEffortMappings")
+        .or_else(|| model_config.get("reasoning_effort_mappings"))?
+        .as_array()?;
+    let mapping = mappings.iter().find(|item| {
+        item.get("level")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|candidate| candidate.trim().eq_ignore_ascii_case(level))
+    })?;
+    let upstream_value = mapping
+        .get("upstreamValue")
+        .or_else(|| mapping.get("upstream_value"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Some(CodexReasoningEffortMapping { upstream_value })
+}
+
+/// Apply a model-specific Codex-level -> provider-native effort mapping before
+/// native Responses passthrough or Responses -> Anthropic conversion.
+pub fn apply_codex_reasoning_effort_mapping(
+    provider: &Provider,
+    body: &mut JsonValue,
+) -> Option<String> {
+    let mapping = codex_reasoning_effort_mapping_for_request(provider, body)?;
+    let upstream_value = mapping.upstream_value?;
+    let reasoning = body.get_mut("reasoning")?.as_object_mut()?;
+    reasoning.insert(
+        "effort".to_string(),
+        JsonValue::String(upstream_value.clone()),
+    );
+    Some(upstream_value)
+}
+
+/// Override the converted Anthropic payload with a provider-native effort
+/// value after the Responses -> Messages bridge has derived its thinking mode.
+pub fn apply_codex_anthropic_reasoning_effort_mapping(
+    provider: &Provider,
+    source_body: &JsonValue,
+    result: &mut JsonValue,
+) -> Option<String> {
+    let upstream_value =
+        codex_reasoning_effort_mapping_for_request(provider, source_body)?.upstream_value?;
+    if !result
+        .get("output_config")
+        .is_some_and(JsonValue::is_object)
+    {
+        result["output_config"] = serde_json::json!({});
+    }
+    result["output_config"]["effort"] = JsonValue::String(upstream_value.clone());
+    Some(upstream_value)
+}
+
+/// Override the converted Chat payload with a provider-native effort value.
+/// The configured Chat effort parameter decides whether the value is written as
+/// top-level `reasoning_effort` or OpenRouter-style `reasoning.effort`.
+pub fn apply_codex_chat_reasoning_effort_mapping(
+    provider: &Provider,
+    source_body: &JsonValue,
+    result: &mut JsonValue,
+    config: Option<&CodexChatReasoningConfig>,
+) -> Option<String> {
+    let upstream_value =
+        codex_reasoning_effort_mapping_for_request(provider, source_body)?.upstream_value?;
+    let effort_param = config
+        .and_then(|value| value.effort_param.as_deref())
+        .unwrap_or("reasoning_effort")
+        .trim()
+        .to_ascii_lowercase();
+    match effort_param.as_str() {
+        "reasoning.effort" => {
+            if !result.get("reasoning").is_some_and(JsonValue::is_object) {
+                result["reasoning"] = serde_json::json!({});
+            }
+            result["reasoning"]["effort"] = JsonValue::String(upstream_value.clone());
+            if let Some(object) = result.as_object_mut() {
+                object.remove("reasoning_effort");
+            }
+        }
+        "none" => return None,
+        _ => {
+            result["reasoning_effort"] = JsonValue::String(upstream_value.clone());
+        }
+    }
+    Some(upstream_value)
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
 ) -> Option<CodexChatReasoningConfig> {
-    if let Some(config) = provider
+    let mut config = provider
         .meta
         .as_ref()
         .and_then(|meta| meta.codex_chat_reasoning.clone())
-    {
-        return Some(normalize_codex_chat_reasoning_config(config));
+        .or_else(|| infer_codex_chat_reasoning_config(provider, body));
+    let had_reasoning_config = config.is_some();
+
+    // A per-model mapping is itself an explicit effort-capability declaration.
+    // Keep a platform-specific parameter shape when inference found one;
+    // otherwise use the common OpenAI-compatible top-level field.
+    if codex_reasoning_effort_mapping_for_request(provider, body).is_some() {
+        let value = config.get_or_insert_with(CodexChatReasoningConfig::default);
+        value.supports_effort = Some(true);
+        if !had_reasoning_config {
+            // Generic OpenAI-compatible Chat providers commonly support only
+            // `reasoning_effort`; do not invent a separate `thinking` object.
+            value.supports_thinking = Some(false);
+            value.thinking_param = Some("none".to_string());
+        }
+        if value
+            .effort_param
+            .as_deref()
+            .is_none_or(|param| param.trim().is_empty() || param == "none")
+        {
+            value.effort_param = Some("reasoning_effort".to_string());
+        }
+        if value.effort_value_mode.is_none() {
+            value.effort_value_mode = Some("passthrough".to_string());
+        }
     }
 
-    infer_codex_chat_reasoning_config(provider, body)
+    config.map(normalize_codex_chat_reasoning_config)
 }
 
 fn normalize_codex_chat_reasoning_config(
@@ -837,6 +969,119 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn applies_model_specific_reasoning_mapping_to_native_responses() {
+        let provider = create_provider(json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "provider-model",
+                    "reasoningEffortMappings": [
+                        { "level": "low", "upstreamValue": "light" },
+                        { "level": "xhigh", "upstreamValue": "adaptive" }
+                    ]
+                }]
+            }
+        }));
+        let mut body = json!({
+            "model": "provider-model",
+            "reasoning": { "effort": "xhigh" }
+        });
+
+        assert_eq!(
+            apply_codex_reasoning_effort_mapping(&provider, &mut body).as_deref(),
+            Some("adaptive")
+        );
+        assert_eq!(body["reasoning"]["effort"], "adaptive");
+    }
+
+    #[test]
+    fn applies_model_specific_reasoning_mapping_after_anthropic_conversion() {
+        let provider = create_provider(json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "provider-model",
+                    "reasoningEffortMappings": [
+                        { "level": "xhigh", "upstreamValue": "max" }
+                    ]
+                }]
+            }
+        }));
+        let source = json!({
+            "model": "provider-model",
+            "reasoning": { "effort": "xhigh" }
+        });
+        let mut result = json!({
+            "model": "provider-model",
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "high" }
+        });
+
+        assert_eq!(
+            apply_codex_anthropic_reasoning_effort_mapping(&provider, &source, &mut result,)
+                .as_deref(),
+            Some("max")
+        );
+        assert_eq!(result["output_config"]["effort"], "max");
+    }
+
+    #[test]
+    fn applies_model_specific_reasoning_mapping_to_chat_parameter_shape() {
+        let provider = create_provider(json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "provider-model",
+                    "reasoningEffortMappings": [
+                        { "level": "high", "upstreamValue": "deep" }
+                    ]
+                }]
+            }
+        }));
+        let source = json!({
+            "model": "provider-model",
+            "reasoning": { "effort": "high" }
+        });
+        let config = CodexChatReasoningConfig {
+            supports_effort: Some(true),
+            effort_param: Some("reasoning.effort".to_string()),
+            ..Default::default()
+        };
+        let mut result = json!({ "model": "provider-model" });
+
+        assert_eq!(
+            apply_codex_chat_reasoning_effort_mapping(
+                &provider,
+                &source,
+                &mut result,
+                Some(&config),
+            )
+            .as_deref(),
+            Some("deep")
+        );
+        assert_eq!(result["reasoning"]["effort"], "deep");
+        assert!(result.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn ignores_reasoning_mapping_for_a_different_model() {
+        let provider = create_provider(json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "model-a",
+                    "reasoningEffortMappings": [
+                        { "level": "high", "upstreamValue": "deep" }
+                    ]
+                }]
+            }
+        }));
+        let mut body = json!({
+            "model": "model-b",
+            "reasoning": { "effort": "high" }
+        });
+
+        assert!(apply_codex_reasoning_effort_mapping(&provider, &mut body).is_none());
+        assert_eq!(body["reasoning"]["effort"], "high");
     }
 
     #[test]
