@@ -24,7 +24,7 @@ import {
   parseFiniteNumber,
 } from "./format";
 import {
-  CACHE_INCLUSIVE_APP_TYPES,
+  getCacheWriteAvailability,
   type AppType,
   type UsageRangeSelection,
   type UsageSummary,
@@ -75,6 +75,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
   hermes: {
     accent: "text-violet-600 dark:text-violet-400",
     iconBg: "bg-violet-500/10",
+  },
+  pi: {
+    accent: "text-fuchsia-600 dark:text-fuchsia-400",
+    iconBg: "bg-fuchsia-500/10",
   },
 };
 
@@ -160,24 +164,6 @@ function pickSummary(
   return aggregateSummaries(apps.map((a) => a.summary));
 }
 
-type CacheWriteState = "ok" | "partial" | "na";
-
-/**
- * Anthropic-style protocols report cache creation; OpenAI-style protocols
- * (Codex/Gemini) do not — so a mix shows the number with a caveat, all-OpenAI
- * shows N/A. `appTypes` is the set actually contributing to the displayed
- * summary (a single app, or every app that participated in "all").
- */
-function deriveCacheWriteState(appTypes: string[]): CacheWriteState {
-  if (appTypes.length === 0) return "ok";
-  const inclusive = appTypes.filter((t) =>
-    CACHE_INCLUSIVE_APP_TYPES.has(t),
-  ).length;
-  if (inclusive === appTypes.length) return "na";
-  if (inclusive === 0) return "ok";
-  return "partial";
-}
-
 /**
  * Hero 标题图标：选中具体应用时显示该应用的品牌图标，"全部"时回退到通用闪电。
  * 复用 APP_ICON_MAP（与侧边栏 / 应用切换器同一套图标），用 cloneElement 放大到
@@ -232,7 +218,7 @@ export function UsageHero({
   const appLabel =
     appType && appType in TITLE_THEMES ? t(`usage.appFilter.${appType}`) : null;
 
-  const cacheWriteState = deriveCacheWriteState(
+  const cacheWriteState = getCacheWriteAvailability(
     appType ? [appType] : allApps.map((a) => a.appType),
   );
   const includesHermes =

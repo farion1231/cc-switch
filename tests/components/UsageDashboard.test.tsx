@@ -21,6 +21,7 @@ const useUsageSummaryByAppMock = vi.hoisted(() => vi.fn());
 const useHermesUsageMetadataMock = vi.hoisted(() => vi.fn());
 const usageHeroPropsMock = vi.hoisted(() => vi.fn());
 const usageTrendPropsMock = vi.hoisted(() => vi.fn());
+const usageHeroMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -61,6 +62,7 @@ vi.mock("@/lib/query/usage", async () => {
 vi.mock("@/components/usage/UsageHero", () => ({
   UsageHero: (props: Record<string, unknown>) => {
     usageHeroPropsMock(props);
+    usageHeroMock(props);
     return <div data-testid="usage-hero" />;
   },
 }));
@@ -154,6 +156,7 @@ describe("UsageDashboard", () => {
     useHermesUsageMetadataMock.mockReset();
     usageHeroPropsMock.mockReset();
     usageTrendPropsMock.mockReset();
+    usageHeroMock.mockReset();
     useProviderStatsMock.mockReturnValue({ data: [] });
     useModelStatsMock.mockReturnValue({ data: [] });
     useUsageSummaryByAppMock.mockReturnValue({ data: [], isLoading: false });
@@ -336,7 +339,30 @@ describe("UsageDashboard", () => {
       expect(locale.usage.averageCostLabel.perRequest).toBeTruthy();
       expect(locale.usage.averageCostLabel.perApiCall).toBeTruthy();
       expect(locale.usage.averageCostLabel.perActivity).toBeTruthy();
+      expect(locale.usage.appFilter.pi).toBeTruthy();
     }
+  });
+
+  it("filters usage queries to Pi", async () => {
+    renderDashboard();
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.appFilter.pi" }));
+
+    await waitFor(() =>
+      expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+        expect.anything(),
+        { appType: "pi" },
+        expect.anything(),
+      ),
+    );
+    expect(useModelStatsMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      { appType: "pi", providerName: undefined },
+      expect.anything(),
+    );
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appType: "pi" }),
+    );
   });
 
   it("persists refresh interval changes", async () => {

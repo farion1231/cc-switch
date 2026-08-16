@@ -162,6 +162,45 @@ html[data-window-active="false"] .status-heartbeat {
   transition-duration: 0s;
 }
 
+@keyframes pi-thinking-popover-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(22px, 0, 0) scale(0.94);
+  }
+  68% {
+    opacity: 1;
+    transform: translate3d(-2px, 0, 0) scale(1.008);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes pi-thinking-popover-out {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(12px, 0, 0) scale(0.97);
+  }
+}
+
+.pi-thinking-popover {
+  transform-origin: var(--radix-popover-content-transform-origin);
+  will-change: transform, opacity;
+}
+
+.pi-thinking-popover[data-state="open"] {
+  animation: pi-thinking-popover-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pi-thinking-popover[data-state="closed"] {
+  animation: pi-thinking-popover-out 150ms cubic-bezier(0.4, 0, 1, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .status-heartbeat {
     opacity: 1;
@@ -171,6 +210,10 @@ html[data-window-active="false"] .status-heartbeat {
   html[data-window-active="true"][data-status-heartbeat="true"]
     .status-heartbeat {
     opacity: 1;
+  }
+
+  .pi-thinking-popover[data-state] {
+    animation: none;
   }
 }
 

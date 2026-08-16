@@ -221,8 +221,9 @@ export interface UsageRangeSelection {
  * Desktop's full usage. The backend collapses `claude-desktop → claude` in
  * every dashboard query (see `folded_app_type_sql`).
  * `opencode` / `openclaw` have no proxy handler and appear only as managed
- * apps elsewhere. Hermes has a dedicated aggregate session-usage source; its
- * deltas are not represented as `RequestLog` rows.
+ * apps elsewhere. `pi` has no proxy handler either; its usage reaches this
+ * dashboard through session importers. Hermes has a dedicated aggregate
+ * session-usage source; its deltas are not represented as `RequestLog` rows.
  */
 export type AppType =
   | "claude"
@@ -230,7 +231,8 @@ export type AppType =
   | "gemini"
   | "grokbuild"
   | "opencode"
-  | "hermes";
+  | "hermes"
+  | "pi";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -241,6 +243,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "grokbuild",
   "opencode",
   "hermes",
+  "pi",
 ];
 
 /**
@@ -260,6 +263,27 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "gemini",
   "grokbuild",
 ]);
+
+// Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates
+// only by app type. Treat cache-write coverage as partial without changing
+// Pi's fresh-input token semantics.
+const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set(["pi"]);
+
+export type CacheWriteAvailability = "ok" | "partial" | "na";
+
+export function getCacheWriteAvailability(
+  appTypes: readonly string[],
+): CacheWriteAvailability {
+  if (appTypes.length === 0) return "ok";
+  const unavailable = appTypes.filter((appType) =>
+    CACHE_INCLUSIVE_APP_TYPES.has(appType),
+  ).length;
+  if (unavailable === appTypes.length) return "na";
+  const partial = appTypes.some((appType) =>
+    PARTIAL_CACHE_WRITE_APP_TYPES.has(appType),
+  );
+  return unavailable === 0 && !partial ? "ok" : "partial";
+}
 
 /** Subset of request-log fields needed to derive cache-normalized input. */
 export interface CacheNormalizableLog {

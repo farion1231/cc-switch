@@ -313,7 +313,28 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 20. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
+        // 20. Session usage dedup ledger: session detail rows are pruned after
+        // rollup, so request IDs needed for fork/rewrite deduplication live in
+        // a compact durable ledger.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_usage_dedup (
+                data_source TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                semantic_id TEXT NOT NULL,
+                has_entry_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (data_source, request_id)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_usage_dedup_semantic
+             ON session_usage_dedup(data_source, semantic_id, has_entry_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 21. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
         //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS profiles (
@@ -517,9 +538,14 @@ impl Database {
                         Self::set_user_version(conn, 16)?;
                     }
                     16 => {
-                        log::info!("迁移数据库从 v16 到 v17（Hermes 会话聚合 snapshot/delta）");
+                        log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（Hermes 会话聚合 snapshot/delta）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1533,9 +1559,38 @@ impl Database {
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
     }
 
-    /// v16 -> v17: add CC Switch-owned Hermes snapshot/delta storage.
+    /// v16 -> v17: preserve session request identities after detail rollup.
     fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        Self::create_session_usage_dedup_on_conn(conn)
+    }
+
+    /// v17 -> v18: convergent migration. Upstream main defined v17 as the
+    /// `session_usage_dedup` ledger, while this branch's pre-merge candidates
+    /// used v17 for the Hermes snapshot/delta tables — so a v17 database may
+    /// come from either side. Ensure BOTH structures exist (idempotent) and
+    /// re-run the Hermes repair logic (missing columns + cost-baseline
+    /// backfill) so a candidate-v17 database with an older Hermes column set
+    /// converges as well.
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        Self::create_session_usage_dedup_on_conn(conn)?;
         Self::create_hermes_usage_tables_on_conn(conn)
+    }
+
+    /// Create the session usage dedup ledger (table + semantic index).
+    fn create_session_usage_dedup_on_conn(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_usage_dedup (
+                data_source TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                semantic_id TEXT NOT NULL,
+                has_entry_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (data_source, request_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_session_usage_dedup_semantic
+             ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
+        )
+        .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
     }
 
     fn create_hermes_usage_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
@@ -2289,6 +2344,17 @@ impl Database {
                 "0.0028",
                 "0",
             ),
+            // 部分上游（如阿里百炼）回传 4 位 MMDD 日期变体。查价的
+            // strip_model_date_suffix 只剥 ISO / 8 位 YYYYMMDD / 6 位 YYMMDD，
+            // 剥不到裸 id，前缀兜底也只匹配更长的行 —— 不补别名会静默按 0 计费
+            (
+                "deepseek-v4-flash-0731",
+                "DeepSeek V4 Flash",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+            ),
             (
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",
@@ -2478,10 +2544,13 @@ impl Database {
             ("qwq-32b", "QwQ 32B", "0.20", "0.60", "0", "0"),
             ("qwen3-32b", "Qwen3 32B", "0.16", "0.64", "0", "0"),
             // Grok 系列 (xAI)
-            ("grok-4.5", "Grok 4.5", "2", "6", "0.50", "0"),
+            // 4.5/4.6 均为分档计价：prompt ≥200K 时单价翻倍（4/12，cached 亦翻倍）。
+            // 本表无档位列，统一取基础档（<200K），与其它分档厂商口径一致
+            ("grok-4.6", "Grok 4.6", "2", "6", "0.50", "0"),
+            ("grok-4.5", "Grok 4.5", "2", "6", "0.30", "0"),
             // Grok CLI 官方 OAuth 态 modelUsage 上报的内部别名。定价由
             // costUsdTicks（1 tick = 1e-10 USD）双轮实测反推：input/output 与
-            // grok-4.5 同为 2/6，cache read 实际按 0.30 计（非 API 挂牌的 0.50）
+            // grok-4.5 同为 2/6，cache read 同为 0.30
             ("grok-4.5-build", "Grok 4.5 Build", "2", "6", "0.30", "0"),
             ("grok-4.3", "Grok 4.3", "1.25", "2.50", "0.20", "0"),
             (
@@ -2651,6 +2720,12 @@ impl Database {
 
     fn repair_current_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_fixes = [
+            // 2026-08-13 models.dev 审计核价：grok-4.5 的 cached input 官方挂牌为 0.30
+            // （docs.x.ai 现行价表），与 grok-4.5-build 的实测计费一致；早先按 0.50
+            // 录入的行在此校正。注意 0.50 是 grok-4.6 的 cached 价，勿两者互串
+            (
+                "grok-4.5", "Grok 4.5", "2", "6", "0.30", "0", "2", "6", "0.50", "0",
+            ),
             // 2026-07-30 OpenAI GPT-5.6 降价：luna -80%、terra -20%（sol 不变）。
             // 每档两条守卫：主守卫匹配 ≥v3.19（已跑过 07-12 cache_write 修正），
             // 0 态守卫匹配 <v3.19 直升用户（cache_write 仍为旧 seed 的 0）
@@ -3091,7 +3166,7 @@ impl Database {
         Self::ensure_model_pricing_seeded_on_conn(&conn)
     }
 
-    fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
+    pub(crate) fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型；仅修复仍等于旧内置值的定价。
         Self::seed_model_pricing(conn)?;
         Self::repair_current_model_pricing(conn)
@@ -3392,6 +3467,9 @@ mod tests {
         Database::apply_schema_migrations_on_conn(&conn)?;
 
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
+        assert!(Database::table_exists(&conn, "hermes_usage_snapshots")?);
+        assert!(Database::table_exists(&conn, "hermes_usage_deltas")?);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
@@ -3482,6 +3560,7 @@ mod tests {
         let fresh = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&fresh)?;
         assert_complete(&fresh)?;
+        assert!(Database::table_exists(&fresh, "session_usage_dedup")?);
         assert_eq!(Database::get_user_version(&fresh)?, 0);
 
         let pre_adjustment_v17 = Connection::open_in_memory()?;
@@ -3613,13 +3692,209 @@ mod tests {
         Database::set_user_version(&migrated, 16)?;
         Database::apply_schema_migrations_on_conn(&migrated)?;
         assert_complete(&migrated)?;
+        assert!(Database::table_exists(&migrated, "session_usage_dedup")?);
         assert_eq!(Database::get_user_version(&migrated)?, SCHEMA_VERSION);
 
-        // Reapplying v16 -> v17 must be a no-op and retain the complete schema.
+        // Reapplying migrations must be a no-op and retain the complete schema.
         Database::apply_schema_migrations_on_conn(&migrated)?;
         assert_complete(&migrated)?;
+        assert!(Database::table_exists(&migrated, "session_usage_dedup")?);
         assert_eq!(Database::get_user_version(&migrated)?, SCHEMA_VERSION);
+        Ok(())
+    }
 
+    #[test]
+    fn migrate_v16_to_v17_creates_session_usage_dedup_ledger() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::set_user_version(&conn, 16)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
+        assert!(Database::table_exists(&conn, "hermes_usage_snapshots")?);
+        assert!(Database::table_exists(&conn, "hermes_usage_deltas")?);
+        conn.execute(
+            "INSERT INTO session_usage_dedup
+             (data_source, request_id, semantic_id, has_entry_id)
+             VALUES ('pi_session', 'request', 'semantic', 1)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_adds_hermes_tables_to_upstream_v17_ledger() -> Result<(), AppError> {
+        // Upstream main v17: only the session_usage_dedup ledger exists.
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_usage_dedup (
+                data_source TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                semantic_id TEXT NOT NULL,
+                has_entry_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (data_source, request_id)
+             );
+             CREATE INDEX idx_session_usage_dedup_semantic
+             ON session_usage_dedup(data_source, semantic_id, has_entry_id);
+             INSERT INTO session_usage_dedup
+                (data_source, request_id, semantic_id, has_entry_id)
+             VALUES ('pi_session', 'existing', 'semantic', 1);",
+        )?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
+        assert!(Database::table_exists(&conn, "hermes_usage_snapshots")?);
+        assert!(Database::table_exists(&conn, "hermes_usage_deltas")?);
+        // Existing dedup rows are preserved, not truncated.
+        let kept: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_usage_dedup WHERE request_id = 'existing'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(kept, 1);
+        // Hermes indexes are present.
+        for index in [
+            "idx_hermes_snapshots_profile",
+            "idx_hermes_deltas_window",
+            "idx_hermes_deltas_dimensions",
+        ] {
+            let found: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = ?1",
+                [index],
+                |row| row.get(0),
+            )?;
+            assert_eq!(found, 1, "index {index} should exist");
+        }
+
+        // Re-running at v18 must be a no-op that retains both structures.
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
+        assert!(Database::table_exists(&conn, "hermes_usage_snapshots")?);
+        assert!(Database::table_exists(&conn, "hermes_usage_deltas")?);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_adds_dedup_and_repairs_candidate_v17_hermes_tables(
+    ) -> Result<(), AppError> {
+        // Pre-merge branch candidates used v17 for the Hermes aggregate tables,
+        // so a v17 database may have Hermes tables but no dedup ledger — and an
+        // older Hermes column set (before cost_baseline/emitted balance).
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE hermes_usage_snapshots (
+                source_id TEXT NOT NULL,
+                source_incarnation TEXT NOT NULL,
+                profile_name TEXT NOT NULL,
+                row_key TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                billing_provider TEXT NOT NULL,
+                billing_base_url_digest TEXT NOT NULL,
+                billing_mode TEXT NOT NULL,
+                task TEXT NOT NULL,
+                api_call_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                estimated_cost_usd TEXT NOT NULL DEFAULT '0',
+                actual_cost_usd TEXT,
+                selected_cost_usd TEXT NOT NULL DEFAULT '0',
+                selected_cost_kind TEXT NOT NULL DEFAULT 'none',
+                cost_status TEXT,
+                cost_source TEXT,
+                first_seen TEXT,
+                last_seen TEXT,
+                observed_at INTEGER NOT NULL,
+                PRIMARY KEY (source_id, row_key)
+             );
+             CREATE TABLE hermes_usage_deltas (
+                delta_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id TEXT NOT NULL,
+                source_incarnation TEXT NOT NULL,
+                profile_name TEXT NOT NULL,
+                row_key TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                billing_base_url_digest TEXT NOT NULL,
+                billing_mode TEXT NOT NULL,
+                task TEXT NOT NULL,
+                sync_window_start INTEGER NOT NULL,
+                sync_window_end INTEGER NOT NULL,
+                api_call_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                cost_usd TEXT NOT NULL DEFAULT '0',
+                cost_kind TEXT NOT NULL DEFAULT 'none',
+                cost_status TEXT,
+                cost_source TEXT,
+                data_source TEXT NOT NULL DEFAULT 'hermes_session',
+                precision TEXT NOT NULL DEFAULT 'aggregate_delta'
+             );
+             INSERT INTO hermes_usage_snapshots (
+                source_id, source_incarnation, profile_name, row_key,
+                session_id, model, billing_provider, billing_base_url_digest,
+                billing_mode, task, api_call_count, input_tokens, output_tokens,
+                cache_read_tokens, cache_write_tokens, reasoning_tokens,
+                estimated_cost_usd, selected_cost_usd, selected_cost_kind, observed_at
+             ) VALUES (
+                'source-c', 'inc-c', 'default', 'row-c',
+                'session-c', 'model-c', 'provider-c', 'digest-c',
+                'api', 'task-c', 2, 110, 55, 11, 21, 8,
+                '0.200000', '0.200000', 'estimated', 400
+             );",
+        )?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        // The dedup ledger (table + index) is added on top of the Hermes tables.
+        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
+        let dedup_index: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_session_usage_dedup_semantic'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(dedup_index, 1);
+        // Older Hermes columns are repaired.
+        for column in ["cost_baseline_usd", "emitted_cost_balance_usd"] {
+            assert!(Database::has_column(
+                &conn,
+                "hermes_usage_snapshots",
+                column
+            )?);
+        }
+        assert!(Database::has_column(
+            &conn,
+            "hermes_usage_deltas",
+            "cost_delta_kind"
+        )?);
+        // Existing snapshot row is preserved and cost state is backfilled.
+        let repaired_cost_state: (String, String) = conn.query_row(
+            "SELECT emitted_cost_balance_usd, cost_baseline_usd
+             FROM hermes_usage_snapshots
+             WHERE source_id = 'source-c' AND row_key = 'row-c'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(
+            repaired_cost_state,
+            ("0.000000".to_string(), "0.200000".to_string())
+        );
         Ok(())
     }
 }

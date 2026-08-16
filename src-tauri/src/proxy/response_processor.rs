@@ -3,11 +3,11 @@
 //! 统一处理流式和非流式 API 响应
 
 use super::{
-    content_encoding::{decompress_body, get_content_encoding},
+    content_encoding::{decompress_body_with_limit, get_content_encoding, DecompressError},
     forwarder::ActiveConnectionGuard,
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
-    hyper_client::ProxyResponse,
+    hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -86,10 +86,11 @@ pub(crate) async fn read_decoded_body(
 ) -> Result<(HeaderMap, http::StatusCode, Bytes), ProxyError> {
     let mut headers = response.headers().clone();
     let status = response.status();
+    let bytes_future = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES);
     let raw_bytes = if body_timeout.is_zero() {
-        response.bytes().await?
+        bytes_future.await?
     } else {
-        tokio::time::timeout(body_timeout, response.bytes())
+        tokio::time::timeout(body_timeout, bytes_future)
             .await
             .map_err(|_| {
                 ProxyError::Timeout(format!(
@@ -111,15 +112,19 @@ pub(crate) async fn read_decoded_body(
 
     if let Some(encoding) = get_content_encoding(&headers) {
         log::debug!("[{tag}] 解压非流式响应: content-encoding={encoding}");
-        match decompress_body(&encoding, &raw_bytes) {
+        match decompress_body_with_limit(&encoding, &raw_bytes, MAX_RESPONSE_BODY_BYTES) {
             Ok(Some(decompressed)) => {
+                // 解码器在预算耗尽处即截停，此处必然 ≤ MAX_RESPONSE_BODY_BYTES
                 body_bytes = Bytes::from(decompressed);
                 decoded = true;
             }
             // 不支持的编码：原样透传且保留 content-encoding 头，
             // 让下游诊断/客户端知道这仍是压缩字节
             Ok(None) => {}
-            Err(e) => {
+            Err(DecompressError::TooLarge { .. }) => {
+                return Err(ProxyError::ResponseBodyTooLarge(MAX_RESPONSE_BODY_BYTES));
+            }
+            Err(DecompressError::Io(e)) => {
                 log::warn!("[{tag}] 解压失败 ({encoding}): {e}，使用原始数据");
             }
         }
@@ -882,6 +887,30 @@ mod tests {
         assert!(formatted.contains("cf-ray=abc123-SJC"), "{formatted}");
         assert!(!formatted.contains("super-secret"), "{formatted}");
         assert!(!formatted.contains("cookie-secret"), "{formatted}");
+    }
+
+    #[tokio::test]
+    async fn read_decoded_body_rejects_compressed_bomb_without_full_expansion() {
+        // 128 MiB+1 全零 payload 的 gzip 只有 ~130 KiB：原始读取上限拦不住它，
+        // 只有解压侧的有界解码能拒绝。若解码退化为"先完整展开再比较"，
+        // 展开后长度 > MAX_RESPONSE_BODY_BYTES 的 payload 会成功返回（测试失败）。
+        let payload = vec![0u8; MAX_RESPONSE_BODY_BYTES + 1];
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, &payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(compressed.len() < MAX_RESPONSE_BODY_BYTES);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("content-encoding", "gzip".parse().unwrap());
+        let response =
+            ProxyResponse::buffered(http::StatusCode::OK, headers, Bytes::from(compressed));
+
+        let result = read_decoded_body(response, "test", Duration::ZERO).await;
+        assert!(
+            matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))),
+            "压缩炸弹应被拒绝而不是完整展开: {:?}",
+            result.map(|(_, _, body)| body.len())
+        );
     }
 
     #[test]

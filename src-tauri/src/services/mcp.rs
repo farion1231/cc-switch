@@ -75,15 +75,13 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
-        let mut servers = state.db.get_all_mcp_servers()?;
-
-        if let Some(server) = servers.get_mut(server_id) {
-            server.apps.set_enabled_for(&app, enabled);
-            state.db.save_mcp_server(server)?;
-
+        if let Some(server) = state
+            .db
+            .update_mcp_server_app_enabled(server_id, &app, enabled)?
+        {
             // 同步到对应应用
             if enabled {
-                Self::sync_server_to_app(state, server, &app)?;
+                Self::sync_server_to_app(state, &server, &app)?;
             } else {
                 Self::remove_server_from_app(state, server_id, &app)?;
             }
@@ -147,6 +145,7 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Pi => {}
         }
         Ok(())
     }
@@ -183,6 +182,7 @@ impl McpService {
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
             }
+            AppType::Pi => {}
         }
         Ok(())
     }
@@ -227,7 +227,10 @@ impl McpService {
         servers: &IndexMap<String, McpServer>,
         app: &AppType,
     ) -> Result<(), AppError> {
-        if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
+        if matches!(
+            app,
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Pi
+        ) {
             return Ok(());
         }
 
