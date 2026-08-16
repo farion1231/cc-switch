@@ -6,6 +6,19 @@ import type {
   SessionMeta,
   Settings,
 } from "@/types";
+import type {
+  AgentSessionNodeView,
+  AgentSessionUsageRequest,
+  AgentSessionUsageSummary,
+  AgentTaskUsageFilter,
+  AgentTaskUsageFilterOptions,
+  AgentTaskUsageFilterOptionsRequest,
+  AgentTaskUsagePage,
+  AgentTaskUsageRow,
+  AgentUsageCapability,
+  AgentUsageMeasure,
+  AgentUsageSourceDimension,
+} from "@/types/usage";
 import { deepClone } from "@/utils/deepClone";
 
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
@@ -202,6 +215,334 @@ let mcpConfigs: McpConfigState = {
   pi: {},
 };
 
+type AgentUsageFixtureState = {
+  capabilities: AgentUsageCapability[];
+  summaries: Record<string, AgentSessionUsageSummary>;
+  tasks: AgentTaskUsageRow[];
+};
+
+const agentUsageFixtureKey = (appType: string, sessionId: string) =>
+  `${appType}:${sessionId}`;
+
+const fixtureMeasure = (
+  dataSource: string,
+  overrides: Partial<AgentUsageMeasure> = {},
+): AgentUsageMeasure => ({
+  dataSource,
+  requestCount: 1,
+  inputTokens: 10,
+  outputTokens: 5,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  totalCostUsd: "0.01",
+  precision: "request_exact",
+  timeSemantics: "event_time",
+  requestCountSemantics: "assistant_message",
+  partial: false,
+  warnings: [],
+  ...overrides,
+});
+
+// Keep this alias local to the anonymous fixture helpers so no production
+// app list is duplicated or exported from the MSW state module.
+type AgentUsageNodeAppType = AgentSessionNodeView["appType"];
+
+const fixtureNode = (
+  appType: AgentUsageNodeAppType,
+  sessionId: string,
+  title: string,
+  projectDir: string,
+): AgentSessionNodeView => ({
+  appType,
+  sessionId,
+  parentSessionId: null,
+  rootSessionId: sessionId,
+  nodeKind: "standalone",
+  relationConfidence: "unavailable",
+  title,
+  projectDir,
+  sourcePath: `/mock/${appType}/${sessionId}.jsonl`,
+  createdAt: 1_723_000_000,
+  lastActiveAt: 1_723_000_100,
+  lastSyncedAt: 1_723_000_100,
+});
+
+const fixtureDimension = (
+  appType: AgentUsageNodeAppType,
+  dataSource: string,
+): AgentUsageSourceDimension => ({
+  providerId: `${appType}-provider`,
+  model: `${appType}-model`,
+  requestModel: `${appType}-request-model`,
+  pricingModel: `${appType}-pricing-model`,
+  dataSource,
+  inputTokenSemantics: 1,
+  sourceIdentity: `${appType}-fixture-source`,
+  profileId: "fixture-profile",
+  databaseIdentity: "fixture-database",
+  baseUrlDigest: "fixture-base-url",
+  billingMode: "fixture",
+  task: "fixture-task",
+  sourceVersion: "fixture-v1",
+  syncWindowStart: 1_723_000_000,
+  syncWindowEnd: 1_723_000_100,
+  apiCallCount: null,
+  cacheWriteTokens: null,
+  reasoningTokens: null,
+  costStatus: null,
+  costSource: null,
+  costDeltaKind: null,
+  correctionState: null,
+  rangePartial: false,
+});
+
+const fixtureSummary = (
+  appType: AgentUsageNodeAppType,
+  sessionId: string,
+  measure: AgentUsageMeasure | null,
+  options: {
+    title: string;
+    projectDir: string;
+    supportsDescendants?: boolean;
+    descendantSessionCount?: number;
+    warnings?: string[];
+    sourceDimensions?: AgentUsageSourceDimension[];
+  },
+): AgentSessionUsageSummary => ({
+  appType,
+  requestedSessionId: sessionId,
+  sessionId,
+  rootSessionId: sessionId,
+  rootResolved: false,
+  root: fixtureNode(appType, sessionId, options.title, options.projectDir),
+  supportsDescendants: options.supportsDescendants ?? false,
+  selfUsage: measure,
+  descendantUsage: null,
+  descendantUsageStatus:
+    options.descendantSessionCount && options.descendantSessionCount > 0
+      ? "unavailable"
+      : "not_applicable",
+  totalUsage: measure,
+  descendantSessionCount: options.descendantSessionCount ?? 0,
+  precision: measure?.precision ?? "unavailable",
+  partial: measure?.partial ?? true,
+  warnings: options.warnings ?? measure?.warnings ?? [],
+  sourceDimensions:
+    options.sourceDimensions ??
+    (measure ? [fixtureDimension(appType, measure.dataSource ?? "fixture")] : []),
+});
+
+const fixtureCapability = (
+  appType: AgentUsageNodeAppType,
+  options: Partial<Omit<AgentUsageCapability, "appType">> = {},
+): AgentUsageCapability => ({
+  appType,
+  sessionEnumeration: "supported",
+  usageStatus: "supported",
+  supportsDescendants: false,
+  tokenStatus: "supported",
+  costStatus: "supported",
+  precision: "request_exact",
+  timeSemantics: "event_time",
+  requestCountSemantics: "assistant_message",
+  notes: "Anonymous MSW fixture",
+  ...options,
+});
+
+const createDefaultAgentUsageFixtures = (): AgentUsageFixtureState => {
+  // Explicit numeric zero is intentionally distinct from the nullable and
+  // unavailable cases below.
+  const claudeZero = fixtureMeasure("session_log", {
+    requestCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalCostUsd: "0",
+  });
+  const claudeDesktopPartial = fixtureMeasure("cowork_session", {
+    inputTokens: 4,
+    outputTokens: 2,
+    cacheCreationTokens: null,
+    totalCostUsd: null,
+    partial: true,
+  });
+  const codexAgentCallPartial = fixtureMeasure("codex_session", {
+    inputTokens: 8,
+    outputTokens: 3,
+    cacheCreationTokens: null,
+    totalCostUsd: null,
+    requestCountSemantics: "agent_call",
+    partial: true,
+  });
+  const geminiAssistantPartial = fixtureMeasure("gemini_session", {
+    inputTokens: 6,
+    outputTokens: 2,
+    cacheCreationTokens: null,
+    totalCostUsd: null,
+    partial: true,
+  });
+  const grokAgentCallPartial = fixtureMeasure("grok_session", {
+    inputTokens: 5,
+    outputTokens: 4,
+    cacheCreationTokens: null,
+    totalCostUsd: null,
+    requestCountSemantics: "agent_call",
+    partial: true,
+  });
+  const opencodeAssistant = fixtureMeasure("opencode_session", {
+    inputTokens: 12,
+    outputTokens: 6,
+    cacheReadTokens: 2,
+    cacheCreationTokens: 1,
+    totalCostUsd: "0.02",
+  });
+  const hermesWindowPartial = fixtureMeasure("hermes_session_model_usage", {
+    requestCount: null,
+    inputTokens: 15,
+    outputTokens: 5,
+    cacheCreationTokens: null,
+    totalCostUsd: null,
+    precision: "sync_window_delta",
+    timeSemantics: "sync_window_end",
+    requestCountSemantics: "unavailable",
+    partial: true,
+  });
+
+  const summaries = [
+    fixtureSummary("claude", "claude-usage-zero", claudeZero, {
+      title: "Claude zero fixture",
+      projectDir: "/mock/claude-zero",
+      supportsDescendants: true,
+    }),
+    fixtureSummary(
+      "claude-desktop",
+      "claude-desktop-usage-partial",
+      claudeDesktopPartial,
+      {
+        title: "Claude Desktop partial fixture",
+        projectDir: "/mock/claude-desktop",
+        supportsDescendants: true,
+      },
+    ),
+    fixtureSummary("codex", "codex-usage-agent-call", codexAgentCallPartial, {
+      title: "Codex agent-call fixture",
+      projectDir: "/mock/codex-agent-call",
+      supportsDescendants: true,
+    }),
+    fixtureSummary("gemini", "gemini-usage-partial", geminiAssistantPartial, {
+      title: "Gemini assistant fixture",
+      projectDir: "/mock/gemini-partial",
+    }),
+    fixtureSummary("grokbuild", "grok-usage-agent-call", grokAgentCallPartial, {
+      title: "Grok agent-call fixture",
+      projectDir: "/mock/grok-agent-call",
+    }),
+    fixtureSummary("opencode", "opencode-usage-exact", opencodeAssistant, {
+      title: "OpenCode assistant fixture",
+      projectDir: "/mock/opencode-exact",
+    }),
+    fixtureSummary("openclaw", "openclaw-usage-unavailable", null, {
+      title: "OpenClaw unavailable fixture",
+      projectDir: "/mock/openclaw-unavailable",
+      warnings: ["OpenClaw usage is unavailable in this fixture."],
+    }),
+    fixtureSummary("hermes", "hermes-usage-window", hermesWindowPartial, {
+      title: "Hermes sync-window fixture",
+      projectDir: "/mock/hermes-window",
+      sourceDimensions: [
+        {
+          ...fixtureDimension("hermes", "hermes_session_model_usage"),
+          apiCallCount: 2,
+          reasoningTokens: 3,
+          costStatus: "unknown",
+          costSource: "fixture",
+          correctionState: "none",
+        },
+      ],
+    }),
+  ];
+
+  const summaryByKey = Object.fromEntries(
+    summaries.map((summary) => [
+      agentUsageFixtureKey(summary.appType, summary.sessionId),
+      summary,
+    ]),
+  ) as Record<string, AgentSessionUsageSummary>;
+
+  const tasks: AgentTaskUsageRow[] = summaries.map((summary) => ({
+    appType: summary.appType,
+    sessionId: summary.sessionId,
+    rootSessionId: summary.rootSessionId,
+    root: summary.root,
+    selfUsage: summary.selfUsage,
+    descendantUsage: summary.descendantUsage,
+    descendantUsageStatus: summary.descendantUsageStatus,
+    totalUsage: summary.totalUsage,
+    descendantSessionCount: summary.descendantSessionCount,
+    precision: summary.precision,
+    partial: summary.partial,
+    warnings: summary.warnings,
+    sourceDimensions: summary.sourceDimensions,
+  }));
+
+  const capabilities: AgentUsageCapability[] = [
+    fixtureCapability("claude", {
+      supportsDescendants: true,
+    }),
+    fixtureCapability("claude-desktop", {
+      sessionEnumeration: "partial",
+      usageStatus: "partial",
+      supportsDescendants: true,
+      tokenStatus: "partial",
+      costStatus: "partial",
+    }),
+    fixtureCapability("codex", {
+      supportsDescendants: true,
+      requestCountSemantics: "agent_call",
+      tokenStatus: "partial",
+      costStatus: "partial",
+    }),
+    fixtureCapability("gemini", {
+      tokenStatus: "partial",
+      costStatus: "partial",
+    }),
+    fixtureCapability("grokbuild", {
+      requestCountSemantics: "agent_call",
+      tokenStatus: "partial",
+      costStatus: "partial",
+    }),
+    fixtureCapability("opencode"),
+    fixtureCapability("openclaw", {
+      sessionEnumeration: "partial",
+      usageStatus: "unavailable",
+      tokenStatus: "unavailable",
+      costStatus: "unavailable",
+      precision: "unavailable",
+      timeSemantics: "unavailable",
+      requestCountSemantics: "unavailable",
+    }),
+    fixtureCapability("hermes", {
+      sessionEnumeration: "partial",
+      usageStatus: "partial",
+      tokenStatus: "partial",
+      costStatus: "partial",
+      precision: "sync_window_delta",
+      timeSemantics: "sync_window_end",
+      requestCountSemantics: "unavailable",
+    }),
+    fixtureCapability("pi", {
+      supportsDescendants: true,
+      costStatus: "partial",
+      requestCountSemantics: "usage_event",
+    }),
+  ];
+
+  return { capabilities, summaries: summaryByKey, tasks };
+};
+
+let agentUsageFixtures = createDefaultAgentUsageFixtures();
+
 const cloneProviders = (value: ProvidersByApp) =>
   deepClone(value) as ProvidersByApp;
 
@@ -215,6 +556,7 @@ export const resetProviderState = () => {
   };
   sessionsState = createDefaultSessions();
   sessionMessagesState = createDefaultSessionMessages();
+  agentUsageFixtures = createDefaultAgentUsageFixtures();
   settingsState = {
     showInTray: true,
     minimizeToTrayOnClose: true,
@@ -438,4 +780,108 @@ export const setSessionFixtures = (
     string,
     SessionMessage[]
   >;
+};
+
+export const getAgentSessionUsageFixture = (
+  request: AgentSessionUsageRequest,
+): AgentSessionUsageSummary => {
+  const key = agentUsageFixtureKey(request.appType, request.sessionId);
+  const existing = agentUsageFixtures.summaries[key];
+  if (existing) return deepClone(existing);
+
+  const fallbackNode = fixtureNode(
+    request.appType,
+    request.sessionId,
+    "Unknown usage fixture",
+    "/mock/unknown",
+  );
+  return {
+    appType: request.appType,
+    requestedSessionId: request.sessionId,
+    sessionId: request.sessionId,
+    rootSessionId: request.sessionId,
+    rootResolved: false,
+    root: fallbackNode,
+    supportsDescendants: false,
+    selfUsage: null,
+    descendantUsage: null,
+    descendantUsageStatus: "not_applicable",
+    totalUsage: null,
+    descendantSessionCount: 0,
+    precision: "unavailable",
+    partial: true,
+    warnings: ["No anonymous usage fixture exists for this session."],
+    sourceDimensions: [],
+  };
+};
+
+export const getAgentTaskUsageFixture = (
+  filter: AgentTaskUsageFilter = {},
+): AgentTaskUsagePage => {
+  const titleNeedle = filter.title?.toLowerCase();
+  const projectNeedle = filter.project?.toLowerCase();
+  const titleExact = filter.titleExact?.trim().toLowerCase();
+  const projectDirExact = filter.projectDirExact?.trim().toLowerCase();
+  const filtered = agentUsageFixtures.tasks.filter((task) => {
+    if (filter.appType && task.appType !== filter.appType) return false;
+    const title = task.root?.title?.toLowerCase() ?? "";
+    const projectDir = task.root?.projectDir?.toLowerCase() ?? "";
+    if (titleExact && title !== titleExact) return false;
+    if (projectDirExact && projectDir !== projectDirExact) return false;
+    if (titleNeedle && !title.includes(titleNeedle)) return false;
+    if (projectNeedle && !projectDir.includes(projectNeedle)) return false;
+    if (
+      filter.projectDir !== undefined &&
+      task.root?.projectDir !== filter.projectDir
+    ) {
+      return false;
+    }
+    return true;
+  });
+  const limit = Math.max(0, Math.min(filter.limit ?? 50, 500));
+  const offset = Math.max(0, filter.offset ?? 0);
+  return {
+    items: deepClone(filtered.slice(offset, offset + limit)),
+    total: filtered.length,
+    limit,
+    offset,
+    hasMore: offset + limit < filtered.length,
+    unattributedUsage: null,
+  };
+};
+
+export const getAgentTaskUsageFilterOptionsFixture = (
+  request: AgentTaskUsageFilterOptionsRequest = {},
+): AgentTaskUsageFilterOptions => {
+  const tasks = agentUsageFixtures.tasks.filter(
+    (task) => !request.appType || task.appType === request.appType,
+  );
+  const titles = new Map<string, string>();
+  const projects = new Map<string, string>();
+  for (const task of tasks) {
+    const title = task.root?.title?.trim();
+    if (title) titles.set(title.toLowerCase(), title);
+    const projectDir = task.root?.projectDir?.trim();
+    if (projectDir) projects.set(projectDir.toLowerCase(), projectDir);
+  }
+  return {
+    titles: Array.from(titles.values()).sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    projects: Array.from(projects.values())
+      .sort((left, right) => left.localeCompare(right))
+      .map((projectDir) => ({ projectDir })),
+  };
+};
+
+export const getAgentUsageCapabilitiesFixture = (): AgentUsageCapability[] =>
+  deepClone(agentUsageFixtures.capabilities);
+
+export const setAgentUsageFixtures = (
+  fixtures: Partial<AgentUsageFixtureState>,
+) => {
+  agentUsageFixtures = {
+    ...agentUsageFixtures,
+    ...deepClone(fixtures),
+  };
 };

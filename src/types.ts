@@ -467,6 +467,8 @@ export interface Settings {
 export interface SessionMeta {
   providerId: string;
   sessionId: string;
+  /** Canonical usage identity; message reads/resume keep using sessionId/sourcePath. */
+  usageSessionId?: string;
   title?: string;
   summary?: string;
   projectDir?: string | null;

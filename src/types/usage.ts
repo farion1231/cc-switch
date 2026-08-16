@@ -1,5 +1,7 @@
 // 使用统计相关类型定义
 
+import type { AppId } from "@/lib/api/types";
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -43,6 +45,34 @@ export interface SessionSyncResult {
   suspectedDuplicates: number;
   deferredFiles: number;
   errors: string[];
+}
+
+/** Providers supported by the explicit historical session-usage rebuild. */
+export const AGENT_USAGE_REBUILD_APPS = [
+  "claude",
+  "codex",
+  "grokbuild",
+  "opencode",
+  "hermes",
+  "pi",
+] as const;
+
+export type AgentUsageRebuildApp = (typeof AGENT_USAGE_REBUILD_APPS)[number];
+
+export interface RebuildAgentSessionUsageRequest {
+  appTypes: AgentUsageRebuildApp[];
+}
+
+export type ProviderUsageRebuildStatus = "published" | "keptPrevious";
+
+export interface ProviderUsageRebuildResult {
+  appType: AgentUsageRebuildApp;
+  status: ProviderUsageRebuildStatus;
+  syncResult: SessionSyncResult;
+}
+
+export interface RebuildAgentSessionUsageResult {
+  providers: ProviderUsageRebuildResult[];
 }
 
 export interface DataSourceSummary {
@@ -318,3 +348,240 @@ export interface StatsFilters {
   providerId?: string;
   appType?: string;
 }
+
+// ============================================================================
+// Canonical Agent session/task usage contract
+// ============================================================================
+
+/**
+ * The backend capability registry is authoritative for runtime support.  This
+ * alias deliberately reuses the app identifier union used by the rest of the
+ * frontend so a newly managed app cannot silently become an untyped usage
+ * bucket.
+ */
+export type AgentUsageAppType = AppId;
+
+export type AgentUsagePrecision =
+  | "request_exact"
+  | "session_exact"
+  | "sync_window_delta"
+  | "estimated"
+  | "unavailable";
+
+export type AgentUsageTimeSemantics =
+  | "event_time"
+  | "session_time"
+  | "sync_window_end"
+  | "unavailable";
+
+/**
+ * Counts are source events, not automatically HTTP requests.  In particular,
+ * Codex/Grok agent calls, Claude/Gemini assistant messages, and Pi usage
+ * carriers remain distinct.
+ */
+export type AgentUsageRequestCountSemantics =
+  | "http_request"
+  | "assistant_message"
+  | "agent_call"
+  | "usage_event"
+  | "unavailable";
+
+export type AgentDescendantUsageStatus =
+  | "available"
+  | "no_activity_in_range"
+  | "unavailable"
+  | "not_applicable";
+
+export type AgentUsageCapabilityStatus =
+  | "supported"
+  | "partial"
+  | "unavailable";
+
+export type AgentSessionNodeKind =
+  | "root"
+  | "child"
+  | "standalone"
+  | "unknown"
+  | "conflict";
+
+export type AgentSessionRelationConfidence =
+  | "explicit"
+  | "structural"
+  | "unavailable"
+  | "conflict";
+
+/** Inclusive Unix-second range accepted by the Tauri commands. */
+export interface AgentUsageRange {
+  startAt?: number;
+  endAt?: number;
+}
+
+/** Input envelope for `get_agent_session_usage`. */
+export interface AgentSessionUsageRequest {
+  appType: AgentUsageAppType;
+  sessionId: string;
+  range?: AgentUsageRange | null;
+}
+
+/** Input envelope for `list_agent_task_usage`. */
+export interface AgentTaskUsageFilter {
+  appType?: AgentUsageAppType;
+  title?: string;
+  project?: string;
+  projectDir?: string;
+  /** Exact native title selected from the task-statistics combobox. */
+  titleExact?: string;
+  /** Exact native project directory selected from the task-statistics combobox. */
+  projectDirExact?: string;
+  range?: AgentUsageRange | null;
+  limit?: number;
+  offset?: number;
+}
+
+/** Scope for the complete task title/project candidate list. */
+export interface AgentTaskUsageFilterOptionsRequest {
+  appType?: AgentUsageAppType;
+  range?: AgentUsageRange | null;
+}
+
+export interface AgentTaskUsageProjectOption {
+  projectDir: string;
+}
+
+export interface AgentTaskUsageFilterOptions {
+  titles: string[];
+  projects: AgentTaskUsageProjectOption[];
+}
+
+/** A normalized measure returned by the backend query layer. */
+export interface AgentUsageMeasure {
+  dataSource: string | null;
+  requestCount: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  totalCostUsd: string | null;
+  precision: AgentUsagePrecision;
+  timeSemantics: AgentUsageTimeSemantics;
+  requestCountSemantics: AgentUsageRequestCountSemantics;
+  partial: boolean;
+  warnings: string[];
+}
+
+// DTO-shaped aliases keep the backend names discoverable to callers while
+// retaining the explicit Agent prefix used by this file's public types.
+export type UsageMeasure = AgentUsageMeasure;
+export type UsagePrecision = AgentUsagePrecision;
+export type TimeSemantics = AgentUsageTimeSemantics;
+export type RequestCountSemantics = AgentUsageRequestCountSemantics;
+export type CapabilityStatus = AgentUsageCapabilityStatus;
+
+export interface AgentSessionNodeView {
+  appType: AgentUsageAppType;
+  sessionId: string;
+  parentSessionId: string | null;
+  rootSessionId: string;
+  nodeKind: AgentSessionNodeKind;
+  relationConfidence: AgentSessionRelationConfidence;
+  title: string | null;
+  projectDir: string | null;
+  sourcePath: string | null;
+  createdAt: number | null;
+  lastActiveAt: number | null;
+  lastSyncedAt: number;
+}
+
+export interface AgentUsageSourceDimension {
+  providerId: string;
+  model: string;
+  requestModel: string;
+  pricingModel: string;
+  dataSource: string;
+  inputTokenSemantics: number;
+  sourceIdentity: string;
+  profileId: string;
+  databaseIdentity: string;
+  baseUrlDigest: string;
+  billingMode: string;
+  task: string;
+  sourceVersion: string;
+  syncWindowStart: number;
+  syncWindowEnd: number;
+  apiCallCount: number | null;
+  cacheWriteTokens: number | null;
+  reasoningTokens: number | null;
+  costStatus: string | null;
+  costSource: string | null;
+  costDeltaKind: string | null;
+  correctionState: string | null;
+  rangePartial: boolean;
+}
+
+export interface AgentUsageCapability {
+  appType: AgentUsageAppType;
+  sessionEnumeration: AgentUsageCapabilityStatus;
+  usageStatus: AgentUsageCapabilityStatus;
+  supportsDescendants: boolean;
+  tokenStatus: AgentUsageCapabilityStatus;
+  costStatus: AgentUsageCapabilityStatus;
+  precision: AgentUsagePrecision;
+  timeSemantics: AgentUsageTimeSemantics;
+  requestCountSemantics: AgentUsageRequestCountSemantics;
+  notes: string;
+}
+
+/** Compile-time guard that a capability map has one entry per managed AppId. */
+export type AgentUsageCapabilityByApp = {
+  [App in AgentUsageAppType]: AgentUsageCapability & { appType: App };
+};
+
+export interface AgentSessionUsageSummary {
+  appType: AgentUsageAppType;
+  requestedSessionId: string;
+  sessionId: string;
+  rootSessionId: string;
+  rootResolved: boolean;
+  root: AgentSessionNodeView | null;
+  supportsDescendants: boolean;
+  selfUsage: AgentUsageMeasure | null;
+  descendantUsage: AgentUsageMeasure | null;
+  descendantUsageStatus: AgentDescendantUsageStatus;
+  totalUsage: AgentUsageMeasure | null;
+  descendantSessionCount: number;
+  precision: AgentUsagePrecision;
+  partial: boolean;
+  warnings: string[];
+  sourceDimensions: AgentUsageSourceDimension[];
+}
+
+export interface AgentTaskUsageRow {
+  appType: AgentUsageAppType;
+  sessionId: string;
+  rootSessionId: string;
+  root: AgentSessionNodeView | null;
+  selfUsage: AgentUsageMeasure | null;
+  descendantUsage: AgentUsageMeasure | null;
+  descendantUsageStatus: AgentDescendantUsageStatus;
+  totalUsage: AgentUsageMeasure | null;
+  descendantSessionCount: number;
+  precision: AgentUsagePrecision;
+  partial: boolean;
+  warnings: string[];
+  sourceDimensions: AgentUsageSourceDimension[];
+}
+
+export interface AgentTaskUsagePage {
+  items: AgentTaskUsageRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  /** Codex proxy requests without verifiable native session attribution. */
+  unattributedUsage: AgentUsageMeasure | null;
+  /** Publication state while Codex canonical usage is rebuilt in the shadow generation. */
+  dataStatus?: "ready" | "rebuilding_with_snapshot" | "rebuilding";
+}
+
+/** Backend default used whenever callers omit pagination values. */
+export const AGENT_TASK_USAGE_DEFAULT_LIMIT = 50;
