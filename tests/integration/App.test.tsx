@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
+import { server } from "../msw/server";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
@@ -11,7 +12,6 @@ import {
   setProviders,
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
-import { server } from "../msw/server";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -89,9 +89,18 @@ vi.mock("@/components/providers/AddProviderDialog", () => ({
 }));
 
 vi.mock("@/components/providers/EditProviderDialog", () => ({
-  EditProviderDialog: ({ open, provider, onSubmit, onOpenChange }: any) =>
+  EditProviderDialog: ({
+    open,
+    provider,
+    onSubmit,
+    onOpenChange,
+    isProxyTakeover,
+  }: any) =>
     open ? (
       <div data-testid="edit-provider-dialog">
+        <div data-testid="edit-provider-takeover">
+          {String(isProxyTakeover)}
+        </div>
         <button
           onClick={() =>
             onSubmit({
@@ -476,5 +485,98 @@ describe("App integration with MSW", () => {
 
     expect(skillsPanelMocks.openDiscovery).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
+  });
+
+  it("passes isProxyTakeover=false to EditProviderDialog when proxy is not running", async () => {
+    // 接管状态为 claude:true 但代理未运行 → isProxyTakeover 必须为 false
+    server.use(
+      http.post("http://tauri.local/get_proxy_status", () =>
+        HttpResponse.json({
+          running: false,
+          address: "127.0.0.1",
+          port: 0,
+          active_connections: 0,
+          total_requests: 0,
+          success_requests: 0,
+          failed_requests: 0,
+          success_rate: 0,
+          uptime_seconds: 0,
+          current_provider: null,
+          current_provider_id: null,
+          last_request_at: null,
+          last_error: null,
+          failover_count: 0,
+          active_targets: [],
+        }),
+      ),
+      http.post("http://tauri.local/get_proxy_takeover_status", () =>
+        HttpResponse.json({
+          claude: true,
+          codex: false,
+          gemini: false,
+          grokbuild: false,
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+    fireEvent.click(screen.getByText("edit"));
+    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-provider-takeover").textContent).toBe(
+      "false",
+    );
+  });
+
+  it("passes isProxyTakeover=true to EditProviderDialog when proxy running and takeover active", async () => {
+    server.use(
+      http.post("http://tauri.local/get_proxy_status", () =>
+        HttpResponse.json({
+          running: true,
+          address: "127.0.0.1",
+          port: 8080,
+          active_connections: 1,
+          total_requests: 1,
+          success_requests: 1,
+          failed_requests: 0,
+          success_rate: 1,
+          uptime_seconds: 10,
+          current_provider: null,
+          current_provider_id: null,
+          last_request_at: null,
+          last_error: null,
+          failover_count: 0,
+          active_targets: [],
+        }),
+      ),
+      http.post("http://tauri.local/get_proxy_takeover_status", () =>
+        HttpResponse.json({
+          claude: true,
+          codex: false,
+          gemini: false,
+          grokbuild: false,
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+    fireEvent.click(screen.getByText("edit"));
+    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-provider-takeover").textContent).toBe(
+      "true",
+    );
   });
 });

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -65,6 +66,11 @@ import {
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
+  applyAutoSyncContextWindowSetting,
+  applyAutoSyncCompactRatioSetting,
+  mergeSettingsConfigPreservingAutoSync,
+} from "@/utils/settingsConfigMerge";
+import {
   codexApiFormatFromWireApi,
   extractCodexWireApi,
   setCodexWireApi,
@@ -115,6 +121,7 @@ import {
   useCodexOauth,
   useXaiOauth,
 } from "./hooks";
+import { migrateLegacyModelSuffixes } from "@/components/providers/forms/hooks/useModelState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useSettingsQuery } from "@/lib/query";
 import {
@@ -345,6 +352,8 @@ function ProviderFormFull({
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     initialData ? null : "custom",
   );
+  const presetInitScopeRef = useRef<string | null>(null);
+  const initializedRef = useRef(false);
   const [activePreset, setActivePreset] = useState<{
     id: string;
     category?: ProviderCategory;
@@ -396,6 +405,9 @@ function ProviderFormFull({
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
+    const scope = `${appId}:${providerId ?? "new"}`;
+    if (presetInitScopeRef.current === scope) return;
+    presetInitScopeRef.current = scope;
     setSelectedPresetId(initialData ? null : "custom");
     setActivePreset(null);
 
@@ -435,7 +447,7 @@ function ProviderFormFull({
         initialData?.meta?.localProxyRequestOverrides?.body,
       ),
     );
-  }, [appId, initialData, supportsFullUrl]);
+  }, [appId, providerId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
     () => ({
@@ -467,10 +479,37 @@ function ProviderFormFull({
     mode: "onSubmit",
   });
   const { isSubmitting } = form.formState;
+  const settingsConfigValue = form.watch("settingsConfig");
 
   const handleSettingsConfigChange = useCallback(
     (config: string) => {
-      form.setValue("settingsConfig", config);
+      const current = form.getValues("settingsConfig");
+      form.setValue(
+        "settingsConfig",
+        mergeSettingsConfigPreservingAutoSync(current, config),
+      );
+    },
+    [form],
+  );
+
+  const handleAutoSyncContextWindowChange = useCallback(
+    (checked: boolean) => {
+      const current = form.getValues("settingsConfig");
+      form.setValue(
+        "settingsConfig",
+        applyAutoSyncContextWindowSetting(current, checked),
+      );
+    },
+    [form],
+  );
+
+  const handleAutoSyncCompactRatioChange = useCallback(
+    (ratio: number | null) => {
+      const current = form.getValues("settingsConfig");
+      form.setValue(
+        "settingsConfig",
+        applyAutoSyncCompactRatioSetting(current, ratio),
+      );
     },
     [form],
   );
@@ -731,6 +770,9 @@ function ProviderFormFull({
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
   useEffect(() => {
+    // 只在首次渲染时用 defaultValues 初始化一次，之后不再因 scope 重复 reset
+    if (initializedRef.current) return;
+    initializedRef.current = true;
     form.reset(defaultValues);
   }, [defaultValues, form]);
 
@@ -850,8 +892,9 @@ function ProviderFormFull({
     handleCommonConfigSnippetChange,
     isExtracting: isClaudeExtracting,
     handleExtract: handleClaudeExtract,
+    isLoading: isClaudeCommonConfigLoading,
   } = useCommonConfigSnippet({
-    settingsConfig: form.getValues("settingsConfig"),
+    settingsConfig: settingsConfigValue,
     onConfigChange: handleSettingsConfigChange,
     initialData: appId === "claude" ? initialData : undefined,
     initialEnabled:
@@ -869,6 +912,7 @@ function ProviderFormFull({
     isExtracting: isCodexExtracting,
     handleExtract: handleCodexExtract,
     clearCommonConfigError: clearCodexCommonConfigError,
+    isLoading: isCodexCommonConfigLoading,
   } = useCodexCommonConfig({
     codexConfig,
     onConfigChange: handleCodexConfigChange,
@@ -953,6 +997,7 @@ function ProviderFormFull({
     isExtracting: isGeminiExtracting,
     handleExtract: handleGeminiExtract,
     clearCommonConfigError: clearGeminiCommonConfigError,
+    isLoading: isGeminiCommonConfigLoading,
   } = useGeminiCommonConfig({
     envValue: geminiEnv,
     onEnvChange: handleGeminiEnvChange,
@@ -1591,6 +1636,8 @@ function ProviderFormFull({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
+    } else if (appId === "claude") {
+      settingsConfig = migrateLegacyModelSuffixes(values.settingsConfig);
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -1958,7 +2005,13 @@ function ProviderFormFull({
     setSelectedPresetId(value);
     if (value === "custom") {
       setActivePreset(null);
-      form.reset(defaultValues);
+      form.reset({
+        ...defaultValues,
+        settingsConfig: mergeSettingsConfigPreservingAutoSync(
+          form.getValues("settingsConfig"),
+          defaultValues.settingsConfig,
+        ),
+      });
 
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
@@ -2130,7 +2183,10 @@ function ProviderFormFull({
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
       websiteUrl: preset.websiteUrl ?? "",
-      settingsConfig: JSON.stringify(config, null, 2),
+      settingsConfig: mergeSettingsConfigPreservingAutoSync(
+        form.getValues("settingsConfig"),
+        JSON.stringify(config, null, 2),
+      ),
       icon: preset.icon ?? "",
       iconColor: preset.iconColor ?? "",
     });
@@ -2374,6 +2430,7 @@ function ProviderFormFull({
           {appId === "claude" && (
             <ClaudeFormFields
               providerId={providerId}
+              isProxyTakeover={isProxyTakeover}
               shouldShowApiKey={
                 (category !== "cloud_provider" ||
                   hasApiKeyField(form.getValues("settingsConfig"), "claude")) &&
@@ -2447,6 +2504,10 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              settingsConfig={settingsConfigValue}
+              onSettingsConfigChange={handleSettingsConfigChange}
+              onAutoSyncContextWindowChange={handleAutoSyncContextWindowChange}
+              onAutoSyncCompactRatioChange={handleAutoSyncCompactRatioChange}
             />
           )}
 
@@ -2665,6 +2726,7 @@ function ProviderFormFull({
                 commonConfigError={codexCommonConfigError}
                 authError={codexAuthError}
                 configError={codexConfigError}
+                commonConfigLoading={isCodexCommonConfigLoading}
                 onExtract={handleCodexExtract}
                 isExtracting={isCodexExtracting}
               />
@@ -2687,6 +2749,7 @@ function ProviderFormFull({
                 commonConfigError={geminiCommonConfigError}
                 envError={envError}
                 configError={geminiConfigError}
+                commonConfigLoading={isGeminiCommonConfigLoading}
                 onExtract={handleGeminiExtract}
                 isExtracting={isGeminiExtracting}
               />
@@ -2774,8 +2837,8 @@ function ProviderFormFull({
           ) : (
             <>
               <CommonConfigEditor
-                value={form.getValues("settingsConfig")}
-                onChange={(value) => form.setValue("settingsConfig", value)}
+                value={settingsConfigValue}
+                onChange={handleSettingsConfigChange}
                 useCommonConfig={useCommonConfig}
                 onCommonConfigToggle={handleCommonConfigToggle}
                 commonConfigSnippet={commonConfigSnippet}
@@ -2785,6 +2848,7 @@ function ProviderFormFull({
                 isModalOpen={isCommonConfigModalOpen}
                 onModalClose={() => setIsCommonConfigModalOpen(false)}
                 onExtract={handleClaudeExtract}
+                isLoading={isClaudeCommonConfigLoading}
                 isExtracting={isClaudeExtracting}
               />
               {settingsConfigErrorField}

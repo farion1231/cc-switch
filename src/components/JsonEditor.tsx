@@ -98,6 +98,8 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   const { t } = useTranslation();
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // 外部 value 写入时抑制回声 onChange（避免把归一化后的值再写回表单）。
+  const isApplyingExternalValueRef = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const hasExplicitHeight = height !== undefined;
@@ -210,6 +212,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       ),
       EditorView.updateListener.of((update) => {
         if (!readOnly && update.docChanged) {
+          if (isApplyingExternalValueRef.current) return;
           const newValue = update.state.doc.toString();
           onChangeRef.current(newValue);
         }
@@ -317,7 +320,12 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
           viewRef.current.state.selection.mainIndex,
         ),
       });
-      viewRef.current.dispatch(transaction);
+      isApplyingExternalValueRef.current = true;
+      try {
+        viewRef.current.dispatch(transaction);
+      } finally {
+        isApplyingExternalValueRef.current = false;
+      }
     }
   }, [value]);
 
