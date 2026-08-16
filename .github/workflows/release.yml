@@ -557,6 +557,7 @@ jobs:
           name: release-assets-${{ runner.os }}-${{ matrix.arch || runner.arch }}
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 1
 
       - name: List generated bundles (debug)
         if: always()
