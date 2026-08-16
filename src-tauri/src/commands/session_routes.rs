@@ -38,16 +38,67 @@ pub async fn update_session_routing_config(
         .map_err(|e| e.to_string())
 }
 
-/// 获取所有活跃 session 路由
+/// 获取所有活跃 session 路由（含 Claude Code 终端名称）
 #[tauri::command]
 pub async fn get_active_session_routes(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<Vec<SessionRouteInfo>, String> {
-    state
+    let mut routes = state
         .db
         .get_all_session_routes(&app_type)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // 从 Claude Code 本地会话文件读取终端名称 (sessionId → name)
+    let name_map = load_claude_session_names();
+
+    for route in &mut routes {
+        route.session_name = name_map
+            .get(&route.session_id)
+            .cloned()
+            .unwrap_or_default();
+    }
+
+    Ok(routes)
+}
+
+/// 读取 ~/.claude/sessions/*.json，构建 sessionId → name 映射
+///
+/// Claude Code 为每个终端在本地保存一个会话文件，其中含 sessionId 和
+/// 终端名（如 "multiple-claude-54"）。
+fn load_claude_session_names() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let sessions_dir = crate::config::get_home_dir().join(".claude").join("sessions");
+    let Ok(entries) = std::fs::read_dir(&sessions_dir) else {
+        return map;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+            continue;
+        };
+        let session_id = json
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let name = json
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if !session_id.is_empty() && !name.is_empty() {
+            map.insert(session_id, name);
+        }
+    }
+    map
 }
 
 /// 删除指定 session 路由

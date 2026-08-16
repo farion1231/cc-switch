@@ -32,6 +32,7 @@ impl Database {
             .query_row([session_id, app_type], |row| {
                 Ok(SessionRouteInfo {
                     session_id: row.get(0)?,
+                    session_name: String::new(),
                     app_type: row.get(1)?,
                     provider_id: row.get(2)?,
                     provider_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
@@ -147,6 +148,7 @@ impl Database {
             .query_map([app_type], |row| {
                 Ok(SessionRouteInfo {
                     session_id: row.get(0)?,
+                    session_name: String::new(),
                     app_type: row.get(1)?,
                     provider_id: row.get(2)?,
                     provider_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),

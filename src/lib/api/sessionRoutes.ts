@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export interface SessionRouteInfo {
   sessionId: string;
+  sessionName: string;
   appType: string;
   providerId: string;
   providerName: string;

@@ -65,6 +65,7 @@ impl Default for SessionRoutingConfig {
 #[serde(rename_all = "camelCase")]
 pub struct SessionRouteInfo {
     pub session_id: String,
+    pub session_name: String,
     pub app_type: String,
     pub provider_id: String,
     pub provider_name: String,

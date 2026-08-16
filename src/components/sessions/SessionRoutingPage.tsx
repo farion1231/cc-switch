@@ -316,8 +316,8 @@ export function SessionRoutingPage() {
                       <ProviderIcon name={route.providerName || route.providerId} size={24} />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium truncate max-w-[120px]">
-                            {route.sessionId.slice(0, 8)}
+                          <span className="text-sm font-medium truncate max-w-[160px]" title={route.sessionId}>
+                            {route.sessionName || route.sessionId.slice(0, 8)}
                           </span>
                         </div>
                         <div className="flex items-center gap-3 text-xs text-muted-foreground">
