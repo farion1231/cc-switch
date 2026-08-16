@@ -16,7 +16,22 @@ interface ModelStatsTableProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
+}
+
+function countLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.countLabel.hermesApiCalls";
+  if (!appType || appType === "all") return "usage.countLabel.mixedActivity";
+  return "usage.countLabel.requests";
+}
+
+function averageCostLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.averageCostLabel.perApiCall";
+  if (!appType || appType === "all")
+    return "usage.averageCostLabel.perActivity";
+  return "usage.averageCostLabel.perRequest";
 }
 
 export function ModelStatsTable({
@@ -24,12 +39,14 @@ export function ModelStatsTable({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t } = useTranslation();
   const { data: stats, isLoading } = useModelStats(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -46,7 +63,7 @@ export function ModelStatsTable({
           <TableRow>
             <TableHead>{t("usage.model", "模型")}</TableHead>
             <TableHead className="text-right">
-              {t("usage.requests", "请求数")}
+              {t(countLabelKey(appType))}
             </TableHead>
             <TableHead className="text-right">
               {t("usage.tokens", "Tokens")}
@@ -55,7 +72,7 @@ export function ModelStatsTable({
               {t("usage.totalCost", "总成本")}
             </TableHead>
             <TableHead className="text-right">
-              {t("usage.avgCost", "平均成本")}
+              {t(averageCostLabelKey(appType))}
             </TableHead>
           </TableRow>
         </TableHeader>

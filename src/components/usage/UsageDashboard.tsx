@@ -21,6 +21,7 @@ import {
   LayoutGrid,
   DatabaseBackup,
   Loader2,
+  Info,
 } from "lucide-react";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import {
@@ -31,7 +32,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useQueryClient } from "@tanstack/react-query";
-import { usageKeys, useModelStats, useProviderStats } from "@/lib/query/usage";
+import {
+  usageKeys,
+  useHermesUsageMetadata,
+  useModelStats,
+  useProviderStats,
+  useUsageSummaryByApp,
+} from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import {
   Accordion,
@@ -71,6 +78,7 @@ const APP_FILTER_ICON: Record<AppType, string> = {
   gemini: "gemini",
   grokbuild: "grok",
   opencode: "opencode",
+  hermes: "hermes",
   pi: "pi",
 };
 
@@ -98,6 +106,8 @@ export function UsageDashboard({
     undefined,
   );
   const [model, setModel] = useState<string | undefined>(undefined);
+  const [profileName, setProfileName] = useState<string | undefined>(undefined);
+  const [task, setTask] = useState<string | undefined>(undefined);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
     normalizeRefreshInterval(savedRefreshIntervalMs),
   );
@@ -115,6 +125,8 @@ export function UsageDashboard({
     if (next !== appType) {
       setProviderName(undefined);
       setModel(undefined);
+      setProfileName(undefined);
+      setTask(undefined);
     }
   };
   const changeProviderName = (next: string | undefined) => {
@@ -123,6 +135,31 @@ export function UsageDashboard({
       setModel(undefined);
     }
   };
+
+  const { data: hermesMetadata } = useHermesUsageMetadata(appType === "hermes");
+
+  useEffect(() => {
+    if (appType !== "hermes") {
+      setProfileName(undefined);
+      setTask(undefined);
+      return;
+    }
+
+    const profiles = hermesMetadata?.profiles ?? [];
+    const tasks = hermesMetadata?.tasks ?? [];
+    if (profileName != null && !profiles.includes(profileName)) {
+      setProfileName(undefined);
+    }
+    if (task != null && !tasks.includes(task)) {
+      setTask(undefined);
+    }
+  }, [
+    appType,
+    hermesMetadata?.profiles,
+    hermesMetadata?.tasks,
+    profileName,
+    task,
+  ]);
 
   // 后端写入新日志时 emit `usage-log-recorded`，本 hook 立刻 invalidate 所有
   // usage 查询，实现实时刷新（仅在 Dashboard 挂载时生效，离开页面自动取消监听）
@@ -197,6 +234,20 @@ export function UsageDashboard({
     return `${startStr} - ${endStr}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
+  const { data: summaryByApp, isLoading: isSummaryByAppLoading } =
+    useUsageSummaryByApp(
+      range,
+      { providerName, model, profileName, task },
+      {
+        refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+      },
+    );
+  const showHermesPrecisionNotice =
+    appType === "hermes" ||
+    (appType === "all" &&
+      !isSummaryByAppLoading &&
+      summaryByApp?.some((app) => app.appType === "hermes") === true);
+
   // 顶栏下拉的选项池：Provider 列表只跟应用/时间范围走（不受自身选中值影响），
   // 模型列表随所选 Provider 级联。两者都只列当前范围内真实有数据的条目。
   // refetchInterval 必须跟随面板的刷新设置——未筛选时这两个查询与统计表共享
@@ -207,12 +258,12 @@ export function UsageDashboard({
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
-    { appType },
+    { appType, profileName, task },
     optionsRefetch,
   );
   const { data: modelOptionsData } = useModelStats(
     range,
-    { appType, providerName },
+    { appType, providerName, profileName, task },
     optionsRefetch,
   );
 
@@ -235,6 +286,9 @@ export function UsageDashboard({
     if (model) names.add(model);
     return Array.from(names);
   }, [modelOptionsData, model]);
+
+  const profileOptions = hermesMetadata?.profiles ?? [];
+  const taskOptions = hermesMetadata?.tasks ?? [];
 
   return (
     <motion.div
@@ -335,6 +389,72 @@ export function UsageDashboard({
             </SelectContent>
           </Select>
 
+          {appType === "hermes" && (
+            <>
+              <Select
+                value={
+                  profileName != null ? encodeOptionValue(profileName) : "all"
+                }
+                onValueChange={(v) => setProfileName(decodeOptionValue(v))}
+              >
+                <SelectTrigger
+                  className="h-9 w-[120px] bg-background text-xs focus:border-border-default [&>span]:min-w-0 [&>span]:truncate"
+                  title={profileName ?? t("usage.hermes.profile")}
+                  aria-label={t("usage.hermes.profile")}
+                >
+                  <SelectValue
+                    placeholder={t("usage.hermes.profilePlaceholder")}
+                  />
+                </SelectTrigger>
+                <SelectContent className="max-w-[280px]">
+                  <SelectItem value="all">
+                    {t("usage.hermes.profilePlaceholder")}
+                  </SelectItem>
+                  {profileOptions.map((name) => (
+                    <SelectItem
+                      key={name}
+                      value={encodeOptionValue(name)}
+                      title={name}
+                      className="[&>span]:min-w-0 [&>span]:truncate"
+                    >
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={task != null ? encodeOptionValue(task) : "all"}
+                onValueChange={(v) => setTask(decodeOptionValue(v))}
+              >
+                <SelectTrigger
+                  className="h-9 w-[120px] bg-background text-xs focus:border-border-default [&>span]:min-w-0 [&>span]:truncate"
+                  title={task ?? t("usage.hermes.task")}
+                  aria-label={t("usage.hermes.task")}
+                >
+                  <SelectValue
+                    placeholder={t("usage.hermes.taskPlaceholder")}
+                  />
+                </SelectTrigger>
+                <SelectContent className="max-w-[280px]">
+                  <SelectItem value="all">
+                    {t("usage.hermes.taskPlaceholder")}
+                  </SelectItem>
+                  {taskOptions.map((name) => (
+                    <SelectItem
+                      key={name}
+                      value={encodeOptionValue(name)}
+                      title={name}
+                      className="[&>span]:min-w-0 [&>span]:truncate"
+                    >
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          )}
+
           <div className="flex items-center gap-2 ml-auto lg:ml-0">
             <Select
               value={String(refreshIntervalMs)}
@@ -373,8 +493,25 @@ export function UsageDashboard({
         appType={appType === "all" ? undefined : appType}
         providerName={providerName}
         model={model}
+        profileName={profileName}
+        task={task}
         refreshIntervalMs={refreshIntervalMs}
       />
+
+      {showHermesPrecisionNotice && (
+        <div
+          className="flex items-start gap-2 rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-sm text-muted-foreground"
+          role="note"
+          data-testid="hermes-precision-notice"
+          title={hermesMetadata?.explanation}
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" />
+          <div className="space-y-0.5">
+            <p>{t("usage.hermes.precisionNotice")}</p>
+            <p>{t("usage.hermes.syncWindowNotice")}</p>
+          </div>
+        </div>
+      )}
 
       <UsageTrendChart
         range={range}
@@ -382,6 +519,8 @@ export function UsageDashboard({
         appType={appType}
         providerName={providerName}
         model={model}
+        profileName={profileName}
+        task={task}
         refreshIntervalMs={refreshIntervalMs}
       />
 
@@ -410,15 +549,25 @@ export function UsageDashboard({
             transition={{ delay: 0.2 }}
           >
             <TabsContent value="logs" className="mt-0">
-              <RequestLogTable
-                range={range}
-                rangeLabel={rangeLabel}
-                appType={appType}
-                providerName={providerName}
-                model={model}
-                refreshIntervalMs={refreshIntervalMs}
-                onRangeChange={setRange}
-              />
+              {appType === "hermes" ? (
+                <div
+                  className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-4 py-6 text-center text-sm text-muted-foreground"
+                  role="note"
+                  data-testid="hermes-request-details-notice"
+                >
+                  {t("usage.hermes.requestDetailsUnavailable")}
+                </div>
+              ) : (
+                <RequestLogTable
+                  range={range}
+                  rangeLabel={rangeLabel}
+                  appType={appType}
+                  providerName={providerName}
+                  model={model}
+                  refreshIntervalMs={refreshIntervalMs}
+                  onRangeChange={setRange}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="providers" className="mt-0">
@@ -427,6 +576,8 @@ export function UsageDashboard({
                 appType={appType}
                 providerName={providerName}
                 model={model}
+                profileName={profileName}
+                task={task}
                 refreshIntervalMs={refreshIntervalMs}
               />
             </TabsContent>
@@ -437,6 +588,8 @@ export function UsageDashboard({
                 appType={appType}
                 providerName={providerName}
                 model={model}
+                profileName={profileName}
+                task={task}
                 refreshIntervalMs={refreshIntervalMs}
               />
             </TabsContent>

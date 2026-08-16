@@ -1608,6 +1608,7 @@ pub fn run() {
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
             commands::get_usage_data_sources,
+            commands::get_hermes_usage_metadata,
             // Stream health check
             commands::stream_check_provider,
             commands::stream_check_all_providers,

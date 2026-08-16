@@ -1704,6 +1704,16 @@
     "source": "ソース",
     "requestsLabel": "リクエスト",
     "costLabel": "合計コスト",
+    "countLabel": {
+      "requests": "リクエスト数",
+      "hermesApiCalls": "集計 API 呼び出し数",
+      "mixedActivity": "集計アクティビティ数"
+    },
+    "averageCostLabel": {
+      "perRequest": "平均コスト",
+      "perApiCall": "API 呼び出しあたりの平均コスト",
+      "perActivity": "集計アクティビティあたりの平均コスト"
+    },
     "appFilter": {
       "all": "すべて",
       "claude": "Claude Code",
@@ -1711,7 +1721,19 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
+      "hermes": "Hermes",
       "pi": "Pi"
+    },
+    "hermes": {
+      "profile": "プロファイル",
+      "profilePlaceholder": "すべてのプロファイル",
+      "task": "タスク",
+      "taskPlaceholder": "すべてのタスク",
+      "precisionNotice": "カウントは Hermes の累積 api_call_count の差分であり、物理 HTTP リクエスト、リトライ、フォールバックの正確な回数ではありません。",
+      "syncWindowNotice": "トレンドの時刻は同期ウィンドウを示し、正確なリクエスト時刻ではありません。",
+      "requestDetailsUnavailable": "Hermes は集計データのみを提供するため、リクエストごとの詳細・ステータス・レイテンシーはありません。",
+      "reasoningTokens": "推論トークン",
+      "notAvailable": "未報告"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {
