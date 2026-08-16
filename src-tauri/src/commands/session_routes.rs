@@ -99,6 +99,9 @@ pub async fn cleanup_expired_session_routes(
 }
 
 /// 获取每个 provider 的 session 负载统计（含名称）
+///
+/// 只显示故障转移队列中的 provider（可分配 session 的候选），
+/// 外加当前有 session 但已移出队列的 provider（仍承载负载）。
 #[tauri::command]
 pub async fn get_session_provider_load(
     state: tauri::State<'_, AppState>,
@@ -108,26 +111,33 @@ pub async fn get_session_provider_load(
         .db
         .count_sessions_per_provider(&app_type)
         .map_err(|e| e.to_string())?;
-    let providers = state
+    let queue_providers = state
         .db
-        .get_all_providers(&app_type)
+        .get_failover_providers(&app_type)
         .map_err(|e| e.to_string())?;
 
-    let mut result: Vec<ProviderLoadInfo> = providers
+    let mut result: Vec<ProviderLoadInfo> = queue_providers
         .iter()
-        .map(|(id, p)| ProviderLoadInfo {
-            provider_id: id.clone(),
+        .map(|p| ProviderLoadInfo {
+            provider_id: p.id.clone(),
             provider_name: p.name.clone(),
-            session_count: counts.get(id).copied().unwrap_or(0),
+            session_count: counts.get(&p.id).copied().unwrap_or(0),
         })
         .collect();
 
-    // 有 session 但 provider 已被删除的，也列出来（名称标记为已删除）
+    // 有 session 但不在队列里的 provider 也列出（名称标记为队列外）
     for (id, count) in counts.iter() {
-        if !providers.contains_key(id) {
+        if *count > 0 && !queue_providers.iter().any(|p| p.id == *id) {
+            let name = state
+                .db
+                .get_provider_by_id(id, &app_type)
+                .ok()
+                .flatten()
+                .map(|p| p.name)
+                .unwrap_or_else(|| "(deleted)".to_string());
             result.push(ProviderLoadInfo {
                 provider_id: id.clone(),
-                provider_name: "(deleted)".to_string(),
+                provider_name: format!("{name} (未入队)"),
                 session_count: *count,
             });
         }
