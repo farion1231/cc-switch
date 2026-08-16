@@ -24,7 +24,16 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
+  getAgentSessionUsageFixture,
+  getAgentTaskUsageFixture,
+  getAgentTaskUsageFilterOptionsFixture,
+  getAgentUsageCapabilitiesFixture,
 } from "./state";
+import type {
+  AgentSessionUsageRequest,
+  AgentTaskUsageFilter,
+  AgentTaskUsageFilterOptionsRequest,
+} from "@/types/usage";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -133,6 +142,46 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/open_external`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/list_sessions`, () => success(listSessions())),
+
+  // Canonical Agent session/task usage data layer.  These fixtures are
+  // anonymous and deliberately include explicit zero, nullable/partial,
+  // unavailable, assistant-message, and agent-call semantics.
+  http.post(
+    `${TAURI_ENDPOINT}/get_agent_session_usage`,
+    async ({ request }) => {
+      const { request: usageRequest } = await withJson<{
+        request?: AgentSessionUsageRequest;
+      }>(request);
+      if (!usageRequest) {
+        return HttpResponse.json("Missing request", { status: 400 });
+      }
+      return success(getAgentSessionUsageFixture(usageRequest));
+    },
+  ),
+
+  http.post(
+    `${TAURI_ENDPOINT}/list_agent_task_usage`,
+    async ({ request }) => {
+      const { filter = {} } = await withJson<{
+        filter?: AgentTaskUsageFilter;
+      }>(request);
+      return success(getAgentTaskUsageFixture(filter));
+    },
+  ),
+
+  http.post(
+    `${TAURI_ENDPOINT}/get_agent_task_usage_filter_options`,
+    async ({ request }) => {
+      const { request: filterRequest = {} } = await withJson<{
+        request?: AgentTaskUsageFilterOptionsRequest;
+      }>(request);
+      return success(getAgentTaskUsageFilterOptionsFixture(filterRequest));
+    },
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_agent_usage_capabilities`, () =>
+    success(getAgentUsageCapabilitiesFixture()),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/get_session_messages`, async ({ request }) => {
     const { providerId, sourcePath } = await withJson<{

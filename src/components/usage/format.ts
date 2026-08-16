@@ -1,3 +1,8 @@
+import type {
+  AgentUsageMeasure,
+  AgentUsageSourceDimension,
+} from "@/types/usage";
+
 export function parseFiniteNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -29,6 +34,106 @@ export function fmtUsd(
   const num = parseFiniteNumber(value);
   if (num == null) return fallback;
   return `$${num.toFixed(digits)}`;
+}
+
+export type UsageCostStatus = "reported" | "estimated" | "unavailable";
+
+export function resolveUsageCostStatus(
+  sourceDimensions: AgentUsageSourceDimension[] | undefined,
+): UsageCostStatus {
+  if (
+    sourceDimensions?.some(
+      (dimension) => dimension.costStatus === "unavailable",
+    )
+  ) {
+    return "unavailable";
+  }
+  if (
+    sourceDimensions?.some((dimension) => dimension.costStatus === "estimated")
+  ) {
+    return "estimated";
+  }
+  return "reported";
+}
+
+/** Resolve the status for one displayed measure, not only its sources. */
+export function resolveUsageCostStatusForMeasure(
+  measure: AgentUsageMeasure | null | undefined,
+  sourceDimensions: AgentUsageSourceDimension[] | undefined,
+): UsageCostStatus {
+  if (!measure || measure.totalCostUsd == null) return "unavailable";
+  return resolveUsageCostStatus(sourceDimensions);
+}
+
+export function isCodexReplayInProgress(
+  sourceDimensions: AgentUsageSourceDimension[] | undefined,
+): boolean {
+  return Boolean(
+    sourceDimensions?.some(
+      (dimension) => dimension.costSource === "codex_replay",
+    ),
+  );
+}
+
+export function formatUsageCost(
+  measure: AgentUsageMeasure | null | undefined,
+  sourceDimensions: AgentUsageSourceDimension[] | undefined,
+  fallback = "—",
+): string {
+  return formatUsageCostWithStatus(
+    measure,
+    resolveUsageCostStatusForMeasure(measure, sourceDimensions),
+    fallback,
+  );
+}
+
+export function formatUsageCostWithStatus(
+  measure: AgentUsageMeasure | null | undefined,
+  status: UsageCostStatus,
+  fallback = "—",
+): string {
+  if (status === "unavailable" || !measure || measure.totalCostUsd == null) {
+    return fallback;
+  }
+  const value = fmtUsd(measure.totalCostUsd, 4, fallback);
+  return status === "estimated" ? `≈${value}` : value;
+}
+
+/**
+ * Display the sum of token components that the source actually provided.
+ *
+ * A trailing `+` means at least this many tokens are known; a missing
+ * component is never silently treated as zero. This is shared by the task
+ * table and the selected-session summary so partial Codex facts stay visible
+ * in both entry points.
+ */
+export function formatKnownTokenTotal(
+  measure:
+    | Pick<
+        AgentUsageMeasure,
+        | "inputTokens"
+        | "outputTokens"
+        | "cacheReadTokens"
+        | "cacheCreationTokens"
+      >
+    | null
+    | undefined,
+  language?: string,
+  fallback = "—",
+): string {
+  if (!measure) return fallback;
+
+  const values = [
+    measure.inputTokens,
+    measure.outputTokens,
+    measure.cacheReadTokens,
+    measure.cacheCreationTokens,
+  ];
+  const known = values.filter((value): value is number => value != null);
+  if (known.length === 0) return fallback;
+
+  const total = known.reduce((sum, value) => sum + value, 0);
+  return `${fmtInt(total, language, fallback)}${known.length === values.length ? "" : "+"}`;
 }
 
 function normalizeLanguageTag(language: string): string {
