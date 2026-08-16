@@ -548,9 +548,9 @@ fn codex_catalog_input_modalities(
     modalities.iter().map(|item| (*item).to_string()).collect()
 }
 
-/// Stable reasoning levels currently rendered by Codex Desktop for custom
-/// catalog entries. Provider-native values are kept in CC Switch settings and
-/// are never written into `supported_reasoning_levels`.
+/// Codex-facing reasoning levels exposed by default for custom catalog entries.
+/// Provider-native values are kept in CC Switch settings and are never written
+/// into `supported_reasoning_levels`.
 const CODEX_REASONING_LEVEL_DESCRIPTIONS: &[(&str, &str)] = &[
     ("low", "Fast responses with lighter reasoning"),
     (
@@ -559,6 +559,8 @@ const CODEX_REASONING_LEVEL_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     ("high", "Greater reasoning depth for complex problems"),
     ("xhigh", "Extra high reasoning depth for complex problems"),
+    ("max", "Maximum reasoning depth for the hardest problems"),
+    ("ultra", "Ultra reasoning depth"),
 ];
 
 fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
@@ -3539,6 +3541,8 @@ base_url = "https://production.api/v1"
                             { "level": "xhigh", "upstreamValue": "max", "description": "Maximum provider reasoning" },
                             { "level": "low", "upstreamValue": "light", "description": "Fast provider reasoning" },
                             { "level": "medium" },
+                            { "level": "max", "upstreamValue": "maximum" },
+                            { "level": "ultra", "description": "Unlimited provider reasoning" },
                             { "level": "bogus", "upstreamValue": "turbo" }
                         ],
                         "defaultReasoningLevel": "xhigh"
@@ -3568,7 +3572,7 @@ base_url = "https://production.api/v1"
                 .filter_map(|level| level.get("effort").and_then(Value::as_str))
                 .collect()
         };
-        assert_eq!(efforts(0), vec!["low", "medium", "xhigh"]);
+        assert_eq!(efforts(0), vec!["low", "medium", "xhigh", "max", "ultra"]);
         assert_eq!(
             models[0]["supported_reasoning_levels"][0]["description"],
             "Fast provider reasoning"
@@ -3581,6 +3585,14 @@ base_url = "https://production.api/v1"
             models[0]["supported_reasoning_levels"][2]["description"],
             "Maximum provider reasoning"
         );
+        assert_eq!(
+            models[0]["supported_reasoning_levels"][3]["description"],
+            "Maximum reasoning depth for the hardest problems"
+        );
+        assert_eq!(
+            models[0]["supported_reasoning_levels"][4]["description"],
+            "Unlimited provider reasoning"
+        );
         assert_eq!(models[0]["default_reasoning_level"], "xhigh");
         for entry in models[0]["supported_reasoning_levels"]
             .as_array()
@@ -3589,12 +3601,11 @@ base_url = "https://production.api/v1"
             assert!(entry.get("upstreamValue").is_none());
             assert!(entry.get("upstream_value").is_none());
             assert_ne!(entry.get("effort").and_then(Value::as_str), Some("light"));
-            assert_ne!(entry.get("effort").and_then(Value::as_str), Some("max"));
         }
 
-        // Existing #6228 data migrates to the stable levels that Codex Desktop
-        // actually renders for custom models.
-        assert_eq!(efforts(1), vec!["low", "high"]);
+        // Existing #6228 data keeps every configured supported level while
+        // dropping none/minimal, which are intentionally not exposed by default.
+        assert_eq!(efforts(1), vec!["low", "high", "max"]);
         assert_eq!(models[1]["default_reasoning_level"], "high");
     }
 

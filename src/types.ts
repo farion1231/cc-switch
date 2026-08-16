@@ -258,7 +258,13 @@ export type ClaudeApiFormat =
 // - "anthropic": native Anthropic Messages format, needs local routing to convert to Responses
 export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
 
-export type CodexReasoningLevel = "low" | "medium" | "high" | "xhigh";
+export type CodexReasoningLevel =
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultra";
 
 export interface CodexReasoningEffortMapping {
   // Stable effort exposed by the Codex model picker.

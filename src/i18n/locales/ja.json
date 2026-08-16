@@ -1547,7 +1547,7 @@
     "reasoningMappingDescriptionPlaceholder": "Codex の既定説明を使用",
     "reasoningMappingUpstreamAria": "{{level}} の上流値",
     "reasoningMappingDescriptionAria": "{{level}} の説明",
-    "reasoningMappingHint": "Codex には上記の固定レベルが表示されます。上流値はリクエストが CC Switch ルーティングを通る場合のみ適用され、空欄の場合は Codex の値をそのまま転送します。"
+    "reasoningMappingHint": "low から ultra までの6段階がデフォルトで有効です。上流値はリクエストが CC Switch ルーティングを通る場合のみ適用され、空欄の場合は Codex の値をそのまま転送します。"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",

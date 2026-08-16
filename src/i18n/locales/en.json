@@ -1547,7 +1547,7 @@
     "reasoningMappingDescriptionPlaceholder": "Use Codex default",
     "reasoningMappingUpstreamAria": "{{level}} upstream value",
     "reasoningMappingDescriptionAria": "{{level}} description",
-    "reasoningMappingHint": "Codex shows the fixed levels above. Upstream values are applied only when requests pass through CC Switch routing; leave blank to forward the same value."
+    "reasoningMappingHint": "Low through Ultra are enabled by default. Upstream values are applied only when requests pass through CC Switch routing; leave blank to forward the same value."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",

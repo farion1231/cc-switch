@@ -108,7 +108,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
               ? rawReasoningMappings
               : legacyReasoningLevels
                   ?.filter((level: unknown) =>
-                    ["low", "medium", "high", "xhigh"].includes(
+                    ["low", "medium", "high", "xhigh", "max", "ultra"].includes(
                       String(level).trim().toLowerCase(),
                     ),
                   )
@@ -142,11 +142,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
                 : {}),
               ...(inputModalities ? { inputModalities } : {}),
               ...(baseInstructions ? { baseInstructions } : {}),
-              ...(reasoningEffortMappings && reasoningEffortMappings.length > 0
+              ...(reasoningEffortMappings !== undefined
                 ? { reasoningEffortMappings }
                 : {}),
               ...(defaultReasoningLevel &&
-              ["low", "medium", "high", "xhigh"].includes(
+              ["low", "medium", "high", "xhigh", "max", "ultra"].includes(
                 defaultReasoningLevel.trim().toLowerCase(),
               )
                 ? {

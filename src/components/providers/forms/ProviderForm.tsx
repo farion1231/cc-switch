@@ -168,6 +168,8 @@ export const normalizeCodexCatalogModelsForSave = (
       "medium",
       "high",
       "xhigh",
+      "max",
+      "ultra",
     ];
     const rawMappings: Array<{
       level: unknown;
@@ -226,7 +228,8 @@ export const normalizeCodexCatalogModelsForSave = (
         ? { inputModalities }
         : {}),
       ...(baseInstructions ? { baseInstructions } : {}),
-      ...(reasoningEffortMappings.length > 0
+      ...(item.reasoningEffortMappings !== undefined ||
+      item.reasoningLevels !== undefined
         ? { reasoningEffortMappings }
         : {}),
       ...(normalizedDefaultReasoningLevel

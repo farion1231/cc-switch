@@ -60,6 +60,7 @@ describe("ProviderForm Codex catalog helpers", () => {
             { level: "xhigh", upstreamValue: " max ", description: " Deep " },
             { level: "low", upstreamValue: " light " },
             { level: "medium", description: " Balanced " },
+            { level: "ultra", upstreamValue: " unlimited " },
             { level: "low", upstreamValue: "duplicate" },
           ],
           defaultReasoningLevel: "xhigh",
@@ -78,12 +79,17 @@ describe("ProviderForm Codex catalog helpers", () => {
           { level: "low", upstreamValue: "duplicate" },
           { level: "medium", description: "Balanced" },
           { level: "xhigh", upstreamValue: "max", description: "Deep" },
+          { level: "ultra", upstreamValue: "unlimited" },
         ],
         defaultReasoningLevel: "xhigh",
       },
       {
         model: "legacy-model",
-        reasoningEffortMappings: [{ level: "low" }, { level: "high" }],
+        reasoningEffortMappings: [
+          { level: "low" },
+          { level: "high" },
+          { level: "max" },
+        ],
         defaultReasoningLevel: "high",
       },
     ]);

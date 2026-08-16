@@ -1547,7 +1547,7 @@
     "reasoningMappingDescriptionPlaceholder": "使用 Codex 默认描述",
     "reasoningMappingUpstreamAria": "{{level}} 上游值",
     "reasoningMappingDescriptionAria": "{{level}} 描述",
-    "reasoningMappingHint": "Codex 固定显示以上档位。请求经过 CC Switch 路由时才会应用上游值；留空则原样传递 Codex 档位。"
+    "reasoningMappingHint": "默认启用 low 到 ultra 六个档位。请求经过 CC Switch 路由时才会应用上游值；留空则原样传递 Codex 档位。"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",

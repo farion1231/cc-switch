@@ -137,6 +137,21 @@ interface CodexFormFieldsProps {
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
 
+// Codex-facing levels exposed by default for every custom catalog model.
+// Provider-native values are configured independently in the mapping editor.
+const CODEX_REASONING_LEVELS: readonly CodexReasoningLevel[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+];
+
+const createDefaultReasoningEffortMappings =
+  (): CodexReasoningEffortMapping[] =>
+    CODEX_REASONING_LEVELS.map((level) => ({ level }));
+
 function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
   return {
     rowId: crypto.randomUUID(),
@@ -152,9 +167,10 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.baseInstructions
       ? { baseInstructions: seed.baseInstructions }
       : {}),
-    ...(seed?.reasoningEffortMappings && seed.reasoningEffortMappings.length > 0
-      ? { reasoningEffortMappings: seed.reasoningEffortMappings }
-      : {}),
+    reasoningEffortMappings:
+      seed?.reasoningEffortMappings !== undefined
+        ? seed.reasoningEffortMappings
+        : createDefaultReasoningEffortMappings(),
     ...(seed?.defaultReasoningLevel
       ? { defaultReasoningLevel: seed.defaultReasoningLevel }
       : {}),
@@ -190,15 +206,6 @@ function catalogRowsMatchModels(
   });
 }
 
-// Codex Desktop currently renders these catalog efforts as Light, Medium, High,
-// and Extra High. Provider-native values are configured separately below.
-const CODEX_REASONING_LEVELS: readonly CodexReasoningLevel[] = [
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-];
-
 // Sentinel for the default-level Select: Radix Select forbids empty item
 // values, so "back to Auto" needs a non-empty value mapped to undefined.
 const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
@@ -232,7 +239,7 @@ function ReasoningLevelsEditor({
       const mapping = nextByLevel.get(level);
       return mapping ? [mapping] : [];
     });
-    onMappingsChange(next.length > 0 ? next : undefined);
+    onMappingsChange(next);
     if (defaultLevel && !nextByLevel.has(defaultLevel)) {
       onDefaultLevelChange(undefined);
     }
