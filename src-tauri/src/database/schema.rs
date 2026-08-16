@@ -536,6 +536,11 @@ impl Database {
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
                     }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（添加 Session 路由表）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1562,6 +1567,38 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
+    }
+
+    /// 迁移 v17 → v18：添加 Session 路由表
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_routes (
+                session_id    TEXT NOT NULL,
+                app_type      TEXT NOT NULL,
+                provider_id   TEXT NOT NULL,
+                assigned_at   INTEGER NOT NULL,
+                last_used_at  INTEGER NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                failover_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, app_type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_routes_last_used
+                ON session_routes(last_used_at);
+            CREATE INDEX IF NOT EXISTS idx_session_routes_provider
+                ON session_routes(app_type, provider_id);
+
+            CREATE TABLE IF NOT EXISTS session_routing_config (
+                app_type          TEXT PRIMARY KEY,
+                enabled           INTEGER NOT NULL DEFAULT 0,
+                strategy          TEXT NOT NULL DEFAULT 'round_robin',
+                session_ttl_seconds INTEGER NOT NULL DEFAULT 3600,
+                max_sessions_per_provider INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT OR IGNORE INTO session_routing_config (app_type)
+                VALUES ('claude'), ('codex'), ('gemini'), ('grokbuild');",
+        )
+        .map_err(|error| AppError::Database(format!("创建 Session 路由表失败: {error}")))?;
         Ok(())
     }
 

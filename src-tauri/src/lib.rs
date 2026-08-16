@@ -1690,6 +1690,13 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // Session routing
+            commands::get_session_routing_config,
+            commands::update_session_routing_config,
+            commands::get_active_session_routes,
+            commands::delete_session_route,
+            commands::cleanup_expired_session_routes,
+            commands::get_session_provider_load,
         ]);
 
     let app = builder
