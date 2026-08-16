@@ -103,6 +103,15 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Kimi For Coding", "kimi-for-coding-highspeed", ["high"]],
     ["Kimi For Coding", "k3", ["low", "high", "max"], "high"],
     ["Kimi For Coding", "k3-256k", ["low", "high", "max"], "high"],
+    // OpenCode Go（Zen 网关）：opencode 客户端 variants() 严格按各模型在
+    // models.dev 的 reasoning_options 声明发 reasoning_effort（provider/
+    // transform.ts）——glm-5.2 / deepseek-v4-pro 仅 high|max、v4-flash 另
+    // 声明 low（均无 none：effort 档位非思考开关，none 会是假开关）。本 PR
+    // 已为该预设补上 codexChatReasoning（effortValueMode:"zen"），代理转换
+    // 层按同一张表逐模型钳制，表即下发生效的依据
+    ["OpenCode Go", "glm-5.2", ["high", "max"]],
+    ["OpenCode Go", "deepseek-v4-pro", ["high", "max"]],
+    ["OpenCode Go", "deepseek-v4-flash", ["low", "high", "max"]],
   ];
 
   it.each(EXPECTED)(
@@ -117,15 +126,16 @@ describe("Codex preset pre-filled reasoning levels", () => {
   );
 
   it("keeps deliberately-unfilled presets unfilled", () => {
-    // Bailian qwen3-coder-plus 无 per-model 档位证据；OpenCode Go 是多厂商
-    // Chat 网关且无 codexChatReasoning 声明（思考开关不生效，填 none 会是假
-    // 开关），逐模型语义未经网关验证前保持不填。SiliconFlow .cn 的 M2.5 能否
-    // 真正关思考无官方明文、ModelScope 是否透传思考字段未证实——真机验证前
-    // 不造两态假开关（2026-08-15 盘点结论）
+    // Bailian qwen3-coder-plus 无 per-model 档位证据。OpenCode Go 的
+    // toggle/未收录模型保持不填：glm-5.1 是 toggle 型（models.dev 无 effort
+    // 声明）、kimi-k2.7-code 官方标注不支持 effort、mimo-v2.5-pro 未收录
+    // models.dev——与 opencode 客户端一致（代理侧无表不发 reasoning_effort
+    // 字段）。SiliconFlow .cn 的 M2.5 能否真正关思考无官方明文、ModelScope
+    // 是否透传思考字段未证实——真机验证前不造两态假开关（2026-08-15 盘点结论）
     const UNFILLED: Array<[string, string]> = [
       ["Bailian", "qwen3-coder-plus"],
-      ["OpenCode Go", "glm-5.2"],
-      ["OpenCode Go", "deepseek-v4-flash"],
+      ["OpenCode Go", "glm-5.1"],
+      ["OpenCode Go", "kimi-k2.7-code"],
       ["OpenCode Go", "mimo-v2.5-pro"],
       ["SiliconFlow", "Pro/MiniMaxAI/MiniMax-M2.5"],
       ["ModelScope", "ZhipuAI/GLM-5.2"],
