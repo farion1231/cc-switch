@@ -112,7 +112,6 @@ export function useSessionProviderLoad(appType: string) {
     refetchInterval: 10000,
   });
 }
-
 export function useCleanupExpiredRoutes() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();

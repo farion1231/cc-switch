@@ -18,6 +18,12 @@ export interface SessionRoutingConfig {
   maxSessionsPerProvider: number;
 }
 
+export interface ProviderLoadInfo {
+  providerId: string;
+  providerName: string;
+  sessionCount: number;
+}
+
 export const sessionRoutesApi = {
   async getConfig(appType: string): Promise<SessionRoutingConfig> {
     return invoke("get_session_routing_config", { appType });
@@ -59,7 +65,7 @@ export const sessionRoutesApi = {
 
   async getProviderLoad(
     appType: string,
-  ): Promise<Record<string, number>> {
+  ): Promise<ProviderLoadInfo[]> {
     return invoke("get_session_provider_load", { appType });
   },
 };

@@ -2,7 +2,7 @@
 //!
 //! 管理 session 级 provider 路由的配置和状态查询
 
-use crate::proxy::session_router::{SessionRouteInfo, SessionRoutingConfig};
+use crate::proxy::session_router::{ProviderLoadInfo, SessionRouteInfo, SessionRoutingConfig};
 use crate::store::AppState;
 
 /// 获取 Session 路由配置
@@ -98,14 +98,42 @@ pub async fn cleanup_expired_session_routes(
         .map_err(|e| e.to_string())
 }
 
-/// 获取每个 provider 的 session 负载统计
+/// 获取每个 provider 的 session 负载统计（含名称）
 #[tauri::command]
 pub async fn get_session_provider_load(
     state: tauri::State<'_, AppState>,
     app_type: String,
-) -> Result<std::collections::HashMap<String, u64>, String> {
-    state
+) -> Result<Vec<ProviderLoadInfo>, String> {
+    let counts = state
         .db
         .count_sessions_per_provider(&app_type)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let providers = state
+        .db
+        .get_all_providers(&app_type)
+        .map_err(|e| e.to_string())?;
+
+    let mut result: Vec<ProviderLoadInfo> = providers
+        .iter()
+        .map(|(id, p)| ProviderLoadInfo {
+            provider_id: id.clone(),
+            provider_name: p.name.clone(),
+            session_count: counts.get(id).copied().unwrap_or(0),
+        })
+        .collect();
+
+    // 有 session 但 provider 已被删除的，也列出来（名称标记为已删除）
+    for (id, count) in counts.iter() {
+        if !providers.contains_key(id) {
+            result.push(ProviderLoadInfo {
+                provider_id: id.clone(),
+                provider_name: "(deleted)".to_string(),
+                session_count: *count,
+            });
+        }
+    }
+
+    // 按 session 数降序
+    result.sort_by(|a, b| b.session_count.cmp(&a.session_count));
+    Ok(result)
 }

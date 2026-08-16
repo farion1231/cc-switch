@@ -74,6 +74,15 @@ pub struct SessionRouteInfo {
     pub failover_count: u64,
 }
 
+/// Provider 负载信息（用于 UI 展示，含名称）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLoadInfo {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub session_count: u64,
+}
+
 /// Session 路由器
 pub struct SessionRouter {
     db: Arc<Database>,

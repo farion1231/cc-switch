@@ -46,7 +46,7 @@ export function SessionRoutingPage() {
   const updateConfig = useUpdateSessionRoutingConfig();
   const { data: routes = [], isLoading: routesLoading } =
     useActiveSessionRoutes(selectedApp);
-  const { data: providerLoad = {} } = useSessionProviderLoad(selectedApp);
+  const { data: providerLoad = [] } = useSessionProviderLoad(selectedApp);
   const deleteRoute = useDeleteSessionRoute();
   const setRouteProvider = useSetSessionRouteProvider();
   const cleanupExpired = useCleanupExpiredRoutes();
@@ -225,32 +225,40 @@ export function SessionRoutingPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {Object.keys(providerLoad).length === 0 ? (
+          {providerLoad.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {t("sessionRoutes.noLoadData")}
             </p>
           ) : (
             <div className="space-y-2">
-              {Object.entries(providerLoad).map(([providerId, count]) => (
+              {providerLoad.map((info) => (
                 <div
-                  key={providerId}
+                  key={info.providerId}
                   className="flex items-center justify-between"
                 >
-                  <div className="flex items-center gap-2">
-                    <ProviderIcon name={providerId} size={24} />
-                    <span className="text-sm">{providerId}</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <ProviderIcon name={info.providerName} size={24} />
+                    <span className="text-sm truncate">{info.providerName}</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
                       <div
                         className="h-full bg-primary rounded-full transition-all"
                         style={{
-                          width: `${Math.min((count / Math.max(Object.values(providerLoad).length, 1)) * 100, 100)}%`,
+                          width: `${Math.min(
+                            (info.sessionCount /
+                              Math.max(
+                                ...providerLoad.map((i) => i.sessionCount),
+                                1,
+                              )) *
+                              100,
+                            100,
+                          )}%`,
                         }}
                       />
                     </div>
                     <span className="text-xs text-muted-foreground w-4 text-right">
-                      {count}
+                      {info.sessionCount}
                     </span>
                   </div>
                 </div>
