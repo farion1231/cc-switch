@@ -199,6 +199,27 @@ fn schema_migration_sets_user_version_when_missing() {
         Database::get_user_version(&conn).expect("read version after"),
         SCHEMA_VERSION
     );
+    assert!(Database::table_exists(&conn, "agent_session_nodes").expect("session nodes table"));
+    assert!(
+        Database::table_exists(&conn, "agent_session_usage_rollups").expect("session usage table")
+    );
+    assert!(
+        Database::table_exists(&conn, "agent_session_usage_snapshots")
+            .expect("session snapshot table")
+    );
+    assert!(
+        Database::table_exists(&conn, "agent_session_canonical_coverage")
+            .expect("canonical coverage table")
+    );
+    let snapshot_index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_agent_session_usage_snapshots_lookup'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("session snapshot index");
+    assert_eq!(snapshot_index_count, 1);
 }
 
 #[test]

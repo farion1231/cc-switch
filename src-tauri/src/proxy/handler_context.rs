@@ -64,12 +64,18 @@ pub struct RequestContext {
     pub session_id: String,
     /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
     pub session_client_provided: bool,
+    /// 可用于长期用量归属的会话 ID。代理生成的请求级 UUID 不写入用量日志。
+    pub usage_session_id: Option<String>,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+}
+
+fn usage_session_id_for(session_id: &str, client_provided: bool) -> Option<String> {
+    client_provided.then(|| session_id.to_string())
 }
 
 impl RequestContext {
@@ -120,6 +126,7 @@ impl RequestContext {
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
         let session_id = session_result.session_id.clone();
+        let usage_session_id = usage_session_id_for(&session_id, session_result.client_provided);
 
         log::debug!(
             "[{}] Session ID: {} (from {:?}, client_provided: {})",
@@ -170,6 +177,7 @@ impl RequestContext {
             app_type,
             session_id,
             session_client_provided: session_result.client_provided,
+            usage_session_id,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -300,7 +308,20 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_gemini_model_from_path;
+    use super::{extract_gemini_model_from_path, usage_session_id_for};
+
+    #[test]
+    fn generated_session_id_is_not_persisted_for_usage() {
+        assert_eq!(usage_session_id_for("generated-session", false), None);
+    }
+
+    #[test]
+    fn client_session_id_is_persisted_for_usage() {
+        assert_eq!(
+            usage_session_id_for("client-session", true).as_deref(),
+            Some("client-session")
+        );
+    }
 
     #[test]
     fn extract_model_with_action() {

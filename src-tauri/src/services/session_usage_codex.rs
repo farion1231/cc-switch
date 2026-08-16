@@ -13,18 +13,31 @@
 //! - `turn_context` → 提取当前 model
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
 
-use crate::codex_config::get_codex_config_dir;
+use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
+use crate::codex_state_db::codex_state_db_paths;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
+use crate::services::agent_session_usage::{
+    local_usage_date, RelationClaim, RelationConfidence, RequestCountSemantics,
+    SessionNodeMetadata, SessionRelationClaim, TimeSemantics, UsagePrecision,
+};
 use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state, update_sync_state_on_conn, SessionSyncResult,
 };
+use crate::services::session_usage_pipeline::{
+    has_canonical_coverage_on_conn, publish_canonical_batch_on_conn,
+    reserve_canonical_coverage_on_conn, CanonicalUsageBatch, RawUsageLogRow, UsageObservation,
+    UsagePublishTarget as CodexStorage, UsageSourceSpec,
+};
 use crate::services::usage_stats::{
-    find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
+    find_matching_proxy_usage_log, find_matching_proxy_usage_log_for_coverage_source,
+    find_model_pricing, has_proxy_request_id, has_suspected_codex_session_duplicate,
+    should_skip_session_insert, DedupKey, SESSION_PROXY_DEDUP_WINDOW_SECONDS,
 };
 use chrono::{DateTime, Utc};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::fs;
@@ -35,13 +48,68 @@ use std::os::unix::fs::MetadataExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
 };
 
 const CODEX_THREAD_REQUEST_ID_PREFIX: &str = "codex_session:thread-v1";
+const CODEX_REPLAY_STATE_KEY: &str = "codex_usage_canonical_replay_v1";
+const CODEX_REPLAY_PENDING: &str = "pending";
+const CODEX_REPLAYING: &str = "replaying";
+const CODEX_REPLAY_COMPLETE: &str = "complete";
+fn has_codex_storage_coverage_on_conn(
+    conn: &Connection,
+    storage: CodexStorage,
+    source: &str,
+    request_id: &str,
+) -> Result<bool, AppError> {
+    has_canonical_coverage_on_conn(conn, storage, "codex", source, request_id)
+}
+
+fn has_codex_storage_session_log_on_conn(
+    conn: &Connection,
+    storage: CodexStorage,
+    request_id: &str,
+) -> Result<bool, AppError> {
+    if storage == CodexStorage::Published {
+        return has_proxy_request_id(conn, request_id);
+    }
+    let sql = format!(
+        "SELECT EXISTS(SELECT 1 FROM {} WHERE request_id = ?1)",
+        storage.session_log_table()
+    );
+    conn.query_row(&sql, [request_id], |row| row.get(0))
+        .map_err(|error| AppError::Database(format!("读取 Codex 重放会话明细失败: {error}")))
+}
+
+/// Reserve a proxy request for this Codex canonical event immediately in the
+/// caller-owned transaction.  The matching SQL excludes rows with a proxy
+/// coverage marker, so writing the reservation before moving to the next event
+/// makes duplicate fingerprints in one batch claim distinct proxy rows (or
+/// fall back to a native compatibility row when no proxy row remains).
+///
+/// This intentionally runs on the same transaction as the canonical fact.  A
+/// later fact/coverage/cursor failure therefore rolls the reservation back with
+/// the rest of the batch instead of leaving an orphan marker.
+fn reserve_codex_proxy_coverage_on_conn(
+    conn: &Connection,
+    storage: CodexStorage,
+    request_id: &str,
+    session_id: &str,
+    marked_at: i64,
+) -> Result<(), AppError> {
+    reserve_canonical_coverage_on_conn(
+        conn,
+        storage,
+        "codex",
+        "proxy",
+        request_id,
+        Some(session_id),
+        marked_at,
+    )
+}
 
 /// 累计 token 用量（跟踪 total_token_usage 字段）
 #[derive(Debug, Clone, Default)]
@@ -57,6 +125,18 @@ struct DeltaTokens {
     input: u32,
     cached_input: u32,
     output: u32,
+}
+
+/// Source-presence-aware components for one token_count event.  The raw
+/// compatibility table has no nullable component distinction, so canonical
+/// facts carry these options directly from the JSON source instead of
+/// treating a missing field as zero.
+#[derive(Debug, Clone, Default)]
+struct ParsedUsageComponents {
+    input: Option<u32>,
+    cache_read: Option<u32>,
+    output: Option<u32>,
+    reasoning: Option<u32>,
 }
 
 impl DeltaTokens {
@@ -147,6 +227,23 @@ struct ParentTokenTimeline {
 }
 
 impl ParentTokenTimeline {
+    fn parent_file_is_stable_before_cutoff(parent_path: &Path, cutoff: DateTime<Utc>) -> bool {
+        let Ok(metadata) = fs::metadata(parent_path) else {
+            return false;
+        };
+        let Ok(modified) = metadata.modified() else {
+            return false;
+        };
+        let Ok(duration) = modified.duration_since(SystemTime::UNIX_EPOCH) else {
+            return false;
+        };
+        // A closed parent rollout whose file mtime predates the child fork is
+        // complete evidence, even when its last token snapshot happened much
+        // earlier.  Requiring a token at the exact fork time would otherwise
+        // leave historical forks deferred forever.
+        duration.as_secs() < cutoff.timestamp().max(0) as u64
+    }
+
     fn signatures_before(
         &self,
         parent_path: &Path,
@@ -161,6 +258,7 @@ impl ParentTokenTimeline {
         if self
             .max_timestamp
             .is_none_or(|timestamp| timestamp < cutoff)
+            && !Self::parent_file_is_stable_before_cutoff(parent_path, cutoff)
         {
             return Err(format!(
                 "父 rollout {} 尚未写到 child fork 时刻",
@@ -197,6 +295,8 @@ struct ParsedTokenEvent {
     event_index: Option<u32>,
     model: String,
     timestamp: Option<String>,
+    precision: UsagePrecision,
+    source_components: ParsedUsageComponents,
 }
 
 #[derive(Debug)]
@@ -211,6 +311,7 @@ struct ParsedCodexFile {
     root_thread_id: Option<String>,
     root_meta_seen: bool,
     root_timestamp: Option<DateTime<Utc>>,
+    project_dir: Option<String>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
     line_offset: i64,
@@ -236,12 +337,21 @@ struct CodexReplayCaches {
     parent_timelines: HashMap<PathBuf, CachedParentTimeline>,
     replay_prefixes: HashMap<PathBuf, CachedReplayPrefix>,
     pending: HashMap<PathBuf, PendingEntry>,
+    request_precisions: HashMap<String, UsagePrecision>,
 }
 
 static CODEX_REPLAY_CACHES: OnceLock<Mutex<CodexReplayCaches>> = OnceLock::new();
 
 fn replay_caches() -> &'static Mutex<CodexReplayCaches> {
     CODEX_REPLAY_CACHES.get_or_init(|| Mutex::new(CodexReplayCaches::default()))
+}
+
+fn remember_request_precision(request_id: &str, precision: UsagePrecision) {
+    if let Ok(mut caches) = replay_caches().lock() {
+        caches
+            .request_precisions
+            .insert(request_id.to_string(), precision);
+    }
 }
 
 pub(crate) fn clear_codex_replay_caches() {
@@ -280,34 +390,12 @@ fn is_codex_cursor_path(file_path: &str, codex_dir: &Path) -> bool {
         .any(|segment| matches!(segment, "sessions" | "archived_sessions"))
 }
 
-fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool, AppError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-        [table],
-        |row| row.get(0),
-    )
-    .map_err(|error| AppError::Database(format!("查询表 {table} 失败: {error}")))
-}
-
-fn sqlite_column_exists(
-    conn: &rusqlite::Connection,
-    table: &str,
-    column: &str,
-) -> Result<bool, AppError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
-        rusqlite::params![table, column],
-        |row| row.get(0),
-    )
-    .map_err(|error| AppError::Database(format!("查询列 {table}.{column} 失败: {error}")))
-}
-
 pub(crate) fn reset_codex_usage_on_conn(
     conn: &rusqlite::Connection,
     codex_dir: &Path,
 ) -> Result<(), AppError> {
-    if sqlite_table_exists(conn, "proxy_request_logs")?
-        && sqlite_column_exists(conn, "proxy_request_logs", "data_source")?
+    if Database::table_exists(conn, "proxy_request_logs")?
+        && Database::has_column(conn, "proxy_request_logs", "data_source")?
     {
         conn.execute(
             "DELETE FROM proxy_request_logs WHERE data_source = 'codex_session'",
@@ -315,8 +403,8 @@ pub(crate) fn reset_codex_usage_on_conn(
         )
         .map_err(|error| AppError::Database(format!("清理 Codex 会话明细失败: {error}")))?;
     }
-    if sqlite_table_exists(conn, "usage_daily_rollups")?
-        && sqlite_column_exists(conn, "usage_daily_rollups", "provider_id")?
+    if Database::table_exists(conn, "usage_daily_rollups")?
+        && Database::has_column(conn, "usage_daily_rollups", "provider_id")?
     {
         conn.execute(
             "DELETE FROM usage_daily_rollups WHERE provider_id = '_codex_session'",
@@ -324,8 +412,8 @@ pub(crate) fn reset_codex_usage_on_conn(
         )
         .map_err(|error| AppError::Database(format!("清理 Codex 用量汇总失败: {error}")))?;
     }
-    if sqlite_table_exists(conn, "session_log_sync")?
-        && sqlite_column_exists(conn, "session_log_sync", "file_path")?
+    if Database::table_exists(conn, "session_log_sync")?
+        && Database::has_column(conn, "session_log_sync", "file_path")?
     {
         let paths = {
             let mut statement = conn
@@ -356,30 +444,182 @@ pub(crate) fn reset_codex_usage_on_conn(
     Ok(())
 }
 
-impl Database {
-    pub(crate) fn reset_codex_usage(&self) -> Result<(), AppError> {
-        let codex_dir = get_codex_config_dir();
-        let conn = lock_conn!(self.conn);
-        conn.execute("SAVEPOINT reset_codex_usage", [])
-            .map_err(|error| AppError::Database(format!("开启 Codex 重建事务失败: {error}")))?;
-        let result = reset_codex_usage_on_conn(&conn, &codex_dir);
-        match result {
-            Ok(()) => {
-                conn.execute("RELEASE reset_codex_usage", [])
-                    .map_err(|error| {
-                        AppError::Database(format!("提交 Codex 重建事务失败: {error}"))
-                    })?;
-                drop(conn);
-                clear_codex_replay_caches();
-                Ok(())
-            }
-            Err(error) => {
-                conn.execute("ROLLBACK TO reset_codex_usage", []).ok();
-                conn.execute("RELEASE reset_codex_usage", []).ok();
-                Err(error)
-            }
+fn codex_replay_state_on_conn(conn: &Connection) -> Result<String, AppError> {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        [CODEX_REPLAY_STATE_KEY],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map(|value| value.unwrap_or_else(|| CODEX_REPLAY_COMPLETE.to_string()))
+    .map_err(|error| AppError::Database(format!("读取 Codex replay 状态失败: {error}")))
+}
+
+fn set_codex_replay_state_on_conn(conn: &Connection, state: &str) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+        rusqlite::params![CODEX_REPLAY_STATE_KEY, state],
+    )
+    .map_err(|error| AppError::Database(format!("写入 Codex 重放状态失败: {error}")))?;
+    Ok(())
+}
+
+pub(crate) fn codex_replay_in_progress_on_conn(conn: &Connection) -> bool {
+    codex_replay_state_on_conn(conn)
+        .map(|state| matches!(state.as_str(), CODEX_REPLAY_PENDING | CODEX_REPLAYING))
+        .unwrap_or(false)
+}
+
+fn readable_codex_files(codex_dir: &Path) -> Result<Vec<PathBuf>, AppError> {
+    let files = collect_codex_session_files(codex_dir);
+    if files.is_empty() {
+        return Err(AppError::Config(
+            "没有找到可用于 Codex 用量重放的 rollout 文件".into(),
+        ));
+    }
+    for path in &files {
+        fs::File::open(path).map_err(|error| {
+            AppError::Config(format!(
+                "无法读取 Codex rollout {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(files)
+}
+
+fn clear_codex_replay_stage_on_conn(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "DELETE FROM codex_replay_nodes;
+         DELETE FROM codex_replay_rollups;
+         DELETE FROM codex_replay_coverage;
+         DELETE FROM codex_replay_session_logs;
+         DELETE FROM codex_replay_sync;",
+    )
+    .map_err(|error| AppError::Database(format!("清理 Codex 重放影子数据失败: {error}")))
+}
+
+fn reset_codex_usage_and_mark_replaying(db: &Database) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    conn.execute("SAVEPOINT reset_codex_usage_replay", [])
+        .map_err(|error| AppError::Database(format!("开启 Codex 重放事务失败: {error}")))?;
+    let result = (|| {
+        clear_codex_replay_stage_on_conn(&conn)?;
+        set_codex_replay_state_on_conn(&conn, CODEX_REPLAYING)
+    })();
+    match result {
+        Ok(()) => {
+            conn.execute("RELEASE reset_codex_usage_replay", [])
+                .map_err(|error| AppError::Database(format!("提交 Codex 重放事务失败: {error}")))?;
+            drop(conn);
+            clear_codex_replay_caches();
+            Ok(())
+        }
+        Err(error) => {
+            conn.execute("ROLLBACK TO reset_codex_usage_replay", [])
+                .ok();
+            conn.execute("RELEASE reset_codex_usage_replay", []).ok();
+            Err(error)
         }
     }
+}
+
+fn publish_codex_replay_on_conn(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "UPDATE codex_replay_nodes SET app_type = 'codex';
+         UPDATE codex_replay_rollups SET app_type = 'codex';
+         UPDATE codex_replay_coverage
+         SET app_type = 'codex',
+             data_source = CASE data_source
+                 WHEN 'codex_session_replay' THEN 'codex_session'
+                 WHEN 'proxy_replay' THEN 'proxy'
+                 ELSE data_source
+             END;
+         DELETE FROM agent_session_usage_rollups WHERE app_type = 'codex';
+         DELETE FROM agent_session_nodes WHERE app_type = 'codex';
+         DELETE FROM agent_session_canonical_coverage
+         WHERE app_type = 'codex' AND data_source IN ('codex_session', 'proxy');
+         INSERT OR REPLACE INTO agent_session_nodes
+         SELECT * FROM codex_replay_nodes;
+         INSERT OR REPLACE INTO agent_session_usage_rollups
+         SELECT * FROM codex_replay_rollups;
+         INSERT OR REPLACE INTO agent_session_canonical_coverage
+         SELECT * FROM codex_replay_coverage;",
+    )
+    .map_err(|error| AppError::Database(format!("发布 Codex 重放数据失败: {error}")))?;
+    clear_codex_replay_stage_on_conn(conn)
+}
+
+fn codex_replay_state(db: &Database) -> Result<String, AppError> {
+    let conn = lock_conn!(db.conn);
+    codex_replay_state_on_conn(&conn)
+}
+
+fn finish_codex_replay_if_ready(db: &Database, result: &SessionSyncResult) -> Result<(), AppError> {
+    if result.files_scanned == 0 || !result.errors.is_empty() || result.deferred_files != 0 {
+        return Ok(());
+    }
+    let conn = lock_conn!(db.conn);
+    // A replay is eligible when the scan is complete and it produced at least
+    // one durable, parsed session identity.  Rollups are intentionally not a
+    // requirement: valid metadata-only/zero-usage rollouts still need to
+    // publish their node generation and transition out of `replaying`.
+    let valid_identity_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM codex_replay_nodes
+         WHERE app_type = 'codex_replay' AND TRIM(COALESCE(session_id, '')) <> ''",
+        [],
+        |row| row.get(0),
+    )?;
+    if valid_identity_count == 0 {
+        return Ok(());
+    }
+    conn.execute("SAVEPOINT publish_codex_replay", [])
+        .map_err(|error| AppError::Database(format!("开启 Codex 重放发布事务失败: {error}")))?;
+    let publish_result = (|| {
+        publish_codex_replay_on_conn(&conn)?;
+        set_codex_replay_state_on_conn(&conn, CODEX_REPLAY_COMPLETE)
+    })();
+    match publish_result {
+        Ok(()) => conn
+            .execute("RELEASE publish_codex_replay", [])
+            .map_err(|error| AppError::Database(format!("提交 Codex 重放发布事务失败: {error}")))
+            .map(|_| ())?,
+        Err(error) => {
+            conn.execute("ROLLBACK TO publish_codex_replay", []).ok();
+            conn.execute("RELEASE publish_codex_replay", []).ok();
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+/// Sync Codex usage and perform a guarded one-time canonical replay when the
+/// schema migration requested it.
+pub fn sync_codex_usage_with_replay(db: &Database) -> Result<SessionSyncResult, AppError> {
+    let state = codex_replay_state(db)?;
+    if state == CODEX_REPLAY_PENDING {
+        let codex_dir = get_codex_config_dir();
+        readable_codex_files(&codex_dir)?;
+        db.backup_database_file()?;
+        reset_codex_usage_and_mark_replaying(db)?;
+    }
+
+    let result = if state == CODEX_REPLAY_COMPLETE {
+        sync_codex_usage(db)?
+    } else {
+        sync_codex_usage_to_storage(db, CodexStorage::CodexReplay)?
+    };
+    if state == CODEX_REPLAY_PENDING || state == CODEX_REPLAYING {
+        finish_codex_replay_if_ready(db, &result)?;
+    }
+    Ok(result)
+}
+
+/// Source-only preflight used by the provider-scoped rebuild command.  It is
+/// intentionally read-only and does not touch replay state or the database.
+pub(crate) fn preflight_codex_usage() -> Result<(), AppError> {
+    let codex_dir = get_codex_config_dir();
+    readable_codex_files(&codex_dir).map(|_| ())
 }
 
 fn non_empty_string(value: Option<&serde_json::Value>) -> Option<String> {
@@ -474,10 +714,14 @@ struct CodexSyncPass {
 }
 
 impl CodexSyncPass {
-    fn load(db: &Database) -> Result<Self, AppError> {
+    fn load(db: &Database, storage: CodexStorage) -> Result<Self, AppError> {
         let conn = lock_conn!(db.conn);
+        let sql = format!(
+            "SELECT file_path, last_modified, last_line_offset FROM {}",
+            storage.cursor_table()
+        );
         let mut stmt = conn
-            .prepare("SELECT file_path, last_modified, last_line_offset FROM session_log_sync")
+            .prepare(&sql)
             .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
         let cursors = stmt
             .query_map([], |row| {
@@ -499,6 +743,7 @@ fn get_codex_sync_state(
     db: &Database,
     file_path: &Path,
     cursors: &HashMap<String, (i64, i64)>,
+    storage: CodexStorage,
 ) -> Result<(i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
     let state = cursors.get(&file_path_str).copied().unwrap_or((0, 0));
@@ -530,11 +775,60 @@ fn get_codex_sync_state(
 
     match inherited {
         Some((offset, modified)) => {
-            update_sync_state(db, &file_path_str, modified, offset)?;
+            update_codex_sync_state(db, &file_path_str, modified, offset, storage)?;
             Ok((modified, offset))
         }
         None => Ok(state),
     }
+}
+
+fn update_codex_sync_state(
+    db: &Database,
+    file_path: &str,
+    modified: i64,
+    offset: i64,
+    storage: CodexStorage,
+) -> Result<(), AppError> {
+    if storage == CodexStorage::Published {
+        return update_sync_state(db, file_path, modified, offset);
+    }
+    let conn = lock_conn!(db.conn);
+    let sql = format!(
+        "INSERT INTO {} (file_path, last_modified, last_line_offset, last_synced_at)
+         VALUES (?1, ?2, ?3, unixepoch())
+         ON CONFLICT(file_path) DO UPDATE SET
+             last_modified = excluded.last_modified,
+             last_line_offset = excluded.last_line_offset,
+             last_synced_at = excluded.last_synced_at",
+        storage.cursor_table()
+    );
+    conn.execute(&sql, rusqlite::params![file_path, modified, offset])
+        .map_err(|error| AppError::Database(format!("更新 Codex 重放 cursor 失败: {error}")))?;
+    Ok(())
+}
+
+fn update_codex_sync_state_on_conn(
+    conn: &Connection,
+    file_path: &str,
+    modified: i64,
+    offset: i64,
+    storage: CodexStorage,
+) -> Result<(), AppError> {
+    if storage == CodexStorage::Published {
+        return update_sync_state_on_conn(conn, file_path, modified, offset);
+    }
+    let sql = format!(
+        "INSERT INTO {} (file_path, last_modified, last_line_offset, last_synced_at)
+         VALUES (?1, ?2, ?3, unixepoch())
+         ON CONFLICT(file_path) DO UPDATE SET
+             last_modified = excluded.last_modified,
+             last_line_offset = excluded.last_line_offset,
+             last_synced_at = excluded.last_synced_at",
+        storage.cursor_table()
+    );
+    conn.execute(&sql, rusqlite::params![file_path, modified, offset])
+        .map_err(|error| AppError::Database(format!("写入 Codex 重放 cursor 失败: {error}")))?;
+    Ok(())
 }
 
 /// 归一化 Codex 模型名
@@ -605,8 +899,26 @@ fn update_high_water(high_water: &mut CumulativeTokens, current: &CumulativeToke
     high_water.output = high_water.output.max(current.output);
 }
 
-/// 从 JSON Value 中提取累计 token 用量
-fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<CumulativeTokens> {
+fn update_presence_high_water(
+    high_water: &mut ParsedUsageComponents,
+    current: &ParsedUsageComponents,
+) {
+    fn update(high_water: &mut Option<u32>, current: Option<u32>) {
+        if let Some(current) = current {
+            *high_water = Some(high_water.unwrap_or(0).max(current));
+        }
+    }
+    update(&mut high_water.input, current.input);
+    update(&mut high_water.cache_read, current.cache_read);
+    update(&mut high_water.output, current.output);
+    update(&mut high_water.reasoning, current.reasoning);
+}
+
+/// Parse a cumulative token snapshot while retaining which source fields were
+/// actually present so missing cached-input/cache-read is never coerced to 0.
+fn parse_cumulative_components(
+    total_usage: &serde_json::Value,
+) -> Option<(CumulativeTokens, ParsedUsageComponents)> {
     let fields = total_usage.as_object()?;
     if ![
         "input_tokens",
@@ -621,21 +933,57 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
     {
         return None;
     }
-    Some(CumulativeTokens {
-        input: total_usage
-            .get("input_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-        cached_input: total_usage
-            .get("cached_input_tokens")
-            .or_else(|| total_usage.get("cache_read_input_tokens"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-        output: total_usage
-            .get("output_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-    })
+    let input = total_usage
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64);
+    let cache_read = total_usage
+        .get("cached_input_tokens")
+        .or_else(|| total_usage.get("cache_read_input_tokens"))
+        .and_then(serde_json::Value::as_u64);
+    let output = total_usage
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64);
+    let reasoning = total_usage
+        .get("reasoning_output_tokens")
+        .and_then(serde_json::Value::as_u64);
+    Some((
+        CumulativeTokens {
+            input: input.unwrap_or(0),
+            cached_input: cache_read.unwrap_or(0),
+            output: output.unwrap_or(0),
+        },
+        ParsedUsageComponents {
+            input: input.map(|value| value.min(u32::MAX as u64) as u32),
+            cache_read: cache_read.map(|value| value.min(u32::MAX as u64) as u32),
+            output: output.map(|value| value.min(u32::MAX as u64) as u32),
+            reasoning: reasoning.map(|value| value.min(u32::MAX as u64) as u32),
+        },
+    ))
+}
+
+fn cumulative_component_delta(
+    previous: Option<&ParsedUsageComponents>,
+    current: &ParsedUsageComponents,
+) -> ParsedUsageComponents {
+    fn delta(
+        previous: Option<&ParsedUsageComponents>,
+        field: fn(&ParsedUsageComponents) -> Option<u32>,
+        current: Option<u32>,
+    ) -> Option<u32> {
+        match (previous, current) {
+            (None, current) => current,
+            (Some(previous), Some(current)) => {
+                field(previous).map(|previous| current.saturating_sub(previous))
+            }
+            (Some(_), None) => None,
+        }
+    }
+    ParsedUsageComponents {
+        input: delta(previous, |value| value.input, current.input),
+        cache_read: delta(previous, |value| value.cache_read, current.cache_read),
+        output: delta(previous, |value| value.output, current.output),
+        reasoning: delta(previous, |value| value.reasoning, current.reasoning),
+    }
 }
 
 type RolloutIndex = HashMap<String, Vec<PathBuf>>;
@@ -650,10 +998,18 @@ struct CodexFileSyncResult {
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
 pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_codex_usage_to_storage(db, CodexStorage::Published)
+}
+
+fn sync_codex_usage_to_storage(
+    db: &Database,
+    storage: CodexStorage,
+) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
     let files = collect_codex_session_files(&codex_dir);
+    let thread_titles = load_native_thread_titles();
     let rollout_index = build_rollout_index(&files);
-    let mut pass = CodexSyncPass::load(db)?;
+    let mut pass = CodexSyncPass::load(db, storage)?;
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -664,8 +1020,19 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         errors: vec![],
     };
 
+    // Normalize every discovered rollout relation in one graph pass before
+    // importing usage.  This is what lets root → child → grandchild resolve
+    // without ever folding a child's own ID into its parent's node.
+    if let Err(error) =
+        persist_codex_nodes_for_files_with_titles_to_storage(db, &files, &thread_titles, storage)
+    {
+        result
+            .errors
+            .push(format!("Codex 会话节点写入失败: {error}"));
+    }
+
     for file_path in &files {
-        match sync_single_codex_file(db, file_path, &rollout_index, &mut pass) {
+        match sync_single_codex_file(db, file_path, &rollout_index, &mut pass, storage) {
             Ok(file_result) => {
                 result.imported = result.imported.saturating_add(file_result.imported);
                 result.skipped = result.skipped.saturating_add(file_result.skipped);
@@ -682,6 +1049,18 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
                 result.errors.push(msg);
             }
         }
+    }
+
+    // Single-file compatibility writes above intentionally fail closed when a
+    // parent claim is not in that call's scope.  Re-run the complete graph
+    // after ingestion so the public sync leaves every discovered depth with
+    // its normalized root/parent ownership.
+    if let Err(error) =
+        persist_codex_nodes_for_files_with_titles_to_storage(db, &files, &thread_titles, storage)
+    {
+        result
+            .errors
+            .push(format!("Codex 会话节点归一化失败: {error}"));
     }
 
     if result.imported > 0 || result.deferred_files > 0 {
@@ -763,6 +1142,7 @@ fn parse_codex_file(
     let reader = BufReader::new(file);
     let mut root_meta_seen = false;
     let mut root_timestamp = None;
+    let mut project_dir = None;
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
     // `total_token_usage` is session-cumulative, including across model and
@@ -776,6 +1156,7 @@ fn parse_codex_file(
     // those stale signatures can legitimately recur after a counter reset.
     let mut last_signature_by_source: HashMap<Option<String>, TokenUsageSignature> = HashMap::new();
     let mut previous_token_signature = None;
+    let mut total_presence_high_water: Option<ParsedUsageComponents> = None;
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
     let mut line_offset = 0i64;
@@ -814,6 +1195,7 @@ fn parse_codex_file(
                 root_meta_seen = true;
                 root_timestamp = parse_timestamp(value.get("timestamp"));
                 let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
+                project_dir = non_empty_string(payload.get("cwd"));
                 parent = explicit_parent_from_meta(payload);
 
                 let meta_thread_id = non_empty_string(
@@ -882,16 +1264,17 @@ fn parse_codex_file(
                 }
 
                 let snapshot_source = token_snapshot_source(payload);
-                let total = info
+                let total_snapshot = info
                     .get("total_token_usage")
-                    .and_then(parse_cumulative_tokens);
-                let last = info
+                    .and_then(parse_cumulative_components);
+                let last_snapshot = info
                     .get("last_token_usage")
-                    .and_then(parse_cumulative_tokens);
-                if total.is_none() && last.is_none() {
+                    .and_then(parse_cumulative_components);
+                if total_snapshot.is_none() && last_snapshot.is_none() {
                     continue;
                 }
-                let has_total_snapshot = total.is_some();
+                let has_total_snapshot = total_snapshot.is_some();
+                let has_exact_last_usage = last_snapshot.is_some();
                 let duplicate_snapshot = has_total_snapshot
                     && (last_signature_by_source.get(&snapshot_source) == Some(&signature)
                         || previous_token_signature.as_ref() == Some(&signature));
@@ -900,38 +1283,61 @@ fn parse_codex_file(
                 }
                 previous_token_signature = Some(signature.clone());
 
-                let delta = if duplicate_snapshot {
-                    DeltaTokens {
-                        input: 0,
-                        cached_input: 0,
-                        output: 0,
-                    }
-                } else if let Some(last) = last {
+                let (delta, source_components) = if duplicate_snapshot {
+                    (
+                        DeltaTokens {
+                            input: 0,
+                            cached_input: 0,
+                            output: 0,
+                        },
+                        ParsedUsageComponents::default(),
+                    )
+                } else if let Some((last, components)) = last_snapshot {
                     // Codex provides the exact per-request usage. Prefer it to
                     // subtracting cumulative snapshots, which may come from
                     // multiple independently advancing rate-limit lanes.
-                    DeltaTokens {
-                        input: last.input as u32,
-                        cached_input: last.cached_input as u32,
-                        output: last.output as u32,
-                    }
-                } else if let Some(total) = total.as_ref() {
-                    compute_delta(&total_high_water, total)
+                    (
+                        DeltaTokens {
+                            input: last.input as u32,
+                            cached_input: last.cached_input as u32,
+                            output: last.output as u32,
+                        },
+                        components,
+                    )
+                } else if let Some((total, components)) = total_snapshot.as_ref() {
+                    (
+                        compute_delta(&total_high_water, total),
+                        cumulative_component_delta(total_presence_high_water.as_ref(), components),
+                    )
                 } else {
                     continue;
                 };
-                if let Some(total) = total {
+                if let Some((total, components)) = total_snapshot {
                     if let Some(high_water) = total_high_water.as_mut() {
                         update_high_water(high_water, &total);
                     } else {
                         total_high_water = Some(total);
+                    }
+                    if let Some(high_water) = total_presence_high_water.as_mut() {
+                        update_presence_high_water(high_water, &components);
+                    } else {
+                        total_presence_high_water = Some(components);
                     }
                 }
                 let delta = DeltaTokens {
                     cached_input: delta.cached_input.min(delta.input),
                     ..delta
                 };
-                let nonzero_index = if delta.is_zero() {
+                let precision = if has_exact_last_usage {
+                    UsagePrecision::RequestExact
+                } else {
+                    UsagePrecision::SessionExact
+                };
+                let nonzero_index = if delta.is_zero()
+                    && source_components
+                        .reasoning
+                        .is_none_or(|reasoning| reasoning == 0)
+                {
                     None
                 } else {
                     has_billable_tokens = true;
@@ -949,6 +1355,8 @@ fn parse_codex_file(
                         .get("timestamp")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
+                    precision,
+                    source_components,
                 });
             }
             _ => {}
@@ -959,10 +1367,247 @@ fn parse_codex_file(
         root_thread_id,
         root_meta_seen,
         root_timestamp,
+        project_dir,
         parent,
         token_events,
         line_offset,
         has_billable_tokens,
+    })
+}
+
+fn event_timestamp_epoch(value: Option<&str>) -> Option<i64> {
+    value
+        .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok())
+        .map(|timestamp| timestamp.timestamp())
+}
+
+/// Read the titles Codex itself exposes in the desktop sidebar. The state
+/// database is authoritative when available; the legacy session index fills
+/// gaps. The query intentionally selects only `id` and `title`, so no prompt
+/// body or `first_user_message` value is read or persisted.
+fn load_native_thread_titles() -> HashMap<String, String> {
+    let config_dir = get_codex_config_dir();
+    let mut titles = load_native_thread_titles_from_index(&config_dir.join("session_index.jsonl"));
+    let config_text = read_codex_config_text().unwrap_or_default();
+    for db_path in codex_state_db_paths(&config_dir, &config_text) {
+        titles.extend(load_native_thread_titles_from_db(&db_path));
+    }
+    titles
+}
+
+fn load_native_thread_titles_from_index(path: &Path) -> HashMap<String, String> {
+    let Ok(file) = fs::File::open(path) else {
+        return HashMap::new();
+    };
+    let mut titles = HashMap::new();
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let Some(id) = non_empty_string(value.get("id")) else {
+            continue;
+        };
+        let Some(title) = non_empty_string(value.get("thread_name")) else {
+            continue;
+        };
+        titles.insert(id, title);
+    }
+    titles
+}
+
+fn load_native_thread_titles_from_db(path: &Path) -> HashMap<String, String> {
+    if !path.exists() {
+        return HashMap::new();
+    }
+    let Ok(conn) = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return HashMap::new();
+    };
+    if conn.busy_timeout(Duration::from_secs(2)).is_err() {
+        return HashMap::new();
+    }
+    let Ok(mut statement) =
+        conn.prepare("SELECT id, title FROM threads WHERE TRIM(COALESCE(title, '')) <> ''")
+    else {
+        return HashMap::new();
+    };
+    let Ok(rows) = statement.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let title: String = row.get(1)?;
+        Ok((id, title))
+    }) else {
+        return HashMap::new();
+    };
+    let mut titles = HashMap::new();
+    for (id, title) in rows.flatten() {
+        let id = id.trim();
+        let title = title.trim();
+        if !id.is_empty() && !title.is_empty() {
+            titles.insert(id.to_string(), title.to_string());
+        }
+    }
+    titles
+}
+
+/// Turn one parsed rollout into the only relation evidence accepted by the
+/// normalized service.  The filename UUID is always the node's own identity;
+/// parentage can only come from the two explicit metadata fields parsed above.
+fn relation_claim_from_parsed(
+    file_path: &Path,
+    parsed: &ParsedCodexFile,
+    file_modified: i64,
+    thread_titles: &HashMap<String, String>,
+) -> Option<SessionRelationClaim> {
+    let session_id = parsed.root_thread_id.clone()?;
+    if !parsed.root_meta_seen {
+        return None;
+    }
+
+    let relation = match &parsed.parent {
+        ParentResolution::None => RelationClaim::Root,
+        ParentResolution::Parent(parent_session_id) => RelationClaim::Parent {
+            parent_session_id: parent_session_id.clone(),
+            confidence: RelationConfidence::Explicit,
+        },
+        // RelationClaim has no standalone conflict variant.  A self edge with
+        // Conflict confidence is intentionally fail-closed in T03's graph
+        // normalizer and cannot become an ownership edge.
+        ParentResolution::Deferred(_) => RelationClaim::Parent {
+            parent_session_id: session_id.clone(),
+            confidence: RelationConfidence::Conflict,
+        },
+    };
+
+    let last_active_at = parsed
+        .token_events
+        .iter()
+        .filter_map(|event| event_timestamp_epoch(event.timestamp.as_deref()))
+        .max();
+    let title = thread_titles.get(&session_id).cloned();
+    Some(SessionRelationClaim {
+        app_type: "codex".to_string(),
+        session_id,
+        relation,
+        metadata: SessionNodeMetadata {
+            title,
+            project_dir: parsed.project_dir.clone(),
+            source_path: Some(file_path.to_string_lossy().to_string()),
+            created_at: parsed.root_timestamp.map(|timestamp| timestamp.timestamp()),
+            last_active_at,
+            last_synced_at: file_modified,
+        },
+    })
+}
+
+fn persist_codex_relation_claims_to_storage(
+    db: &Database,
+    claims: &[SessionRelationClaim],
+    storage: CodexStorage,
+) -> Result<(), AppError> {
+    if claims.is_empty() {
+        return Ok(());
+    }
+    let conn = lock_conn!(db.conn);
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| AppError::Database(format!("开启 Codex 会话节点事务失败: {error}")))?;
+    publish_canonical_batch_on_conn(
+        &tx,
+        storage,
+        CanonicalUsageBatch {
+            relation_claims: claims.to_vec(),
+            ..CanonicalUsageBatch::default()
+        },
+    )?;
+    tx.commit()
+        .map_err(|error| AppError::Database(format!("提交 Codex 会话节点事务失败: {error}")))
+}
+
+fn persist_codex_node_for_parsed(
+    db: &Database,
+    file_path: &Path,
+    parsed: &ParsedCodexFile,
+    file_modified: i64,
+    storage: CodexStorage,
+) -> Result<(), AppError> {
+    if let Some(claim) =
+        relation_claim_from_parsed(file_path, parsed, file_modified, &HashMap::new())
+    {
+        persist_codex_relation_claims_to_storage(db, &[claim], storage)?;
+    }
+    Ok(())
+}
+
+fn persist_codex_nodes_for_files_with_titles_to_storage(
+    db: &Database,
+    files: &[PathBuf],
+    thread_titles: &HashMap<String, String>,
+    storage: CodexStorage,
+) -> Result<(), AppError> {
+    let mut claims = Vec::new();
+    for file_path in files {
+        let metadata = match fs::metadata(file_path) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        let parsed = match parse_codex_file(file_path, thread_id_from_filename(file_path)) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        if let Some(claim) = relation_claim_from_parsed(
+            file_path,
+            &parsed,
+            metadata_modified_nanos(&metadata),
+            thread_titles,
+        ) {
+            claims.push(claim);
+        }
+    }
+    persist_codex_relation_claims_to_storage(db, &claims, storage)
+}
+
+fn codex_fact_from_event(
+    request_id: &str,
+    session_id: &str,
+    event: &ParsedTokenEvent,
+) -> Option<UsageObservation> {
+    let timestamp = event_timestamp_epoch(event.timestamp.as_deref())?;
+    let components = &event.source_components;
+    if components.input.is_none()
+        && components.cache_read.is_none()
+        && components.output.is_none()
+        && components.reasoning.is_none()
+    {
+        return None;
+    }
+    let date = local_usage_date(timestamp)?;
+    let source = UsageSourceSpec::new(
+        "codex",
+        "_codex_session",
+        "codex_session",
+        event.precision,
+        TimeSemantics::EventTime,
+        RequestCountSemantics::AgentCall,
+    );
+    let mut fact = source.fact(
+        date,
+        session_id,
+        event.model.clone(),
+        event.model.clone(),
+        String::new(),
+    );
+    fact.request_count = Some(1);
+    fact.input_tokens = components.input.map(i64::from);
+    fact.output_tokens = components.output.map(i64::from);
+    fact.cache_read_tokens = components.cache_read.map(i64::from);
+    fact.reasoning_tokens = components.reasoning.map(i64::from);
+    fact.first_event_at = Some(timestamp);
+    fact.last_event_at = Some(timestamp);
+    Some(UsageObservation {
+        request_id: request_id.to_string(),
+        fact,
     })
 }
 
@@ -1135,6 +1780,7 @@ fn sync_single_codex_file(
     file_path: &Path,
     rollout_index: &RolloutIndex,
     pass: &mut CodexSyncPass,
+    storage: CodexStorage,
 ) -> Result<CodexFileSyncResult, AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
@@ -1145,7 +1791,7 @@ fn sync_single_codex_file(
     let file_size = metadata.len();
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_codex_sync_state(db, file_path, &pass.cursors)?;
+    let (last_modified, last_offset) = get_codex_sync_state(db, file_path, &pass.cursors, storage)?;
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -1180,8 +1826,18 @@ fn sync_single_codex_file(
     }
 
     let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
+    // Direct callers (including focused fixtures) still get a durable node;
+    // the public sync path repeats this write with all claims in one graph so
+    // missing parents can be upgraded from unknown to child safely.
+    persist_codex_node_for_parsed(db, file_path, &parsed, file_modified, storage)?;
     if !parsed.has_billable_tokens {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_codex_sync_state(
+            db,
+            &file_path_str,
+            file_modified,
+            parsed.line_offset,
+            storage,
+        )?;
         return Ok(CodexFileSyncResult::default());
     }
     let Some(root_thread_id) = parsed.root_thread_id.as_deref() else {
@@ -1198,6 +1854,16 @@ fn sync_single_codex_file(
             file_modified,
             file_size,
             PendingReason::Stable("含计费 token 但尚无 session_meta".to_string()),
+        ));
+    }
+    if parsed.token_events.iter().any(|event| {
+        event.event_index.is_some() && event_timestamp_epoch(event.timestamp.as_deref()).is_none()
+    }) {
+        return Ok(mark_deferred(
+            file_path,
+            file_modified,
+            file_size,
+            PendingReason::Stable("含计费 token 但缺少有效 event timestamp".to_string()),
         ));
     }
 
@@ -1307,31 +1973,96 @@ fn sync_single_codex_file(
         let mut batch_imported = 0u32;
         let mut batch_skipped = 0u32;
         let mut batch_suspected = 0u32;
+        let mut canonical_batch = CanonicalUsageBatch::default();
         for (event, event_index) in batch {
             let request_id =
                 format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{event_index}");
-            match insert_codex_session_entry_on_conn(
-                &tx,
-                &request_id,
-                &event.delta,
-                &event.model,
-                Some(root_thread_id),
-                event.timestamp.as_deref(),
-                &mut batch_suspected,
-                &mut pass.pricing,
-            ) {
-                Ok(true) => batch_imported += 1,
-                Ok(false) => batch_skipped += 1,
-                Err(e) => {
-                    log::warn!("[CODEX-SYNC] 插入失败 ({request_id}): {e}");
-                    batch_skipped += 1;
+            // A raw compatibility row is admitted only when this exact event
+            // can also produce a canonical fact.  The legacy row shape cannot
+            // carry source-field presence or a safe event time, so inserting
+            // first would leave an unmarked/uncanonical row that later raw
+            // retention could interpret incorrectly.
+            let Some(fact_observation) = codex_fact_from_event(&request_id, root_thread_id, event)
+            else {
+                batch_skipped = batch_skipped.saturating_add(1);
+                continue;
+            };
+            if has_codex_storage_coverage_on_conn(&tx, storage, "codex_session", &request_id)?
+                || has_codex_storage_session_log_on_conn(&tx, storage, &request_id)?
+            {
+                batch_skipped = batch_skipped.saturating_add(1);
+                continue;
+            }
+
+            let created_at = event_timestamp_epoch(event.timestamp.as_deref()).unwrap_or(0);
+            let dedup_key = DedupKey {
+                app_type: "codex",
+                model: &event.model,
+                input_tokens: event.delta.input,
+                output_tokens: event.delta.output,
+                cache_read_tokens: event.delta.cached_input,
+                cache_creation_tokens: 0,
+                created_at,
+            };
+            let matched_proxy = if storage == CodexStorage::Published {
+                find_matching_proxy_usage_log(&tx, &dedup_key)?
+            } else {
+                find_matching_proxy_usage_log_for_coverage_source(&tx, &dedup_key)?
+            };
+            if let Some(proxy_request_id) = matched_proxy.as_deref() {
+                // Reserve before looking at the next event.  The reservation
+                // is visible to this transaction's subsequent matcher call,
+                // which prevents two same-batch events from claiming one
+                // proxy row while still allowing a second proxy row to match.
+                reserve_codex_proxy_coverage_on_conn(
+                    &tx,
+                    storage,
+                    proxy_request_id,
+                    root_thread_id,
+                    created_at,
+                )?;
+            }
+            let inserted_compatibility_row = if matched_proxy.is_some() {
+                false
+            } else {
+                match insert_codex_session_entry_on_conn(
+                    &tx,
+                    &request_id,
+                    &event.delta,
+                    &event.model,
+                    Some(root_thread_id),
+                    event.timestamp.as_deref(),
+                    &mut batch_suspected,
+                    &mut pass.pricing,
+                    storage,
+                ) {
+                    Ok(inserted) => inserted,
+                    Err(e) => {
+                        log::warn!("[CODEX-SYNC] 插入失败 ({request_id}): {e}");
+                        false
+                    }
                 }
+            };
+
+            if inserted_compatibility_row || matched_proxy.is_some() {
+                remember_request_precision(&request_id, event.precision);
+                canonical_batch.observations.push(fact_observation);
+                batch_imported = batch_imported.saturating_add(1);
+            } else {
+                batch_skipped = batch_skipped.saturating_add(1);
             }
         }
+        publish_canonical_batch_on_conn(&tx, storage, canonical_batch)?;
         if is_last_batch {
             // 游标推进与最后一批数据同事务提交：中途崩溃时两者一起回滚，
             // 不会出现"游标已推进但数据缺失"的丢数据窗口。
-            update_sync_state_on_conn(&tx, &file_path_str, file_modified, parsed.line_offset)?;
+            update_codex_sync_state_on_conn(
+                &tx,
+                &file_path_str,
+                file_modified,
+                parsed.line_offset,
+                storage,
+            )?;
         }
         tx.commit()
             .map_err(|e| AppError::Database(format!("提交 Codex 会话写入事务失败: {e}")))?;
@@ -1342,34 +2073,15 @@ fn sync_single_codex_file(
     }
 
     if to_insert.is_empty() {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_codex_sync_state(
+            db,
+            &file_path_str,
+            file_modified,
+            parsed.line_offset,
+            storage,
+        )?;
     }
     Ok(result)
-}
-
-/// 插入单条 Codex 会话记录到 proxy_request_logs（自取锁的便捷包装，测试专用；
-/// 生产路径走 [`insert_codex_session_entry_on_conn`] 以复用批量事务与定价缓存）
-#[cfg(test)]
-fn insert_codex_session_entry(
-    db: &Database,
-    request_id: &str,
-    delta: &DeltaTokens,
-    model: &str,
-    session_id: Option<&str>,
-    timestamp: Option<&str>,
-    suspected_duplicates: &mut u32,
-) -> Result<bool, AppError> {
-    let conn = lock_conn!(db.conn);
-    insert_codex_session_entry_on_conn(
-        &conn,
-        request_id,
-        delta,
-        model,
-        session_id,
-        timestamp,
-        suspected_duplicates,
-        &mut HashMap::new(),
-    )
 }
 
 /// 插入单条 Codex 会话记录到 proxy_request_logs。
@@ -1387,6 +2099,7 @@ fn insert_codex_session_entry_on_conn(
     timestamp: Option<&str>,
     suspected_duplicates: &mut u32,
     pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
+    storage: CodexStorage,
 ) -> Result<bool, AppError> {
     let created_at = timestamp
         .and_then(|ts| {
@@ -1394,12 +2107,10 @@ fn insert_codex_session_entry_on_conn(
                 .ok()
                 .map(|dt| dt.timestamp())
         })
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0)
-        });
+        // Event time is the only safe timestamp for normalized usage.  The
+        // parser defers billable events without one; retain epoch here only
+        // for the legacy proxy row shape and never use it in a rollup.
+        .unwrap_or(0);
 
     let dedup_key = DedupKey {
         app_type: "codex",
@@ -1410,10 +2121,20 @@ fn insert_codex_session_entry_on_conn(
         cache_creation_tokens: 0,
         created_at,
     };
-    if should_skip_session_insert(conn, request_id, &dedup_key)? {
+    let should_skip = if storage == CodexStorage::Published {
+        should_skip_session_insert(conn, request_id, &dedup_key)?
+    } else {
+        has_codex_storage_session_log_on_conn(conn, storage, request_id)?
+    };
+    if should_skip {
         return Ok(false);
     }
-    if has_suspected_codex_session_duplicate(conn, request_id, &dedup_key)? {
+    let has_suspected_duplicate = if storage == CodexStorage::Published {
+        has_suspected_codex_session_duplicate(conn, request_id, &dedup_key)?
+    } else {
+        has_suspected_codex_replay_duplicate(conn, request_id, &dedup_key)?
+    };
+    if has_suspected_duplicate {
         *suspected_duplicates = suspected_duplicates.saturating_add(1);
         log::warn!(
             "[CODEX-SYNC] 疑似重复会话用量: request_id={request_id}, model={model}, input={}, output={}, cache_read={}",
@@ -1458,50 +2179,60 @@ fn insert_codex_session_entry_on_conn(
         ),
     };
 
-    let inserted_rows = conn
-        .prepare_cached(
-            "INSERT OR IGNORE INTO proxy_request_logs (
-            request_id, provider_id, app_type, model, request_model,
-            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-            latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
-        )
-        .and_then(|mut stmt| stmt.execute(rusqlite::params![
-                request_id,
-                "_codex_session",    // provider_id
-                "codex",             // app_type
-                model,
-                model,               // request_model = model
-                delta.input,
-                delta.output,
-                delta.cached_input,
-                0i64,                // cache_creation_tokens: Codex 日志无此数据
-                input_cost,
-                output_cost,
-                cache_read_cost,
-                cache_creation_cost,
-                total_cost,
-                0i64,                // latency_ms
-                Option::<i64>::None, // first_token_ms
-                200i64,              // status_code
-                Option::<String>::None, // error_message
-                session_id.map(|s| s.to_string()),
-                Some("codex_session"), // provider_type
-                1i64,                // is_streaming
-                "1.0",               // cost_multiplier
-                created_at,
-                "codex_session",     // data_source
-            ]))
-        .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
-
-    Ok(inserted_rows > 0)
+    let mut row = RawUsageLogRow::native_session(
+        request_id,
+        "_codex_session",
+        "codex",
+        model,
+        session_id,
+        "codex_session",
+        created_at,
+    );
+    row.input_tokens = i64::from(delta.input);
+    row.output_tokens = i64::from(delta.output);
+    row.cache_read_tokens = i64::from(delta.cached_input);
+    row.input_cost_usd = input_cost;
+    row.output_cost_usd = output_cost;
+    row.cache_read_cost_usd = cache_read_cost;
+    row.cache_creation_cost_usd = cache_creation_cost;
+    row.total_cost_usd = total_cost;
+    row.insert_or_ignore_on_conn(conn, storage)
+        .map_err(|error| AppError::Database(format!("插入 Codex 会话日志失败: {error}")))
 }
 
 /// 查找 Codex 模型定价（带归一化）
 fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
     find_model_pricing(conn, &normalize_codex_model(model_id))
+}
+
+fn has_suspected_codex_replay_duplicate(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    key: &DedupKey,
+) -> Result<bool, AppError> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM codex_replay_session_logs
+            WHERE request_id <> ?1
+              AND app_type = 'codex'
+              AND LOWER(model) = LOWER(?2)
+              AND input_tokens = ?3
+              AND output_tokens = ?4
+              AND cache_read_tokens = ?5
+              AND created_at BETWEEN ?6 - ?7 AND ?6 + ?7
+        )",
+        rusqlite::params![
+            request_id,
+            key.model,
+            key.input_tokens as i64,
+            key.output_tokens as i64,
+            key.cache_read_tokens as i64,
+            key.created_at,
+            SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+        ],
+        |row| row.get(0),
+    )
+    .map_err(|error| AppError::Database(format!("查询重放疑似重复 Codex 会话用量失败: {error}")))
 }
 
 #[cfg(test)]
@@ -1512,7 +2243,6 @@ mod tests {
 
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
     const CHILD_A_ID: &str = "00000000-0000-4000-8000-000000000002";
-    const CHILD_B_ID: &str = "00000000-0000-4000-8000-000000000003";
 
     fn write_jsonl(path: &Path, values: &[serde_json::Value]) {
         let contents = values
@@ -1559,6 +2289,18 @@ mod tests {
         session_meta_at(thread_id, None, None, "2026-07-10T03:00:00Z")
     }
 
+    fn session_meta_with_cwd(thread_id: &str, cwd: &str, timestamp: &str) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "session_meta",
+            "payload": {
+                "id": thread_id,
+                "cwd": cwd,
+                "source": "cli"
+            }
+        })
+    }
+
     fn turn_context_for_model_at(model: &str, timestamp: &str) -> serde_json::Value {
         serde_json::json!({
             "timestamp": timestamp,
@@ -1573,6 +2315,30 @@ mod tests {
 
     fn turn_context() -> serde_json::Value {
         turn_context_at("2026-07-10T03:00:01Z")
+    }
+
+    #[test]
+    fn codex_claim_keeps_native_title_and_session_meta_cwd() {
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta_with_cwd(PARENT_ID, "/workspace/codex", "2026-07-10T03:00:00Z"),
+                serde_json::json!({
+                    "type": "user",
+                    "first_user_message": "prompt body must not become title"
+                }),
+            ],
+        );
+        let parsed = parse_codex_file(&path, Some(PARENT_ID.to_string())).unwrap();
+        let titles = HashMap::from([(PARENT_ID.to_string(), "Native task title".to_string())]);
+        let claim = relation_claim_from_parsed(&path, &parsed, 100, &titles).unwrap();
+        assert_eq!(claim.metadata.title.as_deref(), Some("Native task title"));
+        assert_eq!(
+            claim.metadata.project_dir.as_deref(),
+            Some("/workspace/codex")
+        );
     }
 
     fn token_count_at(input: u64, cached: u64, output: u64, timestamp: &str) -> serde_json::Value {
@@ -1651,78 +2417,14 @@ mod tests {
             .iter()
             .map(|path| path.to_path_buf())
             .collect::<Vec<_>>();
-        let mut pass = CodexSyncPass::load(db)?;
-        sync_single_codex_file(db, file, &build_rollout_index(&files), &mut pass)
-    }
-
-    #[test]
-    fn test_delta_first_event() {
-        let prev = None;
-        let current = CumulativeTokens {
-            input: 17934,
-            cached_input: 9600,
-            output: 454,
-        };
-        let delta = compute_delta(&prev, &current);
-        assert_eq!(delta.input, 17934);
-        assert_eq!(delta.cached_input, 9600);
-        assert_eq!(delta.output, 454);
-        assert!(!delta.is_zero());
-    }
-
-    #[test]
-    fn test_delta_subsequent_event() {
-        let prev = Some(CumulativeTokens {
-            input: 17934,
-            cached_input: 9600,
-            output: 454,
-        });
-        let current = CumulativeTokens {
-            input: 36722,
-            cached_input: 27904,
-            output: 804,
-        };
-        let delta = compute_delta(&prev, &current);
-        assert_eq!(delta.input, 36722 - 17934);
-        assert_eq!(delta.cached_input, 27904 - 9600);
-        assert_eq!(delta.output, 804 - 454);
-    }
-
-    #[test]
-    fn test_delta_zero_at_task_boundary() {
-        let prev = Some(CumulativeTokens {
-            input: 58346,
-            cached_input: 46976,
-            output: 1045,
-        });
-        // task 边界：相同的累计值
-        let current = CumulativeTokens {
-            input: 58346,
-            cached_input: 46976,
-            output: 1045,
-        };
-        let delta = compute_delta(&prev, &current);
-        assert!(delta.is_zero());
-    }
-
-    #[test]
-    fn test_delta_saturating_sub() {
-        // 异常情况：当前值小于前值（不应发生，但需防护）
-        let prev = Some(CumulativeTokens {
-            input: 100,
-            cached_input: 50,
-            output: 30,
-        });
-        let current = CumulativeTokens {
-            input: 80,
-            cached_input: 40,
-            output: 20,
-        };
-        let delta = compute_delta(&prev, &current);
-        assert_eq!(delta.input, 0);
-        assert_eq!(delta.cached_input, 0);
-        assert_eq!(delta.output, 0);
-        assert!(delta.is_zero());
+        let mut pass = CodexSyncPass::load(db, CodexStorage::Published)?;
+        sync_single_codex_file(
+            db,
+            file,
+            &build_rollout_index(&files),
+            &mut pass,
+            CodexStorage::Published,
+        )
     }
 
     #[test]
@@ -1797,41 +2499,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cross_limit_snapshot_replay_is_not_double_counted() -> Result<(), AppError> {
-        let dir = tempdir().unwrap();
-        let file = rollout_path(dir.path(), PARENT_ID);
-        write_jsonl(
-            &file,
-            &[
-                session_meta(PARENT_ID),
-                turn_context(),
-                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
-                token_count_with_last_at(
-                    1_000,
-                    0,
-                    10,
-                    100,
-                    0,
-                    10,
-                    "codex_bengalfox",
-                    "2026-07-10T03:00:03Z",
-                ),
-            ],
-        );
-
-        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
-        let deltas = parsed
-            .token_events
-            .iter()
-            .filter(|event| !event.delta.is_zero())
-            .map(|event| event.delta.input)
-            .collect::<Vec<_>>();
-
-        assert_eq!(deltas, vec![100]);
-        Ok(())
-    }
-
-    #[test]
     fn test_adjacent_replay_burst_across_multiple_sources_is_deduped() -> Result<(), AppError> {
         let dir = tempdir().unwrap();
         let file = rollout_path(dir.path(), PARENT_ID);
@@ -1873,80 +2540,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(deltas, vec![100]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cross_source_replay_remains_adjacent_across_non_token_events() -> Result<(), AppError> {
-        let dir = tempdir().unwrap();
-        let file = rollout_path(dir.path(), PARENT_ID);
-        write_jsonl(
-            &file,
-            &[
-                session_meta(PARENT_ID),
-                turn_context(),
-                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
-                turn_context_for_model_at("gpt-5.6-sol", "2026-07-10T03:00:03Z"),
-                token_count_with_last_at(
-                    1_000,
-                    0,
-                    10,
-                    100,
-                    0,
-                    10,
-                    "codex_bengalfox",
-                    "2026-07-10T03:00:04Z",
-                ),
-            ],
-        );
-
-        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
-        let deltas = parsed
-            .token_events
-            .iter()
-            .filter(|event| !event.delta.is_zero())
-            .map(|event| event.delta.input)
-            .collect::<Vec<_>>();
-
-        assert_eq!(deltas, vec![100]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_same_source_repeat_is_deduped_after_another_source_advances() -> Result<(), AppError> {
-        let dir = tempdir().unwrap();
-        let file = rollout_path(dir.path(), PARENT_ID);
-        write_jsonl(
-            &file,
-            &[
-                session_meta(PARENT_ID),
-                turn_context(),
-                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
-                token_count_with_last_at(
-                    2_000,
-                    0,
-                    20,
-                    100,
-                    0,
-                    10,
-                    "codex_bengalfox",
-                    "2026-07-10T03:00:03Z",
-                ),
-                // `codex` has not advanced since its X snapshot, so this is a
-                // same-source replay even though another source was interleaved.
-                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:04Z"),
-            ],
-        );
-
-        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
-        let deltas = parsed
-            .token_events
-            .iter()
-            .filter(|event| !event.delta.is_zero())
-            .map(|event| event.delta.input)
-            .collect::<Vec<_>>();
-
-        assert_eq!(deltas, vec![100, 100]);
         Ok(())
     }
 
@@ -1993,210 +2586,148 @@ mod tests {
     }
 
     #[test]
-    fn test_full_snapshot_dedupe_allows_counter_reset() -> Result<(), AppError> {
-        let dir = tempdir().unwrap();
-        let file = rollout_path(dir.path(), PARENT_ID);
-        let first =
-            token_count_with_last_at(100, 50, 10, 100, 50, 10, "codex", "2026-07-10T03:00:02Z");
-        write_jsonl(
-            &file,
-            &[
-                session_meta(PARENT_ID),
-                turn_context(),
-                first.clone(),
-                first,
-                token_count_with_last_at(
-                    200,
-                    100,
-                    20,
-                    100,
-                    50,
-                    10,
-                    "codex",
-                    "2026-07-10T03:00:04Z",
-                ),
-                // A restarted counter may legitimately return to an older
-                // total after another full snapshot has advanced the source.
-                token_count_with_last_at(100, 50, 10, 50, 25, 5, "codex", "2026-07-10T03:00:05Z"),
-            ],
-        );
+    #[serial_test::serial]
+    fn replay_source_missing_keeps_pending_data_intact() -> Result<(), AppError> {
+        let temp = tempdir().unwrap();
+        let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, cache_read_tokens, latency_ms, status_code,
+                    created_at, data_source
+                 ) VALUES ('pending-row', '_codex_session', 'codex', 'gpt-5.6-sol',
+                           10, 2, 0, 0, 200, 1, 'codex_session')",
+                [],
+            )?;
+            set_codex_replay_state_on_conn(&conn, CODEX_REPLAY_PENDING)?;
+        }
 
-        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
-        let deltas = parsed
-            .token_events
-            .iter()
-            .filter(|event| !event.delta.is_zero())
-            .map(|event| event.delta.input)
-            .collect::<Vec<_>>();
+        let error = sync_codex_usage_with_replay(&db).expect_err("missing source must block reset");
+        assert!(error.to_string().contains("没有找到可用于 Codex 用量重放"));
+        let conn = lock_conn!(db.conn);
+        let row_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'pending-row'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(row_count, 1);
+        assert_eq!(codex_replay_state_on_conn(&conn)?, CODEX_REPLAY_PENDING);
+        drop(conn);
 
-        assert_eq!(deltas, vec![100, 100, 50]);
+        match previous_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
         Ok(())
     }
 
     #[test]
-    fn test_empty_last_usage_falls_back_to_total() -> Result<(), AppError> {
-        let dir = tempdir().unwrap();
-        let file = rollout_path(dir.path(), PARENT_ID);
-        write_jsonl(
-            &file,
-            &[
-                session_meta(PARENT_ID),
-                turn_context(),
-                serde_json::json!({
-                    "timestamp": "2026-07-10T03:00:02Z",
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "token_count",
-                        "info": {
-                            "total_token_usage": {
-                                "input_tokens": 100,
-                                "cached_input_tokens": 0,
-                                "output_tokens": 10,
-                                "reasoning_output_tokens": 0,
-                                "total_tokens": 110
-                            },
-                            "last_token_usage": {}
-                        }
-                    }
-                }),
-            ],
-        );
+    fn replay_state_transitions_are_idempotent_and_partial_safe() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, cache_read_tokens, latency_ms, status_code,
+                    created_at, data_source
+                 ) VALUES ('replay-row', '_codex_session', 'codex', 'gpt-5.6-sol',
+                           10, 2, 0, 0, 200, 1, 'codex_session')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                     date, app_type, provider_id, model, request_count, input_tokens
+                 ) VALUES ('2026-08-01', 'codex', '_codex_session', 'gpt-5.6-sol', 7, 70)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO session_log_sync (
+                     file_path, last_modified, last_line_offset, last_synced_at
+                 ) VALUES ('C:\\Users\\admin\\.codex\\sessions\\2026\\08\\rollout-live.jsonl',
+                           1, 1, 1)",
+                [],
+            )?;
+            set_codex_replay_state_on_conn(&conn, CODEX_REPLAY_PENDING)?;
+        }
 
-        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
-        let deltas = parsed
-            .token_events
-            .iter()
-            .filter(|event| !event.delta.is_zero())
-            .map(|event| event.delta.input)
-            .collect::<Vec<_>>();
+        reset_codex_usage_and_mark_replaying(&db)?;
+        {
+            let conn = lock_conn!(db.conn);
+            let row_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                [],
+                |row| row.get(0),
+            )?;
+            // Shadow replay never removes the last published generation.
+            assert_eq!(row_count, 1);
+            let staged_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM codex_replay_session_logs",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(staged_count, 0);
+            assert_eq!(codex_replay_state_on_conn(&conn)?, CODEX_REPLAYING);
+        }
 
-        assert_eq!(deltas, vec![100]);
+        finish_codex_replay_if_ready(
+            &db,
+            &SessionSyncResult {
+                files_scanned: 1,
+                deferred_files: 1,
+                ..Default::default()
+            },
+        )?;
+        {
+            let conn = lock_conn!(db.conn);
+            assert_eq!(codex_replay_state_on_conn(&conn)?, CODEX_REPLAYING);
+            conn.execute(
+                "INSERT INTO codex_replay_nodes (
+                    app_type, session_id, root_session_id, node_kind,
+                    relation_confidence, last_synced_at
+                 ) VALUES ('codex_replay', 'root', 'root', 'root', 'explicit', 1)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO codex_replay_rollups (
+                    date, app_type, session_id, provider_id, model, data_source,
+                    request_count
+                 ) VALUES ('2026-08-15', 'codex_replay', 'root', '_codex_session',
+                           'gpt-5.6-sol', 'codex_session', 1)",
+                [],
+            )?;
+        }
+        finish_codex_replay_if_ready(
+            &db,
+            &SessionSyncResult {
+                files_scanned: 1,
+                ..Default::default()
+            },
+        )?;
+        let conn = lock_conn!(db.conn);
+        assert_eq!(codex_replay_state_on_conn(&conn)?, CODEX_REPLAY_COMPLETE);
+        let legacy_counts: (i64, i64) = conn.query_row(
+            "SELECT
+                 (SELECT COUNT(*) FROM proxy_request_logs
+                  WHERE request_id = 'replay-row'),
+                 (SELECT request_count FROM usage_daily_rollups
+                  WHERE provider_id = '_codex_session' AND model = 'gpt-5.6-sol')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(legacy_counts, (1, 7));
+        let live_cursor_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_log_sync
+             WHERE file_path = 'C:\\Users\\admin\\.codex\\sessions\\2026\\08\\rollout-live.jsonl'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(live_cursor_count, 1);
         Ok(())
-    }
-
-    #[test]
-    fn test_empty_total_does_not_enable_snapshot_deduplication() -> Result<(), AppError> {
-        let dir = tempdir().unwrap();
-        let file = rollout_path(dir.path(), PARENT_ID);
-        let event = |limit_id: &str, timestamp: &str| {
-            serde_json::json!({
-                "timestamp": timestamp,
-                "type": "event_msg",
-                "payload": {
-                    "type": "token_count",
-                    "info": {
-                        "total_token_usage": {},
-                        "last_token_usage": {
-                            "input_tokens": 100,
-                            "cached_input_tokens": 0,
-                            "output_tokens": 10,
-                            "reasoning_output_tokens": 0,
-                            "total_tokens": 110
-                        }
-                    },
-                    "rate_limits": { "limit_id": limit_id }
-                }
-            })
-        };
-        write_jsonl(
-            &file,
-            &[
-                session_meta(PARENT_ID),
-                turn_context(),
-                event("codex", "2026-07-10T03:00:02Z"),
-                // Without a usable cumulative total, identical per-request
-                // usage is not enough evidence that this is a replay.
-                event("codex_bengalfox", "2026-07-10T03:00:03Z"),
-            ],
-        );
-
-        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
-        let deltas = parsed
-            .token_events
-            .iter()
-            .filter(|event| !event.delta.is_zero())
-            .map(|event| event.delta.input)
-            .collect::<Vec<_>>();
-
-        assert_eq!(deltas, vec![100, 100]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_total_fallback_uses_session_baseline_across_model_switch() -> Result<(), AppError> {
-        let dir = tempdir().unwrap();
-        let file = rollout_path(dir.path(), PARENT_ID);
-        write_jsonl(
-            &file,
-            &[
-                session_meta(PARENT_ID),
-                turn_context_for_model_at("model-a", "2026-07-10T03:00:01Z"),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:02Z"),
-                turn_context_for_model_at("model-b", "2026-07-10T03:00:03Z"),
-                token_count_at(150, 75, 15, "2026-07-10T03:00:04Z"),
-            ],
-        );
-
-        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
-        let deltas = parsed
-            .token_events
-            .iter()
-            .filter(|event| !event.delta.is_zero())
-            .map(|event| event.delta.input)
-            .collect::<Vec<_>>();
-
-        assert_eq!(deltas, vec![100, 50]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_parse_cumulative_tokens_valid() {
-        let json: serde_json::Value = serde_json::json!({
-            "input_tokens": 17934,
-            "cached_input_tokens": 9600,
-            "output_tokens": 454,
-            "reasoning_output_tokens": 233,
-            "total_tokens": 18388
-        });
-        let tokens = parse_cumulative_tokens(&json).unwrap();
-        assert_eq!(tokens.input, 17934);
-        assert_eq!(tokens.cached_input, 9600);
-        assert_eq!(tokens.output, 454);
-    }
-
-    #[test]
-    fn test_parse_cumulative_tokens_null() {
-        let json = serde_json::Value::Null;
-        assert!(parse_cumulative_tokens(&json).is_none());
-    }
-
-    #[test]
-    fn test_parse_cumulative_tokens_rejects_empty_object_but_accepts_explicit_zero() {
-        assert!(parse_cumulative_tokens(&serde_json::json!({})).is_none());
-
-        let tokens = parse_cumulative_tokens(&serde_json::json!({ "input_tokens": 0 }))
-            .expect("an explicit zero is valid usage");
-        assert_eq!(tokens.input, 0);
-        assert_eq!(tokens.cached_input, 0);
-        assert_eq!(tokens.output, 0);
-    }
-
-    #[test]
-    fn test_parse_cumulative_tokens_alt_field_names() {
-        // 某些版本可能使用 cache_read_input_tokens 而非 cached_input_tokens
-        let json: serde_json::Value = serde_json::json!({
-            "input_tokens": 1000,
-            "cache_read_input_tokens": 500,
-            "output_tokens": 200
-        });
-        let tokens = parse_cumulative_tokens(&json).unwrap();
-        assert_eq!(tokens.cached_input, 500);
-    }
-
-    #[test]
-    fn test_collect_codex_session_files_nonexistent() {
-        let files = collect_codex_session_files(Path::new("/nonexistent/path"));
-        assert!(files.is_empty());
     }
 
     #[test]
@@ -2244,294 +2775,6 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_filtered_parent_events_use_subsequence_prefix_alignment() -> Result<(), AppError> {
-        clear_codex_replay_caches();
-        let db = Database::memory()?;
-        let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        let child = rollout_path(temp.path(), CHILD_A_ID);
-        write_jsonl(
-            &parent,
-            &[
-                session_meta(PARENT_ID),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                token_count_at(200, 100, 20, "2026-07-10T03:00:02Z"),
-                token_count_at(300, 150, 30, "2026-07-10T03:00:03Z"),
-                turn_context_at("2026-07-10T03:00:10Z"),
-            ],
-        );
-        write_jsonl(
-            &child,
-            &[
-                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:05Z"),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:06Z"),
-                token_count_at(300, 150, 30, "2026-07-10T03:00:07Z"),
-                token_count_at(450, 220, 45, "2026-07-10T03:00:08Z"),
-            ],
-        );
-
-        let result = sync_test_file(&db, &child, &[&parent, &child])?;
-        assert_eq!((result.imported, result.skipped), (1, 2));
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_parent_rollout_is_cached_once_across_fork_cutoffs() -> Result<(), AppError> {
-        clear_codex_replay_caches();
-        let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        write_jsonl(
-            &parent,
-            &[
-                session_meta(PARENT_ID),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                token_count_at(200, 100, 20, "2026-07-10T03:00:10Z"),
-                turn_context_at("2026-07-10T03:00:20Z"),
-            ],
-        );
-
-        let early = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
-        let late = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
-        assert_eq!(parent_signatures_before(&parent, early).unwrap().len(), 1);
-        let first_timeline =
-            Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
-        assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
-
-        let caches = replay_caches().lock().unwrap();
-        assert_eq!(caches.parent_timelines.len(), 1);
-        assert!(Arc::ptr_eq(
-            &first_timeline,
-            &caches.parent_timelines[&parent].timeline
-        ));
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_parent_rollout_cache_invalidates_after_append() -> Result<(), AppError> {
-        clear_codex_replay_caches();
-        let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        let cutoff = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
-        write_jsonl(
-            &parent,
-            &[
-                session_meta(PARENT_ID),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                turn_context_at("2026-07-10T03:00:20Z"),
-            ],
-        );
-        assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 1);
-
-        write_jsonl(
-            &parent,
-            &[
-                session_meta(PARENT_ID),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                token_count_at(200, 100, 20, "2026-07-10T03:00:10Z"),
-                turn_context_at("2026-07-10T03:00:20Z"),
-            ],
-        );
-        assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 2);
-
-        let caches = replay_caches().lock().unwrap();
-        assert_eq!(caches.parent_timelines.len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_parent_rollout_content_error_cache_preserves_open_errors() {
-        clear_codex_replay_caches();
-        let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        let cutoff = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
-        write_jsonl(
-            &parent,
-            &[
-                session_meta(PARENT_ID),
-                token_count_without_timestamp(100, 50, 10),
-                turn_context_at("2026-07-10T03:00:20Z"),
-            ],
-        );
-
-        let first_error = parent_signatures_before(&parent, cutoff).unwrap_err();
-        assert!(first_error.contains("token_count 缺少有效 timestamp"));
-        let cached_timeline =
-            || Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
-        let first_timeline = cached_timeline();
-
-        let second_error = parent_signatures_before(&parent, cutoff).unwrap_err();
-        assert_eq!(second_error, first_error);
-        assert!(Arc::ptr_eq(&first_timeline, &cached_timeline()));
-
-        fs::remove_file(&parent).unwrap();
-        let open_error = parent_signatures_before(&parent, cutoff).unwrap_err();
-        assert!(open_error.contains("无法打开父 rollout"));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_parent_rollout_nanosecond_cutoffs_are_exact() {
-        clear_codex_replay_caches();
-        let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        write_jsonl(
-            &parent,
-            &[
-                session_meta(PARENT_ID),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:00.000000500Z"),
-                turn_context_at("2026-07-10T03:00:00.000000900Z"),
-            ],
-        );
-
-        let before = "2026-07-10T03:00:00.000000300Z"
-            .parse::<DateTime<Utc>>()
-            .unwrap();
-        let after = "2026-07-10T03:00:00.000000700Z"
-            .parse::<DateTime<Utc>>()
-            .unwrap();
-        assert!(parent_signatures_before(&parent, before)
-            .unwrap()
-            .is_empty());
-        assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
-        assert_eq!(replay_caches().lock().unwrap().parent_timelines.len(), 1);
-    }
-
-    #[cfg(any(unix, windows))]
-    #[test]
-    fn test_parent_file_stamp_distinguishes_same_size_same_mtime_files() {
-        let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        let replacement = temp.path().join("replacement.jsonl");
-        let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
-        write_jsonl(&parent, &values);
-        write_jsonl(&replacement, &values);
-        let original_file = fs::File::open(&parent).unwrap();
-        let original_metadata = original_file.metadata().unwrap();
-        let replacement_file = fs::OpenOptions::new()
-            .write(true)
-            .open(&replacement)
-            .unwrap();
-        replacement_file
-            .set_times(fs::FileTimes::new().set_modified(original_metadata.modified().unwrap()))
-            .unwrap();
-        let original_stamp = ParentFileStamp::from_file(&original_file).unwrap();
-        let replacement_stamp = ParentFileStamp::from_file(&replacement_file).unwrap();
-        assert_eq!(
-            (original_stamp.size, original_stamp.modified_nanos),
-            (replacement_stamp.size, replacement_stamp.modified_nanos)
-        );
-        assert_ne!(original_stamp, replacement_stamp);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_empty_fork_imports_no_parent_usage() -> Result<(), AppError> {
-        clear_codex_replay_caches();
-        let db = Database::memory()?;
-        let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        let child = rollout_path(temp.path(), CHILD_A_ID);
-        write_jsonl(
-            &parent,
-            &[
-                session_meta(PARENT_ID),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                token_count_at(200, 100, 20, "2026-07-10T03:00:02Z"),
-                turn_context_at("2026-07-10T03:00:10Z"),
-            ],
-        );
-        write_jsonl(
-            &child,
-            &[
-                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:05Z"),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:06Z"),
-                token_count_at(200, 100, 20, "2026-07-10T03:00:07Z"),
-                serde_json::json!({
-                    "timestamp": "2026-07-10T03:00:08Z",
-                    "type": "event_msg",
-                    "payload": { "type": "thread_settings_applied" }
-                }),
-            ],
-        );
-
-        let result = sync_test_file(&db, &child, &[&parent, &child])?;
-        assert_eq!(
-            (result.imported, result.skipped, result.deferred),
-            (0, 2, false)
-        );
-        let conn = lock_conn!(db.conn);
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(count, 0);
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_conflicting_explicit_parents_are_deferred() -> Result<(), AppError> {
-        clear_codex_replay_caches();
-        let db = Database::memory()?;
-        let temp = tempdir().unwrap();
-        let child = rollout_path(temp.path(), CHILD_A_ID);
-        write_jsonl(
-            &child,
-            &[
-                session_meta_at(
-                    CHILD_A_ID,
-                    Some(PARENT_ID),
-                    Some(CHILD_B_ID),
-                    "2026-07-10T03:00:05Z",
-                ),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:06Z"),
-            ],
-        );
-
-        let result = sync_test_file(&db, &child, &[&child])?;
-        assert!(result.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_parent_future_signature_cannot_extend_replay_prefix() -> Result<(), AppError> {
-        clear_codex_replay_caches();
-        let db = Database::memory()?;
-        let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        let child = rollout_path(temp.path(), CHILD_A_ID);
-        write_jsonl(
-            &parent,
-            &[
-                session_meta(PARENT_ID),
-                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                token_count_at(200, 100, 20, "2026-07-10T03:00:06Z"),
-            ],
-        );
-        write_jsonl(
-            &child,
-            &[
-                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:05Z"),
-                token_count_at(200, 100, 20, "2026-07-10T03:00:07Z"),
-            ],
-        );
-
-        let result = sync_test_file(&db, &child, &[&parent, &child])?;
-        assert_eq!(
-            (result.imported, result.skipped, result.deferred),
-            (1, 0, false)
-        );
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial]
     fn test_missing_parent_is_deferred_and_recovered_without_child_change() -> Result<(), AppError>
     {
         clear_codex_replay_caches();
@@ -2550,6 +2793,16 @@ mod tests {
         let deferred = sync_test_file(&db, &child, &[&child])?;
         assert!(deferred.deferred);
         assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        {
+            let conn = lock_conn!(db.conn);
+            let node: (String, String) = conn.query_row(
+                "SELECT root_session_id, node_kind FROM agent_session_nodes
+                 WHERE app_type = 'codex' AND session_id = ?1",
+                [CHILD_A_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(node, (CHILD_A_ID.to_string(), "unknown".to_string()));
+        }
 
         write_jsonl(
             &parent,
@@ -2566,175 +2819,13 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_billable_file_without_meta_is_deferred_without_cursor() -> Result<(), AppError> {
+    fn test_matching_proxy_row_still_persists_canonical_fact_and_coverage() -> Result<(), AppError>
+    {
         clear_codex_replay_caches();
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
-        let child = rollout_path(temp.path(), CHILD_A_ID);
-        write_jsonl(&child, &[turn_context(), token_count(100, 50, 10)]);
-
-        let result = sync_test_file(&db, &child, &[&child])?;
-        assert!(result.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
-
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        write_jsonl(
-            &child,
-            &[
-                turn_context(),
-                token_count(100, 50, 10),
-                session_meta_at(CHILD_A_ID, None, None, "2026-07-10T03:00:03Z"),
-            ],
-        );
-        let recovered = sync_test_file(&db, &child, &[&child])?;
-        assert_eq!((recovered.imported, recovered.deferred), (1, false));
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_non_billable_file_without_meta_advances_cursor() -> Result<(), AppError> {
-        clear_codex_replay_caches();
-        let db = Database::memory()?;
-        let temp = tempdir().unwrap();
-        let child = rollout_path(temp.path(), CHILD_A_ID);
-        write_jsonl(
-            &child,
-            &[
-                turn_context(),
-                token_count_at(0, 0, 0, "2026-07-10T03:00:02Z"),
-            ],
-        );
-
-        let result = sync_test_file(&db, &child, &[&child])?;
-        assert!(!result.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?.1, 2);
-        Ok(())
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_subagents_use_filename_thread_ids() -> Result<(), AppError> {
-        clear_codex_replay_caches();
-        let db = Database::memory()?;
-        let temp = tempdir().unwrap();
-        let child_a = rollout_path(temp.path(), CHILD_A_ID);
-        let child_b = rollout_path(temp.path(), CHILD_B_ID);
-        write_jsonl(
-            &child_a,
-            &[
-                session_meta(CHILD_A_ID),
-                turn_context(),
-                token_count(100, 50, 10),
-            ],
-        );
-        write_jsonl(
-            &child_b,
-            &[
-                session_meta(CHILD_B_ID),
-                turn_context(),
-                token_count(200, 100, 20),
-            ],
-        );
-
-        assert_eq!(
-            sync_test_file(&db, &child_a, &[&child_a, &child_b])?.imported,
-            1
-        );
-        assert_eq!(
-            sync_test_file(&db, &child_b, &[&child_a, &child_b])?.imported,
-            1
-        );
-
-        let conn = lock_conn!(db.conn);
-        let request_ids = conn
-            .prepare(
-                "SELECT request_id FROM proxy_request_logs
-                 WHERE data_source = 'codex_session' ORDER BY request_id",
-            )?
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(
-            request_ids,
-            vec![
-                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:1"),
-                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_B_ID}:1")
-            ]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_archived_log_inherits_cursor_and_only_imports_appended_usage() -> Result<(), AppError> {
-        let db = Database::memory()?;
-        let temp = tempdir().unwrap();
-        let sessions = temp.path().join("sessions");
-        let archived = temp.path().join("archived_sessions");
-        fs::create_dir_all(&sessions).unwrap();
-        fs::create_dir_all(&archived).unwrap();
-        let source = rollout_path(&sessions, PARENT_ID);
-        let archived_file = rollout_path(&archived, PARENT_ID);
-        write_jsonl(
-            &archived_file,
-            &[
-                session_meta(PARENT_ID),
-                turn_context(),
-                token_count(100, 50, 10),
-                token_count(200, 100, 20),
-            ],
-        );
-
-        {
-            let conn = lock_conn!(db.conn);
-            conn.execute(
-                "INSERT INTO proxy_request_logs (
-                    request_id, provider_id, app_type, model, request_model,
-                    input_tokens, output_tokens, cache_read_tokens,
-                    total_cost_usd, latency_ms, status_code, session_id,
-                    created_at, data_source
-                ) VALUES ('codex_session:parent:2', '_codex_session', 'codex',
-                          'gpt-5.6-sol', 'gpt-5.6-sol', 999, 99, 0, '0', 0,
-                          200, 'parent', 1, 'codex_session')",
-                [],
-            )?;
-        }
-        let source_path = source.to_string_lossy().to_string();
-        update_sync_state(&db, &source_path, 1, 3)?;
-
-        assert_eq!(
-            sync_test_file(&db, &archived_file, &[&archived_file])?.imported,
-            1
-        );
-        assert_eq!(
-            sync_test_file(&db, &archived_file, &[&archived_file])?.imported,
-            0
-        );
-
-        let conn = lock_conn!(db.conn);
-        let old_row_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs
-             WHERE request_id = 'codex_session:parent:2'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(old_row_count, 1);
-        let usage: (i64, i64, i64) = conn.query_row(
-            "SELECT input_tokens, cache_read_tokens, output_tokens
-             FROM proxy_request_logs
-             WHERE request_id = ?1",
-            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:2")],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        assert_eq!(usage, (100, 50, 10));
-        drop(conn);
-        assert_eq!(get_sync_state(&db, &archived_file.to_string_lossy())?.1, 4);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_insert_codex_session_skips_matching_proxy_log() -> Result<(), AppError> {
-        let db = Database::memory()?;
+        let file = rollout_path(temp.path(), PARENT_ID);
+        let event_time = "2026-07-10T03:00:02Z";
         {
             let conn = lock_conn!(db.conn);
             conn.execute(
@@ -2744,343 +2835,103 @@ mod tests {
                     total_cost_usd, latency_ms, status_code, created_at, data_source
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
-                    "codex-proxy",
+                    "proxy-match-1",
                     "openai",
                     "codex",
-                    "gpt-5.4",
-                    "gpt-5.4",
+                    "gpt-5.6-sol",
+                    "gpt-5.6-sol",
                     10,
                     2,
                     1,
-                    7,
+                    0,
                     "0.01",
                     100,
                     200,
-                    1000,
+                    DateTime::parse_from_rfc3339(event_time)
+                        .unwrap()
+                        .timestamp(),
                     "proxy"
                 ],
             )?;
         }
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_at(10, 1, 2, event_time),
+            ],
+        );
 
-        let delta = DeltaTokens {
-            input: 10,
-            cached_input: 1,
-            output: 2,
-        };
-        let mut suspected_duplicates = 0;
-        let inserted = insert_codex_session_entry(
-            &db,
-            "codex-session-dup",
-            &delta,
-            "gpt-5.4",
-            Some("session-1"),
-            Some("1970-01-01T00:16:45Z"),
-            &mut suspected_duplicates,
-        )?;
-        assert!(!inserted);
-
+        let result = sync_test_file(&db, &file, &[&file])?;
+        assert_eq!(result.imported, 1);
         let conn = lock_conn!(db.conn);
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
-            row.get(0)
-        })?;
-        assert_eq!(count, 1);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_codex_session_duplicate_is_observed_but_still_inserted() -> Result<(), AppError> {
-        let db = Database::memory()?;
-        let delta = DeltaTokens {
-            input: 10,
-            cached_input: 1,
-            output: 2,
-        };
-        let mut suspected_duplicates = 0;
-        assert!(insert_codex_session_entry(
-            &db,
-            "codex-session-a",
-            &delta,
-            "gpt-5.4",
-            Some("session-a"),
-            Some("1970-01-01T00:16:40Z"),
-            &mut suspected_duplicates,
-        )?);
-        assert!(insert_codex_session_entry(
-            &db,
-            "codex-session-b",
-            &delta,
-            "gpt-5.4",
-            Some("session-b"),
-            Some("1970-01-01T00:16:45Z"),
-            &mut suspected_duplicates,
-        )?);
-        assert_eq!(suspected_duplicates, 1);
-
-        let conn = lock_conn!(db.conn);
-        let count: i64 = conn.query_row(
+        let compatibility_rows: i64 = conn.query_row(
             "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(count, 2);
+        let fact_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_session_usage_rollups
+             WHERE app_type = 'codex' AND data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        let (source_coverage, proxy_coverage): (i64, i64) = conn.query_row(
+            "SELECT
+                SUM(CASE WHEN data_source = 'codex_session' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN data_source = 'proxy' THEN 1 ELSE 0 END)
+             FROM agent_session_canonical_coverage
+             WHERE app_type = 'codex'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(compatibility_rows, 0);
+        assert_eq!(fact_rows, 1);
+        assert_eq!((source_coverage, proxy_coverage), (1, 1));
         Ok(())
     }
 
     #[test]
-    fn reset_codex_usage_only_removes_codex_rows_and_structural_cursors() -> Result<(), AppError> {
+    #[serial_test::serial]
+    fn test_missing_timestamp_never_inserts_unmarked_raw_or_fact() -> Result<(), AppError> {
+        clear_codex_replay_caches();
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
-        let wide_dir = temp.path();
-        let current_codex = rollout_path(&wide_dir.join("sessions"), CHILD_A_ID);
-        let legacy_codex =
-            format!("C:\\old-codex\\archived_sessions\\rollout-old-{CHILD_B_ID}.jsonl");
-        let gemini_cursor = wide_dir.join("gemini/sessions/session-123.json");
-        let claude_cursor = wide_dir.join(format!("projects/rollout-{PARENT_ID}.jsonl"));
-
-        {
-            let conn = lock_conn!(db.conn);
-            conn.execute_batch(
-                "INSERT INTO proxy_request_logs (
-                    request_id, provider_id, app_type, model, input_tokens,
-                    output_tokens, cache_read_tokens, latency_ms, status_code,
-                    created_at, data_source
-                 ) VALUES
-                    ('codex-row', '_codex_session', 'codex', 'gpt', 1, 1, 0, 0, 200, 1, 'codex_session'),
-                    ('gemini-row', '_gemini_session', 'gemini', 'gemini', 1, 1, 0, 0, 200, 1, 'gemini_session');
-                 INSERT INTO usage_daily_rollups (date, app_type, provider_id, model)
-                 VALUES
-                    ('2026-07-10', 'codex', '_codex_session', 'gpt'),
-                    ('2026-07-10', 'gemini', '_gemini_session', 'gemini');",
-            )?;
-            for path in [
-                current_codex.to_string_lossy().to_string(),
-                legacy_codex,
-                gemini_cursor.to_string_lossy().to_string(),
-                claude_cursor.to_string_lossy().to_string(),
-            ] {
-                conn.execute(
-                    "INSERT INTO session_log_sync
-                     (file_path, last_modified, last_line_offset, last_synced_at)
-                     VALUES (?1, 1, 1, 1)",
-                    [path],
-                )?;
-            }
-
-            reset_codex_usage_on_conn(&conn, wide_dir)?;
-            let codex_rows: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
-                [],
-                |row| row.get(0),
-            )?;
-            let gemini_rows: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'gemini_session'",
-                [],
-                |row| row.get(0),
-            )?;
-            let codex_rollups: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM usage_daily_rollups WHERE provider_id = '_codex_session'",
-                [],
-                |row| row.get(0),
-            )?;
-            let remaining_cursors: i64 =
-                conn.query_row("SELECT COUNT(*) FROM session_log_sync", [], |row| {
-                    row.get(0)
-                })?;
-            assert_eq!((codex_rows, gemini_rows, codex_rollups), (0, 1, 0));
-            assert_eq!(remaining_cursors, 2);
-        }
-        Ok(())
-    }
-
-    // ── 模型名归一化测试 ──
-
-    #[test]
-    fn test_normalize_codex_model_lowercase() {
-        assert_eq!(normalize_codex_model("GLM-4.6"), "glm-4.6");
-        assert_eq!(normalize_codex_model("DeepSeek-Chat"), "deepseek-chat");
-        assert_eq!(normalize_codex_model("GPT-5.4"), "gpt-5.4");
-    }
-
-    #[test]
-    fn test_normalize_codex_model_strip_prefix() {
-        assert_eq!(normalize_codex_model("openai/gpt-5.4"), "gpt-5.4");
-        assert_eq!(
-            normalize_codex_model("azure/gpt-5.2-codex"),
-            "gpt-5.2-codex"
-        );
-        assert_eq!(normalize_codex_model("OPENAI/GPT-5.4"), "gpt-5.4");
-    }
-
-    #[test]
-    fn test_normalize_codex_model_strip_iso_date() {
-        assert_eq!(normalize_codex_model("gpt-5.4-2026-03-05"), "gpt-5.4");
-        assert_eq!(
-            normalize_codex_model("gpt-5.4-pro-2026-03-05"),
-            "gpt-5.4-pro"
-        );
-    }
-
-    #[test]
-    fn test_normalize_codex_model_strip_compact_date() {
-        assert_eq!(normalize_codex_model("gpt-5.4-20260305"), "gpt-5.4");
-        assert_eq!(
-            normalize_codex_model("claude-opus-4-6-20260206"),
-            "claude-opus-4-6"
-        );
-    }
-
-    #[test]
-    fn test_normalize_codex_model_no_change() {
-        assert_eq!(normalize_codex_model("gpt-5.4"), "gpt-5.4");
-        assert_eq!(normalize_codex_model("gpt-5.2-codex"), "gpt-5.2-codex");
-        assert_eq!(normalize_codex_model("o3"), "o3");
-        assert_eq!(normalize_codex_model("deepseek-chat"), "deepseek-chat");
-    }
-
-    #[test]
-    fn test_normalize_codex_model_combined() {
-        // prefix + uppercase + ISO date
-        assert_eq!(
-            normalize_codex_model("openai/GPT-5.4-2026-03-05"),
-            "gpt-5.4"
-        );
-        // prefix + compact date
-        assert_eq!(normalize_codex_model("openai/gpt-5.4-20260305"), "gpt-5.4");
-    }
-
-    #[test]
-    fn test_cached_clamped_to_input() {
-        // cached > input 的异常场景应被 min() 钳制
-        let prev = Some(CumulativeTokens {
-            input: 100,
-            cached_input: 0,
-            output: 50,
-        });
-        let current = CumulativeTokens {
-            input: 110,       // delta = 10
-            cached_input: 80, // delta = 80（异常：大于 input delta）
-            output: 60,
-        };
-        let delta = compute_delta(&prev, &current);
-        // 钳制前：cached_input = 80, input = 10
-        assert_eq!(delta.cached_input, 80);
-        assert_eq!(delta.input, 10);
-        // 实际钳制在调用侧：delta.cached_input.min(delta.input)
-        let clamped = delta.cached_input.min(delta.input);
-        assert_eq!(clamped, 10);
-    }
-
-    /// 真实语料回放验收 harness（仅手动运行，勿在 CI 跑）。
-    ///
-    /// 把真实 `~/.codex/sessions` 语料在内存库上做一次全量重导，输出计时与
-    /// 结果快照。用于性能改动的行为等价验证：改动前后各跑一次，两侧
-    /// `CODEX_REPLAY_OUT` 文件必须逐字节相同。
-    ///
-    /// ```bash
-    /// CODEX_REPLAY_OUT=/tmp/replay.tsv \
-    ///   cargo test --release replay_real_codex_corpus -- --ignored --nocapture
-    /// ```
-    #[test]
-    #[ignore]
-    fn replay_real_codex_corpus() -> Result<(), AppError> {
-        let Some(real_home) = dirs::home_dir() else {
-            eprintln!("[REPLAY] no home dir, skipping");
-            return Ok(());
-        };
-        let real_sessions = real_home.join(".codex").join("sessions");
-        if !real_sessions.is_dir() {
-            eprintln!("[REPLAY] {} not found, skipping", real_sessions.display());
-            return Ok(());
-        }
-
-        // 临时 HOME 里只放一个指向真实语料的只读 symlink，避免测试
-        // 触碰真实 ~/.cc-switch / ~/.codex 下的任何其他内容。
-        let temp = tempfile::tempdir().expect("create temp home");
-        fs::create_dir_all(temp.path().join(".codex")).expect("mkdir .codex");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&real_sessions, temp.path().join(".codex").join("sessions"))
-            .expect("symlink sessions");
-        let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-
-        clear_codex_replay_caches();
-        // CODEX_REPLAY_DISK=1 时用临时 HOME 下的磁盘库：逐行 autocommit 的
-        // 主要成本是磁盘 journal fsync，内存库测不出真实写库开销。
-        let db = if std::env::var("CODEX_REPLAY_DISK").is_ok() {
-            Database::init()?
-        } else {
-            Database::memory()?
-        };
-        let start = std::time::Instant::now();
-        let result = sync_codex_usage(&db)?;
-        let full_elapsed = start.elapsed();
-        eprintln!(
-            "[REPLAY] full reimport: imported={} skipped={} suspected_dup={} deferred={} files={} errors={} elapsed={:.2?}",
-            result.imported,
-            result.skipped,
-            result.suspected_duplicates,
-            result.deferred_files,
-            result.files_scanned,
-            result.errors.len(),
-            full_elapsed
+        let file = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_without_timestamp(100, 10, 5),
+            ],
         );
 
-        let start = std::time::Instant::now();
-        let steady = sync_codex_usage(&db)?;
-        eprintln!(
-            "[REPLAY] steady pass: imported={} deferred={} elapsed={:.2?}",
-            steady.imported,
-            steady.deferred_files,
-            start.elapsed()
-        );
-
-        if let Ok(out_path) = std::env::var("CODEX_REPLAY_OUT") {
-            use std::io::Write;
-            let conn = lock_conn!(db.conn);
-            let mut stmt = conn
-                .prepare(
-                    "SELECT request_id, model, request_model, input_tokens, output_tokens,
-                            cache_read_tokens, cache_creation_tokens,
-                            input_cost_usd, output_cost_usd, cache_read_cost_usd,
-                            cache_creation_cost_usd, total_cost_usd,
-                            session_id, provider_id, provider_type, status_code,
-                            is_streaming, cost_multiplier, created_at, data_source
-                     FROM proxy_request_logs
-                     WHERE data_source = 'codex_session'
-                     ORDER BY request_id",
-                )
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            let rows = stmt
-                .query_map([], |row| {
-                    let mut fields = Vec::with_capacity(20);
-                    for idx in 0..20 {
-                        fields.push(match row.get_ref(idx)? {
-                            rusqlite::types::ValueRef::Null => "NULL".to_string(),
-                            rusqlite::types::ValueRef::Integer(v) => v.to_string(),
-                            rusqlite::types::ValueRef::Real(v) => v.to_string(),
-                            rusqlite::types::ValueRef::Text(v) => {
-                                String::from_utf8_lossy(v).into_owned()
-                            }
-                            rusqlite::types::ValueRef::Blob(v) => format!("blob:{}", v.len()),
-                        });
-                    }
-                    Ok(fields.join("\t"))
-                })
-                .map_err(|e| AppError::Database(e.to_string()))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            let mut out = fs::File::create(&out_path).expect("create replay out file");
-            for line in &rows {
-                writeln!(out, "{line}").expect("write replay row");
-            }
-            eprintln!("[REPLAY] wrote {} rows to {out_path}", rows.len());
-        }
-
-        match previous_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
+        let result = sync_test_file(&db, &file, &[&file])?;
+        assert!(result.deferred);
+        let conn = lock_conn!(db.conn);
+        let raw_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs
+             WHERE app_type = 'codex' AND data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        let fact_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_session_usage_rollups
+             WHERE app_type = 'codex' AND data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        let marker_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_session_canonical_coverage
+             WHERE app_type = 'codex' AND data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!((raw_count, fact_count, marker_count), (0, 0, 0));
+        drop(conn);
+        assert_eq!(get_sync_state(&db, &file.to_string_lossy())?, (0, 0));
         Ok(())
     }
 }
