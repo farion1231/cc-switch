@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import {
   Activity,
   Route,
-  RefreshCw,
   Trash2,
   Loader2,
   AlertTriangle,
@@ -29,11 +28,11 @@ import {
   useUpdateSessionRoutingConfig,
   useActiveSessionRoutes,
   useDeleteSessionRoute,
+  useSetSessionRouteProvider,
   useSessionProviderLoad,
   useCleanupExpiredRoutes,
 } from "@/lib/query/sessionRoutes";
-import { extractErrorMessage } from "@/utils/errorUtils";
-import { toast } from "sonner";
+import { useFailoverQueue } from "@/lib/query/failover";
 
 const APP_TYPES = ["claude", "codex", "gemini"] as const;
 type AppType = (typeof APP_TYPES)[number];
@@ -49,7 +48,10 @@ export function SessionRoutingPage() {
     useActiveSessionRoutes(selectedApp);
   const { data: providerLoad = {} } = useSessionProviderLoad(selectedApp);
   const deleteRoute = useDeleteSessionRoute();
+  const setRouteProvider = useSetSessionRouteProvider();
   const cleanupExpired = useCleanupExpiredRoutes();
+  // 可分配的 provider（故障转移队列里的）
+  const { data: queueProviders = [] } = useFailoverQueue(selectedApp);
 
   const handleToggle = async (enabled: boolean) => {
     if (!config) return;
@@ -77,6 +79,15 @@ export function SessionRoutingPage() {
 
   const handleDeleteRoute = (sessionId: string) => {
     deleteRoute.mutate({ sessionId, appType: selectedApp });
+  };
+
+  const handleSetProvider = (sessionId: string, providerId: string) => {
+    if (!providerId) return;
+    setRouteProvider.mutate({
+      sessionId,
+      appType: selectedApp,
+      providerId,
+    });
   };
 
   const handleCleanup = () => {
@@ -300,9 +311,6 @@ export function SessionRoutingPage() {
                           <span className="text-sm font-medium truncate max-w-[120px]">
                             {route.sessionId.slice(0, 8)}
                           </span>
-                          <span className="text-xs text-muted-foreground">
-                            {route.providerName}
-                          </span>
                         </div>
                         <div className="flex items-center gap-3 text-xs text-muted-foreground">
                           <span>
@@ -319,14 +327,35 @@ export function SessionRoutingPage() {
                         </div>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      onClick={() => handleDeleteRoute(route.sessionId)}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Select
+                        value={route.providerId}
+                        onValueChange={(v) => handleSetProvider(route.sessionId, v)}
+                      >
+                        <SelectTrigger className="w-36 h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {queueProviders.map((p) => (
+                            <SelectItem
+                              key={p.providerId}
+                              value={p.providerId}
+                              className="text-xs"
+                            >
+                              {p.providerName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        onClick={() => handleDeleteRoute(route.sessionId)}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

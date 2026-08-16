@@ -1695,6 +1695,7 @@ pub fn run() {
             commands::update_session_routing_config,
             commands::get_active_session_routes,
             commands::delete_session_route,
+            commands::set_session_route_provider,
             commands::cleanup_expired_session_routes,
             commands::get_session_provider_load,
         ]);

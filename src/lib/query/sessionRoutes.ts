@@ -75,6 +75,35 @@ export function useDeleteSessionRoute() {
   });
 }
 
+export function useSetSessionRouteProvider() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({
+      sessionId,
+      appType,
+      providerId,
+    }: {
+      sessionId: string;
+      appType: string;
+      providerId: string;
+    }) => sessionRoutesApi.setRouteProvider(sessionId, appType, providerId),
+    onSuccess: (_, { appType }) => {
+      queryClient.invalidateQueries({
+        queryKey: sessionRouteKeys.routes(appType),
+      });
+      queryClient.invalidateQueries({
+        queryKey: sessionRouteKeys.load(appType),
+      });
+      toast.success(t("sessionRoutes.providerAssigned"));
+    },
+    onError: (error) => {
+      toast.error(extractErrorMessage(error));
+    },
+  });
+}
+
 export function useSessionProviderLoad(appType: string) {
   return useQuery({
     queryKey: sessionRouteKeys.load(appType),

@@ -38,6 +38,18 @@ export const sessionRoutesApi = {
     return invoke("delete_session_route", { sessionId, appType });
   },
 
+  async setRouteProvider(
+    sessionId: string,
+    appType: string,
+    providerId: string,
+  ): Promise<void> {
+    return invoke("set_session_route_provider", {
+      sessionId,
+      appType,
+      providerId,
+    });
+  },
+
   async cleanupExpired(
     appType: string,
     ttlSeconds: number,

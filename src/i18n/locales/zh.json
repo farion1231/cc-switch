@@ -3265,6 +3265,7 @@
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "cleanup": "清理过期",
-    "cleanedUp": "已清理 {{count}} 个过期会话"
+    "cleanedUp": "已清理 {{count}} 个过期会话",
+    "providerAssigned": "已为该会话指定供应商"
   }
 }

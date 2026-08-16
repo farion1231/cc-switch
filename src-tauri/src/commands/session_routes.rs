@@ -63,6 +63,27 @@ pub async fn delete_session_route(
         .map_err(|e| e.to_string())
 }
 
+/// 手动指定 session 使用某个 provider（覆盖自动分配）
+#[tauri::command]
+pub async fn set_session_route_provider(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    app_type: String,
+    provider_id: String,
+) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    log::info!(
+        "[SessionRoutes] 手动指定: session={} app={} → provider={}",
+        &session_id[..8.min(session_id.len())],
+        app_type,
+        provider_id,
+    );
+    state
+        .db
+        .update_session_route_provider(&session_id, &app_type, &provider_id, now)
+        .map_err(|e| e.to_string())
+}
+
 /// 清理过期 session 路由
 #[tauri::command]
 pub async fn cleanup_expired_session_routes(

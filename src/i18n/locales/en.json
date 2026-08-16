@@ -3265,6 +3265,7 @@
     "minutesAgo": "{{count}}m ago",
     "hoursAgo": "{{count}}h ago",
     "cleanup": "Cleanup Expired",
-    "cleanedUp": "Cleaned up {{count}} expired sessions"
+    "cleanedUp": "Cleaned up {{count}} expired sessions",
+    "providerAssigned": "Provider assigned for this session"
   }
 }
