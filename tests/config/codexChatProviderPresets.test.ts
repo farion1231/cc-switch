@@ -34,6 +34,20 @@ const expectedChatPresets = new Map<
     },
   ],
   [
+    "Baidu Qianfan Token Plan",
+    {
+      baseUrl: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+      contextWindows: {
+        "deepseek-v4-pro": 1048576,
+        "deepseek-v4-flash": 1048576,
+        "deepseek-v4-flash-0731": 1048576,
+        "glm-5.2": 1048576,
+        "glm-5.1": 198000,
+        "kimi-k2.6": 262144,
+      },
+    },
+  ],
+  [
     "Kimi",
     {
       baseUrl: "https://api.moonshot.cn/v1",

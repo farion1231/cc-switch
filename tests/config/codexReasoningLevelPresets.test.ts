@@ -76,6 +76,13 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Novita AI", "zai-org/glm-5.1", ["none", "high"]],
     // 千帆 v2 官方 thinking:{type}（声明已补）→ 两态
     ["Baidu Qianfan Coding Plan", "qianfan-code-latest", ["none", "high"]],
+    // 千帆 Token Plan：deepseek-v4-pro/v4-flash 在 thinking+reasoning_effort
+    // 双官方清单内（effort 仅 high/max 两档真实深度）；不声明 default=回落
+    // max，恰好等于平台对复杂 Agent 类请求的自动行为。glm-5.1 只在 thinking
+    // 清单 → 两态
+    ["Baidu Qianfan Token Plan", "deepseek-v4-pro", ["none", "high", "max"]],
+    ["Baidu Qianfan Token Plan", "deepseek-v4-flash", ["none", "high", "max"]],
+    ["Baidu Qianfan Token Plan", "glm-5.1", ["none", "high"]],
     // BytePlus 国际站已切原生 Responses，档位=官方 Codex 文档三档（与国内
     // 站火山双 Plan 同源交叉印证）
     ["BytePlus", "ark-code-latest", ["low", "medium", "high"]],
@@ -128,6 +135,11 @@ describe("Codex preset pre-filled reasoning levels", () => {
       // Nvidia NIM：无思考开关（真参数 chat_template_kwargs 不在值域），
       // 声明已改 thinkingParam:none 撤销假开关
       ["Nvidia", "moonshotai/kimi-k2.5"],
+      // 千帆 Token Plan：三模型均不在 thinking 官方清单（2026-05-27 版）且
+      // 无任何官方接入示例下发思考字段——无证据不造档位
+      ["Baidu Qianfan Token Plan", "deepseek-v4-flash-0731"],
+      ["Baidu Qianfan Token Plan", "glm-5.2"],
+      ["Baidu Qianfan Token Plan", "kimi-k2.6"],
     ];
     for (const [presetName, modelId] of UNFILLED) {
       const model = catalogModel(presetName, modelId);

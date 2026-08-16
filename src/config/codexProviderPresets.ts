@@ -1213,6 +1213,88 @@ requires_openai_auth = true`,
     iconColor: "#2932E1",
   },
   {
+    // Token Plan 个人版：2026-07-13 起替代 Coding Plan 发售（Coding Plan
+    // 停止新购、存量可用至到期，故上面的旧预设保留）。无别名机制，直接
+    // 指定真实模型 id；官方 Codex 接入指南 wire_api 省略=chat 默认，与
+    // Coding Plan 同走本地路由。API Key 是订阅页专属 Key（非通用应用 Key）
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qianfan_tokenplan",
+      "https://qianfan.baidubce.com/v2/tokenplan/personal",
+      "deepseek-v4-pro",
+    ),
+    endpointCandidates: ["https://qianfan.baidubce.com/v2/tokenplan/personal"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 阵容与排序=Token Plan 个人版文档（2026-08-14 版）；ernie-5.1 官方
+      // 标注 8/20 下线不收。窗口=千帆平台模型列表页口径（2026-08-06 版，
+      // glm-5.1 与官方 OpenCode 接入页 198000 双重印证）
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1048576,
+        // thinking + reasoning_effort 双官方清单模型：none=关思考，high/max
+        // =官方仅有的两档真实深度。不声明 default：官方对复杂 Agent 类请求
+        // 自动置 max=回落结果，显式钉 high 反而会压低平台该行为
+        reasoningLevels: ["none", "high", "max"],
+      },
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high", "max"],
+      },
+      {
+        // 平台模型列表无独立条目、思考双清单均未收录——窗口按 v4-flash
+        // 同款填，档位无证据不造
+        model: "deepseek-v4-flash-0731",
+        displayName: "DeepSeek V4 Flash 0731",
+        contextWindow: 1048576,
+      },
+      {
+        // 千帆平台标 1M（≠智谱自家 coding 端点 200K 口径，窗口是平台部署
+        // 属性）；thinking 清单（2026-05-27 版）未收录，档位不填
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1048576,
+      },
+      {
+        model: "glm-5.1",
+        displayName: "GLM-5.1",
+        contextWindow: 198000,
+        // thinking 清单内，且官方 OpenCode 接入页在 Token Plan 端点上对它
+        // 一手下发 thinking:{type:"enabled"} → 真实两态
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        // thinking 清单未收录，档位不填
+        model: "kimi-k2.6",
+        displayName: "Kimi K2.6",
+        contextWindow: 262144,
+      },
+    ]),
+    // 与 Coding Plan 的差异：这里开 supportsEffort——Coding Plan 因别名不知
+    // 解析到谁而保持 false；Token Plan catalog 全为显式模型，默认模型
+    // deepseek-v4-pro 在 reasoning_effort 官方清单内（清单仅 v4-pro/v4-flash，
+    // 档位仅 high/max）。effortValueMode:"deepseek"（max/xhigh/ultra→max、
+    // 其余→high）与千帆官方向下兼容映射（low/medium→high、xhigh→max）逐字
+    // 吻合；非清单模型收到 reasoning_effort 按平台明文"忽略不报错"，无害
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "thinking",
+      effortParam: "reasoning_effort",
+      effortValueMode: "deepseek",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+  },
+  {
     name: "Bailian",
     websiteUrl: "https://bailian.console.aliyun.com",
     apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
