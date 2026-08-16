@@ -2788,14 +2788,6 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
     Ok(())
 }
 
-/// Route a Codex live write between full auth+config or config-only.
-///
-/// Official providers with usable login material own `auth.json`. Third-party
-/// providers only touch `config.toml` when the compatibility setting is enabled
-/// so the user's ChatGPT login cache survives provider switches.
-///
-/// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
-/// （见 `inject_codex_unified_session_bucket`）。
 /// Codex Desktop owns the `[desktop]` table in `config.toml`: it is the app's
 /// own UI state (`mac-menu-bar-enabled`, …), not provider configuration.
 /// Switching providers replaces the live file with the stored provider TOML,
@@ -2810,7 +2802,13 @@ fn merge_codex_desktop_table(live_text: &str, config_text: &str) -> String {
     let Ok(live_doc) = live_text.parse::<DocumentMut>() else {
         return config_text.to_string();
     };
-    let Some(live_desktop) = live_doc.get("desktop").and_then(|item| item.as_table()) else {
+    // `as_table_like`, not `as_table`: `desktop = { mac-menu-bar-enabled = false }`
+    // is an inline table and perfectly valid TOML, but `as_table` returns none
+    // for it — same trap `update_codex_toml_field` documents for `model_providers`.
+    let Some(live_desktop) = live_doc
+        .get("desktop")
+        .and_then(|item| item.as_table_like())
+    else {
         return config_text.to_string();
     };
     if live_desktop.is_empty() {
@@ -2820,18 +2818,22 @@ fn merge_codex_desktop_table(live_text: &str, config_text: &str) -> String {
         return config_text.to_string();
     };
 
-    if target_doc
-        .get("desktop")
-        .and_then(|item| item.as_table())
-        .is_none()
-    {
-        let mut table = toml_edit::Table::new();
-        table.set_implicit(false);
-        target_doc["desktop"] = toml_edit::Item::Table(table);
+    match target_doc.get("desktop") {
+        // Nothing to merge into yet, so give the carried keys a home.
+        None => {
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(false);
+            target_doc["desktop"] = toml_edit::Item::Table(table);
+        }
+        // The incoming config wins, and that has to hold for shapes we cannot
+        // merge into as well (`desktop = 42`). Replacing it here would discard a
+        // value the provider config states outright, so leave the text alone.
+        Some(item) if item.as_table_like().is_none() => return config_text.to_string(),
+        Some(_) => {}
     }
     let Some(target_desktop) = target_doc
         .get_mut("desktop")
-        .and_then(|item| item.as_table_mut())
+        .and_then(|item| item.as_table_like_mut())
     else {
         return config_text.to_string();
     };
@@ -2839,7 +2841,7 @@ fn merge_codex_desktop_table(live_text: &str, config_text: &str) -> String {
     let mut carried = false;
     for (key, value) in live_desktop.iter() {
         if target_desktop.get(key).is_none() {
-            target_desktop[key] = value.clone();
+            target_desktop.insert(key, value.clone());
             carried = true;
         }
     }
@@ -2860,13 +2862,61 @@ fn carry_over_codex_desktop_table(config_text: &str) -> String {
     }
 }
 
+/// `[desktop]` belongs to live for the same reason `[mcp_servers]` does, so it
+/// gets the same treatment on the way out: strip it when backfilling a provider.
+///
+/// Leaving it in makes the snapshot taken at switch-out time the provider's own
+/// value. Switch away, change a Desktop setting, switch back, and that stale
+/// snapshot wins over the newer live value — the carry-over above deliberately
+/// yields to keys the provider config sets, and it cannot tell a backfilled key
+/// from one the user meant.
+pub fn strip_codex_desktop_from_settings(settings: &mut Value) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    if !config_text.contains("desktop") {
+        return Ok(());
+    }
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    if doc.as_table_mut().remove("desktop").is_some() {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(doc.to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// Route a Codex live write between full auth+config or config-only.
+///
+/// Official providers with usable login material own `auth.json`. Third-party
+/// providers only touch `config.toml` when the compatibility setting is enabled
+/// so the user's ChatGPT login cache survives provider switches.
+///
+/// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
+/// （见 `inject_codex_unified_session_bucket`）。
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let desktop_preserved = config_text.map(carry_over_codex_desktop_table);
-    let config_text = desktop_preserved.as_deref().or(config_text);
+    // A Codex provider may legitimately carry no `config` at all, and every
+    // branch below then writes an empty `config.toml` — which drops `[desktop]`
+    // exactly as an overwrite would. Merge against the empty string so that case
+    // is covered too, and keep the result only when something was actually
+    // carried, so a provider with no config and no live desktop state still
+    // writes nothing.
+    let desktop_preserved = carry_over_codex_desktop_table(config_text.unwrap_or(""));
+    let config_text = match config_text {
+        Some(_) => Some(desktop_preserved.as_str()),
+        None if !desktop_preserved.trim().is_empty() => Some(desktop_preserved.as_str()),
+        None => None,
+    };
 
     let unified_official_config =
         if category == Some("official") && crate::settings::unify_codex_session_history() {
@@ -3599,6 +3649,100 @@ mac-menu-bar-enabled = true
                 "live config {live:?} should leave the incoming config untouched"
             );
         }
+    }
+
+    // Both sides of the merge may be written as inline tables, which is valid
+    // TOML the `as_table` accessor silently reports as "not a table".
+    #[test]
+    fn desktop_merge_handles_inline_tables_on_both_sides() {
+        let live = r#"desktop = { mac-menu-bar-enabled = false, followUpQueueMode = "queue" }
+"#;
+        let incoming = r#"desktop = { mac-menu-bar-enabled = true }
+"#;
+
+        let merged = merge_codex_desktop_table(live, incoming);
+        let parsed: toml::Value = toml::from_str(&merged).expect("merged config parses");
+        let desktop = parsed.get("desktop").expect("desktop table");
+
+        assert_eq!(
+            desktop
+                .get("mac-menu-bar-enabled")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "an inline table the provider config sets must not be replaced"
+        );
+        assert_eq!(
+            desktop.get("followUpQueueMode").and_then(|v| v.as_str()),
+            Some("queue"),
+            "keys carried out of an inline live table"
+        );
+    }
+
+    // "Incoming wins" has to hold for shapes there is no way to merge into,
+    // rather than degrading into "incoming gets replaced".
+    #[test]
+    fn desktop_merge_leaves_a_non_table_incoming_value_alone() {
+        let live = "[desktop]\nmac-menu-bar-enabled = false\n";
+        let incoming = "desktop = 42\n";
+
+        assert_eq!(merge_codex_desktop_table(live, incoming), incoming);
+    }
+
+    // Codex providers may legitimately store no `config` at all, and the live
+    // write then produces an empty config.toml — dropping `[desktop]` just as an
+    // overwrite does. This has to go through `write_codex_live_for_provider`:
+    // the merge helper is not where that case is decided.
+    #[test]
+    #[serial_test::serial]
+    fn live_write_without_a_provider_config_keeps_the_desktop_table() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let outcome = (|| {
+            let config_path = get_codex_config_path();
+            if !config_path.starts_with(temp_home.path()) {
+                return Err(format!(
+                    "live config resolved outside the isolated home: {}",
+                    config_path.display()
+                ));
+            }
+            std::fs::create_dir_all(config_path.parent().expect("codex dir"))
+                .map_err(|e| e.to_string())?;
+            std::fs::write(&config_path, "[desktop]\nmac-menu-bar-enabled = false\n")
+                .map_err(|e| e.to_string())?;
+
+            write_codex_live_for_provider(Some("custom"), &json!({}), None)
+                .map_err(|e| e.to_string())?;
+
+            std::fs::read_to_string(&config_path).map_err(|e| e.to_string())
+        })();
+
+        match previous_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        let written = outcome.expect("live write");
+        assert!(
+            written.contains("mac-menu-bar-enabled"),
+            "a provider with no stored config must not wipe Desktop's own state, got: {written:?}"
+        );
+    }
+
+    // The stripping itself is covered end-to-end at the backfill entry point in
+    // `services::provider::live`; this pins the no-op path.
+    #[test]
+    fn backfill_strip_leaves_a_config_without_desktop_untouched() {
+        let original = "model_provider = \"vendor\"\n";
+        let mut settings = json!({ "config": original });
+
+        strip_codex_desktop_from_settings(&mut settings).expect("strip succeeds");
+
+        assert_eq!(
+            settings.get("config").and_then(|v| v.as_str()),
+            Some(original)
+        );
     }
 
     #[test]
