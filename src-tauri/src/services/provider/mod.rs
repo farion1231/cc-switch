@@ -5557,11 +5557,9 @@ impl ProviderService {
                     }
                 }
             } else {
-                if let Err(err) = write_live_with_common_config_for_state(
-                    state,
-                    &app_type,
-                    &provider,
-                ) {
+                if let Err(err) =
+                    write_live_with_common_config_for_state(state, &app_type, &provider)
+                {
                     // Harness native writes can be rejected by its cross-process
                     // lock or by an inherited environment override. Restore the
                     // provider snapshot so a reported save failure does not leave

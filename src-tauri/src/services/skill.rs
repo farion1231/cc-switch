@@ -688,7 +688,7 @@ impl SkillService {
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop | AppType::DeepSeekHarness) {
                 continue;
             }
             let app_dir = Self::get_app_skills_dir(&app)?;
@@ -5532,6 +5532,20 @@ mod tests {
             source.join("SKILL.md").exists(),
             "validation must happen before any source is moved"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn validate_skill_storage_destination_ignores_apps_without_skill_storage() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _pi_dir =
+            crate::pi_config::test_support::TestAgentDir::at(&temp.path().join("pi-agent"));
+        let target = temp.path().join("custom-skills");
+        fs::create_dir_all(&target).expect("create target");
+
+        SkillService::validate_skill_storage_destination(&target)
+            .expect("apps without managed Skills directories must be ignored");
     }
 
     #[test]
