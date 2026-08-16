@@ -11,8 +11,11 @@ fn main() {
     // 1. Embeds the manifest into test binaries via /MANIFEST:EMBED
     // 2. Uses /MANIFEST:NO for the main binary to avoid duplicate resources
     //    (Tauri already handles manifest embedding for the app binary)
+    //
+    // Note: /MANIFEST:EMBED is MSVC-specific. MinGW/GNU linker does not
+    // support it, so we skip in that case.
     #[cfg(target_os = "windows")]
-    {
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         let manifest_path = std::path::PathBuf::from(
             std::env::var("CARGO_MANIFEST_DIR").expect("missing CARGO_MANIFEST_DIR"),
         )
