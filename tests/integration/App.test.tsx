@@ -2,6 +2,8 @@ import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { http, HttpResponse } from "msw";
+import { server } from "../msw/server";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
@@ -35,6 +37,8 @@ vi.mock("@/components/providers/ProviderList", () => ({
     onConfigureUsage,
     onOpenWebsite,
     onCreate,
+    onDelete,
+    onRemoveFromConfig,
   }: any) => (
     <div>
       <div data-testid="provider-list">{JSON.stringify(providers)}</div>
@@ -51,6 +55,12 @@ vi.mock("@/components/providers/ProviderList", () => ({
       </button>
       <button onClick={() => onOpenWebsite("https://example.com")}>
         open-website
+      </button>
+      <button onClick={() => onDelete(Object.values(providers)[0])}>
+        delete
+      </button>
+      <button onClick={() => onRemoveFromConfig?.(Object.values(providers)[0])}>
+        remove
       </button>
       <button onClick={() => onCreate?.()}>create</button>
     </div>
@@ -79,9 +89,18 @@ vi.mock("@/components/providers/AddProviderDialog", () => ({
 }));
 
 vi.mock("@/components/providers/EditProviderDialog", () => ({
-  EditProviderDialog: ({ open, provider, onSubmit, onOpenChange }: any) =>
+  EditProviderDialog: ({
+    open,
+    provider,
+    onSubmit,
+    onOpenChange,
+    isProxyTakeover,
+  }: any) =>
     open ? (
       <div data-testid="edit-provider-dialog">
+        <div data-testid="edit-provider-takeover">
+          {String(isProxyTakeover)}
+        </div>
         <button
           onClick={() =>
             onSubmit({
@@ -112,9 +131,10 @@ vi.mock("@/components/UsageScriptModal", () => ({
 }));
 
 vi.mock("@/components/ConfirmDialog", () => ({
-  ConfirmDialog: ({ isOpen, onConfirm, onCancel }: any) =>
+  ConfirmDialog: ({ isOpen, message, onConfirm, onCancel }: any) =>
     isOpen ? (
       <div data-testid="confirm-dialog">
+        <div data-testid="confirm-message">{message}</div>
         <button onClick={() => onConfirm()}>confirm-delete</button>
         <button onClick={() => onCancel()}>cancel-delete</button>
       </div>
@@ -194,6 +214,7 @@ describe("App integration with MSW", () => {
     skillsPanelMocks.checkUpdates.mockReset();
     skillsPanelMocks.openDiscovery.mockReset();
     localStorage.removeItem("cc-switch-last-view");
+    localStorage.removeItem("cc-switch-last-app");
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -338,6 +359,51 @@ describe("App integration with MSW", () => {
     );
   });
 
+  it("warns without blocking when removing Pi's global default provider", async () => {
+    localStorage.setItem("cc-switch-last-app", "pi");
+    setProviders("pi", {
+      custom: {
+        id: "custom",
+        name: "Custom Pi",
+        settingsConfig: {
+          baseUrl: "https://api.example.com/v1",
+          apiKey: "test-key",
+          api: "openai-completions",
+          models: [{ id: "model-a" }],
+        },
+        category: "custom",
+        sortIndex: 0,
+        createdAt: Date.now(),
+      },
+    });
+    server.use(
+      http.post("http://tauri.local/get_pi_current_state", () =>
+        HttpResponse.json({
+          enabledProviderIds: ["custom"],
+          defaultProviderId: "custom",
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "Custom Pi",
+      ),
+    );
+    fireEvent.click(screen.getByText("remove"));
+
+    expect(screen.getByTestId("confirm-message")).toHaveTextContent(
+      "confirm.piDefaultProviderWarning",
+    );
+    fireEvent.click(screen.getByText("confirm-delete"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument(),
+    );
+  });
+
   it("shows toast when duplicate cannot load live provider ids", async () => {
     setProviders("openclaw", {
       deepseek: {
@@ -419,5 +485,98 @@ describe("App integration with MSW", () => {
 
     expect(skillsPanelMocks.openDiscovery).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
+  });
+
+  it("passes isProxyTakeover=false to EditProviderDialog when proxy is not running", async () => {
+    // 接管状态为 claude:true 但代理未运行 → isProxyTakeover 必须为 false
+    server.use(
+      http.post("http://tauri.local/get_proxy_status", () =>
+        HttpResponse.json({
+          running: false,
+          address: "127.0.0.1",
+          port: 0,
+          active_connections: 0,
+          total_requests: 0,
+          success_requests: 0,
+          failed_requests: 0,
+          success_rate: 0,
+          uptime_seconds: 0,
+          current_provider: null,
+          current_provider_id: null,
+          last_request_at: null,
+          last_error: null,
+          failover_count: 0,
+          active_targets: [],
+        }),
+      ),
+      http.post("http://tauri.local/get_proxy_takeover_status", () =>
+        HttpResponse.json({
+          claude: true,
+          codex: false,
+          gemini: false,
+          grokbuild: false,
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+    fireEvent.click(screen.getByText("edit"));
+    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-provider-takeover").textContent).toBe(
+      "false",
+    );
+  });
+
+  it("passes isProxyTakeover=true to EditProviderDialog when proxy running and takeover active", async () => {
+    server.use(
+      http.post("http://tauri.local/get_proxy_status", () =>
+        HttpResponse.json({
+          running: true,
+          address: "127.0.0.1",
+          port: 8080,
+          active_connections: 1,
+          total_requests: 1,
+          success_requests: 1,
+          failed_requests: 0,
+          success_rate: 1,
+          uptime_seconds: 10,
+          current_provider: null,
+          current_provider_id: null,
+          last_request_at: null,
+          last_error: null,
+          failover_count: 0,
+          active_targets: [],
+        }),
+      ),
+      http.post("http://tauri.local/get_proxy_takeover_status", () =>
+        HttpResponse.json({
+          claude: true,
+          codex: false,
+          gemini: false,
+          grokbuild: false,
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+    fireEvent.click(screen.getByText("edit"));
+    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-provider-takeover").textContent).toBe(
+      "true",
+    );
   });
 });

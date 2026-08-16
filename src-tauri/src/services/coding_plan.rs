@@ -18,7 +18,8 @@ enum CodingPlanProvider {
     MiniMaxEn,
     ZenMux,
     /// 火山方舟 Agent Plan / Coding Plan（base_url 形如
-    /// `https://ark.cn-beijing.volces.com/api/coding[/v3]`）。
+    /// `https://ark.cn-beijing.volces.com/api/plan[/v3]`（Agent Plan）
+    /// 或 `/api/coding[/v3]`（Coding Plan））。
     Volcengine,
 }
 
@@ -36,9 +37,11 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
-    } else if url.contains("volces.com/api/coding") {
-        // 仅匹配 Coding/Agent Plan 入口；DouBaoSeed 按量付费走 /api/v3 与
-        // /api/compatible，没有套餐额度，不在此命中。
+    } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
+        // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
+        // 入口；DouBaoSeed 按量付费走 /api/v3 与 /api/compatible，没有套餐
+        // 额度，不在此命中。用量探测本身是双 plan 自动探测（GetAFPUsage →
+        // GetCodingPlanUsage），无需在此区分两种订阅。
         Some(CodingPlanProvider::Volcengine)
     } else {
         None
@@ -254,7 +257,9 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             // 大小写不敏感比较：上游若把 "TOKENS_LIMIT" 改成小写或驼峰，依然能识别
-            if !limit_type.eq_ignore_ascii_case("TOKENS_LIMIT") {
+            if !(limit_type.eq_ignore_ascii_case("TOKENS_LIMIT")
+                || limit_type.eq_ignore_ascii_case("CREDIT_LIMIT"))
+            {
                 continue;
             }
             let percentage = limit_item

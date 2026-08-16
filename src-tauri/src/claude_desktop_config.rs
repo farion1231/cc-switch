@@ -61,7 +61,10 @@ pub fn parse_context_window_suffix(model: &str) -> (&str, Option<u64>) {
             if let Some(open) = trimmed[..close].rfind('[') {
                 if open > 0 {
                     let slug = trimmed[..open].trim();
-                    let inner = trimmed[open + 1..close].trim();
+                    let inner = &trimmed[open + 1..close];
+                    if inner.chars().any(char::is_whitespace) {
+                        return (model, None);
+                    }
                     if !slug.is_empty() {
                         if let Some(window) = parse_window_token(inner) {
                             return (slug, Some(window));
@@ -72,6 +75,104 @@ pub fn parse_context_window_suffix(model: &str) -> (&str, Option<u64>) {
         }
     }
     (model, None)
+}
+
+/// 将 env 中旧式模型名后缀迁移到独立的 contextWindows 字段，并清理模型名。
+/// Claude Code 各可配置角色对应的 env key。
+pub(crate) const CLAUDE_MODEL_ENV_KEYS: [&str; 6] = [
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+];
+
+/// Claude ACW/MAX env 键 ↔ autoSyncState 账本短键映射，全项目单一来源。
+pub(crate) const CLAUDE_CONTEXT_WINDOW_LEDGER_KEYS: [(&str, &str); 2] = [
+    ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "ACW"),
+    ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "MAX"),
+];
+
+pub(crate) fn migrate_legacy_suffix_to_context_windows(
+    settings_config: &mut serde_json::Value,
+) -> bool {
+    // 先只读扫描，避免同时持有 env 和 contextWindows 的写借用。
+    let pending = {
+        let Some(env) = settings_config.get("env").and_then(Value::as_object) else {
+            return false;
+        };
+        let mut pending: Vec<(&'static str, String, u64)> = Vec::new();
+        for key in CLAUDE_MODEL_ENV_KEYS {
+            let Some(model) = env.get(key).and_then(Value::as_str) else {
+                continue;
+            };
+            let (slug, window) = parse_context_window_suffix(model);
+            if let Some(window) = window {
+                if slug != model {
+                    pending.push((key, slug.to_string(), window));
+                }
+            }
+        }
+        pending
+    };
+
+    if pending.is_empty() {
+        return false;
+    }
+
+    // contextWindows 已存在但形状非法时不改写任何 env，保持与直接写入逻辑一致。
+    match settings_config.get("contextWindows") {
+        Some(windows) if !windows.is_object() => return false,
+        None => {
+            settings_config["contextWindows"] = json!({});
+        }
+        _ => {}
+    }
+
+    {
+        let Some(env) = settings_config
+            .get_mut("env")
+            .and_then(Value::as_object_mut)
+        else {
+            return false;
+        };
+        for (key, slug, _) in &pending {
+            env.insert(key.to_string(), json!(slug));
+        }
+    }
+
+    let Some(windows) = settings_config
+        .get_mut("contextWindows")
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    for (key, _, window) in pending {
+        if !windows.contains_key(key) {
+            windows.insert(key.to_string(), json!(window));
+        }
+    }
+    true
+}
+
+/// 优先读取 contextWindows 中的显式值，缺失时回退到模型名后缀。
+pub(crate) fn resolve_context_window(
+    settings_config: &serde_json::Value,
+    role_env_key: &str,
+) -> Option<u64> {
+    if let Some(w) = settings_config
+        .get("contextWindows")
+        .and_then(|o| o.get(role_env_key))
+        .and_then(Value::as_u64)
+    {
+        return (w > 0).then_some(w);
+    }
+    settings_config
+        .get("env")
+        .and_then(|o| o.get(role_env_key))
+        .and_then(Value::as_str)
+        .and_then(|m| parse_context_window_suffix(m).1)
 }
 
 const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-5";
@@ -2305,9 +2406,73 @@ mod tests {
     }
 
     #[test]
+    fn parse_context_window_suffix_rejects_whitespace_between_number_and_unit() {
+        let (slug, window) = parse_context_window_suffix("model[1 k]");
+        assert_eq!(slug, "model[1 k]");
+        assert_eq!(window, None);
+    }
+
+    #[test]
     fn parse_window_token_handles_empty_and_zero() {
         assert_eq!(parse_window_token(""), None);
         assert_eq!(parse_window_token("0"), None);
         assert_eq!(parse_window_token("0K"), None);
+    }
+
+    #[test]
+    fn migrate_legacy_suffix_writes_context_windows_and_cleans_model() {
+        let mut config = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2[200k]"
+            }
+        });
+        assert!(migrate_legacy_suffix_to_context_windows(&mut config));
+        assert_eq!(config["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "glm-5.2");
+        assert_eq!(
+            config["contextWindows"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            200000
+        );
+        assert_eq!(
+            resolve_context_window(&config, "ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            Some(200000)
+        );
+    }
+
+    #[test]
+    fn migrate_legacy_suffix_preserves_explicit_context_window() {
+        let mut config = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "model[200k]"
+            },
+            "contextWindows": {
+                "ANTHROPIC_MODEL": 500000
+            }
+        });
+        assert!(migrate_legacy_suffix_to_context_windows(&mut config));
+        assert_eq!(config["env"]["ANTHROPIC_MODEL"], "model");
+        assert_eq!(config["contextWindows"]["ANTHROPIC_MODEL"], 500000);
+    }
+
+    #[test]
+    fn resolve_context_window_falls_back_to_suffix_then_none() {
+        let config = json!({ "env": { "ANTHROPIC_MODEL": "deepseek[1m]" } });
+        assert_eq!(
+            resolve_context_window(&config, "ANTHROPIC_MODEL"),
+            Some(1000000)
+        );
+        let empty = json!({ "env": {} });
+        assert_eq!(resolve_context_window(&empty, "ANTHROPIC_MODEL"), None);
+    }
+
+    #[test]
+    fn resolve_context_window_rejects_zero_explicit_window() {
+        let config = json!({
+            "env": { "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet[1m]" },
+            "contextWindows": { "ANTHROPIC_DEFAULT_SONNET_MODEL": 0 }
+        });
+        assert_eq!(
+            resolve_context_window(&config, "ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            None
+        );
     }
 }

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,11 +61,14 @@ import type {
   ClaudeApiFormat,
   ClaudeApiKeyField,
 } from "@/types";
+import type { ManagedAuthProvider } from "@/lib/api";
 import {
   parseModelSuffix,
-  setModelSuffix,
-  reapplySuffix,
+  readContextWindows,
+  readContextWindowTokens,
+  writeContextWindow,
   stripModelSuffix,
+  parseWindowToken,
   type ClaudeModelEnvField,
 } from "./hooks/useModelState";
 import {
@@ -68,6 +78,9 @@ import {
 import {
   applyAutoSyncCompactRatioSetting,
   applyAutoSyncContextWindowSetting,
+  resolveAutoSyncContextWindow,
+  AUTO_SYNC_COMPACT_RATIO_MIN,
+  AUTO_SYNC_COMPACT_RATIO_MAX,
 } from "@/utils/settingsConfigMerge";
 
 interface EndpointCandidate {
@@ -81,8 +94,8 @@ function parseAutoSyncCompactRatio(config?: string): number | null {
     if (
       typeof ratio === "number" &&
       Number.isFinite(ratio) &&
-      ratio >= 0.2 &&
-      ratio <= 1
+      ratio >= AUTO_SYNC_COMPACT_RATIO_MIN &&
+      ratio <= AUTO_SYNC_COMPACT_RATIO_MAX
     ) {
       return ratio;
     }
@@ -94,6 +107,23 @@ function parseAutoSyncCompactRatio(config?: string): number | null {
 
 function formatAutoSyncCompactRatio(ratio: number | null): string {
   return ratio === null ? "" : String(ratio);
+}
+
+function parseContextWindowInput(input: string): number | null {
+  // 与 setModelSuffix + parseModelSuffix 等价：trim 后按纯数字/Kk/Mm 解析
+  return parseWindowToken(input) ?? null;
+}
+
+function contextWindowInputValue(
+  contextWindows: Record<string, number>,
+  contextWindowTokens: Record<string, string>,
+  roleEnvKey: string,
+  model: string,
+): string {
+  const token = contextWindowTokens[roleEnvKey];
+  if (token) return token;
+  const window = contextWindows[roleEnvKey] ?? parseModelSuffix(model).window;
+  return window ? String(window) : "";
 }
 
 interface ClaudeFormFieldsProps {
@@ -116,6 +146,8 @@ interface ClaudeFormFieldsProps {
   selectedGitHubAccountId?: string | null;
   /** GitHub 账号选择回调（多账号支持） */
   onGitHubAccountSelect?: (accountId: string | null) => void;
+  /** 打开托管账号管理入口 */
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
 
   // Codex OAuth (ChatGPT Plus/Pro)
   isCodexOauthPreset?: boolean;
@@ -184,6 +216,8 @@ interface ClaudeFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+  /** 路由（代理接管）模式：直连解冻后自动同步开关不再按模式门控，该 prop 仅保留 API 兼容 */
+  isProxyTakeover?: boolean;
   settingsConfig?: string;
   onSettingsConfigChange?: (config: string) => void;
   onAutoSyncContextWindowChange?: (checked: boolean) => void;
@@ -205,6 +239,7 @@ export function ClaudeFormFields({
   isCopilotAuthenticated,
   selectedGitHubAccountId,
   onGitHubAccountSelect,
+  onManageAuthAccounts,
   isCodexOauthPreset,
   isCodexOauthAuthenticated,
   selectedCodexAccountId,
@@ -253,6 +288,8 @@ export function ClaudeFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  // 自动同步已直连解冻，不再按接管状态门控；保留 prop 以兼容 ProviderForm/测试传参。
+  isProxyTakeover: _isProxyTakeover = false,
   settingsConfig,
   onSettingsConfigChange,
   onAutoSyncContextWindowChange,
@@ -282,29 +319,32 @@ export function ClaudeFormFields({
   // 更新 settingsConfig，但 react-hook-form 的 setValue 默认不触发 re-render，
   // 直接派生会导致 Switch 点击后 checked 不更新（看起来"不能切换"）。
   // local state 立即响应点击，useEffect 在 settingsConfig 外部变化时同步。
-  const [autoSyncContextWindow, setAutoSyncContextWindow] = useState(() => {
-    try {
-      const parsed = JSON.parse(settingsConfig ?? "{}");
-      return (parsed as Record<string, unknown>).autoSyncContextWindow === true;
-    } catch {
-      return false;
-    }
-  });
+  const [autoSyncContextWindow, setAutoSyncContextWindow] = useState(() =>
+    resolveAutoSyncContextWindow(settingsConfig ?? "{}"),
+  );
 
   useEffect(() => {
-    if (!settingsConfig) {
-      setAutoSyncContextWindow(false);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(settingsConfig ?? "{}");
-      setAutoSyncContextWindow(
-        (parsed as Record<string, unknown>).autoSyncContextWindow === true,
-      );
-    } catch {
-      setAutoSyncContextWindow(false);
-    }
+    setAutoSyncContextWindow(
+      resolveAutoSyncContextWindow(settingsConfig ?? "{}"),
+    );
   }, [settingsConfig]);
+
+  // 每行窗口输入框共用一次解析，避免每次渲染整份 settingsConfig JSON.parse
+  const contextWindows = useMemo(
+    () => readContextWindows(settingsConfig ?? "{}"),
+    [settingsConfig],
+  );
+  // display-only 原样串（200k / 2m）：重开编辑页时优先回显，数字解析值在 contextWindows。
+  const contextWindowTokens = useMemo(
+    () => readContextWindowTokens(settingsConfig ?? "{}"),
+    [settingsConfig],
+  );
+
+  // 上下文长度输入框：输入过程中保留用户原样字符串（支持 200k / 2m），
+  // 失焦时才解析写入 contextWindows；未输入时回退到已存值显示。
+  const [rawWindowInput, setRawWindowInput] = useState<Record<string, string>>(
+    {},
+  );
 
   const [autoSyncCompactRatioInput, setAutoSyncCompactRatioInput] = useState(
     () => formatAutoSyncCompactRatio(parseAutoSyncCompactRatio(settingsConfig)),
@@ -334,7 +374,11 @@ export function ClaudeFormFields({
         return;
       }
       const parsed = Number(value);
-      if (Number.isFinite(parsed) && parsed >= 0.2 && parsed <= 1) {
+      if (
+        Number.isFinite(parsed) &&
+        parsed >= AUTO_SYNC_COMPACT_RATIO_MIN &&
+        parsed <= AUTO_SYNC_COMPACT_RATIO_MAX
+      ) {
         setAutoSyncCompactRatioError("");
         if (onAutoSyncCompactRatioChange) {
           onAutoSyncCompactRatioChange(parsed);
@@ -346,7 +390,7 @@ export function ClaudeFormFields({
       } else {
         setAutoSyncCompactRatioError(
           t("providerForm.autoSyncCompactRatioInvalid", {
-            defaultValue: "压缩比例必须是 0.2~1 之间的数字",
+            defaultValue: "压缩比例必须是 0.2~0.95 之间的数字",
           }),
         );
       }
@@ -377,6 +421,77 @@ export function ClaudeFormFields({
     },
     [settingsConfig, onSettingsConfigChange, onAutoSyncContextWindowChange],
   );
+
+  const handleContextWindowChange = useCallback(
+    (roleEnvKey: string, input: string, token: string | null) => {
+      if (!onSettingsConfigChange) return;
+      const trimmed = input.trim();
+      if (!trimmed) {
+        onSettingsConfigChange(
+          writeContextWindow(settingsConfig ?? "{}", roleEnvKey, null, null),
+        );
+        return;
+      }
+      const window = parseContextWindowInput(input);
+      if (window === null) return;
+      onSettingsConfigChange(
+        writeContextWindow(settingsConfig ?? "{}", roleEnvKey, window, token),
+      );
+    },
+    [settingsConfig, onSettingsConfigChange],
+  );
+
+  const commitWindow = useCallback(
+    (field: ClaudeModelEnvField, raw: string) => {
+      const trimmed = raw.trim();
+      const window = trimmed ? parseContextWindowInput(trimmed) : null;
+      const accepted = !trimmed || window !== null;
+      if (accepted) {
+        // 合法输入：原样串随解析值一起持久化（display-only token），
+        // 保存重开后仍原样回显，不再被数字替换。
+        handleContextWindowChange(
+          field,
+          trimmed,
+          trimmed && window !== null ? trimmed : null,
+        );
+      }
+      setRawWindowInput((prev) => {
+        // 提交后统一删除会话内 raw：显示回退到刚写入的 contextWindowTokens
+        // 原样串（值一致）；空或非法输入则回退到已存值显示。
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    },
+    [handleContextWindowChange],
+  );
+
+  // 回车只结束该输入框的编辑状态（等价于失焦提交解析），不触发表单整体保存。
+  const commitContextWindowFromKeyDown = useCallback(
+    (
+      event: ReactKeyboardEvent<HTMLInputElement>,
+      field: ClaudeModelEnvField,
+    ) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const raw = rawWindowInput[field];
+      if (raw !== undefined) {
+        commitWindow(field, raw);
+      }
+      event.currentTarget.blur();
+    },
+    [commitWindow, rawWindowInput],
+  );
+
+  const clearRawWindowInput = useCallback((field: ClaudeModelEnvField) => {
+    setRawWindowInput((prev) => {
+      if (!(field in prev)) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
@@ -760,14 +875,18 @@ export function ClaudeFormFields({
 
   const handleRoleModelChange = (row: ModelRoleRow, value: string) => {
     const oldModelBase = stripModelSuffix(row.model).trim();
-    // 改模型名时保留原 context window 后缀，避免丢窗口配置
-    const nextModel = reapplySuffix(row.model, value);
-    const nextModelBase = stripModelSuffix(nextModel).trim();
+    // 模型字段保留用户原样输入（可含 [200k] 后缀，保存路径负责剥离迁移）；
+    // display-name 始终同步干净模型名（不带窗口后缀）。
+    const nextModel = value.trim();
     const displayName = row.displayName?.trim() ?? "";
     const shouldSyncDisplayName = !displayName || displayName === oldModelBase;
     onModelChange(row.modelField, nextModel);
+    // 模型名变化后窗口值可能随之变化（后缀迁移），清掉该角色的原样输入缓存。
+    if (nextModel !== row.model) {
+      clearRawWindowInput(row.modelField);
+    }
     if (row.displayNameField && shouldSyncDisplayName) {
-      onModelChange(row.displayNameField, nextModelBase);
+      onModelChange(row.displayNameField, stripModelSuffix(nextModel).trim());
     }
   };
 
@@ -776,16 +895,28 @@ export function ClaudeFormFields({
       {/* GitHub Copilot OAuth 认证 */}
       {isCopilotPreset && (
         <CopilotAuthSection
+          mode="select"
           selectedAccountId={selectedGitHubAccountId}
           onAccountSelect={onGitHubAccountSelect}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("github_copilot")
+              : undefined
+          }
         />
       )}
 
       {/* Codex OAuth 认证 (ChatGPT Plus/Pro) */}
       {isCodexOauthPreset && (
         <CodexOAuthSection
+          mode="select"
           selectedAccountId={selectedCodexAccountId}
           onAccountSelect={onCodexAccountSelect}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("codex_oauth")
+              : undefined
+          }
           fastModeEnabled={codexFastMode}
           onFastModeChange={onCodexFastModeChange}
         />
@@ -1017,7 +1148,7 @@ export function ClaudeFormFields({
                         subagentModel;
                       if (value) {
                         for (const row of modelRoleRows) {
-                          const roleValue = value;
+                          const roleValue = stripModelSuffix(value);
                           onModelChange(row.modelField, roleValue);
                           if (row.displayNameField) {
                             onModelChange(
@@ -1096,7 +1227,6 @@ export function ClaudeFormFields({
 
               {modelRoleRows.map((row) => {
                 const modelBase = stripModelSuffix(row.model);
-                const suffixResult = parseModelSuffix(row.model);
 
                 return (
                   <div
@@ -1132,7 +1262,7 @@ export function ClaudeFormFields({
                     )}
                     {renderModelInput(
                       row.inputId,
-                      modelBase,
+                      row.model,
                       row.modelField,
                       t("providerForm.modelPlaceholder", { defaultValue: "" }),
                       (value) => handleRoleModelChange(row, value),
@@ -1142,19 +1272,29 @@ export function ClaudeFormFields({
                         inputMode="text"
                         className="w-[90px] text-center font-mono text-sm"
                         value={
-                          suffixResult.window
-                            ? row.model.slice(row.model.lastIndexOf("["))
-                            : ""
+                          rawWindowInput[row.modelField] ??
+                          contextWindowInputValue(
+                            contextWindows,
+                            contextWindowTokens,
+                            row.modelField,
+                            row.model,
+                          )
                         }
                         onChange={(event) => {
-                          // 上下文长度输入直接调 onModelChange，绕过
-                          // handleRoleModelChange 内的 reapplySuffix
-                          // （reapplySuffix 会剥离新后缀，仅用于改模型名）
-                          onModelChange(
-                            row.modelField,
-                            setModelSuffix(row.model, event.target.value),
-                          );
+                          // 输入中原样显示（支持 K/M），失焦时再解析写入。
+                          setRawWindowInput((prev) => ({
+                            ...prev,
+                            [row.modelField]: event.target.value,
+                          }));
                         }}
+                        onBlur={() => {
+                          const raw = rawWindowInput[row.modelField];
+                          if (raw === undefined) return;
+                          commitWindow(row.modelField, raw);
+                        }}
+                        onKeyDown={(event) =>
+                          commitContextWindowFromKeyDown(event, row.modelField)
+                        }
                         placeholder={t(
                           "providerForm.modelContextWindowPlaceholder",
                           {
@@ -1197,9 +1337,9 @@ export function ClaudeFormFields({
               <Input
                 id="auto-sync-compact-ratio"
                 type="number"
-                min={0.2}
-                max={1}
-                step={0.1}
+                min={AUTO_SYNC_COMPACT_RATIO_MIN}
+                max={AUTO_SYNC_COMPACT_RATIO_MAX}
+                step={0.05}
                 className="h-7 w-20 text-center"
                 value={autoSyncCompactRatioInput}
                 onChange={(event) =>
@@ -1225,14 +1365,14 @@ export function ClaudeFormFields({
                 {
                   defaultValue: autoSyncContextWindow
                     ? "上下文长度和压缩阈值按切换的模型更新配置 json。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。多CC终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。"
-                    : "对于[1M]后缀的模型Claude Code原生支持1M上下文，其他输入形式或不输入默认为200k，切换模型后终端内生效。",
+                    : "关闭后，切换模型不再自动更新上下文长度与压缩阈值。",
                 },
               )}
             </p>
             <p className="mt-1.5 ml-1 text-xs leading-relaxed text-muted-foreground">
               {t("providerForm.autoSyncCompactRatioHint", {
                 defaultValue:
-                  "该参数是模型自动压缩上下文窗口的比例，范围 0.2~1，留空按 1 处理。",
+                  "该参数是模型自动压缩上下文窗口的比例，范围 0.2~0.95，留空按 0.95 处理。",
               })}
             </p>
 
@@ -1245,29 +1385,40 @@ export function ClaudeFormFields({
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]">
                 {renderModelInput(
                   "claudeModel",
-                  stripModelSuffix(claudeModel),
+                  claudeModel,
                   "ANTHROPIC_MODEL",
                   t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                  (value) =>
-                    onModelChange(
-                      "ANTHROPIC_MODEL",
-                      reapplySuffix(claudeModel, value),
-                    ),
+                  (value) => {
+                    clearRawWindowInput("ANTHROPIC_MODEL");
+                    onModelChange("ANTHROPIC_MODEL", value.trim());
+                  },
                 )}
                 <Input
                   inputMode="text"
                   className="w-[90px] text-center font-mono text-sm"
                   value={
-                    parseModelSuffix(claudeModel).window
-                      ? claudeModel.slice(claudeModel.lastIndexOf("["))
-                      : ""
+                    rawWindowInput.ANTHROPIC_MODEL ??
+                    contextWindowInputValue(
+                      contextWindows,
+                      contextWindowTokens,
+                      "ANTHROPIC_MODEL",
+                      claudeModel,
+                    )
                   }
                   onChange={(event) => {
-                    onModelChange(
-                      "ANTHROPIC_MODEL",
-                      setModelSuffix(claudeModel, event.target.value),
-                    );
+                    setRawWindowInput((prev) => ({
+                      ...prev,
+                      ANTHROPIC_MODEL: event.target.value,
+                    }));
                   }}
+                  onBlur={() => {
+                    const raw = rawWindowInput.ANTHROPIC_MODEL;
+                    if (raw === undefined) return;
+                    commitWindow("ANTHROPIC_MODEL", raw);
+                  }}
+                  onKeyDown={(event) =>
+                    commitContextWindowFromKeyDown(event, "ANTHROPIC_MODEL")
+                  }
                   placeholder={t("providerForm.modelContextWindowPlaceholder", {
                     defaultValue: "1M / 200K",
                   })}

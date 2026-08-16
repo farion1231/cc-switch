@@ -1,10 +1,30 @@
+import { isPlainObject } from "@/utils/providerConfigUtils";
+
 const CLAUDE_CONTEXT_WINDOW_ENV_KEYS = [
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
   "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
 ] as const;
 
-const AUTO_SYNC_COMPACT_RATIO_MIN = 0.2;
-const AUTO_SYNC_COMPACT_RATIO_MAX = 1;
+const CLAUDE_CONTEXT_WINDOW_STATE_KEYS = {
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW: "ACW",
+  CLAUDE_CODE_MAX_CONTEXT_TOKENS: "MAX",
+} as const;
+
+export const AUTO_SYNC_COMPACT_RATIO_MIN = 0.2;
+export const AUTO_SYNC_COMPACT_RATIO_MAX = 0.95;
+
+/**
+ * autoSyncContextWindow 开关有效值：显式字段优先，缺失即关闭
+ * （spec：缺失该开关时默认关闭）。
+ */
+export function resolveAutoSyncContextWindow(config: string): boolean {
+  try {
+    const parsed = JSON.parse(config || "{}") as Record<string, unknown>;
+    return parsed.autoSyncContextWindow === true;
+  } catch {
+    return false;
+  }
+}
 
 function removeClaudeContextWindowEnvFields(config: Record<string, unknown>) {
   const env = config.env;
@@ -16,11 +36,66 @@ function removeClaudeContextWindowEnvFields(config: Record<string, unknown>) {
   }
 }
 
+function contextWindowValueAsString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    Number.isInteger(value)
+  ) {
+    return String(value);
+  }
+  return undefined;
+}
+
+export function matchesAutoSyncSource(
+  state: Record<string, unknown>,
+  shortKey: string,
+  liveValue: unknown,
+): boolean {
+  // 与 Rust backfill/live 侧对齐：live 值先规范化成字符串，账本值只认字符串且严格相等；
+  // 数字型账本值不匹配（Rust as_str 对数字返回 None）。
+  const live = contextWindowValueAsString(liveValue);
+  if (live === undefined) return false;
+  return ["lastWritten", "staticInjected"].some((sourceName) => {
+    const source = state[sourceName];
+    if (!isPlainObject(source)) return false;
+    const sourceValue = source[shortKey];
+    return typeof sourceValue === "string" && sourceValue === live;
+  });
+}
+
+function restorableLedgerValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return String(value);
+  }
+  return undefined;
+}
+
+export function restoreAutoSyncContextWindowValue(
+  state: Record<string, unknown>,
+  shortKey: string,
+): string | undefined {
+  for (const sourceName of ["lastWritten", "staticInjected"] as const) {
+    const source = state[sourceName];
+    if (!isPlainObject(source)) continue;
+    const value = restorableLedgerValue(source[shortKey]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
 /**
  * 写入自动同步开关状态。
  *
- * 关闭时顺手清理 Claude Code 的 ACW/MAX env 字段；开启时只写开关状态，
- * 不自动补回字段，等 watcher 在终端切换模型时再写。
+ * 关闭时按 autoSyncState 清理等于 lastWritten/staticInjected 的自动值，
+ * 其余 live 值原样保留（不再写入 userExplicit）。
+ * 开启时从 lastWritten/staticInjected 恢复；都没有则不写回。
  */
 export function applyAutoSyncContextWindowSetting(
   config: string,
@@ -29,8 +104,40 @@ export function applyAutoSyncContextWindowSetting(
   try {
     const parsed = JSON.parse(config || "{}") as Record<string, unknown>;
     parsed.autoSyncContextWindow = enabled;
-    if (!enabled) {
+    if (enabled) {
+      const state = parsed.autoSyncState;
+      if (isPlainObject(state)) {
+        const writes: Array<[string, string]> = [];
+        for (const envKey of CLAUDE_CONTEXT_WINDOW_ENV_KEYS) {
+          const shortKey = CLAUDE_CONTEXT_WINDOW_STATE_KEYS[envKey];
+          const value = restoreAutoSyncContextWindowValue(state, shortKey);
+          if (value !== undefined) writes.push([envKey, value]);
+        }
+        if (writes.length > 0) {
+          if (!isPlainObject(parsed.env)) parsed.env = {};
+          const env = parsed.env as Record<string, unknown>;
+          for (const [envKey, value] of writes) env[envKey] = value;
+        }
+      }
+      return JSON.stringify(parsed, null, 2);
+    }
+
+    const state = parsed.autoSyncState;
+    if (!isPlainObject(state)) {
       removeClaudeContextWindowEnvFields(parsed);
+      return JSON.stringify(parsed, null, 2);
+    }
+
+    const env = parsed.env;
+    if (isPlainObject(env)) {
+      for (const envKey of CLAUDE_CONTEXT_WINDOW_ENV_KEYS) {
+        const liveValue = env[envKey];
+        if (liveValue === undefined) continue;
+        const shortKey = CLAUDE_CONTEXT_WINDOW_STATE_KEYS[envKey];
+        if (matchesAutoSyncSource(state, shortKey, liveValue)) {
+          delete env[envKey];
+        }
+      }
     }
     return JSON.stringify(parsed, null, 2);
   } catch {
@@ -42,7 +149,7 @@ export function applyAutoSyncContextWindowSetting(
  * 写入或清空自动压缩比例。
  *
  * null 表示用户留空，不持久化字段，watcher 按 1 处理；
- * 数字必须在 0.2 ~ 1 之间，调用方应已校验。
+ * 数字必须在 0.2 ~ 0.95 之间，调用方应已校验。
  */
 export function applyAutoSyncCompactRatioSetting(
   config: string,

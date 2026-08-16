@@ -1,4 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import ReactDOM from "react-dom";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Provider } from "@/types";
 
@@ -7,6 +15,10 @@ const apiMocks = vi.hoisted(() => ({
   getLiveProviderSettings: vi.fn(),
   getOpenClawLiveProvider: vi.fn(),
 }));
+let mockFormReady = true;
+let mockCodexNativeLoginSelected = false;
+let mockCodexManagedAccountSelected = false;
+let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -42,6 +54,8 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     initialData,
     onSubmit,
+    onSubmitReadyChange,
+    onManageAuthAccounts,
     isProxyTakeover,
   }: {
     initialData: {
@@ -61,38 +75,77 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       meta?: Record<string, unknown>;
       icon?: string;
       iconColor?: string;
+      codexNativeLoginSelected?: boolean;
     }) => void;
+    onSubmitReadyChange?: (isReady: boolean) => void;
+    onManageAuthAccounts?: (target: "codex_oauth") => void;
     isProxyTakeover?: boolean;
-  }) => (
-    <form
-      id="provider-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit({
-          name: initialData.name ?? "",
-          websiteUrl: initialData.websiteUrl ?? "",
-          notes: initialData.notes,
-          settingsConfig: JSON.stringify(initialData.settingsConfig ?? {}),
-          meta: initialData.meta,
-          icon: initialData.icon,
-          iconColor: initialData.iconColor,
-        });
-      }}
-    >
-      <output data-testid="settings-config">
-        {JSON.stringify(initialData.settingsConfig ?? {})}
-      </output>
-      <output data-testid="is-proxy-takeover">
-        {isProxyTakeover ? "true" : "false"}
-      </output>
-    </form>
-  ),
+    appId?: string;
+  }) => {
+    useEffect(() => {
+      if (onSubmitReadyChange) {
+        submitReadyCallbacks.push(onSubmitReadyChange);
+        onSubmitReadyChange(mockFormReady);
+      }
+    }, [onSubmitReadyChange]);
+    return (
+      <form
+        id="provider-form"
+        data-testid="provider-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit({
+            name: initialData.name ?? "",
+            websiteUrl: initialData.websiteUrl ?? "",
+            notes: initialData.notes,
+            settingsConfig: JSON.stringify(initialData.settingsConfig ?? {}),
+            meta: mockCodexManagedAccountSelected
+              ? {
+                  ...(initialData.meta ?? {}),
+                  providerType: "codex_oauth",
+                  authBinding: {
+                    source: "managed_account",
+                    authProvider: "codex_oauth",
+                    accountId: "acct-managed",
+                  },
+                }
+              : initialData.meta,
+            icon: initialData.icon,
+            iconColor: initialData.iconColor,
+            codexNativeLoginSelected: mockCodexNativeLoginSelected,
+          });
+        }}
+      >
+        <output data-testid="settings-config">
+          {JSON.stringify(initialData.settingsConfig ?? {})}
+        </output>
+        <output data-testid="is-proxy-takeover">
+          {isProxyTakeover ? "true" : "false"}
+        </output>
+        <button
+          type="button"
+          onClick={() => onManageAuthAccounts?.("codex_oauth")}
+        >
+          manage-auth
+        </button>
+      </form>
+    );
+  },
+}));
+
+vi.mock("@/components/providers/AuthSettingsPanel", () => ({
+  AuthSettingsPanel: ({ target }: { target: string | null }) =>
+    target ? <div data-testid="auth-settings-panel">{target}</div> : null,
 }));
 
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 
 describe("EditProviderDialog", () => {
   beforeEach(() => {
+    mockFormReady = true;
+    mockCodexNativeLoginSelected = false;
+    mockCodexManagedAccountSelected = false;
+    submitReadyCallbacks = [];
     apiMocks.getCurrent.mockReset();
     apiMocks.getLiveProviderSettings.mockReset();
     apiMocks.getOpenClawLiveProvider.mockReset();
@@ -203,6 +256,262 @@ describe("EditProviderDialog", () => {
     ).toEqual(provider.settingsConfig);
   });
 
+  it("clears the nested auth panel before the dialog reopens", async () => {
+    const provider: Provider = {
+      id: "official",
+      name: "OpenAI Official",
+      settingsConfig: { auth: {}, config: "" },
+    };
+    const props = {
+      provider,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+      appId: "codex" as const,
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+
+    // 分支保留 P2-2 live 加载 gate：表单在 live 状态就绪后才渲染，先等按钮出现。
+    await screen.findByRole("button", { name: "manage-auth" });
+    fireEvent.click(screen.getByRole("button", { name: "manage-auth" }));
+    expect(screen.getByTestId("auth-settings-panel")).toHaveTextContent(
+      "codex_oauth",
+    );
+
+    rerender(<EditProviderDialog open={false} {...props} />);
+    rerender(<EditProviderDialog open {...props} />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("auth-settings-panel"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("promotes a legacy Codex Official row after native login is selected", async () => {
+    mockCodexNativeLoginSelected = true;
+    apiMocks.getCurrent.mockResolvedValue(null);
+    const onSubmit = vi.fn();
+    const provider: Provider = {
+      id: "legacy-unbound-official",
+      name: "Legacy OpenAI Official",
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    };
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={onSubmit}
+        appId="codex"
+      />,
+    );
+
+    // 分支保留 P2-2 live 加载 gate：等保存按钮就绪（启用）后再点击。
+    const saveButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originalId: "legacy-unbound-official",
+        provider: expect.objectContaining({ id: "codex-official" }),
+      }),
+    );
+  });
+
+  it("moves the fixed Codex card to a managed-account ID when its login changes", async () => {
+    mockCodexManagedAccountSelected = true;
+    apiMocks.getCurrent.mockResolvedValue(null);
+    const onSubmit = vi.fn();
+    const provider: Provider = {
+      id: "codex-official",
+      name: "OpenAI Official",
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    };
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={onSubmit}
+        appId="codex"
+      />,
+    );
+
+    // 分支保留 P2-2 live 加载 gate：等保存按钮就绪（启用）后再点击。
+    const saveButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.originalId).toBe("codex-official");
+    expect(submitted.provider.id).not.toBe("codex-official");
+    expect(submitted.provider.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(submitted.provider.meta?.authBinding).toEqual({
+      source: "managed_account",
+      authProvider: "codex_oauth",
+      accountId: "acct-managed",
+    });
+  });
+
+  it("编辑 Pi 供应商时保留通用元数据", async () => {
+    const provider: Provider = {
+      id: "pi-provider",
+      name: "Pi Provider",
+      settingsConfig: {
+        baseUrl: "https://api.example.com/v1",
+        models: [{ id: "model" }],
+      },
+      meta: {
+        isPartner: true,
+        endpointAutoSelect: true,
+        custom_endpoints: {
+          "https://failover.example.com/v1": {
+            url: "https://failover.example.com/v1",
+            addedAt: 1,
+          },
+        },
+      },
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="pi"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].provider.meta).toMatchObject({
+      isPartner: true,
+    });
+    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
+      "expectedSettingsConfig",
+    );
+  });
+
+  it("重新打开 Pi 编辑表单后忽略上一轮的就绪回调", async () => {
+    const provider: Provider = {
+      id: "pi-provider",
+      name: "Pi Provider",
+      settingsConfig: { models: [{ id: "model" }] },
+    };
+    const props = {
+      provider,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+      appId: "pi" as const,
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+
+    const saveButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    const staleCallback = submitReadyCallbacks.at(-1);
+    expect(staleCallback).toBeDefined();
+
+    rerender(<EditProviderDialog open={false} {...props} />);
+    mockFormReady = false;
+    rerender(<EditProviderDialog open {...props} />);
+    const reopenedButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(reopenedButton).toBeDisabled());
+
+    act(() => staleCallback?.(true));
+    expect(reopenedButton).toBeDisabled();
+  });
+});
+
+describe("EditProviderDialog contextWindows/autoSyncState 合并回填", () => {
+  beforeEach(() => {
+    mockFormReady = true;
+    mockCodexNativeLoginSelected = false;
+    mockCodexManagedAccountSelected = false;
+    submitReadyCallbacks = [];
+    apiMocks.getCurrent.mockReset();
+    apiMocks.getLiveProviderSettings.mockReset();
+    apiMocks.getOpenClawLiveProvider.mockReset();
+  });
+
+  it("Claude live 配置缺少 contextWindows/autoSyncState 时保留数据库账本", async () => {
+    const dbContextWindows = {
+      ANTHROPIC_MODEL: 200000,
+      CLAUDE_CODE_SUBAGENT_MODEL: 1000000,
+    };
+    const dbContextWindowTokens = { ANTHROPIC_MODEL: "200k" };
+    const dbAutoSyncState = {
+      lastWritten: { ACW: "160000", MAX: "200000" },
+      userExplicit: { MAX: "250000" },
+    };
+    const provider: Provider = {
+      id: "claude-db",
+      name: "Claude DB",
+      category: "aggregator",
+      settingsConfig: {
+        env: { ANTHROPIC_MODEL: "deepseek-v3" },
+        contextWindows: dbContextWindows,
+        contextWindowTokens: dbContextWindowTokens,
+        autoSyncState: dbAutoSyncState,
+      },
+    };
+    const liveSettings = { env: { ANTHROPIC_MODEL: "deepseek-v3" } };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="claude"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({
+        ...liveSettings,
+        contextWindows: dbContextWindows,
+        contextWindowTokens: dbContextWindowTokens,
+        autoSyncState: dbAutoSyncState,
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual({
+      ...liveSettings,
+      contextWindows: dbContextWindows,
+      contextWindowTokens: dbContextWindowTokens,
+      autoSyncState: dbAutoSyncState,
+    });
+  });
+
   it("Claude live 配置缺少 autoSyncContextWindow 时保留数据库开关状态", async () => {
     const provider: Provider = {
       id: "claude-proxy",
@@ -249,5 +558,307 @@ describe("EditProviderDialog", () => {
         autoSyncCompactRatio: 0.8,
       });
     });
+  });
+
+  it("live 配置加载完成前不渲染表单，加载完成后出现", async () => {
+    const provider: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "aggregator",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "db-key" },
+      },
+    };
+    let resolveLive: (value: Record<string, unknown>) => void = () => {};
+    const livePromise = new Promise<Record<string, unknown>>((resolve) => {
+      resolveLive = resolve;
+    });
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockReturnValue(livePromise);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+
+    expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
+
+    resolveLive({});
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-form")).toBeInTheDocument(),
+    );
+  });
+
+  it("live 配置加载失败时禁用保存且不渲染表单", async () => {
+    const provider: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "aggregator",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "db-key" },
+      },
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockRejectedValue(new Error("boom"));
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "common.save" }),
+      ).toBeDisabled(),
+    );
+    expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
+    expect(screen.getByTestId("live-load-error")).toHaveTextContent(
+      /读取实时配置失败/,
+    );
+  });
+
+  it("OpenClaw live 配置加载失败时禁用保存且不渲染表单", async () => {
+    const provider: Provider = {
+      id: "openclaw-provider",
+      name: "OpenClaw Provider",
+      category: "custom",
+      settingsConfig: { base_url: "https://db.example.com" },
+    };
+
+    apiMocks.getOpenClawLiveProvider.mockRejectedValue(new Error("boom"));
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="openclaw"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "common.save" }),
+      ).toBeDisabled(),
+    );
+    expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
+    expect(screen.getByTestId("live-load-error")).toHaveTextContent(
+      /读取实时配置失败/,
+    );
+  });
+
+  it("providersApi.getCurrent 失败时禁用保存并显示 live 读取失败", async () => {
+    const provider: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "aggregator",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "db-key" },
+      },
+    };
+
+    apiMocks.getCurrent.mockRejectedValue(new Error("boom"));
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("live-load-error")).toHaveTextContent(
+        /读取实时配置失败/,
+      );
+    });
+    expect(screen.getByRole("button", { name: "common.save" })).toBeDisabled();
+    expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
+    expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
+  });
+
+  it("切换 provider 后的首个 commit 不渲染旧 live 表单", async () => {
+    const providerA: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "aggregator",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "db-key-a" },
+      },
+    };
+    const providerB: Provider = {
+      id: "kimi",
+      name: "Kimi",
+      category: "aggregator",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "db-key-b" },
+      },
+    };
+    const liveA = { auth: { OPENAI_API_KEY: "live-key-a" } };
+    const liveB = { auth: { OPENAI_API_KEY: "live-key-b" } };
+    let resolveA: (value: Record<string, unknown>) => void = () => {};
+    const livePromiseA = new Promise<Record<string, unknown>>((resolve) => {
+      resolveA = resolve;
+    });
+
+    apiMocks.getCurrent
+      .mockResolvedValueOnce(providerA.id)
+      .mockResolvedValueOnce(providerB.id);
+    apiMocks.getLiveProviderSettings
+      .mockReturnValueOnce(livePromiseA)
+      .mockReturnValueOnce(liveB);
+
+    const view = render(
+      <EditProviderDialog
+        open
+        provider={providerA}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+      { legacyRoot: true },
+    );
+
+    resolveA(liveA);
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(liveA);
+    });
+
+    // 直接 ReactDOM.render 绕开 RTL 的 act，让断言落在切换后的首个 commit 上
+    ReactDOM.render(
+      <EditProviderDialog
+        open
+        provider={providerB}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+      view.container,
+    );
+
+    expect(apiMocks.getCurrent).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("加载中...")).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "common.save" })).toBeDisabled();
+  });
+
+  it("同一会话切换 provider 时重新进入加载 gate，避免短暂用旧 live 配置渲染", async () => {
+    const providerA: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "aggregator",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "db-key-a" },
+      },
+    };
+    const providerB: Provider = {
+      id: "kimi",
+      name: "Kimi",
+      category: "aggregator",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "db-key-b" },
+      },
+    };
+    let resolveA: (value: Record<string, unknown>) => void = () => {};
+    let resolveB: (value: Record<string, unknown>) => void = () => {};
+    const liveA = new Promise<Record<string, unknown>>((resolve) => {
+      resolveA = resolve;
+    });
+    const liveB = new Promise<Record<string, unknown>>((resolve) => {
+      resolveB = resolve;
+    });
+
+    apiMocks.getCurrent
+      .mockResolvedValueOnce(providerA.id)
+      .mockResolvedValueOnce(providerB.id);
+    apiMocks.getLiveProviderSettings
+      .mockReturnValueOnce(liveA)
+      .mockReturnValueOnce(liveB);
+
+    const view = render(
+      <EditProviderDialog
+        open
+        provider={providerA}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+
+    resolveA({ auth: { OPENAI_API_KEY: "live-key-a" } });
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({ auth: { OPENAI_API_KEY: "live-key-a" } });
+    });
+
+    view.rerender(
+      <EditProviderDialog
+        open
+        provider={providerB}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+    expect(screen.getByText("加载中...")).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "common.save" })).toBeDisabled();
+
+    resolveB({ auth: { OPENAI_API_KEY: "live-key-b" } });
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({ auth: { OPENAI_API_KEY: "live-key-b" } });
+    });
+  });
+
+  it("live 配置不存在时仍使用数据库快照渲染并允许保存", async () => {
+    const provider: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "aggregator",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "db-key" },
+      },
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(null);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-form")).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "common.save" })).toBeEnabled();
+    expect(
+      JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+    ).toEqual(provider.settingsConfig);
   });
 });

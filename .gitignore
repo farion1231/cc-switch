@@ -38,5 +38,6 @@ mainWindow.js
 /docs/superpowers/plans/2026-08-03-context-window-input-fix.md
 /docs/superpowers/specs/2026-08-03-context-window-input-fix-design.md
 /docs/specs/2026-07-14-per-model-context-window-design.md
-/docs/superpowers/specs/2026-07-18-claude-context-window-autosync-design.md
 /docs/superpowers/specs/2026-08-05-settings-entry-protection-and-common-config-init-design.md
+
+.pnpm-store/

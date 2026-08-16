@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentProps, PropsWithChildren } from "react";
+import { useState, type ComponentProps, type PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeFormFields } from "@/components/providers/forms/ClaudeFormFields";
+import { useModelState } from "@/components/providers/forms/hooks/useModelState";
 import { Form } from "@/components/ui/form";
 
 const copilotApiMock = vi.hoisted(() => ({
@@ -43,7 +44,9 @@ const FormShell = ({ children }: PropsWithChildren) => {
   return <Form {...form}>{children}</Form>;
 };
 
-const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
+const buildCopilotFormProps = (
+  overrides: Partial<ClaudeFormFieldsProps> = {},
+): ClaudeFormFieldsProps => {
   const props: ClaudeFormFieldsProps = {
     shouldShowApiKey: false,
     apiKey: "",
@@ -102,12 +105,58 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     onLocalProxyBodyOverrideChange: vi.fn(),
     ...overrides,
   };
+  return props;
+};
 
-  return render(
+const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
+  render(
     <FormShell>
-      <ClaudeFormFields {...props} />
+      <ClaudeFormFields {...buildCopilotFormProps(overrides)} />
     </FormShell>,
   );
+
+const renderStatefulCopilotForm = (
+  initialConfig: string,
+  overrides: Partial<ClaudeFormFieldsProps> = {},
+) => {
+  const StatefulForm = () => {
+    const [settingsConfig, setSettingsConfig] = useState(initialConfig);
+    const modelState = useModelState({
+      settingsConfig,
+      onConfigChange: setSettingsConfig,
+    });
+    const props = buildCopilotFormProps({
+      ...overrides,
+      claudeModel: modelState.claudeModel,
+      defaultHaikuModel: modelState.defaultHaikuModel,
+      defaultHaikuModelName: modelState.defaultHaikuModelName,
+      defaultSonnetModel: modelState.defaultSonnetModel,
+      defaultSonnetModelName: modelState.defaultSonnetModelName,
+      defaultOpusModel: modelState.defaultOpusModel,
+      defaultOpusModelName: modelState.defaultOpusModelName,
+      defaultFableModel: modelState.defaultFableModel,
+      defaultFableModelName: modelState.defaultFableModelName,
+      subagentModel: modelState.subagentModel,
+      onModelChange: modelState.handleModelChange,
+      settingsConfig,
+      onSettingsConfigChange: setSettingsConfig,
+    });
+
+    return (
+      <FormShell>
+        <ClaudeFormFields {...props} />
+        <div data-testid="live-config" data-config={settingsConfig} />
+      </FormShell>
+    );
+  };
+
+  render(<StatefulForm />);
+  return {
+    getConfig: () =>
+      JSON.parse(
+        screen.getByTestId("live-config").dataset.config ?? "{}",
+      ) as Record<string, any>,
+  };
 };
 
 const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
@@ -192,28 +241,183 @@ describe("ClaudeFormFields", () => {
 
     expect(onModelChange).toHaveBeenCalledWith(
       "CLAUDE_CODE_SUBAGENT_MODEL",
-      "shared-model[1M]",
+      "shared-model",
     );
   });
 
-  it("角色模型上下文长度输入框能正确写入后缀", () => {
+  it("角色模型名输入保留新模型后缀原样，不前端剥离", () => {
     const onModelChange = vi.fn();
+    renderCopilotForm({
+      defaultSonnetModel: "claude-sonnet[200k]",
+      defaultSonnetModelName: "Claude Sonnet",
+      onModelChange,
+    });
+
+    const modelInput = screen.getByDisplayValue("claude-sonnet[200k]");
+    fireEvent.change(modelInput, { target: { value: "glm-5.2[200k]" } });
+
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "glm-5.2[200k]",
+    );
+  });
+
+  it("legacy 后缀模型改名后 contextWindows 保留窗口", () => {
+    const { getConfig } = renderStatefulCopilotForm(
+      JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2[200k]" },
+      }),
+    );
+
+    const modelInput = document.getElementById(
+      "claudeDefaultSonnetModel",
+    ) as HTMLInputElement;
+    fireEvent.change(modelInput, { target: { value: "glm-5.3" } });
+
+    const config = getConfig();
+    expect(config.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("glm-5.3");
+    expect(config.contextWindows.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(200000);
+  });
+
+  it("非法窗口输入不清空已有 contextWindows", () => {
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      defaultSonnetModel: "glm-5.2",
+      settingsConfig: JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2" },
+        contextWindows: { ANTHROPIC_DEFAULT_SONNET_MODEL: 200000 },
+      }),
+      onSettingsConfigChange,
+    });
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    fireEvent.change(contextInputs[0], { target: { value: "1.5M" } });
+    fireEvent.blur(contextInputs[0]);
+
+    expect(onSettingsConfigChange).not.toHaveBeenCalled();
+  });
+
+  it("角色窗口输入框优先显示 contextWindows 中的值", () => {
+    renderCopilotForm({
+      defaultSonnetModel: "claude-sonnet",
+      settingsConfig: JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet" },
+        contextWindows: { ANTHROPIC_DEFAULT_SONNET_MODEL: 200000 },
+      }),
+    });
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    expect(contextInputs[0]).toHaveValue("200000");
+  });
+
+  it("角色模型上下文长度输入框写入 contextWindows 且模型名保持干净", () => {
+    const onModelChange = vi.fn();
+    const onSettingsConfigChange = vi.fn();
     renderCopilotForm({
       defaultSonnetModel: "claude-sonnet",
       defaultSonnetModelName: "Claude Sonnet",
+      settingsConfig: JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet" },
+      }),
       onModelChange,
+      onSettingsConfigChange,
     });
 
     // getAllByLabelText 返回所有 context window 输入框，顺序为：
     // [0] Sonnet, [1] Opus, [2] Fable, [3] Haiku, [4] Subagent, [5] 兜底模型
     const contextInputs = screen.getAllByLabelText("Context Window");
-    const sonnetContextInput = contextInputs[0];
+    fireEvent.change(contextInputs[0], { target: { value: "1M" } });
+    fireEvent.blur(contextInputs[0]);
 
-    fireEvent.change(sonnetContextInput, { target: { value: "1M" } });
+    expect(onModelChange).not.toHaveBeenCalled();
+    const updated = JSON.parse(onSettingsConfigChange.mock.calls[0][0]);
+    expect(updated.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("claude-sonnet");
+    expect(updated.contextWindows.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(1000000);
+  });
+
+  it("从旧后缀模型输入窗口 200K 后 env 模型名干净且 contextWindows 写入", () => {
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      defaultSonnetModel: "model[1M]",
+      defaultSonnetModelName: "Claude Sonnet",
+      settingsConfig: JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "model[1M]" },
+      }),
+      onSettingsConfigChange,
+    });
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    fireEvent.change(contextInputs[0], { target: { value: "200K" } });
+    fireEvent.blur(contextInputs[0]);
+
+    const updated = JSON.parse(onSettingsConfigChange.mock.calls[0][0]);
+    expect(updated.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("model");
+    expect(updated.contextWindows.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(200000);
+  });
+
+  it("清空角色窗口时剥离 env 旧后缀并删除 contextWindows key", () => {
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      defaultSonnetModel: "model[1M]",
+      defaultSonnetModelName: "Claude Sonnet",
+      settingsConfig: JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "model[1M]" },
+        contextWindows: { ANTHROPIC_DEFAULT_SONNET_MODEL: 1000000 },
+      }),
+      onSettingsConfigChange,
+    });
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    fireEvent.change(contextInputs[0], { target: { value: "" } });
+    fireEvent.blur(contextInputs[0]);
+
+    const updated = JSON.parse(onSettingsConfigChange.mock.calls[0][0]);
+    expect(updated.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("model");
+    expect(
+      updated.contextWindows.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    ).toBeUndefined();
+  });
+
+  it("兜底模型窗口输入框读取并写入 ANTHROPIC_MODEL 的 contextWindows", () => {
+    const onModelChange = vi.fn();
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      claudeModel: "fallback-model",
+      settingsConfig: JSON.stringify({
+        env: { ANTHROPIC_MODEL: "fallback-model" },
+        contextWindows: { ANTHROPIC_MODEL: 800000 },
+      }),
+      onModelChange,
+      onSettingsConfigChange,
+    });
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    expect(contextInputs[5]).toHaveValue("800000");
+
+    fireEvent.change(contextInputs[5], { target: { value: "200K" } });
+    fireEvent.blur(contextInputs[5]);
+
+    expect(onModelChange).not.toHaveBeenCalled();
+    const updated = JSON.parse(onSettingsConfigChange.mock.calls[0][0]);
+    expect(updated.env.ANTHROPIC_MODEL).toBe("fallback-model");
+    expect(updated.contextWindows.ANTHROPIC_MODEL).toBe(200000);
+  });
+
+  it("兜底模型名输入保留新模型后缀原样", () => {
+    const onModelChange = vi.fn();
+    renderCopilotForm({
+      claudeModel: "fallback-model[1M]",
+      onModelChange,
+    });
+
+    const modelInput = document.getElementById(
+      "claudeModel",
+    ) as HTMLInputElement;
+    fireEvent.change(modelInput, { target: { value: "new-model[200K]" } });
 
     expect(onModelChange).toHaveBeenCalledWith(
-      "ANTHROPIC_DEFAULT_SONNET_MODEL",
-      "claude-sonnet[1m]",
+      "ANTHROPIC_MODEL",
+      "new-model[200K]",
     );
   });
 
@@ -222,6 +426,7 @@ describe("ClaudeFormFields", () => {
     const onSettingsConfigChange = vi.fn();
     renderCopilotForm({
       settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      isProxyTakeover: true,
       onSettingsConfigChange,
       onAutoSyncContextWindowChange,
     });
@@ -247,6 +452,7 @@ describe("ClaudeFormFields", () => {
         },
         autoSyncContextWindow: true,
       }),
+      isProxyTakeover: true,
       onSettingsConfigChange,
     });
 
@@ -266,6 +472,7 @@ describe("ClaudeFormFields", () => {
   it("开关打开和关闭时显示对应的上下文同步提示", () => {
     renderCopilotForm({
       settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      isProxyTakeover: true,
     });
 
     expect(
@@ -281,9 +488,7 @@ describe("ClaudeFormFields", () => {
     );
 
     expect(
-      screen.getByText(
-        "对于[1M]后缀的模型Claude Code原生支持1M上下文，其他输入形式或不输入默认为200k，切换模型后终端内生效。",
-      ),
+      screen.getByText("关闭后，切换模型不再自动更新上下文长度与压缩阈值。"),
     ).toBeInTheDocument();
   });
 
@@ -311,10 +516,21 @@ describe("ClaudeFormFields", () => {
     expect(screen.getByLabelText("压缩比例")).toHaveValue(0.8);
   });
 
+  it("压缩比例输入 max=0.95 step=0.05", () => {
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+    });
+
+    const input = screen.getByLabelText("压缩比例");
+    expect(input).toHaveAttribute("max", "0.95");
+    expect(input).toHaveAttribute("step", "0.05");
+  });
+
   it("修改压缩比例时走独立回调", () => {
     const onAutoSyncCompactRatioChange = vi.fn();
     renderCopilotForm({
       settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      isProxyTakeover: true,
       onAutoSyncCompactRatioChange,
     });
 
@@ -325,6 +541,21 @@ describe("ClaudeFormFields", () => {
     expect(onAutoSyncCompactRatioChange).toHaveBeenCalledWith(0.5);
   });
 
+  it("压缩比例 0.95 在范围内时写入", () => {
+    const onAutoSyncCompactRatioChange = vi.fn();
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      isProxyTakeover: true,
+      onAutoSyncCompactRatioChange,
+    });
+
+    fireEvent.change(screen.getByLabelText("压缩比例"), {
+      target: { value: "0.95" },
+    });
+
+    expect(onAutoSyncCompactRatioChange).toHaveBeenCalledWith(0.95);
+  });
+
   it("清空压缩比例时删除字段", () => {
     const onAutoSyncCompactRatioChange = vi.fn();
     renderCopilotForm({
@@ -333,6 +564,7 @@ describe("ClaudeFormFields", () => {
         autoSyncContextWindow: true,
         autoSyncCompactRatio: 0.8,
       }),
+      isProxyTakeover: true,
       onAutoSyncCompactRatioChange,
     });
 
@@ -347,16 +579,17 @@ describe("ClaudeFormFields", () => {
     const onAutoSyncCompactRatioChange = vi.fn();
     renderCopilotForm({
       settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      isProxyTakeover: true,
       onAutoSyncCompactRatioChange,
     });
 
     fireEvent.change(screen.getByLabelText("压缩比例"), {
-      target: { value: "1.5" },
+      target: { value: "0.96" },
     });
 
     expect(onAutoSyncCompactRatioChange).not.toHaveBeenCalled();
     expect(
-      screen.getByText("压缩比例必须是 0.2~1 之间的数字"),
+      screen.getByText("压缩比例必须是 0.2~0.95 之间的数字"),
     ).toBeInTheDocument();
   });
 
@@ -370,5 +603,155 @@ describe("ClaudeFormFields", () => {
     });
 
     expect(screen.getByLabelText("压缩比例")).toBeDisabled();
+  });
+
+  it("上下文长度框输入 200k 原样显示，失焦后写入 contextWindows 与 token", () => {
+    const { getConfig } = renderStatefulCopilotForm(
+      JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet" },
+      }),
+    );
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    fireEvent.change(contextInputs[0], { target: { value: "200k" } });
+    expect(contextInputs[0]).toHaveValue("200k");
+
+    fireEvent.blur(contextInputs[0]);
+    const config = getConfig();
+    expect(config.contextWindows.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(200000);
+    // 原样串作为 display-only token 与解析数字同时持久化。
+    expect(config.contextWindowTokens.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
+      "200k",
+    );
+    // 合法 K/M 输入失焦后仍原样显示（回退到刚写入的 token），不再归一化成数字。
+    expect(contextInputs[0]).toHaveValue("200k");
+  });
+
+  it("上下文长度框输入 2m 后按回车只结束编辑状态并写入解析值与 token", () => {
+    const { getConfig } = renderStatefulCopilotForm(
+      JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet" },
+      }),
+    );
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    fireEvent.focus(contextInputs[0]);
+    fireEvent.change(contextInputs[0], { target: { value: "2m" } });
+    fireEvent.keyDown(contextInputs[0], { key: "Enter" });
+
+    // 回车即提交解析（等价于失焦），不依赖表单保存。
+    const config = getConfig();
+    expect(config.contextWindows.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(2000000);
+    expect(config.contextWindowTokens.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
+      "2m",
+    );
+    expect(contextInputs[0]).toHaveValue("2m");
+  });
+
+  it("重开编辑页时优先回显 contextWindowTokens 原样串", () => {
+    renderCopilotForm({
+      defaultSonnetModel: "claude-sonnet",
+      settingsConfig: JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet" },
+        contextWindows: { ANTHROPIC_DEFAULT_SONNET_MODEL: 200000 },
+        contextWindowTokens: { ANTHROPIC_DEFAULT_SONNET_MODEL: "200k" },
+      }),
+    });
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    expect(contextInputs[0]).toHaveValue("200k");
+  });
+
+  it("上下文长度框非法输入失焦后回退到已存值且不写入", () => {
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      defaultSonnetModel: "claude-sonnet",
+      settingsConfig: JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet" },
+        contextWindows: { ANTHROPIC_DEFAULT_SONNET_MODEL: 200000 },
+      }),
+      onSettingsConfigChange,
+    });
+
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    fireEvent.change(contextInputs[0], { target: { value: "200M3" } });
+    fireEvent.blur(contextInputs[0]);
+
+    expect(onSettingsConfigChange).not.toHaveBeenCalled();
+    expect(contextInputs[0]).toHaveValue("200000");
+  });
+
+  it("模型名输入 glm-5.2[200k] 原样显示，不前端剥离", () => {
+    renderStatefulCopilotForm(
+      JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2" },
+      }),
+    );
+
+    const modelInput = document.getElementById(
+      "claudeDefaultSonnetModel",
+    ) as HTMLInputElement;
+    fireEvent.change(modelInput, { target: { value: "glm-5.2[200k]" } });
+
+    // 模型名输入框原样显示带后缀值（显示名输入可能同值，故按 id 断言）。
+    expect(
+      (document.getElementById("claudeDefaultSonnetModel") as HTMLInputElement)
+        .value,
+    ).toBe("glm-5.2[200k]");
+  });
+
+  it("模型名带 [200k] 后缀时 display-name 同步干净名、模型字段保留后缀", () => {
+    const { getConfig } = renderStatefulCopilotForm(
+      JSON.stringify({
+        env: { ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2" },
+      }),
+    );
+
+    const modelInput = document.getElementById(
+      "claudeDefaultSonnetModel",
+    ) as HTMLInputElement;
+    fireEvent.change(modelInput, { target: { value: "glm-5.2[200k]" } });
+
+    const config = getConfig();
+    expect(config.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("glm-5.2[200k]");
+    expect(config.env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME).toBe("glm-5.2");
+  });
+
+  it("路由模式下自动同步开关可切换", () => {
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: false }),
+      isProxyTakeover: true,
+      onSettingsConfigChange,
+    });
+
+    const toggle = screen.getByRole("switch", {
+      name: "自动同步模型上下文长度",
+    });
+    expect(toggle).not.toBeDisabled();
+
+    fireEvent.click(toggle);
+    expect(onSettingsConfigChange).toHaveBeenCalled();
+  });
+
+  it("直连模式下自动同步开关可用且跟随配置状态，不再提示仅路由可用", () => {
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      isProxyTakeover: false,
+      onSettingsConfigChange,
+    });
+
+    const toggle = screen.getByRole("switch", {
+      name: "自动同步模型上下文长度",
+    });
+    expect(toggle).not.toBeDisabled();
+    expect(toggle).toHaveAttribute("data-state", "checked");
+    expect(
+      screen.queryByText("自动同步仅在路由（代理接管）模式下可用"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(onSettingsConfigChange).toHaveBeenCalled();
   });
 });
