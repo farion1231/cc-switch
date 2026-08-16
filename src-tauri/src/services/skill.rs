@@ -345,6 +345,8 @@ const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
 /// 发现阶段经 raw.githubusercontent.com 抓取单个 SKILL.md 的内容上限。
 /// 正常的 SKILL.md 是几 KB 到几十 KB 的 Markdown，512 KiB 是宽松上限。
 const MAX_SKILL_MD_BYTES: u64 = 512 * 1024;
+/// 单个仓库内 SKILL.md 正文抓取的最大并发数（配合聚合字节预算限制峰值内存）
+const CONCURRENT_SKILL_FETCHES: usize = 16;
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -2636,30 +2638,54 @@ impl SkillService {
         Ok(skills)
     }
 
-    /// 从仓库获取技能列表（仅读取元数据与 SKILL.md，不下载整仓归档）
+    /// 从仓库获取技能列表（优先 GitHub Trees API，API 失败/限流时回退整仓下载）
     ///
-    /// 通过 GitHub Trees API（git/trees/{ref}?recursive=1）拿到整棵文件树——这
-    /// 只是 JSON 路径元数据，不含文件内容——再并发抓取每个 SKILL.md 的正文。
+    /// 常规路径只读取元数据与 SKILL.md，不下载整仓归档：
+    /// - `git/trees/{ref}?recursive=1` 拿文件树（JSON 路径元数据，不含文件内容）
+    /// - 并发抓取每个 SKILL.md 的正文（raw.githubusercontent.com，不耗 API 配额）
+    ///
     /// 相比下载整仓 zip：超大仓库（如 hugohe3/ppt-master，归档 200MB+）不再触发
     /// ARCHIVE_TOO_LARGE，且非技能文件一个字节都不会落到磁盘。安装时才整仓下载。
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (resolved_branch, tree) = timeout(
+        match timeout(
             std::time::Duration::from_secs(60),
             self.fetch_repo_tree(repo),
         )
         .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[
-                    ("owner", &repo.owner),
-                    ("name", &repo.name),
-                    ("timeout", "60")
-                ],
-                Some("checkNetwork"),
-            ))
-        })??;
+        {
+            Ok(Ok((resolved_branch, tree))) => {
+                self.build_skills_from_tree(repo, &resolved_branch, &tree)
+                    .await
+            }
+            // 匿名 GitHub API 有 60 次/小时/IP 的限流，且可能 404/断网；
+            // 一律回退到旧的整仓 zip 下载，避免发现结果被 API 故障清空。
+            Ok(Err(e)) => {
+                log::warn!(
+                    "GitHub API 获取仓库 {}/{} 失败，回退整仓下载: {}",
+                    repo.owner,
+                    repo.name,
+                    e
+                );
+                self.fetch_repo_skills_legacy(repo).await
+            }
+            Err(_) => {
+                log::warn!(
+                    "GitHub API 获取仓库 {}/{} 超时，回退整仓下载",
+                    repo.owner,
+                    repo.name
+                );
+                self.fetch_repo_skills_legacy(repo).await
+            }
+        }
+    }
 
+    /// 由 GitHub 文件树解析技能列表（API 路径）
+    async fn build_skills_from_tree(
+        &self,
+        repo: &SkillRepo,
+        resolved_branch: &str,
+        tree: &GithubRepoTree,
+    ) -> Result<Vec<DiscoverableSkill>> {
         if tree.truncated.unwrap_or(false) {
             log::warn!(
                 "仓库 {}/{} 的文件树被 GitHub 截断，部分技能可能未列出",
@@ -2668,71 +2694,166 @@ impl SkillService {
             );
         }
 
-        let doc_paths: Vec<&str> = tree
+        // 收集文件名恰好为 SKILL.md 的条目及其父目录（根目录用空串表示）
+        let mut candidates: Vec<(String, String)> = tree
             .tree
             .iter()
-            .filter(|entry| entry.kind == "blob" && entry.path.ends_with("SKILL.md"))
-            .map(|entry| entry.path.as_str())
+            .filter(|entry| entry.kind == "blob" && Self::is_skill_manifest_path(&entry.path))
+            .map(|entry| {
+                let doc_path = entry.path.clone();
+                let dir = doc_path
+                    .rsplit_once('/')
+                    .map(|(dir, _)| dir.to_string())
+                    .unwrap_or_default();
+                (doc_path, dir)
+            })
             .collect();
 
-        let client = crate::proxy::http_client::get();
-        let contents = futures::future::join_all(doc_paths.iter().map(|doc_path| {
-            timeout(
-                std::time::Duration::from_secs(30),
-                self.fetch_raw_skill_md(
-                    &client,
-                    &repo.owner,
-                    &repo.name,
-                    &resolved_branch,
-                    doc_path,
-                ),
-            )
-        }))
-        .await;
-
-        let doc_path_count = doc_paths.len();
-        let mut skills = Vec::with_capacity(doc_path_count);
-        for (doc_path, content) in doc_paths.into_iter().zip(contents) {
-            // 单个 SKILL.md 抓取失败只跳过该技能，不拖垮整个仓库
-            let content = match content {
-                Ok(Ok(content)) => content,
-                _ => continue,
-            };
-
-            let directory = match doc_path.rsplit_once('/') {
-                Some((dir, "SKILL.md")) if !dir.is_empty() => dir.to_string(),
-                // SKILL.md 在仓库根：与旧 zip 扫描一致，用仓库名当目录名
-                _ => repo.name.clone(),
-            };
-            let meta = Self::parse_skill_metadata_from_str(&content);
-
-            skills.push(DiscoverableSkill {
-                key: format!("{}/{}:{}", repo.owner, repo.name, directory),
-                name: meta.name.unwrap_or_else(|| directory.to_string()),
-                description: meta.description.unwrap_or_default(),
-                directory,
-                readme_url: Self::build_skill_doc_url(
-                    &repo.owner,
-                    &repo.name,
-                    &resolved_branch,
-                    doc_path,
-                ),
-                repo_owner: repo.owner.clone(),
-                repo_name: repo.name.clone(),
-                repo_branch: resolved_branch.clone(),
+        // 与旧 zip 扫描的 DFS 语义一致：目录一旦有 SKILL.md 就不再深入其子目录。
+        // 根 SKILL.md 会剪掉所有子目录；否则剪掉位于其它已识别技能目录之下的项。
+        if candidates.iter().any(|(_, dir)| dir.is_empty()) {
+            candidates.retain(|(_, dir)| dir.is_empty());
+        } else {
+            // 先复制目录列表，避免 retain 的 &mut 与闭包里的 & 冲突
+            let dirs: Vec<String> = candidates.iter().map(|(_, dir)| dir.clone()).collect();
+            candidates.retain(|(_, dir)| {
+                !dirs
+                    .iter()
+                    .any(|other| !other.is_empty() && Self::is_dir_descendant(dir, other))
             });
         }
 
-        if doc_path_count > 0 && skills.is_empty() {
+        let candidate_count = candidates.len();
+        if candidate_count == 0 {
+            return Ok(Vec::new());
+        }
+
+        // 数量上限：与 zip 条数上限对齐，病态仓库只截断告警而不是整仓报错
+        if candidate_count > MAX_ARCHIVE_ENTRIES {
+            log::warn!(
+                "仓库 {}/{} 的 SKILL.md 数量超过上限，仅取前 {MAX_ARCHIVE_ENTRIES} 个",
+                repo.owner,
+                repo.name
+            );
+            candidates.truncate(MAX_ARCHIVE_ENTRIES);
+        }
+
+        let client = crate::proxy::http_client::get();
+        let mut skills = Vec::new();
+        let mut total_bytes = 0u64;
+
+        // 有界并发 + 仓库级聚合字节预算：一次性 join_all 全部正文会让恶意仓库把
+        // 所有 SKILL.md 同时驻留内存（单文件上限绕过了旧的归档总预算）。按固定
+        // 大小分批抓取，峰值内存只与批次大小成正比；聚合预算截断总下载量。
+        'fetch: for chunk in candidates.chunks(CONCURRENT_SKILL_FETCHES) {
+            let contents = futures::future::join_all(chunk.iter().map(|(doc_path, _)| {
+                timeout(
+                    std::time::Duration::from_secs(30),
+                    self.fetch_raw_skill_md(
+                        &client,
+                        &repo.owner,
+                        &repo.name,
+                        resolved_branch,
+                        doc_path,
+                    ),
+                )
+            }))
+            .await;
+
+            for ((doc_path, dir), content) in chunk.iter().zip(contents) {
+                // 单个 SKILL.md 抓取失败只跳过该技能，不拖垮整个仓库
+                let content = match content {
+                    Ok(Ok(content)) => content,
+                    _ => continue,
+                };
+
+                if total_bytes.saturating_add(content.len() as u64) > MAX_ARCHIVE_TOTAL_BYTES {
+                    log::warn!(
+                        "仓库 {}/{} 的 SKILL.md 累计超过聚合预算，停止继续抓取",
+                        repo.owner,
+                        repo.name
+                    );
+                    break 'fetch;
+                }
+                total_bytes += content.len() as u64;
+
+                let directory = if dir.is_empty() {
+                    repo.name.clone()
+                } else {
+                    dir.clone()
+                };
+                let meta = Self::parse_skill_metadata_from_str(&content);
+                let name = meta.name.unwrap_or_else(|| directory.clone());
+
+                skills.push(DiscoverableSkill {
+                    key: format!("{}/{}:{}", repo.owner, repo.name, directory),
+                    name,
+                    description: meta.description.unwrap_or_default(),
+                    directory,
+                    readme_url: Self::build_skill_doc_url(
+                        &repo.owner,
+                        &repo.name,
+                        resolved_branch,
+                        doc_path,
+                    ),
+                    repo_owner: repo.owner.clone(),
+                    repo_name: repo.name.clone(),
+                    repo_branch: resolved_branch.to_string(),
+                });
+            }
+        }
+
+        if candidate_count > 0 && skills.is_empty() {
             log::warn!(
                 "仓库 {}/{} 有 {} 个 SKILL.md 但正文全部抓取失败",
                 repo.owner,
                 repo.name,
-                doc_path_count
+                candidate_count
             );
         }
 
         Ok(skills)
+    }
+
+    /// 旧实现：下载整仓 zip 后递归扫描 SKILL.md，仅在 GitHub API 失败/限流时作为回退
+    async fn fetch_repo_skills_legacy(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
+        let (temp_guard, resolved_branch) =
+            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
+                .await
+                .map_err(|_| {
+                    anyhow!(format_skill_error(
+                        "DOWNLOAD_TIMEOUT",
+                        &[
+                            ("owner", &repo.owner),
+                            ("name", &repo.name),
+                            ("timeout", "60")
+                        ],
+                        Some("checkNetwork"),
+                    ))
+                })??;
+
+        let mut skills = Vec::new();
+        let scan_dir = temp_guard.path();
+        let mut resolved_repo = repo.clone();
+        resolved_repo.branch = resolved_branch;
+        self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
+
+        Ok(skills)
+    }
+
+    /// 文件名必须恰好是 `SKILL.md`（与旧 zip 扫描语义一致，排除 NOTSKILL.md 等）
+    fn is_skill_manifest_path(path: &str) -> bool {
+        path.rsplit_once('/')
+            .map(|(_, file)| file == "SKILL.md")
+            .unwrap_or_else(|| path == "SKILL.md")
+    }
+
+    /// `dir` 是否位于 `ancestor` 目录之下（严格后代，按 `/` 边界判定，避免
+    /// `parent` 误判为 `parentish` 的祖先）
+    fn is_dir_descendant(dir: &str, ancestor: &str) -> bool {
+        dir.len() > ancestor.len()
+            && dir.starts_with(ancestor)
+            && dir.as_bytes().get(ancestor.len()) == Some(&b'/')
     }
 
     /// 解析分支并获取仓库的递归文件树（GitHub Trees API，仅元数据）
@@ -2816,7 +2937,18 @@ impl SkillService {
         branch: &str,
         doc_path: &str,
     ) -> Result<String> {
-        let url = format!("https://raw.githubusercontent.com/{owner}/{name}/{branch}/{doc_path}");
+        // owner/name/branch 已经过 validate_repo_ref 校验，可直接拼进路径；
+        // doc_path 来自 GitHub 文件树，含 #/? 等字符时必须按段百分号编码，
+        // 否则会被当作 fragment/query 截断成错误的地址。逐段 push 保留 `/` 层级。
+        let mut url = url::Url::parse(&format!(
+            "https://raw.githubusercontent.com/{owner}/{name}/{branch}"
+        ))?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow!("invalid raw.githubusercontent.com URL"))?
+            .pop_if_empty()
+            .extend(doc_path.split('/'));
+        let url = url.to_string();
+
         let response = client
             .get(&url)
             .header("Accept-Encoding", "identity")
@@ -6210,5 +6342,35 @@ mod tests {
         let meta =
             SkillService::parse_skill_metadata_from_str("\u{feff}---\nname: bom-skill\n---\n");
         assert_eq!(meta.name.as_deref(), Some("bom-skill"));
+    }
+
+    #[test]
+    fn is_skill_manifest_path_requires_exact_basename() {
+        // 只有文件名叫 SKILL.md 才算技能清单
+        assert!(SkillService::is_skill_manifest_path("SKILL.md"));
+        assert!(SkillService::is_skill_manifest_path(
+            "skills/ppt-master/SKILL.md"
+        ));
+        // NOTSKILL.md / README_SKILL.md 这类必须以 SKILL.md 结尾之外的都不能误判
+        assert!(!SkillService::is_skill_manifest_path("NOTSKILL.md"));
+        assert!(!SkillService::is_skill_manifest_path("README_SKILL.md"));
+        assert!(!SkillService::is_skill_manifest_path("docs/not-a-skill.md"));
+    }
+
+    #[test]
+    fn is_dir_descendant_requires_a_directory_boundary() {
+        assert!(SkillService::is_dir_descendant("a/b", "a"));
+        assert!(SkillService::is_dir_descendant("a/b/c", "a/b"));
+        assert!(SkillService::is_dir_descendant(
+            "skills/ppt-master/sub",
+            "skills/ppt-master"
+        ));
+        // 相等不是严格后代
+        assert!(!SkillService::is_dir_descendant("a/b", "a/b"));
+        // parent 不能误判为 parentish 的祖先
+        assert!(!SkillService::is_dir_descendant("ab/c", "a"));
+        assert!(!SkillService::is_dir_descendant("a2/b", "a"));
+        // 根目录不是任何空串之外的祖先
+        assert!(!SkillService::is_dir_descendant("", "a"));
     }
 }
