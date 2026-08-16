@@ -57,16 +57,11 @@ export const sessionRoutesApi = {
     });
   },
 
-  async cleanupExpired(
-    appType: string,
-    ttlSeconds: number,
-  ): Promise<number> {
+  async cleanupExpired(appType: string, ttlSeconds: number): Promise<number> {
     return invoke("cleanup_expired_session_routes", { appType, ttlSeconds });
   },
 
-  async getProviderLoad(
-    appType: string,
-  ): Promise<ProviderLoadInfo[]> {
+  async getProviderLoad(appType: string): Promise<ProviderLoadInfo[]> {
     return invoke("get_session_provider_load", { appType });
   },
 };

@@ -1,5 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { sessionRoutesApi, type SessionRoutingConfig } from "@/lib/api/sessionRoutes";
+import {
+  sessionRoutesApi,
+  type SessionRoutingConfig,
+} from "@/lib/api/sessionRoutes";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -131,9 +134,7 @@ export function useCleanupExpiredRoutes() {
       queryClient.invalidateQueries({
         queryKey: sessionRouteKeys.load(appType),
       });
-      toast.success(
-        t("sessionRoutes.cleanedUp", { count }),
-      );
+      toast.success(t("sessionRoutes.cleanedUp", { count }));
     },
     onError: (error) => {
       toast.error(extractErrorMessage(error));

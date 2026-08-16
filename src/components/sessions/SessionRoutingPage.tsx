@@ -61,7 +61,9 @@ export function SessionRoutingPage() {
     });
   };
 
-  const handleStrategyChange = async (strategy: "round_robin" | "least_loaded") => {
+  const handleStrategyChange = async (
+    strategy: "round_robin" | "least_loaded",
+  ) => {
     if (!config) return;
     updateConfig.mutate({
       appType: selectedApp,
@@ -113,9 +115,7 @@ export function SessionRoutingPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Route className="w-5 h-5" />
-          <h2 className="text-lg font-semibold">
-            {t("sessionRoutes.title")}
-          </h2>
+          <h2 className="text-lg font-semibold">{t("sessionRoutes.title")}</h2>
         </div>
         <Select
           value={selectedApp}
@@ -238,7 +238,9 @@ export function SessionRoutingPage() {
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <ProviderIcon name={info.providerName} size={24} />
-                    <span className="text-sm truncate">{info.providerName}</span>
+                    <span className="text-sm truncate">
+                      {info.providerName}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
@@ -313,17 +315,22 @@ export function SessionRoutingPage() {
                     className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50 transition-colors"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <ProviderIcon name={route.providerName || route.providerId} size={24} />
+                      <ProviderIcon
+                        name={route.providerName || route.providerId}
+                        size={24}
+                      />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium truncate max-w-[160px]" title={route.sessionId}>
+                          <span
+                            className="text-sm font-medium truncate max-w-[160px]"
+                            title={route.sessionId}
+                          >
                             {route.sessionName || route.sessionId.slice(0, 8)}
                           </span>
                         </div>
                         <div className="flex items-center gap-3 text-xs text-muted-foreground">
                           <span>
-                            {route.requestCount}{" "}
-                            {t("sessionRoutes.requests")}
+                            {route.requestCount} {t("sessionRoutes.requests")}
                           </span>
                           {route.failoverCount > 0 && (
                             <span className="text-amber-500">
@@ -338,7 +345,9 @@ export function SessionRoutingPage() {
                     <div className="flex items-center gap-2 shrink-0">
                       <Select
                         value={route.providerId}
-                        onValueChange={(v) => handleSetProvider(route.sessionId, v)}
+                        onValueChange={(v) =>
+                          handleSetProvider(route.sessionId, v)
+                        }
                       >
                         <SelectTrigger className="w-36 h-8 text-xs">
                           <SelectValue />

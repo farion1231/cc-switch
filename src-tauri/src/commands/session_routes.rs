@@ -195,6 +195,6 @@ pub async fn get_session_provider_load(
     }
 
     // 按 session 数降序
-    result.sort_by(|a, b| b.session_count.cmp(&a.session_count));
+    result.sort_by_key(|b| std::cmp::Reverse(b.session_count));
     Ok(result)
 }

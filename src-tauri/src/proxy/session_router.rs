@@ -221,6 +221,10 @@ impl SessionRouter {
     }
 
     /// 清理过期 session
+    ///
+    /// 供后台定时任务调用（当前由 UI 的「清理过期」触发对应的 DAO 方法，
+    /// 此方法保留为未来调度任务接入）。
+    #[allow(dead_code)]
     pub async fn cleanup_expired(&self, ttl_seconds: u64) -> Result<u64, AppError> {
         let cutoff = chrono::Utc::now().timestamp_millis() - (ttl_seconds as i64 * 1000);
         let count = self.db.delete_expired_session_routes(cutoff)?;
