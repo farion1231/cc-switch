@@ -36,11 +36,12 @@ pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
-    build_effective_provider_for_live_with_codex_oauth_manager,
-    build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config_for_codex_oauth_manager,
-    write_live_with_common_config_for_state,
+    auto_sync_state_mut, build_effective_provider_for_live_with_codex_oauth_manager,
+    build_effective_settings_with_common_config, ensure_claude_settings_watcher,
+    normalize_provider_common_config_for_storage, provider_exists_in_live_config,
+    static_context_window_fallback, strip_common_config_from_live_settings,
+    strip_legacy_suffixes_from_claude_models, sync_current_provider_for_app_to_live,
+    write_live_with_common_config_for_codex_oauth_manager, write_live_with_common_config_for_state,
 };
 
 // Internal re-exports
@@ -4294,6 +4295,99 @@ wire_api = "responses"
             );
         });
     }
+
+    #[test]
+    fn normalize_provider_if_claude_persists_legacy_suffix_migration() {
+        with_test_home(|state, _| {
+            let provider = Provider::with_id(
+                "p".to_string(),
+                "P".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_MODEL": "fallback-model",
+                        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2[200k]",
+                        "CLAUDE_CODE_SUBAGENT_MODEL": "subagent-model[1M]"
+                    }
+                }),
+                None,
+            );
+            ProviderService::add(state, AppType::Claude, provider, false).expect("add provider");
+            let saved = state
+                .db
+                .get_provider_by_id("p", AppType::Claude.as_str())
+                .expect("query provider")
+                .expect("provider should exist");
+            assert_eq!(
+                saved.settings_config["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+                "glm-5.2"
+            );
+            assert_eq!(
+                saved.settings_config["contextWindows"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+                200000
+            );
+            assert_eq!(
+                saved.settings_config["env"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+                "subagent-model"
+            );
+            assert_eq!(
+                saved.settings_config["contextWindows"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+                1000000
+            );
+        });
+    }
+
+    #[test]
+    fn normalize_provider_if_claude_persists_legacy_suffix_migration_on_update() {
+        with_test_home(|state, _| {
+            let original = Provider::with_id(
+                "p".to_string(),
+                "P".to_string(),
+                json!({ "env": { "ANTHROPIC_MODEL": "fallback-model" } }),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &original)
+                .expect("seed provider");
+
+            let updated = Provider::with_id(
+                "p".to_string(),
+                "P".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_MODEL": "fallback-model",
+                        "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2[200k]",
+                        "CLAUDE_CODE_SUBAGENT_MODEL": "subagent-model[1M]"
+                    }
+                }),
+                None,
+            );
+            ProviderService::update(state, AppType::Claude, None, updated)
+                .expect("update provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("p", AppType::Claude.as_str())
+                .expect("query provider")
+                .expect("provider should exist");
+            assert_eq!(
+                saved.settings_config["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+                "glm-5.2"
+            );
+            assert_eq!(
+                saved.settings_config["contextWindows"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+                200000
+            );
+            assert_eq!(
+                saved.settings_config["env"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+                "subagent-model"
+            );
+            assert_eq!(
+                saved.settings_config["contextWindows"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+                1000000
+            );
+        });
+    }
 }
 
 impl ProviderService {
@@ -4691,7 +4785,10 @@ impl ProviderService {
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
         if matches!(app_type, AppType::Claude) {
             let mut v = provider.settings_config.clone();
-            if normalize_claude_models_in_value(&mut v) {
+            let normalized = normalize_claude_models_in_value(&mut v);
+            let migrated =
+                crate::claude_desktop_config::migrate_legacy_suffix_to_context_windows(&mut v);
+            if normalized || migrated {
                 provider.settings_config = v;
             }
         }

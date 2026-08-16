@@ -24,6 +24,7 @@ tauri-build = { version = "2.4.0", features = [] }
 
 [dependencies]
 serde_json = { version = "1.0", features = ["preserve_order"] }
+notify-debouncer-mini = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
