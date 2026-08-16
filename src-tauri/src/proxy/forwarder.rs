@@ -1178,6 +1178,13 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        let endpoint_path = endpoint
+            .split_once('?')
+            .map_or(endpoint, |(path, _query)| path);
+        let grokbuild_direct_chat =
+            matches!(app_type, AppType::GrokBuild) && endpoint_path == "/chat/completions";
+        let grokbuild_direct_messages =
+            matches!(app_type, AppType::GrokBuild) && endpoint_path == "/v1/messages";
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
 
@@ -1413,16 +1420,17 @@ impl RequestForwarder {
             )
         };
 
-        let codex_chat_base_is_full_endpoint =
-            codex_responses_to_chat && base_url_is_full_endpoint(&base_url, "/chat/completions");
+        let chat_base_is_full_endpoint = (codex_responses_to_chat || grokbuild_direct_chat)
+            && base_url_is_full_endpoint(&base_url, "/chat/completions");
 
-        // Defensive fallback mirroring `codex_chat_base_is_full_endpoint`: if a user pastes
+        // Defensive fallback mirroring `chat_base_is_full_endpoint`: if a user pastes
         // a base URL already ending in the Anthropic `/v1/messages` endpoint but leaves the
         // "full URL" switch off, treat it as a full endpoint so we don't double-append
         // `/v1/messages` (→ `.../v1/messages/v1/messages`, a non-retryable 400). Matches the
         // exact endpoint suffix, so prefixed gateways like `.../api/v1/messages` are covered.
-        let codex_anthropic_base_is_full_endpoint =
-            codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
+        let anthropic_base_is_full_endpoint = (codex_responses_to_anthropic
+            || grokbuild_direct_messages)
+            && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
@@ -1430,10 +1438,7 @@ impl RequestForwarder {
                 &effective_endpoint,
                 is_full_url,
             )
-        } else if is_full_url
-            || codex_chat_base_is_full_endpoint
-            || codex_anthropic_base_is_full_endpoint
-        {
+        } else if is_full_url || chat_base_is_full_endpoint || anthropic_base_is_full_endpoint {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
@@ -1900,11 +1905,18 @@ impl RequestForwarder {
             .ok()
             .and_then(|u| u.authority().map(|a| a.to_string()));
 
-        let should_send_anthropic_headers = adapter.name() == "Claude"
-            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
+        let should_send_anthropic_headers = grokbuild_direct_messages
+            || (adapter.name() == "Claude"
+                && matches!(resolved_claude_api_format.as_deref(), Some("anthropic")));
 
-        // 预计算 anthropic-beta 值（仅 Claude）
-        let anthropic_beta_value = if should_send_anthropic_headers {
+        // Native Grok Build Messages preserves the client's beta list as-is.
+        // Claude paths keep their existing Claude Code beta behavior.
+        let anthropic_beta_value = if grokbuild_direct_messages {
+            headers
+                .get("anthropic-beta")
+                .and_then(|beta| beta.to_str().ok())
+                .map(ToString::to_string)
+        } else if should_send_anthropic_headers {
             const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
             Some(if let Some(beta) = headers.get("anthropic-beta") {
                 if let Ok(beta_str) = beta.to_str() {
@@ -3212,15 +3224,22 @@ fn merge_query_params(base_query: Option<&str>, extra_param: Option<&str>) -> Op
 }
 
 fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
-    match query {
+    let (base, fragment) = base_url
+        .split_once('#')
+        .map_or((base_url, None), |(base, fragment)| (base, Some(fragment)));
+    let url = match query {
         Some(query) if !query.is_empty() => {
-            if base_url.contains('?') {
-                format!("{base_url}&{query}")
+            if base.contains('?') {
+                format!("{base}&{query}")
             } else {
-                format!("{base_url}?{query}")
+                format!("{base}?{query}")
             }
         }
-        _ => base_url.to_string(),
+        _ => base.to_string(),
+    };
+    match fragment {
+        Some(fragment) => format!("{url}#{fragment}"),
+        None => url,
     }
 }
 
@@ -4237,6 +4256,17 @@ mod tests {
         assert_eq!(
             append_query_to_full_url("https://host.example/v1/messages", Some("x=1")),
             "https://host.example/v1/messages?x=1"
+        );
+        assert_eq!(
+            append_query_to_full_url("https://host.example/v1/messages#frag", Some("x=1")),
+            "https://host.example/v1/messages?x=1#frag"
+        );
+        assert_eq!(
+            append_query_to_full_url(
+                "https://host.example/v1/messages?beta=true#frag",
+                Some("x=1")
+            ),
+            "https://host.example/v1/messages?beta=true&x=1#frag"
         );
         // A base URL that already carries its own query is preserved verbatim (no double
         // `/v1/messages`, query kept).

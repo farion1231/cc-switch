@@ -327,11 +327,18 @@ impl ProxyServer {
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
-            // Grok Build uses the Responses protocol but has an independent
-            // provider namespace and failover queue.
+            // Grok Build has an independent provider namespace and failover queue.
+            .route(
+                "/grokbuild/v1/chat/completions",
+                post(handlers::handle_grokbuild_chat_completions),
+            )
             .route(
                 "/grokbuild/v1/responses",
                 post(handlers::handle_grokbuild_responses),
+            )
+            .route(
+                "/grokbuild/v1/messages",
+                post(handlers::handle_grokbuild_messages),
             )
             // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
             .route(
@@ -401,5 +408,139 @@ impl ProxyServer {
             .provider_router
             .reset_provider_breaker(provider_id, app_type)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::{Provider, ProviderMeta};
+    use axum::{body::Body, http::Request};
+    use serde_json::json;
+    use tokio::sync::mpsc;
+    use tower::Service;
+
+    #[tokio::test]
+    async fn grokbuild_routes_use_grokbuild_provider_and_preserve_protocol() {
+        let (capture_tx, mut capture_rx) = mpsc::unbounded_channel();
+        let upstream = Router::new().fallback(axum::routing::any(
+            move |request: axum::extract::Request| {
+                let capture_tx = capture_tx.clone();
+                async move {
+                    let path = request
+                        .uri()
+                        .path_and_query()
+                        .expect("upstream path")
+                        .as_str()
+                        .to_string();
+                    capture_tx
+                        .send((path, request.headers().clone()))
+                        .expect("capture request");
+                    axum::http::StatusCode::BAD_REQUEST
+                }
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let upstream_origin = format!("http://{}", listener.local_addr().expect("upstream addr"));
+        let upstream_task = tokio::spawn(async move {
+            axum::serve(listener, upstream)
+                .await
+                .expect("serve upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        let mut provider = Provider::with_id(
+            "grok-only".to_string(),
+            "Grok only".to_string(),
+            json!({
+                "base_url": upstream_origin.clone(),
+                "api_key": "grok-upstream-secret",
+            }),
+            None,
+        );
+        provider.in_failover_queue = true;
+        db.save_provider("grokbuild", &provider)
+            .expect("save GrokBuild provider");
+        let mut proxy_config = db
+            .get_proxy_config_for_app("grokbuild")
+            .await
+            .expect("GrokBuild proxy config");
+        proxy_config.auto_failover_enabled = true;
+        proxy_config.max_retries = 0;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("enable GrokBuild failover queue");
+
+        let server = ProxyServer::new(ProxyConfig::default(), db.clone(), None);
+        let router = server.build_router();
+
+        for (route, api_format, expected_path) in [
+            (
+                "/grokbuild/v1/chat/completions?trace=chat",
+                "openai_chat",
+                "/v1/chat/completions?trace=chat",
+            ),
+            (
+                "/grokbuild/v1/messages?trace=messages",
+                "anthropic",
+                "/v1/messages?trace=messages",
+            ),
+        ] {
+            let is_messages = api_format == "anthropic";
+            provider.meta = Some(ProviderMeta {
+                api_format: Some(api_format.to_string()),
+                api_key_field: is_messages.then(|| "ANTHROPIC_API_KEY".to_string()),
+                ..Default::default()
+            });
+            provider.settings_config["base_url"] = json!(format!(
+                "{upstream_origin}{}",
+                expected_path.split('?').next().expect("endpoint path")
+            ));
+            db.save_provider("grokbuild", &provider)
+                .expect("update GrokBuild provider");
+
+            let mut request = Request::post(route)
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer client-secret");
+            if is_messages {
+                request = request
+                    .header("anthropic-version", "2024-01-01")
+                    .header("anthropic-beta", "test-beta");
+            }
+            let request = request
+                .body(Body::from(r#"{"model":"grok-4.5"}"#))
+                .expect("request");
+            router.clone().call(request).await.expect("route response");
+
+            let (path, headers) = capture_rx.try_recv().expect("GrokBuild upstream request");
+            assert_eq!(path, expected_path);
+            let (auth_header, auth_value) = if is_messages {
+                ("x-api-key", "grok-upstream-secret")
+            } else {
+                ("authorization", "Bearer grok-upstream-secret")
+            };
+            assert_eq!(
+                headers
+                    .get(auth_header)
+                    .and_then(|value| value.to_str().ok()),
+                Some(auth_value)
+            );
+            assert_eq!(
+                headers
+                    .get("anthropic-version")
+                    .and_then(|value| value.to_str().ok()),
+                is_messages.then_some("2024-01-01")
+            );
+            assert_eq!(
+                headers
+                    .get("anthropic-beta")
+                    .and_then(|value| value.to_str().ok()),
+                is_messages.then_some("test-beta")
+            );
+        }
+
+        upstream_task.abort();
     }
 }
