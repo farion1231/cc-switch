@@ -986,7 +986,7 @@
     "collapseContent": "收起",
     "remoteImage": "远程图片",
     "loadRemoteImage": "加载远程图片",
-    "hiddenSearchMatch": "折叠内容中的匹配"
+    "hiddenSearchMatch": "原文中的匹配"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",

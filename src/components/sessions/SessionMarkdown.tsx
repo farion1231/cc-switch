@@ -32,6 +32,20 @@ const LINK_METADATA_NODES = new Set([
   "URL",
 ]);
 
+// 折叠预览、可见匹配检测与渲染会在同一次渲染流程中连续解析同一段内容，
+// 缓存最近一次解析结果即可覆盖这种访问模式。
+let lastParse: {
+  content: string;
+  tree: ReturnType<typeof markdownLanguage.parser.parse>;
+} | null = null;
+
+const parseMarkdown = (content: string) => {
+  if (lastParse?.content !== content) {
+    lastParse = { content, tree: markdownLanguage.parser.parse(content) };
+  }
+  return lastParse.tree;
+};
+
 const safeExternalUrl = (value: string) => {
   const url = value.trim();
   if (/^(https?:|mailto:)/i.test(url)) return url;
@@ -123,10 +137,63 @@ export const createCollapsedMarkdownPreview = (
   maxLength: number,
 ) => {
   const preview = content.slice(0, maxLength);
-  const tree = markdownLanguage.parser.parse(preview);
+  const tree = parseMarkdown(preview);
   const unclosedFence = findUnclosedFence(tree.topNode, preview);
 
   return unclosedFence ? `${preview}\n${unclosedFence}\n\n…` : `${preview}…`;
+};
+
+// 与 renderNode 一样不产生可见文本的节点（TableDelimiter、链接引用定义、
+// 代码块语言标记）。CodeInfo 仅作为 data-language 属性输出。
+const HIDDEN_TEXT_NODES = new Set([
+  "CodeInfo",
+  "LinkReference",
+  "TableDelimiter",
+]);
+
+const collectVisibleTextPieces = (
+  node: MarkdownNode,
+  source: string,
+  pieces: string[],
+  skippedNodes = MARKER_NODES,
+) => {
+  let cursor = node.from;
+
+  for (const child of childNodes(node)) {
+    if (child.from > cursor) {
+      pieces.push(source.slice(cursor, child.from));
+    }
+
+    if (!skippedNodes.has(child.name) && !HIDDEN_TEXT_NODES.has(child.name)) {
+      if (child.name === "Image") {
+        const raw = source.slice(child.from, child.to);
+        pieces.push(/^!\[([^\]]*)\]/.exec(raw)?.[1] ?? "");
+      } else if (child.name === "Link") {
+        collectVisibleTextPieces(child, source, pieces, LINK_METADATA_NODES);
+      } else {
+        collectVisibleTextPieces(child, source, pieces);
+      }
+    }
+    cursor = child.to;
+  }
+
+  if (cursor < node.to) {
+    pieces.push(source.slice(cursor, node.to));
+  }
+};
+
+// 判断搜索词是否会出现在某个连续渲染文本片段中。highlightText 只能高亮
+// 单个文本片段内的匹配；藏在链接 URL 里或跨越行内节点边界（如跨越粗体
+// 分界）的匹配渲染后不可见，需要调用方另行展示原文片段。
+export const hasHighlightableMarkdownMatch = (
+  content: string,
+  query: string,
+) => {
+  if (!query) return false;
+  const pieces: string[] = [];
+  collectVisibleTextPieces(parseMarkdown(content).topNode, content, pieces);
+  const normalized = query.toLowerCase();
+  return pieces.some((piece) => piece.toLowerCase().includes(normalized));
 };
 
 const renderChildren = (
@@ -513,7 +580,7 @@ export const SessionMarkdown = memo(function SessionMarkdown({
   content,
   searchQuery,
 }: SessionMarkdownProps) {
-  const tree = useMemo(() => markdownLanguage.parser.parse(content), [content]);
+  const tree = useMemo(() => parseMarkdown(content), [content]);
   const linkReferences = useMemo(
     () => collectLinkReferences(tree.topNode, content),
     [content, tree],

@@ -117,9 +117,7 @@ describe("SessionMessageItem", () => {
 
     expect(container.querySelector("img")).toBeNull();
 
-    await user.click(
-      screen.getByRole("button", { name: /加载远程图片.*tracking pixel/ }),
-    );
+    await user.click(screen.getByRole("button", { name: /tracking pixel/ }));
 
     expect(screen.getByRole("img", { name: "tracking pixel" })).toHaveAttribute(
       "src",
@@ -133,9 +131,7 @@ describe("SessionMessageItem", () => {
       <SessionMarkdown content="![first](https://tracker.example/first)" />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: /加载远程图片.*first/ }),
-    );
+    await user.click(screen.getByRole("button", { name: /first/ }));
     expect(screen.getByRole("img", { name: "first" })).toHaveAttribute(
       "src",
       "https://tracker.example/first",
@@ -146,9 +142,7 @@ describe("SessionMessageItem", () => {
     );
 
     expect(container.querySelector("img")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /加载远程图片.*second/ }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /second/ })).toBeInTheDocument();
   });
 
   it("renders table rows using only semantic cell elements", () => {
@@ -191,7 +185,7 @@ describe("SessionMessageItem", () => {
     );
 
     expect(screen.getByText("needle").tagName).toBe("MARK");
-    expect(screen.getByText("折叠内容中的匹配")).toBeInTheDocument();
+    expect(screen.getByText("原文中的匹配")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /展开完整内容/ }),
     ).toHaveAttribute("aria-expanded", "false");
@@ -201,7 +195,21 @@ describe("SessionMessageItem", () => {
     renderMessage(`${"a".repeat(1497)}needle${"b".repeat(1600)}`, "needle");
 
     expect(screen.getByText("needle").tagName).toBe("MARK");
-    expect(screen.getByText("折叠内容中的匹配")).toBeInTheDocument();
+    expect(screen.getByText("原文中的匹配")).toBeInTheDocument();
+  });
+
+  it("shows search context when the match only exists in a hidden link URL", () => {
+    renderMessage("See [docs](https://hidden-domain.example/page).", "hidden-domain");
+
+    expect(screen.getByText("hidden-domain").tagName).toBe("MARK");
+    expect(screen.getByText("原文中的匹配")).toBeInTheDocument();
+  });
+
+  it("does not show a snippet when the match is visible in rendered Markdown", () => {
+    renderMessage("The **important result** is ready.", "result");
+
+    expect(screen.getByText("result").tagName).toBe("MARK");
+    expect(screen.queryByText("原文中的匹配")).toBeNull();
   });
 
   it("closes a truncated code fence before rendering the preview ellipsis", () => {

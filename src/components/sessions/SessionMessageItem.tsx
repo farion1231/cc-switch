@@ -12,37 +12,47 @@ import { cn } from "@/lib/utils";
 import type { SessionMessage } from "@/types";
 import {
   createCollapsedMarkdownPreview,
+  hasHighlightableMarkdownMatch,
   SessionMarkdown,
 } from "./SessionMarkdown";
 import {
   formatTimestamp,
   getRoleLabel,
   getRoleTone,
+  getSearchSnippet,
   highlightText,
 } from "./utils";
 
 const COLLAPSE_THRESHOLD = 3000;
 const COLLAPSED_LENGTH = 1500;
-const SEARCH_CONTEXT_LENGTH = 80;
 
-const getHiddenSearchSnippet = (content: string, searchQuery?: string) => {
+const getHiddenSearchSnippet = (
+  content: string,
+  collapsed: boolean,
+  renderedAsMarkdown: boolean,
+  displayContent: string,
+  searchQuery?: string,
+) => {
   if (!searchQuery) return null;
 
-  const searchStart = Math.max(0, COLLAPSED_LENGTH - searchQuery.length + 1);
-  const matchIndex = content
-    .toLowerCase()
-    .indexOf(searchQuery.toLowerCase(), searchStart);
-  if (matchIndex < 0) return null;
+  // 折叠时，匹配可能整体位于折叠边界之后（含跨边界的情况）。
+  if (collapsed) {
+    const hiddenStart = Math.max(0, COLLAPSED_LENGTH - searchQuery.length + 1);
+    const snippet = getSearchSnippet(content, searchQuery, hiddenStart);
+    if (snippet) return snippet;
+  }
 
-  const start = Math.max(0, matchIndex - SEARCH_CONTEXT_LENGTH);
-  const end = Math.min(
-    content.length,
-    matchIndex + searchQuery.length + SEARCH_CONTEXT_LENGTH,
-  );
+  // Markdown 渲染会隐藏部分原文（链接 URL、标记符），还会把行内文本切成
+  // 多个片段导致跨节点匹配无法高亮。此时展示原文上下文，避免“搜索命中
+  // 却看不到匹配”的困惑。
+  if (
+    renderedAsMarkdown &&
+    !hasHighlightableMarkdownMatch(displayContent, searchQuery)
+  ) {
+    return getSearchSnippet(content, searchQuery);
+  }
 
-  return `${start > 0 ? "…" : ""}${content.slice(start, end)}${
-    end < content.length ? "…" : ""
-  }`;
+  return null;
 };
 
 interface SessionMessageItemProps {
@@ -73,8 +83,20 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   }, [collapsed, message.content, shouldRenderMarkdown]);
   const hiddenSearchSnippet = useMemo(
     () =>
-      collapsed ? getHiddenSearchSnippet(message.content, searchQuery) : null,
-    [collapsed, message.content, searchQuery],
+      getHiddenSearchSnippet(
+        message.content,
+        collapsed,
+        shouldRenderMarkdown,
+        displayContent,
+        searchQuery,
+      ),
+    [
+      collapsed,
+      displayContent,
+      message.content,
+      searchQuery,
+      shouldRenderMarkdown,
+    ],
   );
 
   return (
@@ -129,7 +151,7 @@ export const SessionMessageItem = memo(function SessionMessageItem({
         <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-2.5 py-2 text-xs">
           <div className="mb-1 font-medium text-muted-foreground">
             {t("sessionManager.hiddenSearchMatch", {
-              defaultValue: "折叠内容中的匹配",
+              defaultValue: "原文中的匹配",
             })}
           </div>
           <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">

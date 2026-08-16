@@ -987,7 +987,7 @@
     "collapseContent": "收起",
     "remoteImage": "遠端圖片",
     "loadRemoteImage": "載入遠端圖片",
-    "hiddenSearchMatch": "摺疊內容中的相符項目"
+    "hiddenSearchMatch": "原文中的相符項目"
   },
   "console": {
     "providerSwitchReceived": "收到供應商切換事件：",

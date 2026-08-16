@@ -986,7 +986,7 @@
     "collapseContent": "Collapse",
     "remoteImage": "Remote image",
     "loadRemoteImage": "Load remote image",
-    "hiddenSearchMatch": "Match in collapsed content"
+    "hiddenSearchMatch": "Match in original text"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
