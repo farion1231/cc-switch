@@ -1053,7 +1053,10 @@
     }
   },
   "appSwitcher": {
-    "more": "More apps"
+    "more": "More apps",
+    "hide": "Hide from homepage",
+    "add": "Add apps to homepage",
+    "allShown": "All apps are shown"
   },
   "grokBuild": {
     "apiBackend": "API backend",

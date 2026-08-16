@@ -1053,7 +1053,10 @@
     }
   },
   "appSwitcher": {
-    "more": "その他のアプリ"
+    "more": "その他のアプリ",
+    "hide": "ホームページから隠す",
+    "add": "アプリをホームページに追加",
+    "allShown": "すべてのアプリが表示されています"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
