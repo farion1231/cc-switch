@@ -8,6 +8,7 @@ use crate::config::{
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::process::{Command, Stdio};
@@ -113,6 +114,189 @@ fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     false
 }
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
+const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodexManagedOAuthLiveAuthMarker {
+    version: u32,
+    account_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexLiveFileState {
+    path: PathBuf,
+    contents: Option<Vec<u8>>,
+    #[cfg(unix)]
+    mode: Option<u32>,
+}
+
+impl CodexLiveFileState {
+    fn capture(path: PathBuf) -> Result<Self, AppError> {
+        if !path.exists() {
+            return Ok(Self {
+                path,
+                contents: None,
+                #[cfg(unix)]
+                mode: None,
+            });
+        }
+
+        let contents = fs::read(&path).map_err(|error| AppError::io(&path, error))?;
+        #[cfg(unix)]
+        let mode = {
+            use std::os::unix::fs::PermissionsExt;
+            Some(
+                fs::metadata(&path)
+                    .map_err(|error| AppError::io(&path, error))?
+                    .permissions()
+                    .mode(),
+            )
+        };
+
+        Ok(Self {
+            path,
+            contents: Some(contents),
+            #[cfg(unix)]
+            mode,
+        })
+    }
+
+    fn restore(&self) -> Result<(), AppError> {
+        match self.contents.as_deref() {
+            Some(contents) => {
+                atomic_write(&self.path, contents)?;
+                #[cfg(unix)]
+                if let Some(mode) = self.mode {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&self.path, fs::Permissions::from_mode(mode))
+                        .map_err(|error| AppError::io(&self.path, error))?;
+                }
+                Ok(())
+            }
+            None => delete_file(&self.path),
+        }
+    }
+}
+
+/// Rollback point for the cc-switch-owned model catalog. Catalog projection
+/// writes this file before the caller commits `config.toml`, so guarded restore
+/// paths use this snapshot when a concurrently changing `auth.json` cancels the
+/// commit.
+pub(crate) struct CodexModelCatalogFileSnapshot(CodexLiveFileState);
+
+impl CodexModelCatalogFileSnapshot {
+    pub(crate) fn capture() -> Result<Self, AppError> {
+        CodexLiveFileState::capture(get_codex_model_catalog_path()).map(Self)
+    }
+
+    pub(crate) fn restore(&self) -> Result<(), AppError> {
+        self.0.restore()
+    }
+}
+
+/// Exact rollback state for a managed Codex live write. The generated catalog
+/// and ownership marker are part of the same logical commit as auth/config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexLiveStateSnapshot {
+    auth: CodexLiveFileState,
+    config: CodexLiveFileState,
+    catalog: CodexLiveFileState,
+    managed_marker: CodexLiveFileState,
+}
+
+impl CodexLiveStateSnapshot {
+    pub(crate) fn capture() -> Result<Self, AppError> {
+        Ok(Self {
+            auth: CodexLiveFileState::capture(get_codex_auth_path())?,
+            config: CodexLiveFileState::capture(get_codex_config_path())?,
+            catalog: CodexLiveFileState::capture(get_codex_model_catalog_path())?,
+            managed_marker: CodexLiveFileState::capture(
+                get_codex_managed_oauth_live_auth_marker_path(),
+            )?,
+        })
+    }
+
+    /// Roll back config/catalog exactly while retaining a demonstrably newer
+    /// ChatGPT auth generation for the same account. OAuth refresh can advance
+    /// auth.json after a provider transaction captures its snapshot; restoring
+    /// that snapshot blindly would invalidate the CLI's newly rotated token.
+    ///
+    /// Cross-account writes are still rolled back exactly: an A -> B transaction
+    /// that fails must restore A even if B refreshed while it was briefly live.
+    /// The marker follows auth as one generation bundle.
+    pub(crate) fn restore_preserving_newer_same_account_auth(&self) -> Result<(), AppError> {
+        let mut failures = Vec::new();
+        let current_auth = match CodexLiveFileState::capture(get_codex_auth_path()) {
+            Ok(state) => Some(state),
+            Err(error) => {
+                // Inspection failure must not prevent config/catalog and the
+                // remaining rollback files from being attempted.
+                failures.push(format!("inspect current auth: {error}"));
+                None
+            }
+        };
+        let snapshot_generation = Self::chatgpt_auth_generation(&self.auth);
+        let current_generation = current_auth
+            .as_ref()
+            .and_then(Self::chatgpt_auth_generation);
+        let preserve_current_auth = match (snapshot_generation, current_generation) {
+            (Some((snapshot_account, snapshot_time)), Some((current_account, current_time)))
+                if snapshot_account == current_account =>
+            {
+                match (snapshot_time, current_time) {
+                    (Some(snapshot_time), Some(current_time)) => current_time > snapshot_time,
+                    (None, Some(_)) => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+
+        for (label, state) in [("catalog", &self.catalog), ("config", &self.config)] {
+            if let Err(error) = state.restore() {
+                failures.push(format!("{label}: {error}"));
+            }
+        }
+        if !preserve_current_auth {
+            for (label, state) in [
+                ("auth", &self.auth),
+                ("managed marker", &self.managed_marker),
+            ] {
+                if let Err(error) = state.restore() {
+                    failures.push(format!("{label}: {error}"));
+                }
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(AppError::Message(format!(
+                "恢复 Codex Live 状态失败: {}",
+                failures.join("; ")
+            )))
+        }
+    }
+
+    fn chatgpt_auth_generation(state: &CodexLiveFileState) -> Option<(String, Option<i64>)> {
+        let auth: Value = serde_json::from_slice(state.contents.as_deref()?).ok()?;
+        if auth.get("auth_mode").and_then(Value::as_str) != Some("chatgpt") {
+            return None;
+        }
+        let account_id = auth
+            .pointer("/tokens/account_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|account_id| !account_id.is_empty())?
+            .to_string();
+        let last_refresh_ms = auth
+            .get("last_refresh")
+            .and_then(Value::as_str)
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.timestamp_millis());
+        Some((account_id, last_refresh_ms))
+    }
+}
 
 /// Which Codex tool surface the generated model catalog should target.
 ///
@@ -178,6 +362,371 @@ pub fn get_codex_config_dir() -> PathBuf {
 /// 获取 Codex auth.json 路径
 pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
+}
+
+fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
+    crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
+}
+
+#[cfg(test)]
+pub(crate) fn codex_managed_oauth_live_auth_marker_exists() -> bool {
+    get_codex_managed_oauth_live_auth_marker_path().exists()
+}
+
+/// 从 live/备份的 Codex `auth` 中提取 `account_id`，用于 marker 记录/比对。
+///
+/// 仅接受 ChatGPT 登录形状（`auth_mode == "chatgpt"`、`OPENAI_API_KEY` 可清空）。
+/// 托管账号写入的完整 bundle 会额外带 `tokens.refresh_token` 与顶层 `last_refresh`，
+/// 这里一并容忍。所有权按 account-scoped 内容判断；Codex CLI 自刷新会轮换
+/// access_token，因此短期 token 指纹不能作为稳定的删除谓词。
+fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
+    let auth_obj = auth.as_object()?;
+
+    if auth_obj.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "auth_mode" | "OPENAI_API_KEY" | "tokens" | "last_refresh"
+        )
+    }) {
+        return None;
+    }
+
+    if auth.get("auth_mode").and_then(|value| value.as_str()) != Some("chatgpt") {
+        return None;
+    }
+
+    let api_key_is_clearable = auth
+        .get("OPENAI_API_KEY")
+        .is_none_or(|value| value.is_null() || value.as_str() == Some("PROXY_MANAGED"));
+    if !api_key_is_clearable {
+        return None;
+    }
+
+    let tokens = auth.get("tokens").and_then(|value| value.as_object())?;
+
+    if tokens.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "access_token" | "account_id" | "id_token" | "refresh_token"
+        )
+    }) {
+        return None;
+    }
+
+    let account_id = tokens
+        .get("account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    tokens
+        .get("access_token")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?;
+
+    Some(account_id.to_string())
+}
+
+/// Build the native-shaped ChatGPT auth bundle shared by cc-switch and Codex CLI.
+pub fn codex_managed_oauth_auth_value(
+    account_id: &str,
+    access_token: &str,
+    id_token: Option<&str>,
+    refresh_token: &str,
+    last_refresh: &str,
+) -> Value {
+    let mut tokens = serde_json::Map::new();
+    if let Some(id_token) = id_token {
+        tokens.insert("id_token".to_string(), Value::String(id_token.to_string()));
+    }
+    tokens.insert(
+        "access_token".to_string(),
+        Value::String(access_token.to_string()),
+    );
+    tokens.insert(
+        "refresh_token".to_string(),
+        Value::String(refresh_token.to_string()),
+    );
+    tokens.insert(
+        "account_id".to_string(),
+        Value::String(account_id.to_string()),
+    );
+    json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": Value::Object(tokens),
+        "last_refresh": last_refresh,
+    })
+}
+
+pub fn record_codex_managed_oauth_live_auth(auth: &Value) -> Result<(), AppError> {
+    let Some(account_id) = extract_codex_managed_oauth_account_id(auth) else {
+        return Ok(());
+    };
+
+    let marker = CodexManagedOAuthLiveAuthMarker {
+        version: 2,
+        account_id,
+    };
+    crate::config::write_json_file(&get_codex_managed_oauth_live_auth_marker_path(), &marker)
+}
+
+pub fn codex_auth_matches_recorded_managed_oauth(
+    auth: &Value,
+    account_id: &str,
+) -> Result<bool, AppError> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Ok(false);
+    }
+
+    let Some(auth_account_id) = extract_codex_managed_oauth_account_id(auth) else {
+        return Ok(false);
+    };
+    if auth_account_id != account_id {
+        return Ok(false);
+    }
+
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
+        Ok(marker) => marker,
+        Err(err) => {
+            log::warn!(
+                "Failed to read Codex managed OAuth auth marker at {}: {err}",
+                marker_path.display()
+            );
+            return Ok(false);
+        }
+    };
+
+    // v1 markers also carry an access-token fingerprint. Serde ignores that
+    // legacy extra field, and matching intentionally no longer consults it:
+    // the Codex CLI rotates access tokens during normal self-refresh.
+    Ok(matches!(marker.version, 1 | 2) && marker.account_id == account_id)
+}
+
+fn clear_codex_managed_oauth_live_auth_marker_for_account(
+    account_id: &str,
+) -> Result<(), AppError> {
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    if !marker_path.exists() {
+        return Ok(());
+    }
+    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
+        Ok(marker) => marker,
+        Err(error) => {
+            log::warn!(
+                "Failed to read Codex managed OAuth auth marker at {} while cleaning account {}: {error}",
+                marker_path.display(),
+                account_id
+            );
+            // A malformed marker cannot establish ownership for any account
+            // and is unusable for rollback/synchronization; remove the stale
+            // bookkeeping file while leaving non-matching live auth untouched.
+            return delete_file(&marker_path);
+        }
+    };
+    if marker.account_id == account_id.trim() {
+        delete_file(&marker_path)?;
+    }
+    Ok(())
+}
+
+/// 切走托管 provider 或从认证中心删除账号时，清理其残留在
+/// `~/.codex/auth.json` 的 ChatGPT 登录。
+///
+/// 删除谓词按 `auth_mode + tokens.account_id` 的内容判断，而不依赖会被 Codex CLI
+/// 自刷新破坏的 access-token 指纹。同一账号的原生 `codex login` 也会被视为该账号
+/// 的登录；切换路径必须先把盘上轮换后的 refresh token 采纳回 manager，再调用本函数，
+/// 因而这种 account-scoped 取舍不会丢失凭据。认证中心显式删除/登出则有意移除它。
+pub fn clear_codex_live_auth_for_managed_account(account_id: &str) -> Result<(), AppError> {
+    clear_codex_live_auth_for_managed_account_if_unchanged(account_id, None)
+}
+
+/// Verify that the outgoing account's live refresh generation has not changed
+/// since it was adopted into the OAuth manager.
+pub fn ensure_codex_live_auth_unchanged_for_managed_account(
+    account_id: &str,
+    expected_refresh_token: &str,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Err(AppError::Message(format!(
+            "Codex CLI 账号 {account_id} 的 live auth 已在切换期间被移除，请重试"
+        )));
+    }
+    let auth: Value = read_json_file(&auth_path)?;
+    let current_refresh_token = auth
+        .pointer("/tokens/refresh_token")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id)
+        || current_refresh_token != Some(expected_refresh_token.trim())
+    {
+        return Err(AppError::Message(format!(
+            "Codex CLI 账号 {account_id} 的 live 凭据在切换期间已刷新；为避免覆盖新 refresh token，本次操作已取消，请重试"
+        )));
+    }
+    Ok(())
+}
+
+/// Content-based cleanup with an optional compare-before-delete guard.
+pub fn clear_codex_live_auth_for_managed_account_if_unchanged(
+    account_id: &str,
+    expected_refresh_token: Option<&str>,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    let mut removed_matching_auth = false;
+    if auth_path.exists() {
+        let auth: Value = read_json_file(&auth_path)?;
+        if codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+            if let Some(expected_refresh_token) = expected_refresh_token {
+                let current_refresh_token = auth
+                    .pointer("/tokens/refresh_token")
+                    .and_then(Value::as_str)
+                    .map(str::trim);
+                if current_refresh_token != Some(expected_refresh_token.trim()) {
+                    return Err(AppError::Message(format!(
+                        "Codex CLI 账号 {account_id} 的 live 凭据在切换期间已刷新；为避免删除新 refresh token，本次操作已取消，请重试"
+                    )));
+                }
+            }
+            delete_file(&auth_path)?;
+            removed_matching_auth = true;
+        }
+    }
+
+    if removed_matching_auth {
+        // Once the matching live file is gone, any marker is stale regardless
+        // of version or parseability.
+        delete_file(&get_codex_managed_oauth_live_auth_marker_path())?;
+    } else {
+        clear_codex_managed_oauth_live_auth_marker_for_account(account_id)?;
+    }
+    Ok(())
+}
+
+/// 判断给定的 Codex `auth`（来自 live auth.json 或 Live 备份）是否是「属于
+/// `account_id` 的 ChatGPT 托管登录」。
+///
+/// 托管账号写入的是**完整可刷新 bundle**，与原生浏览器登录形状一致（都含
+/// refresh_token），且 Codex CLI 会轮换 token 使旧的 access_token 指纹失效，因此
+/// 无法再凭形状/哈希区分。这里采用**基于内容的 account_id 判定**：只要是 chatgpt
+/// 模式、且 `tokens.account_id` 命中托管账号，即视为该账号的登录。对同一账号的原生
+/// 登录会被同等处理（同账号，无损）。
+///
+/// 用于 Live 备份剥离：避免把托管账号的可刷新 token 持久化进备份配置。
+pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) -> bool {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return false;
+    }
+    let Some(obj) = auth.as_object() else {
+        return false;
+    };
+    if obj.get("auth_mode").and_then(|value| value.as_str()) != Some("chatgpt") {
+        return false;
+    }
+    let api_key_clearable = obj
+        .get("OPENAI_API_KEY")
+        .is_none_or(|value| value.is_null() || value.as_str() == Some("PROXY_MANAGED"));
+    if !api_key_clearable {
+        return false;
+    }
+    obj.get("tokens")
+        .and_then(|tokens| tokens.as_object())
+        .and_then(|tokens| tokens.get("account_id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        == Some(account_id)
+}
+
+/// 读回 Codex CLI 当前 `~/.codex/auth.json` 中属于 `account_id` 的 refresh_token /
+/// id_token（仅当磁盘上的登录账号与之一致时）。
+///
+/// 用于切换回托管 provider 前，采纳 CLI 自行刷新时轮换出的最新 refresh_token，避免
+/// 用陈腐 token 覆盖 CLI 的有效登录（“裸跑 codex” 反复切换场景）。
+pub fn read_codex_live_auth_refresh_for_account(
+    account_id: &str,
+) -> Option<(String, Option<String>, Option<i64>)> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return None;
+    }
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return None;
+    }
+    let auth: Value = read_json_file(&auth_path).ok()?;
+    // 仅在磁盘上确是「该 account_id 的 ChatGPT 登录」时才采纳其 refresh_token，
+    // 避免从非 chatgpt/异常 auth 里误取 token。
+    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+        return None;
+    }
+    let tokens = auth.get("tokens")?.as_object()?;
+    let refresh_token = tokens.get("refresh_token")?.as_str()?.trim().to_string();
+    if refresh_token.is_empty() {
+        return None;
+    }
+    let id_token = tokens
+        .get("id_token")
+        .and_then(|value| value.as_str())
+        .map(|token| token.to_string());
+    let last_refresh_ms = auth
+        .get("last_refresh")
+        .and_then(Value::as_str)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.timestamp_millis());
+    Some((refresh_token, id_token, last_refresh_ms))
+}
+
+/// Keep Codex CLI's live auth in the same refresh-token generation after the
+/// manager refreshes a managed account.
+///
+/// The write is compare-and-swap-like: immediately before replacing auth.json,
+/// it verifies that the file still contains the refresh token used for the
+/// network request. Codex CLI does not share cc-switch's process lock, so this
+/// is a best-effort guard that narrows (but cannot make atomic) the cross-process
+/// check-to-replace window.
+/// Ownership is account-scoped: a file recorded for the same managed account
+/// keeps its marker across access-token rotation. A same-account native login
+/// has the same content identity and is intentionally treated equivalently.
+pub fn sync_codex_managed_oauth_live_auth_after_refresh(
+    account_id: &str,
+    expected_refresh_token: &str,
+    refreshed_auth: &Value,
+) -> Result<bool, AppError> {
+    let account_id = account_id.trim();
+    let expected_refresh_token = expected_refresh_token.trim();
+    if account_id.is_empty() || expected_refresh_token.is_empty() {
+        return Ok(false);
+    }
+
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(false);
+    }
+    let current_auth: Value = read_json_file(&auth_path)?;
+    if !codex_live_auth_is_managed_chatgpt_login(&current_auth, account_id) {
+        return Ok(false);
+    }
+    let current_refresh_token = current_auth
+        .pointer("/tokens/refresh_token")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    if current_refresh_token != Some(expected_refresh_token) {
+        return Ok(false);
+    }
+
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    let was_recorded_managed = marker_path.exists()
+        && codex_auth_matches_recorded_managed_oauth(&current_auth, account_id)?;
+
+    write_json_file(&auth_path, refreshed_auth)?;
+    if was_recorded_managed {
+        record_codex_managed_oauth_live_auth(refreshed_auth)?;
+    }
+    Ok(true)
 }
 
 /// 获取 Codex config.toml 路径
@@ -548,6 +1097,90 @@ fn codex_catalog_input_modalities(
     modalities.iter().map(|item| (*item).to_string()).collect()
 }
 
+/// Canonical reasoning effort levels Codex understands, with the same
+/// descriptions the official gpt-5.5 template uses. `none` disables thinking.
+const CODEX_REASONING_LEVEL_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("none", "Disable Thinking"),
+    ("minimal", "Minimal reasoning"),
+    ("low", "Fast responses with lighter reasoning"),
+    (
+        "medium",
+        "Balances speed and reasoning depth for everyday tasks",
+    ),
+    ("high", "Greater reasoning depth for complex problems"),
+    ("xhigh", "Extra high reasoning depth for complex problems"),
+    ("max", "Maximum reasoning depth for the hardest problems"),
+    ("ultra", "Ultra reasoning depth"),
+];
+
+fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
+    CODEX_REASONING_LEVEL_DESCRIPTIONS
+        .iter()
+        .find(|(candidate, _)| *candidate == effort)
+        .map(|(_, description)| *description)
+}
+
+/// User-declared levels reduced to the canonical efforts Codex understands,
+/// in canonical (lowest → highest) order regardless of declaration order.
+/// Unknown efforts are dropped so a typo can never produce an entry Codex
+/// would reject.
+fn codex_canonical_efforts(levels: &[String]) -> Vec<&str> {
+    CODEX_REASONING_LEVEL_DESCRIPTIONS
+        .iter()
+        .filter(|(effort, _)| levels.iter().any(|candidate| candidate == effort))
+        .map(|(effort, _)| *effort)
+        .collect()
+}
+
+/// Build a `supported_reasoning_levels` array from user-declared effort values.
+fn codex_supported_reasoning_levels(levels: &[String]) -> Value {
+    let entries: Vec<Value> = codex_canonical_efforts(levels)
+        .into_iter()
+        .map(|effort| {
+            let description = codex_reasoning_level_description(effort)
+                .expect("canonical effort always has a description");
+            json!({ "effort": effort, "description": description })
+        })
+        .collect();
+    json!(entries)
+}
+
+/// Apply a per-model reasoning-level override onto a catalog entry. Returns
+/// true when the override was applied (so callers can skip further work).
+/// `template_default` is the base entry's `default_reasoning_level` (from the
+/// profile template or an official vendor entry) used as the fallback when the
+/// user did not declare one explicitly.
+fn apply_codex_reasoning_level_override(
+    entry_obj: &mut serde_json::Map<String, Value>,
+    template_default: Option<&str>,
+    spec: &CodexCatalogModelSpec,
+) -> bool {
+    let Some(levels) = spec.reasoning_levels.as_deref() else {
+        return false;
+    };
+    let canonical = codex_canonical_efforts(levels);
+    if canonical.is_empty() {
+        return false;
+    }
+    let supported = codex_supported_reasoning_levels(levels);
+    entry_obj.insert("supported_reasoning_levels".to_string(), supported);
+
+    // Default: explicit user value wins; otherwise keep the base default when
+    // it is still supported; otherwise fall back to the highest supported
+    // level in canonical order. All candidates are validated against the
+    // canonical set so the default can never reference a dropped effort.
+    let default_level = spec
+        .default_reasoning_level
+        .as_deref()
+        .filter(|level| canonical.contains(level))
+        .or_else(|| template_default.filter(|level| canonical.contains(level)))
+        .or_else(|| canonical.last().copied());
+    if let Some(default_level) = default_level {
+        entry_obj.insert("default_reasoning_level".to_string(), json!(default_level));
+    }
+    true
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
     spec: &CodexCatalogModelSpec,
@@ -619,6 +1252,14 @@ fn codex_catalog_model_entry(
         }
     }
 
+    // Per-model reasoning levels override the template's conservative
+    // none/high default (e.g. a LiteLLM gateway serving a model that accepts
+    // low/medium/high/xhigh/max). Applies to every profile.
+    let template_default = template
+        .get("default_reasoning_level")
+        .and_then(|value| value.as_str());
+    apply_codex_reasoning_level_override(entry_obj, template_default, spec);
+
     entry
 }
 
@@ -645,6 +1286,17 @@ struct CodexCatalogModelSpec {
     /// back to the template default when absent. Only consulted for
     /// `NativeResponses`.
     base_instructions: Option<String>,
+    /// Per-row override for the generated catalog's `supported_reasoning_levels`
+    /// (e.g. ["none", "low", "medium", "high", "xhigh", "max"]). When omitted
+    /// the template's conservative default (none/high) is kept. Consulted for
+    /// every profile; the vendor-catalog path applies it on top of the
+    /// official entry.
+    reasoning_levels: Option<Vec<String>>,
+    /// Per-row override for the generated catalog's `default_reasoning_level`.
+    /// Only meaningful together with `reasoning_levels`; when absent the
+    /// template default is kept if it is still in the list, otherwise the last
+    /// (highest) declared level wins.
+    default_reasoning_level: Option<String>,
 }
 
 fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
@@ -711,6 +1363,28 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             .filter(|text| !text.is_empty())
             .map(str::to_string);
 
+        let reasoning_levels = model_config
+            .get("reasoningLevels")
+            .or_else(|| model_config.get("reasoning_levels"))
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(str::trim)
+                    .filter(|level| !level.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|levels| !levels.is_empty());
+        let default_reasoning_level = model_config
+            .get("defaultReasoningLevel")
+            .or_else(|| model_config.get("default_reasoning_level"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|level| !level.is_empty())
+            .map(str::to_string);
+
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
             display_name,
@@ -718,6 +1392,8 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
+            reasoning_levels,
+            default_reasoning_level,
         });
     }
 
@@ -1057,6 +1733,12 @@ fn codex_vendor_catalog_model_entry(
         Some(found) => found.clone(),
         None => vendor_models.first().cloned().unwrap_or_else(|| json!({})),
     };
+    // Capture before the mutable borrow: the vendor entry's own default is the
+    // fallback when the user declares reasoning levels without a default.
+    let vendor_default = entry
+        .get("default_reasoning_level")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
     let Some(entry_obj) = entry.as_object_mut() else {
         return json!({});
     };
@@ -1092,6 +1774,11 @@ fn codex_vendor_catalog_model_entry(
     {
         entry_obj.insert("base_instructions".to_string(), json!(base_instructions));
     }
+
+    // Per-model reasoning levels win over the official vendor entry too.
+    // The vendor file is the base (its own levels stay when no override is
+    // declared); its default_reasoning_level is the fallback.
+    apply_codex_reasoning_level_override(entry_obj, vendor_default.as_deref(), spec);
 
     // Defensive: if a future codex parser requires a field the vendor file
     // predates, backfill only whitelisted parser-required keys.
@@ -1818,8 +2505,8 @@ fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Tab
     }
 }
 
-/// Project the built-in Codex official provider through the local proxy while
-/// keeping authentication owned by Codex itself.
+/// Project a Codex official account card through the local proxy while keeping
+/// authentication owned by Codex itself.
 ///
 /// The resulting custom provider explicitly opts into OpenAI authentication,
 /// so Codex forwards its existing ChatGPT login to the local `/responses`
@@ -2355,6 +3042,122 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use std::ffi::OsString;
+
+    struct CodexLiveTestHome {
+        _dir: tempfile::TempDir,
+        original_test_home: Option<OsString>,
+    }
+
+    impl CodexLiveTestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create isolated Codex live test home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings for isolated test home");
+
+            Self {
+                _dir: dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for CodexLiveTestHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct CodexLiveTestState {
+        auth_bytes: Vec<u8>,
+        auth_value: Value,
+        config_bytes: Vec<u8>,
+        config_value: toml::Value,
+        catalog_bytes: Vec<u8>,
+        catalog_value: Value,
+        marker_bytes: Vec<u8>,
+        marker_value: Value,
+    }
+
+    fn capture_codex_live_test_state() -> CodexLiveTestState {
+        let auth_bytes = fs::read(get_codex_auth_path()).expect("read live auth bytes");
+        let config_bytes = fs::read(get_codex_config_path()).expect("read live config bytes");
+        let catalog_bytes =
+            fs::read(get_codex_model_catalog_path()).expect("read live catalog bytes");
+        let marker_bytes = fs::read(get_codex_managed_oauth_live_auth_marker_path())
+            .expect("read managed auth marker bytes");
+
+        CodexLiveTestState {
+            auth_value: serde_json::from_slice(&auth_bytes).expect("parse live auth"),
+            config_value: toml::from_str(
+                std::str::from_utf8(&config_bytes).expect("live config must be UTF-8"),
+            )
+            .expect("parse live config"),
+            catalog_value: serde_json::from_slice(&catalog_bytes).expect("parse live catalog"),
+            marker_value: serde_json::from_slice(&marker_bytes).expect("parse managed auth marker"),
+            auth_bytes,
+            config_bytes,
+            catalog_bytes,
+            marker_bytes,
+        }
+    }
+
+    fn seed_rotated_managed_codex_live_state() -> CodexLiveTestState {
+        let auth = codex_managed_oauth_auth_value(
+            "account-a",
+            "access-r1",
+            Some("id-r1"),
+            "refresh-r1",
+            "2026-08-06T00:00:01Z",
+        );
+        crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("seed live auth R1");
+        crate::config::write_text_file(
+            &get_codex_config_path(),
+            "# cas-guard-sentinel\nmodel = \"gpt-5.5\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n",
+        )
+        .expect("seed live config");
+        crate::config::write_json_file(
+            &get_codex_model_catalog_path(),
+            &json!({ "models": [{ "slug": "cas-guard-sentinel" }] }),
+        )
+        .expect("seed live catalog");
+        record_codex_managed_oauth_live_auth(&auth).expect("seed managed auth marker");
+
+        capture_codex_live_test_state()
+    }
+
+    #[test]
+    #[serial]
+    fn ensure_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
+        let _home = CodexLiveTestHome::new();
+        let before = seed_rotated_managed_codex_live_state();
+
+        let result =
+            ensure_codex_live_auth_unchanged_for_managed_account("account-a", "refresh-r0");
+
+        assert!(result.is_err(), "R1 live auth must reject an expected R0");
+        assert_eq!(capture_codex_live_test_state(), before);
+    }
+
+    #[test]
+    #[serial]
+    fn clear_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
+        let _home = CodexLiveTestHome::new();
+        let before = seed_rotated_managed_codex_live_state();
+
+        let result =
+            clear_codex_live_auth_for_managed_account_if_unchanged("account-a", Some("refresh-r0"));
+
+        assert!(result.is_err(), "R1 live auth must reject an expected R0");
+        assert_eq!(capture_codex_live_test_state(), before);
+    }
 
     #[test]
     fn catalog_tool_profile_from_api_format() {
@@ -2659,6 +3462,38 @@ base_url = "https://single.example.com/v1"
             err.to_string().contains("config.toml"),
             "error should explain missing config.toml, got: {err}"
         );
+    }
+
+    #[test]
+    fn managed_chatgpt_login_matched_by_account_id_including_full_refresh_bundle() {
+        // ① 之后托管写入的是含 refresh_token 的完整 bundle；备份剥离必须凭 account_id
+        // 认出它，避免把可刷新 token 持久化进 Live 备份。
+        let full_bundle = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "id_token": "id",
+                "access_token": "access",
+                "refresh_token": "refresh-secret",
+                "account_id": "acct-managed"
+            },
+            "last_refresh": "2026-01-02T03:04:05.000000000Z"
+        });
+        assert!(
+            codex_live_auth_is_managed_chatgpt_login(&full_bundle, "acct-managed"),
+            "a full refreshable bundle for the managed account must be recognized"
+        );
+        assert!(
+            !codex_live_auth_is_managed_chatgpt_login(&full_bundle, "acct-other"),
+            "a login for a different account must not match"
+        );
+
+        // 非 chatgpt 模式（API key）不应命中。
+        let api_key_auth = json!({ "OPENAI_API_KEY": "sk-live" });
+        assert!(!codex_live_auth_is_managed_chatgpt_login(
+            &api_key_auth,
+            "acct-managed"
+        ));
     }
 
     #[test]
@@ -3225,6 +4060,8 @@ base_url = "https://production.api/v1"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            reasoning_levels: None,
+            default_reasoning_level: None,
         }];
         let catalog = codex_model_catalog_from_specs(
             &specs,
@@ -3345,6 +4182,155 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn native_responses_catalog_honors_per_model_reasoning_levels() {
+        // The native template only declares none/high. A per-model
+        // reasoningLevels override must replace supported_reasoning_levels and
+        // pick a sensible default_reasoning_level.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "reasoningLevels": ["none", "low", "medium", "high", "xhigh", "max"],
+                        "defaultReasoningLevel": "xhigh"
+                    },
+                    {
+                        "model": "no-default-model",
+                        "reasoningLevels": ["low", "medium", "high"]
+                    },
+                    {
+                        "model": "template-default-model",
+                        "reasoningLevels": ["none", "high", "xhigh"]
+                    },
+                    {
+                        "model": "dirty-levels",
+                        "reasoningLevels": ["none", "bogus", "high", ""]
+                    },
+                    {
+                        "model": "unordered-model",
+                        "reasoningLevels": ["xhigh", "low", "bogus", "low"],
+                        "defaultReasoningLevel": "bogus"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let models = catalog["models"].as_array().expect("models array");
+        let efforts = |index: usize| -> Vec<String> {
+            models[index]["supported_reasoning_levels"]
+                .as_array()
+                .expect("supported_reasoning_levels array")
+                .iter()
+                .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+                .map(str::to_string)
+                .collect()
+        };
+
+        // Explicit default wins.
+        assert_eq!(
+            efforts(0),
+            vec!["none", "low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            models[0]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("xhigh")
+        );
+
+        // No explicit default: falls back to the last (highest) declared level.
+        assert_eq!(efforts(1), vec!["low", "medium", "high"]);
+        assert_eq!(
+            models[1]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+
+        // Template default ("high") is kept when it is still in the list.
+        assert_eq!(efforts(2), vec!["none", "high", "xhigh"]);
+        assert_eq!(
+            models[2]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+
+        // Unknown / empty efforts are dropped; the default still resolves to
+        // a supported level (the template default, "high").
+        assert_eq!(efforts(3), vec!["none", "high"]);
+        assert_eq!(
+            models[3]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+
+        // Declaration order is normalized to canonical order, duplicates and
+        // an unknown explicit default are dropped, and the fallback picks the
+        // highest supported level in canonical order (not the last declared
+        // one, and never an unknown effort).
+        assert_eq!(efforts(4), vec!["low", "xhigh"]);
+        assert_eq!(
+            models[4]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    fn vendor_catalog_honors_per_model_reasoning_levels() {
+        // The DeepSeek official catalog declares low/high/max; a per-model
+        // override must win over the official entry.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "reasoningLevels": ["none", "low", "medium", "high", "xhigh", "max"],
+                        "defaultReasoningLevel": "xhigh"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        let efforts: Vec<&str> = entry["supported_reasoning_levels"]
+            .as_array()
+            .expect("supported_reasoning_levels array")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(
+            efforts,
+            vec!["none", "low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            entry
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
     fn native_responses_profile_suppresses_apply_patch_and_keeps_shell() {
         // Native (direct) /responses providers must NOT emit a freeform
         // apply_patch (type=="custom") tool — gateways like MiMo reject it.
@@ -3431,6 +4417,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek/deepseek-v4-pro".to_string(),
@@ -3439,6 +4427,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
                 model: "glm-5.2v".to_string(),
@@ -3447,6 +4437,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek-v4-flash".to_string(),
@@ -3455,6 +4447,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
                 model: "custom-text-alias".to_string(),
@@ -3463,6 +4457,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
         ];
 
@@ -3733,6 +4729,8 @@ wire_api = "responses"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            reasoning_levels: None,
+            default_reasoning_level: None,
         }];
         // Using a gpt-5.5-shaped template under ProxyChat must NOT strip
         // apply_patch_tool_type. (The native template lacks it, so synthesize

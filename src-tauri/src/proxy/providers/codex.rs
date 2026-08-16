@@ -219,12 +219,20 @@ pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
     provider.is_xai_oauth()
 }
 
-/// The single built-in official Codex provider.  Unlike managed Codex OAuth
-/// providers used by Claude, this route receives authentication from the
-/// calling Codex client (`requires_openai_auth = true`).
+/// A native-login or managed-account Codex Official card receives
+/// authentication from the calling Codex client (`requires_openai_auth =
+/// true`). Legacy unbound Official rows keep their previous stored-key behavior.
 pub fn is_codex_official_provider(provider: &Provider) -> bool {
+    if provider.category.as_deref() != Some("official") {
+        return false;
+    }
+
     provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
-        && provider.category.as_deref() == Some("official")
+        || provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            .is_some_and(|account_id| !account_id.trim().is_empty())
 }
 
 /// Resolve the model-catalog tool profile for a Codex provider using the SAME
@@ -398,16 +406,27 @@ fn infer_codex_chat_reasoning_config(
         });
     }
 
-    // StepFun：仅 step-3.5-flash-2603 这一版支持 reasoning effort（low/high 两档），
-    // 其余 step 模型不暴露 effort，故 supports_effort 仅对含 "2603" 的模型置真。
+    // StepFun：官方 reasoning 指南与两站模型页（2026-08-15 盘点）——
+    // step-3.5-flash-2603 支持 low/high 两档；step-3.7-flash 支持
+    // low/medium/high 三档（官方默认 medium）；其余 step 模型（含无后缀
+    // step-3.5-flash）不暴露 effort。2603 沿用 low_high 收敛映射；
+    // 3.7-flash 必须 passthrough——套 low_high 会把 medium 塌成 high，
+    // 造出 wire 上无差异的假档位。全系无思考开关（thinking_param 恒 none）。
     // 第二个 OR 分支覆盖「经中转/聚合跑该模型、但平台 name/base_url 不含 stepfun」的情况。
     if haystack.contains("stepfun") || haystack.contains("step-3.5-flash-2603") {
         return Some(CodexChatReasoningConfig {
             supports_thinking: Some(true),
-            supports_effort: Some(model.contains("2603")),
+            supports_effort: Some(model.contains("2603") || model.contains("step-3.7-flash")),
             thinking_param: Some("none".to_string()),
             effort_param: Some("reasoning_effort".to_string()),
-            effort_value_mode: Some("low_high".to_string()),
+            effort_value_mode: Some(
+                if model.contains("2603") {
+                    "low_high"
+                } else {
+                    "passthrough"
+                }
+                .to_string(),
+            ),
             output_format: Some("reasoning".to_string()),
         });
     }
@@ -500,6 +519,22 @@ fn infer_aggregator_platform_config(
     // 安全降级：不按 reasoning_effort 发 effort（平台用 thinking_budget 控制深度，
     // 发 reasoning_effort 反而可能不被接受）。
     if platform.contains("siliconflow") {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(false),
+            thinking_param: Some("enable_thinking".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            output_format: Some("reasoning_content".to_string()),
+        });
+    }
+
+    // ModelScope 魔搭 API-Inference：与 SiliconFlow 同构——平台级统一
+    // `enable_thinking` 布尔（官方模型页范例 extra_body {"enable_thinking": bool}，
+    // OpenAI SDK 的 extra_body 合并进请求体顶层），思维回传 reasoning_content。
+    // 智谱风格 thinking:{type} 是模型厂商自家方言，平台文档零出现——没有这条
+    // 分支时挂 GLM 的 ModelScope 供应商会被下方 glm 模型规则错误注入该形态。
+    if platform.contains("modelscope") {
         return Some(CodexChatReasoningConfig {
             supports_thinking: Some(true),
             supports_effort: Some(false),
@@ -871,10 +906,24 @@ context_window = 500000
     }
 
     #[test]
-    fn official_provider_uses_fixed_chatgpt_backend_without_stored_key() {
+    fn official_account_card_uses_fixed_chatgpt_backend_without_stored_key() {
         let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
-        provider.id = "codex-official".to_string();
+        provider.id = "managed-official-account".to_string();
         provider.category = Some("official".to_string());
+        assert!(!is_codex_official_provider(&provider));
+
+        let mut native = provider.clone();
+        native.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        assert!(is_codex_official_provider(&native));
+
+        provider.meta = Some(crate::provider::ProviderMeta {
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
         let adapter = CodexAdapter::new();
 
         assert!(is_codex_official_provider(&provider));
@@ -1522,7 +1571,7 @@ wire_api = "chat"
         let provider = create_provider(json!({
             "config": r#"
 model_provider = "siliconflow"
-model = "MiniMaxAI/MiniMax-M2.7"
+model = "MiniMaxAI/MiniMax-M2.5"
 
 [model_providers.siliconflow]
 name = "SiliconFlow"
@@ -1534,13 +1583,77 @@ wire_api = "chat"
         // 模型是 MiniMax（官方用 reasoning_split），但平台是 SiliconFlow —— 应走平台的 enable_thinking。
         let config = resolve_codex_chat_reasoning_config(
             &provider,
-            &json!({ "model": "MiniMaxAI/MiniMax-M2.7" }),
+            &json!({ "model": "MiniMaxAI/MiniMax-M2.5" }),
         )
         .unwrap();
 
         assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_modelscope_platform_overrides_glm() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "modelscope"
+model = "ZhipuAI/GLM-5.2"
+
+[model_providers.modelscope]
+name = "ModelScope"
+base_url = "https://api-inference.modelscope.cn/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // 模型是 GLM（智谱自家用 thinking:{type}），但平台是 ModelScope ——
+        // 应走平台级 enable_thinking，而不是被 glm 模型规则注入智谱方言。
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "ZhipuAI/GLM-5.2" }))
+                .unwrap();
+
+        assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
+        assert_eq!(config.supports_effort, Some(false));
+        assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_infer_codex_chat_reasoning_stepfun_per_model_effort() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "stepfun"
+model = "step-3.7-flash"
+
+[model_providers.stepfun]
+name = "StepFun"
+base_url = "https://api.stepfun.com/step_plan/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // step-3.7-flash：官方三档 low/medium/high —— 必须 passthrough，
+        // 套 low_high 会把 medium 塌成 high（假差异档）
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "step-3.7-flash" }))
+                .unwrap();
+        assert_eq!(config.supports_effort, Some(true));
+        assert_eq!(config.effort_value_mode.as_deref(), Some("passthrough"));
+
+        // step-3.5-flash-2603：官方两档 low/high，沿用收敛映射
+        let config = resolve_codex_chat_reasoning_config(
+            &provider,
+            &json!({ "model": "step-3.5-flash-2603" }),
+        )
+        .unwrap();
+        assert_eq!(config.supports_effort, Some(true));
+        assert_eq!(config.effort_value_mode.as_deref(), Some("low_high"));
+
+        // 无后缀 step-3.5-flash：官方未暴露 effort，不下发
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "step-3.5-flash" }))
+                .unwrap();
+        assert_eq!(config.supports_effort, Some(false));
+        assert_eq!(config.thinking_param.as_deref(), Some("none"));
     }
 
     #[test]

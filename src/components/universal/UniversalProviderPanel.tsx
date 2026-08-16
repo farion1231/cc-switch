@@ -38,6 +38,7 @@ const APP_LABELS: Record<AppId, string> = {
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   hermes: "Hermes",
+  pi: "Pi",
 };
 
 interface UniversalProviderPanelProps {
