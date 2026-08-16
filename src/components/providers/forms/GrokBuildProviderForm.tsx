@@ -104,6 +104,7 @@ export function GrokBuildProviderForm({
   );
   const [baseUrl, setBaseUrl] = useState(initialConfig.baseUrl);
   const [apiKey, setApiKey] = useState(initialConfig.apiKey);
+  const [apiBackend, setApiBackend] = useState(initialConfig.apiBackend);
   const [contextWindow, setContextWindow] = useState(
     String(initialConfig.contextWindow),
   );
@@ -218,7 +219,7 @@ export function GrokBuildProviderForm({
       apiKey,
       contextWindow: Number.parseInt(contextWindow, 10),
       ...overrides,
-      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+      apiBackend,
     };
     setRawConfig((current) => updateGrokBuildConfig(current, next));
   };
@@ -274,6 +275,7 @@ export function GrokBuildProviderForm({
     setApiKey(presetApiKey);
     setUpstreamModel(presetModel);
     setApiFormat(presetApiFormat);
+    setApiBackend(GROK_BUILD_DEFAULT_API_BACKEND);
     setPresetEndpoints(preset.endpointCandidates ?? []);
     setRawConfig(
       buildGrokBuildConfig({
@@ -296,6 +298,7 @@ export function GrokBuildProviderForm({
     setUpstreamModel(parsed.upstreamModel ?? parsed.model);
     setBaseUrl(parsed.baseUrl);
     setApiKey(parsed.apiKey);
+    setApiBackend(parsed.apiBackend);
     setContextWindow(String(parsed.contextWindow));
     if (parsed.name) form.setValue("name", parsed.name);
   };
@@ -350,7 +353,7 @@ export function GrokBuildProviderForm({
       baseUrl,
       name,
       apiKey,
-      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+      apiBackend,
       contextWindow: parsedContextWindow,
     });
     const configError = validateGrokBuildConfig(finalConfig);
