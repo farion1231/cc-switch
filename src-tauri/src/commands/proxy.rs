@@ -293,8 +293,8 @@ pub async fn switch_proxy_provider(
     provider_id: String,
 ) -> Result<(), String> {
     let app = require_proxy_app(&app_type)?;
-    // Codex's built-in official provider can use the client's native OpenAI
-    // login through takeover. Other official providers remain blocked.
+    // Codex official account cards can use the client's native OpenAI login
+    // through takeover. Other apps' official providers remain blocked.
     let provider = state
         .db
         .get_provider_by_id(&provider_id, &app_type)

@@ -510,7 +510,22 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
 
         // 强一致语义：Auto 模式开启后立即切到队列 P1（P1→P2→...）
         // 若队列为空，则尝试把“当前供应商”自动加入队列作为 P1，避免用户陷入无法开启的死锁。
-        let mut queue = app_state.db.get_failover_queue(app_type_str)?;
+        let all_providers = app_state.db.get_all_providers(app_type_str)?;
+        let mut queue = app_state
+            .db
+            .get_failover_queue(app_type_str)?
+            .into_iter()
+            .filter(|item| {
+                all_providers
+                    .get(&item.provider_id)
+                    .is_some_and(|provider| {
+                        crate::proxy::provider_router::provider_supports_failover(
+                            app_type_str,
+                            provider,
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
         if queue.is_empty() {
             let current_id =
                 crate::settings::get_effective_current_provider(&app_state.db, app_type)?;
@@ -519,10 +534,33 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
                     "故障转移队列为空，且未设置当前供应商，无法启用 Auto 模式".to_string(),
                 ));
             };
+            let current = app_state
+                .db
+                .get_provider_by_id(&current_id, app_type_str)?
+                .ok_or_else(|| AppError::Message(format!("供应商不存在: {current_id}")))?;
+            if !crate::proxy::provider_router::provider_supports_failover(app_type_str, &current) {
+                return Err(AppError::Message(
+                    "Codex Official 账号卡不支持自动故障转移".to_string(),
+                ));
+            }
             app_state
                 .db
                 .add_to_failover_queue(app_type_str, &current_id)?;
-            queue = app_state.db.get_failover_queue(app_type_str)?;
+            queue = app_state
+                .db
+                .get_failover_queue(app_type_str)?
+                .into_iter()
+                .filter(|item| {
+                    all_providers
+                        .get(&item.provider_id)
+                        .is_some_and(|provider| {
+                            crate::proxy::provider_router::provider_supports_failover(
+                                app_type_str,
+                                provider,
+                            )
+                        })
+                })
+                .collect();
         }
 
         let p1_provider_id = queue

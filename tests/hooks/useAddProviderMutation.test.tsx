@@ -7,6 +7,7 @@ import type { Provider } from "@/types";
 
 const apiMocks = vi.hoisted(() => ({
   add: vi.fn(),
+  update: vi.fn(),
   ensureClaudeDesktopOfficialProvider: vi.fn(),
   ensureCodexOfficialProvider: vi.fn(),
   getAll: vi.fn(),
@@ -26,6 +27,7 @@ const toastMocks = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({
   providersApi: {
     add: (...args: unknown[]) => apiMocks.add(...args),
+    update: (...args: unknown[]) => apiMocks.update(...args),
     ensureClaudeDesktopOfficialProvider: (...args: unknown[]) =>
       apiMocks.ensureClaudeDesktopOfficialProvider(...args),
     ensureCodexOfficialProvider: (...args: unknown[]) =>
@@ -62,6 +64,7 @@ function createWrapper() {
 
 beforeEach(() => {
   apiMocks.add.mockReset().mockResolvedValue(true);
+  apiMocks.update.mockReset().mockResolvedValue(true);
   apiMocks.ensureClaudeDesktopOfficialProvider
     .mockReset()
     .mockResolvedValue(true);
@@ -144,7 +147,59 @@ describe("useAddProviderMutation", () => {
     expect(persistedProvider).toEqual(seedProvider);
   });
 
-  it("recreates and returns the fixed Codex official seed", async () => {
+  it("adds a managed Codex account as a separate official card", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("codex"), {
+      wrapper,
+    });
+
+    const persistedProvider = await act(async () =>
+      result.current.mutateAsync({
+        name: "OpenAI Official",
+        settingsConfig: { auth: {}, config: "" },
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "acct-managed",
+          },
+        },
+        ensureCodexOfficialSeed: true,
+      }),
+    );
+
+    expect(apiMocks.ensureCodexOfficialProvider).not.toHaveBeenCalled();
+    expect(apiMocks.getAll).not.toHaveBeenCalled();
+    expect(apiMocks.update).not.toHaveBeenCalled();
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "generated-uuid",
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "acct-managed",
+          },
+        },
+      }),
+      "codex",
+      undefined,
+    );
+    expect(persistedProvider).toEqual(
+      expect.objectContaining({
+        id: "generated-uuid",
+        meta: expect.objectContaining({
+          authBinding: expect.objectContaining({
+            accountId: "acct-managed",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("restores the single native-login card when it is added unbound", async () => {
     const seedProvider: Provider = {
       id: "codex-official",
       name: "OpenAI Official",
@@ -171,6 +226,7 @@ describe("useAddProviderMutation", () => {
     expect(apiMocks.ensureCodexOfficialProvider).toHaveBeenCalledTimes(1);
     expect(apiMocks.getAll).toHaveBeenCalledWith("codex");
     expect(apiMocks.add).not.toHaveBeenCalled();
+    expect(apiMocks.update).not.toHaveBeenCalled();
     expect(persistedProvider).toEqual(seedProvider);
   });
 

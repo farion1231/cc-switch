@@ -1,6 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,8 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /** Entry/exit motion. Nested navigation panels can opt into a horizontal transition. */
+  motionPreset?: "fade" | "slide-from-right";
   /**
    * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
    * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。
@@ -27,6 +29,25 @@ interface FullScreenPanelProps {
 
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px - match App.tsx
 const HEADER_HEIGHT = 64; // px - match App.tsx
+
+let bodyScrollLockCount = 0;
+let bodyOverflowBeforeFirstLock: string | null = null;
+
+const lockBodyScroll = () => {
+  if (bodyScrollLockCount === 0) {
+    bodyOverflowBeforeFirstLock = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+  bodyScrollLockCount += 1;
+};
+
+const unlockBodyScroll = () => {
+  bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
+  if (bodyScrollLockCount === 0) {
+    document.body.style.overflow = bodyOverflowBeforeFirstLock ?? "";
+    bodyOverflowBeforeFirstLock = null;
+  }
+};
 
 /**
  * Reusable full-screen panel component
@@ -40,14 +61,17 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   children,
   footer,
   contentClassName,
+  motionPreset = "fade",
 }) => {
+  const prefersReducedMotion = useReducedMotion();
+  const shouldSlideFromRight =
+    motionPreset === "slide-from-right" && !prefersReducedMotion;
+
   React.useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
+    if (!isOpen) return;
+
+    lockBodyScroll();
+    return unlockBodyScroll;
   }, [isOpen]);
 
   // ESC 键关闭面板
@@ -87,10 +111,20 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
+          initial={
+            prefersReducedMotion
+              ? false
+              : shouldSlideFromRight
+                ? { x: "100%" }
+                : { opacity: 0 }
+          }
+          animate={shouldSlideFromRight ? { x: 0 } : { opacity: 1 }}
+          exit={shouldSlideFromRight ? { x: "100%" } : { opacity: 0 }}
+          transition={
+            shouldSlideFromRight
+              ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
+              : { duration: prefersReducedMotion ? 0 : 0.2 }
+          }
           className="fixed inset-0 z-[60] flex flex-col"
           style={{ backgroundColor: "hsl(var(--background))" }}
         >

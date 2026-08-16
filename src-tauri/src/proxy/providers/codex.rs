@@ -219,12 +219,20 @@ pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
     provider.is_xai_oauth()
 }
 
-/// The single built-in official Codex provider.  Unlike managed Codex OAuth
-/// providers used by Claude, this route receives authentication from the
-/// calling Codex client (`requires_openai_auth = true`).
+/// A native-login or managed-account Codex Official card receives
+/// authentication from the calling Codex client (`requires_openai_auth =
+/// true`). Legacy unbound Official rows keep their previous stored-key behavior.
 pub fn is_codex_official_provider(provider: &Provider) -> bool {
+    if provider.category.as_deref() != Some("official") {
+        return false;
+    }
+
     provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
-        && provider.category.as_deref() == Some("official")
+        || provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            .is_some_and(|account_id| !account_id.trim().is_empty())
 }
 
 /// Resolve the model-catalog tool profile for a Codex provider using the SAME
@@ -871,10 +879,24 @@ context_window = 500000
     }
 
     #[test]
-    fn official_provider_uses_fixed_chatgpt_backend_without_stored_key() {
+    fn official_account_card_uses_fixed_chatgpt_backend_without_stored_key() {
         let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
-        provider.id = "codex-official".to_string();
+        provider.id = "managed-official-account".to_string();
         provider.category = Some("official".to_string());
+        assert!(!is_codex_official_provider(&provider));
+
+        let mut native = provider.clone();
+        native.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        assert!(is_codex_official_provider(&native));
+
+        provider.meta = Some(crate::provider::ProviderMeta {
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
         let adapter = CodexAdapter::new();
 
         assert!(is_codex_official_provider(&provider));

@@ -386,7 +386,7 @@ describe("useProviderActions", () => {
     );
   });
 
-  it("allows the built-in Codex official provider during takeover", async () => {
+  it("allows the native Codex official provider during takeover", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
@@ -427,11 +427,20 @@ describe("useProviderActions", () => {
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not grant routing capability to a UUID Codex official copy", async () => {
+  it("allows a managed Codex Official card during takeover", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
       id: "generated-uuid",
       category: "official",
+      meta: {
+        providerType: "codex_oauth",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct-managed",
+        },
+      },
     });
     const { result } = renderHook(
       () => useProviderActions("codex", true, true),
@@ -442,8 +451,8 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
-    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith("generated-uuid");
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {

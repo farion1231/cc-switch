@@ -1,12 +1,19 @@
 import { useMemo, useState, useEffect } from "react";
-import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  AlertTriangle,
+  GripVertical,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { OpenClawProviderConfig, Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -23,7 +30,10 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
+  CODEX_OFFICIAL_PROVIDER_ID,
+  resolveCodexOfficialIdentity,
   supportsOfficialProxyTakeover,
   providerNeedsRouting,
 } from "@/utils/providerCapabilities";
@@ -190,6 +200,33 @@ export function ProviderCard({
   onSetAsDefault,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
+  const managedCodexAccountId = resolveManagedAccountId(
+    provider.meta,
+    "codex_oauth",
+  )?.trim();
+  const {
+    data: codexAuthStatus,
+    isSuccess: isCodexAuthStatusSuccess,
+    isError: isCodexAuthStatusError,
+  } = useQuery({
+    queryKey: ["managed-auth-status", "codex_oauth"],
+    queryFn: () => authApi.authGetStatus("codex_oauth"),
+    enabled:
+      codexOfficialIdentity === "managed_account" &&
+      Boolean(managedCodexAccountId),
+    staleTime: 30_000,
+  });
+  const managedCodexAccount = codexAuthStatus?.accounts.find(
+    (account) => account.id === managedCodexAccountId,
+  );
+  const manualNote = provider.notes?.trim() || undefined;
+  const providerNameIncludesAccountLogin = Boolean(
+    managedCodexAccount?.login &&
+      (provider.name.trim() === managedCodexAccount.login ||
+        provider.name.trim() ===
+          `OpenAI Official (${managedCodexAccount.login})`),
+  );
 
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
@@ -263,6 +300,12 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const canDuplicate = !(
+    appId === "codex" &&
+    (provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
+      (provider.category === "official" &&
+        !resolveManagedAccountId(provider.meta, "codex_oauth")?.trim()))
+  );
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
@@ -384,7 +427,13 @@ export function ProviderCard({
 
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2 min-h-7">
-              <h3 className="text-base font-semibold leading-none">
+              <h3
+                className={cn(
+                  "text-base font-semibold leading-none",
+                  codexOfficialIdentity && "min-w-0 flex-1 truncate",
+                )}
+                title={codexOfficialIdentity ? provider.name : undefined}
+              >
                 {provider.name}
               </h3>
 
@@ -436,36 +485,18 @@ export function ProviderCard({
                 />
               )}
 
-              {appId === "codex" && supportsOfficialRouting && (
-                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {isProxyTakeover
-                    ? t("codex.officialRouting", {
-                        defaultValue: "官方账号路由",
-                      })
-                    : t("codex.nativeLogin", {
-                        defaultValue: "Codex 登录",
-                      })}
-                </span>
-              )}
-
-              {appId === "codex" &&
-                provider.category === "official" &&
-                !supportsOfficialRouting && (
-                  <ProviderStatusBadge
-                    label={t("provider.noRoutingSupport", {
-                      defaultValue: "不支持路由",
-                    })}
+              {isProxyRunning &&
+                !supportsOfficialRouting &&
+                isInFailoverQueue &&
+                health && (
+                  <ProviderHealthBadge
+                    consecutiveFailures={health.consecutive_failures}
+                    isHealthy={health.is_healthy}
                   />
                 )}
 
-              {isProxyRunning && isInFailoverQueue && health && (
-                <ProviderHealthBadge
-                  consecutiveFailures={health.consecutive_failures}
-                  isHealthy={health.is_healthy}
-                />
-              )}
-
               {isAutoFailoverEnabled &&
+                !supportsOfficialRouting &&
                 isInFailoverQueue &&
                 failoverPriority && (
                   <FailoverPriorityBadge priority={failoverPriority} />
@@ -485,7 +516,93 @@ export function ProviderCard({
               )}
             </div>
 
-            {displayUrl && (
+            {codexOfficialIdentity ? (
+              <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+                {codexOfficialIdentity === "native_login" ? (
+                  <span className="min-w-0 truncate" title={manualNote}>
+                    {manualNote ??
+                      t("codex.followCodexLoginDescription", {
+                        defaultValue: "账号会随 Codex CLI 当前登录变化",
+                      })}
+                  </span>
+                ) : codexOfficialIdentity === "unbound" ? (
+                  <>
+                    <span className="inline-flex min-w-0 items-center gap-1 text-sm text-amber-700 dark:text-amber-300">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        {t("codex.accountNotSelected", {
+                          defaultValue: "尚未选择账号",
+                        })}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-sm font-medium text-primary hover:underline"
+                      onClick={() => onEdit(provider)}
+                    >
+                      {t("codex.chooseAccount", {
+                        defaultValue: "选择账号",
+                      })}
+                    </button>
+                  </>
+                ) : managedCodexAccount ? (
+                  <>
+                    <span
+                      className="min-w-0 truncate"
+                      title={manualNote ?? managedCodexAccount.login}
+                    >
+                      {manualNote ??
+                        (providerNameIncludesAccountLogin
+                          ? t("codex.openAiAccount", {
+                              defaultValue: "OpenAI 账号",
+                            })
+                          : managedCodexAccount.login)}
+                    </span>
+                    {managedCodexAccount.reauth_required && (
+                      <span className="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {t("codexOauth.reauthBadge", "需要重新登录")}
+                      </span>
+                    )}
+                  </>
+                ) : isCodexAuthStatusError ? (
+                  <span className="inline-flex min-w-0 items-center gap-1 text-amber-700 dark:text-amber-300">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">
+                      {t("codex.accountStatusUnavailable", {
+                        defaultValue: "无法读取账号信息",
+                      })}
+                    </span>
+                  </span>
+                ) : isCodexAuthStatusSuccess ? (
+                  <>
+                    <span className="inline-flex min-w-0 items-center gap-1 text-sm text-amber-700 dark:text-amber-300">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        {t("codex.boundAccountUnavailable", {
+                          defaultValue: "绑定的账号不可用",
+                        })}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-sm font-medium text-primary hover:underline"
+                      onClick={() => onEdit(provider)}
+                    >
+                      {t("codex.chooseAccount", {
+                        defaultValue: "选择账号",
+                      })}
+                    </button>
+                  </>
+                ) : (
+                  <span className="min-w-0 truncate">
+                    {t("codex.accountLoading", {
+                      defaultValue: "正在加载账号…",
+                    })}
+                  </span>
+                )}
+              </div>
+            ) : displayUrl ? (
               <button
                 type="button"
                 onClick={handleOpenWebsite}
@@ -500,7 +617,7 @@ export function ProviderCard({
               >
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -591,7 +708,9 @@ export function ProviderCard({
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
-              onDuplicate={() => onDuplicate(provider)}
+              onDuplicate={
+                canDuplicate ? () => onDuplicate(provider) : undefined
+              }
               onTest={
                 // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
                 // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
@@ -622,7 +741,9 @@ export function ProviderCard({
               }
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
-              onToggleFailover={onToggleFailover}
+              onToggleFailover={
+                supportsOfficialRouting ? undefined : onToggleFailover
+              }
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
               isRemovalProtected={isRemovalProtected}

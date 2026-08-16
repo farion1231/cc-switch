@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
+import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
@@ -23,6 +24,7 @@ import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
+import type { ManagedAuthProvider } from "@/lib/api";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -61,6 +63,25 @@ export function AddProviderDialog({
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [authSettingsTarget, setAuthSettingsTarget] =
+    useState<ManagedAuthProvider | null>(null);
+
+  useEffect(() => {
+    setAuthSettingsTarget(null);
+  }, [appId, open]);
+
+  const closeDialog = useCallback(() => {
+    setAuthSettingsTarget(null);
+    onOpenChange(false);
+  }, [onOpenChange]);
+
+  const handlePanelClose = useCallback(() => {
+    if (authSettingsTarget) {
+      setAuthSettingsTarget(null);
+      return;
+    }
+    closeDialog();
+  }, [authSettingsTarget, closeDialog]);
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
     [appId, open],
@@ -339,9 +360,9 @@ export function AddProviderDialog({
       }
 
       await onSubmit(providerData);
-      onOpenChange(false);
+      closeDialog();
     },
-    [appId, onSubmit, onOpenChange],
+    [appId, onSubmit, closeDialog],
   );
 
   const footer =
@@ -352,7 +373,7 @@ export function AddProviderDialog({
         </span>
         <Button
           variant="outline"
-          onClick={() => onOpenChange(false)}
+          onClick={closeDialog}
           className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
@@ -375,7 +396,7 @@ export function AddProviderDialog({
       <>
         <Button
           variant="outline"
-          onClick={() => onOpenChange(false)}
+          onClick={closeDialog}
           className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
@@ -394,7 +415,7 @@ export function AddProviderDialog({
     <FullScreenPanel
       isOpen={open}
       title={t("provider.addNewProvider")}
-      onClose={() => onOpenChange(false)}
+      onClose={handlePanelClose}
       footer={footer}
       contentClassName={appId === "pi" ? "pt-3 pb-0" : "pt-3"}
     >
@@ -417,7 +438,8 @@ export function AddProviderDialog({
               appId={appId}
               submitLabel={t("common.add")}
               onSubmit={handleSubmit}
-              onCancel={() => onOpenChange(false)}
+              onCancel={closeDialog}
+              onManageAuthAccounts={setAuthSettingsTarget}
               onSubmittingChange={setIsFormSubmitting}
               onSubmitReadyChange={handleSubmitReadyChange}
               showButtons={false}
@@ -434,7 +456,8 @@ export function AddProviderDialog({
           appId={appId}
           submitLabel={t("common.add")}
           onSubmit={handleSubmit}
-          onCancel={() => onOpenChange(false)}
+          onCancel={closeDialog}
+          onManageAuthAccounts={setAuthSettingsTarget}
           onSubmittingChange={setIsFormSubmitting}
           onSubmitReadyChange={handleSubmitReadyChange}
           showButtons={false}
@@ -449,6 +472,11 @@ export function AddProviderDialog({
           initialPreset={selectedUniversalPreset}
         />
       )}
+
+      <AuthSettingsPanel
+        target={authSettingsTarget}
+        onClose={() => setAuthSettingsTarget(null)}
+      />
     </FullScreenPanel>
   );
 }
