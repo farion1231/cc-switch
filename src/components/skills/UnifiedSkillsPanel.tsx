@@ -49,6 +49,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+const DEFAULT_SKILL_APPS = {
+  claude: false,
+  codex: false,
+  gemini: false,
+  grokbuild: false,
+  opencode: false,
+  openclaw: false,
+  hermes: false,
+  cursor: false,
+  pi: false,
+} satisfies ImportSkillSelection["apps"];
 const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
 
 interface UnifiedSkillsPanelProps {
@@ -221,6 +232,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      cursor: 0,
       pi: 0,
     };
     if (!skills) return counts;
@@ -1041,15 +1053,11 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
       skills.map((skill) => [
         skill.directory,
         {
-          claude: skill.foundIn.includes("claude"),
-          codex: skill.foundIn.includes("codex"),
-          gemini: skill.foundIn.includes("gemini"),
-          grokbuild: skill.foundIn.includes("grokbuild"),
-          opencode: skill.foundIn.includes("opencode"),
-          openclaw: false,
-          hermes: skill.foundIn.includes("hermes"),
-          pi: false,
-        },
+          ...DEFAULT_SKILL_APPS,
+          ...Object.fromEntries(
+            SKILLS_APP_IDS.map((app) => [app, skill.foundIn.includes(app)]),
+          ),
+        } satisfies ImportSkillSelection["apps"],
       ]),
     ),
   );
@@ -1068,16 +1076,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
     onImport(
       Array.from(selected).map((directory) => ({
         directory,
-        apps: selectedApps[directory] ?? {
-          claude: false,
-          codex: false,
-          gemini: false,
-          grokbuild: false,
-          opencode: false,
-          openclaw: false,
-          hermes: false,
-          pi: false,
-        },
+        apps: selectedApps[directory] ?? { ...DEFAULT_SKILL_APPS },
       })),
     );
   };
@@ -1114,13 +1113,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                     <AppToggleGroup
                       apps={
                         selectedApps[skill.directory] ?? {
-                          claude: false,
-                          codex: false,
-                          gemini: false,
-                          grokbuild: false,
-                          opencode: false,
-                          openclaw: false,
-                          hermes: false,
+                          ...DEFAULT_SKILL_APPS,
                         }
                       }
                       onToggle={(app, enabled) => {
@@ -1128,13 +1121,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           ...prev,
                           [skill.directory]: {
                             ...(prev[skill.directory] ?? {
-                              claude: false,
-                              codex: false,
-                              gemini: false,
-                              grokbuild: false,
-                              opencode: false,
-                              openclaw: false,
-                              hermes: false,
+                              ...DEFAULT_SKILL_APPS,
                             }),
                             [app]: enabled,
                           },

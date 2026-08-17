@@ -427,6 +427,78 @@ describe("SessionManagerPage", () => {
     invalidateSpy.mockRestore();
   });
 
+  it("renders Cursor sessions from conversation-search.db source", async () => {
+    setSessionFixtures(
+      [
+        {
+          providerId: "cursor",
+          sessionId: "f531dd2f-e7dd-4090-a36e-2a534618bd7f",
+          title: "Cursor Session",
+          summary: "Cursor summary",
+          projectDir: null,
+          createdAt: 0,
+          lastActiveAt: 50,
+          sourcePath:
+            "sqlite:/mock/conversation-search.db:f531dd2f-e7dd-4090-a36e-2a534618bd7f",
+        },
+      ],
+      {
+        "cursor:sqlite:/mock/conversation-search.db:f531dd2f-e7dd-4090-a36e-2a534618bd7f":
+          [{ role: "user", content: "cursor transcript", ts: 50 }],
+      },
+    );
+    renderPage("cursor");
+
+    await waitFor(() =>
+      expect(screen.getByText("Cursor Session")).toBeInTheDocument(),
+    );
+  });
+
+  it("exports the selected session as Markdown to the clipboard", async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: writeTextMock },
+      configurable: true,
+    });
+
+    setSessionFixtures(
+      [
+        {
+          providerId: "cursor",
+          sessionId: "f531dd2f-e7dd-4090-a36e-2a534618bd7f",
+          title: "Cursor Session",
+          summary: "Cursor summary",
+          projectDir: null,
+          createdAt: 0,
+          lastActiveAt: 50,
+          sourcePath:
+            "sqlite:/mock/conversation-search.db:f531dd2f-e7dd-4090-a36e-2a534618bd7f",
+        },
+      ],
+      {
+        "cursor:sqlite:/mock/conversation-search.db:f531dd2f-e7dd-4090-a36e-2a534618bd7f":
+          [
+            { role: "user", content: "帮我查一下权限" },
+            { role: "assistant", content: "已查出如下结果" },
+          ],
+      },
+    );
+    renderPage("cursor");
+
+    const exportButton = await screen.findByRole("button", {
+      name: /导出 Markdown/i,
+    });
+    await waitFor(() => expect(exportButton).toBeEnabled());
+
+    fireEvent.click(exportButton);
+
+    await waitFor(() =>
+      expect(writeTextMock).toHaveBeenCalledWith(
+        "# Cursor Session\n\n## User\n\n帮我查一下权限\n\n## Assistant\n\n已查出如下结果\n",
+      ),
+    );
+  });
+
   it("switches to grouped view collapsed by default and shows collapse control", async () => {
     renderPage("all");
 

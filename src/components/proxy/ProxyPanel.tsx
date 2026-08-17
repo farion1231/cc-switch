@@ -32,7 +32,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   getAppLabel,
-  PROXY_APP_IDS,
+  PROXY_TAKEOVER_APP_IDS,
   type ProxyAppId,
 } from "@/config/appConfig";
 
@@ -79,10 +79,22 @@ export function ProxyPanel({
   const { data: codexQueue = [] } = useFailoverQueue("codex");
   const { data: geminiQueue = [] } = useFailoverQueue("gemini");
   const { data: grokQueue = [] } = useFailoverQueue("grokbuild");
+  const { data: cursorQueue = [] } = useFailoverQueue("cursor");
 
   const handleTakeoverChange = async (appType: string, enabled: boolean) => {
     try {
       await setTakeoverForApp.mutateAsync({ appType, enabled });
+      // Cursor 走本地路由时必须配合公网路由（公网隧道，Cursor 云端拦私网），
+      // 提示用户前往设置中的公网路由栏目完成配置。
+      if (appType === "cursor" && enabled) {
+        toast.info(
+          t("proxy.publicRoute.takeoverHint", {
+            defaultValue:
+              "Cursor 经本地路由接管时需要配置公网路由（隧道），请到 设置 → 路由 → 公网路由 查看设置方式",
+          }),
+          { closeButton: true },
+        );
+      }
       toast.success(
         enabled
           ? t("proxy.takeover.enabled", {
@@ -280,8 +292,11 @@ export function ProxyPanel({
                   })}
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {PROXY_APP_IDS.map((appType) => {
-                    const isEnabled = takeoverStatus?.[appType] ?? false;
+                  {PROXY_TAKEOVER_APP_IDS.map((appType) => {
+                    const isEnabled =
+                      takeoverStatus?.[
+                        appType as keyof typeof takeoverStatus
+                      ] ?? false;
                     return (
                       <div
                         key={appType}
@@ -420,7 +435,8 @@ export function ProxyPanel({
               {(claudeQueue.length > 0 ||
                 codexQueue.length > 0 ||
                 geminiQueue.length > 0 ||
-                grokQueue.length > 0) && (
+                grokQueue.length > 0 ||
+                cursorQueue.length > 0) && (
                 <div className="pt-3 border-t border-border space-y-3">
                   <div className="flex items-center gap-2">
                     <ListOrdered className="h-3.5 w-3.5 text-muted-foreground" />
@@ -470,6 +486,18 @@ export function ProxyPanel({
                       appType="grokbuild"
                       appLabel="Grok Build"
                       targets={grokQueue.map((item) => ({
+                        id: item.providerId,
+                        name: item.providerName,
+                      }))}
+                      status={status}
+                    />
+                  )}
+
+                  {cursorQueue.length > 0 && (
+                    <ProviderQueueGroup
+                      appType="cursor"
+                      appLabel="Cursor"
+                      targets={cursorQueue.map((item) => ({
                         id: item.providerId,
                         name: item.providerName,
                       }))}

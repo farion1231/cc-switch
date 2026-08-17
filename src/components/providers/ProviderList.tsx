@@ -63,6 +63,7 @@ interface ProviderListProps {
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
+  onOpenPublicRouteSettings?: () => void;
   onOpenTerminal?: (provider: Provider) => void;
   onCreate?: () => void;
   isLoading?: boolean;
@@ -85,6 +86,7 @@ export function ProviderList({
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
+  onOpenPublicRouteSettings,
   onOpenTerminal,
   onCreate,
   isLoading = false,
@@ -475,6 +477,7 @@ export function ProviderList({
                 onDuplicate={onDuplicate}
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
+                onOpenPublicRouteSettings={onOpenPublicRouteSettings}
                 onOpenTerminal={onOpenTerminal}
                 onTest={handleTest}
                 isTesting={isChecking(provider.id)}
@@ -632,6 +635,7 @@ interface SortableProviderCardProps {
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
+  onOpenPublicRouteSettings?: () => void;
   onOpenTerminal?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   isTesting: boolean;
@@ -665,6 +669,7 @@ function SortableProviderCard({
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
+  onOpenPublicRouteSettings,
   onOpenTerminal,
   onTest,
   isTesting,
@@ -714,6 +719,7 @@ function SortableProviderCard({
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
         }
         onOpenWebsite={onOpenWebsite}
+        onOpenPublicRouteSettings={onOpenPublicRouteSettings}
         onOpenTerminal={onOpenTerminal}
         onTest={onTest}
         isTesting={isTesting}

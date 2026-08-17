@@ -724,6 +724,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["xycai", "xyc", "aggregator", "relay", "gateway", "token"],
     defaultColor: "#1E88E5",
   },
+  cursor: {
+    name: "cursor",
+    displayName: "Cursor",
+    category: "ai-provider",
+    keywords: ["cursor", "ide", "ai-editor", "cursor.sh"],
+    defaultColor: "#A855F7",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

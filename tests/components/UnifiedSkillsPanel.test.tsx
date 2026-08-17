@@ -228,6 +228,49 @@ describe("UnifiedSkillsPanel", () => {
     });
   });
 
+  it("includes all skill app keys including cursor in import fallback apps", async () => {
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openImport();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("skills.import")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      screen.getByText("skills.importSelected").click();
+    });
+
+    await waitFor(() => {
+      expect(importSkillsMock).toHaveBeenCalledWith([
+        {
+          directory: "shared-skill",
+          apps: {
+            claude: false,
+            codex: false,
+            gemini: false,
+            grokbuild: true,
+            opencode: false,
+            openclaw: false,
+            hermes: false,
+            cursor: false,
+            pi: false,
+          },
+        },
+      ]);
+    });
+  });
+
   it("passes only the installed Skill ID to uninstall", async () => {
     installedSkillsMock = [
       makeInstalledSkill({

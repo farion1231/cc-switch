@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_cursor FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -25,6 +25,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let enabled_grokbuild: bool = row.get(10)?;
     let enabled_opencode: bool = row.get(11)?;
     let enabled_hermes: bool = row.get(12)?;
+    let enabled_cursor: bool = row.get(13)?;
 
     let server = serde_json::from_str(&server_config_str).unwrap_or_default();
     let tags = serde_json::from_str(&tags_str).unwrap_or_default();
@@ -42,6 +43,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 grokbuild: enabled_grokbuild,
                 opencode: enabled_opencode,
                 hermes: enabled_hermes,
+                cursor: enabled_cursor,
             },
             description,
             homepage,
@@ -90,6 +92,7 @@ impl Database {
             AppType::GrokBuild => Some("enabled_grokbuild"),
             AppType::OpenCode => Some("enabled_opencode"),
             AppType::Hermes => Some("enabled_hermes"),
+            AppType::Cursor => Some("enabled_cursor"),
             // These applications intentionally have no MCP flag in the SSOT.
             AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi => None,
         };
@@ -120,8 +123,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_cursor
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 server.id,
                 server.name,
@@ -139,6 +142,7 @@ impl Database {
                 server.apps.grokbuild,
                 server.apps.opencode,
                 server.apps.hermes,
+                server.apps.cursor,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

@@ -1174,8 +1174,10 @@ impl RequestForwarder {
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
         // catalog matching and to the transform's own strip+beta detection).
-        let codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        // 公网路由 同样走这里：第三方 Cursor 供应商不支持 Responses API，需要降格式。
+        let codex_responses_to_chat = super::providers::should_convert_responses_to_chat_for_app(
+            app_type, provider, endpoint,
+        );
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
@@ -1198,7 +1200,8 @@ impl RequestForwarder {
         };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mut mapped_body = normalize_thinking_type(mapped_body);
+        let mapped_body = normalize_thinking_type(mapped_body);
+        let mut mapped_body = mapped_body;
 
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
@@ -1563,6 +1566,16 @@ impl RequestForwarder {
         } else {
             mapped_body
         };
+
+        // Cursor 的 modelCatalog 行是「客户端模型名 → 上游模型名」（前端把
+        // Upstream Model Name 存进 displayName）。所有 Cursor 转发路径（Chat /
+        // Responses→Chat / 原生 Responses）都在请求体定稿后做最终翻译，放在此处
+        // 可避免被 apply_codex_upstream_model 的 catalog 命中逻辑抢先保留客户端名。
+        // （#6124 review P2；Codex/GrokBuild 的 displayName 只是显示名，不在此翻译）
+        if matches!(app_type, AppType::Cursor) {
+            request_body =
+                super::model_mapper::translate_cursor_catalog_model(request_body, provider);
+        }
 
         // Native Responses passthrough to a strict third-party gateway (xAI):
         // flatten Codex's private `namespace`/plugin tool declarations into

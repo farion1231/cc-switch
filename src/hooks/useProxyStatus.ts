@@ -151,6 +151,13 @@ export function useProxyStatus() {
     status,
     isRunning: status?.running || false,
     takeoverStatus,
+    isTakeoverActive:
+      takeoverStatus?.claude ||
+      takeoverStatus?.codex ||
+      takeoverStatus?.gemini ||
+      takeoverStatus?.grokbuild ||
+      takeoverStatus?.cursor ||
+      false,
     isInitialStatusPending: isProxyStatusPending || isTakeoverStatusPending,
 
     // 启动/停止（总开关）

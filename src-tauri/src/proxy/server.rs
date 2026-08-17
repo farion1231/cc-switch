@@ -17,9 +17,10 @@ use super::{
     types::*,
     ProxyError,
 };
+use crate::app_config::AppType;
 use crate::database::Database;
 use axum::{
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, State},
     routing::{any, get, post},
     Router,
 };
@@ -143,7 +144,7 @@ impl ProxyServer {
             loop {
                 tokio::select! {
                     result = listener.accept() => {
-                        let (stream, _remote_addr) = match result {
+                        let (stream, remote_addr) = match result {
                             Ok(v) => v,
                             Err(e) => {
                                 log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
@@ -178,12 +179,21 @@ impl ProxyServer {
                             let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut router = app.clone();
                                 let cases = original_cases.clone();
+                                let remote_addr = remote_addr;
                                 async move {
                                     // 将 hyper::body::Incoming 转为 axum::body::Body，保留 extensions
                                     let (mut parts, body) = req.into_parts();
 
                                     // Insert our own header case map alongside hyper's internal one
                                     parts.extensions.insert(cases);
+
+                                    // 注入真实来源地址：公网路由鉴权中间件按来源 IP 判定本地/外部，
+                                    // 绝不信任客户端可控的 Host 头（防 LAN 攻击者伪造 Host 绕过鉴权）。
+                                    parts
+                                        .extensions
+                                        .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+                                            remote_addr,
+                                        ));
 
                                     let body = axum::body::Body::new(body);
                                     let axum_req = http::Request::from_parts(parts, body);
@@ -354,6 +364,18 @@ impl ProxyServer {
                 "/grokbuild/v1/responses/compact",
                 post(handlers::handle_grokbuild_responses_compact),
             )
+            // 公网路由（Cursor 经公网隧道接入）命名空间：经 cloudflared 公网隧道进入的 Cursor 请求
+            // 固定路由到 Cursor 的当前供应商（与 Codex/GrokBuild 命名空间隔离）。
+            // Cursor 侧 Override OpenAI Base URL 填 {public_url}/cursor/v1。
+            .route(
+                "/cursor/v1/chat/completions",
+                post(handlers::handle_cursor_chat_completions),
+            )
+            .route(
+                "/cursor/v1/responses",
+                post(handlers::handle_cursor_responses),
+            )
+            .route("/cursor/v1/models", get(handlers::handle_cursor_models))
             // Codex standalone Alpha Search API. All local aliases normalize to
             // the selected provider's canonical sibling `/alpha/search` route.
             .route("/alpha/search", post(handlers::handle_alpha_search))
@@ -373,8 +395,19 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
+            // Codex / Cursor 透传：未匹配的其他 /v1/* 路径（如用量查询、账户检查等）
+            // 直接代理到上游 API，避免 404 导致客户端误报额度/授权错误。
+            .route("/v1/*path", any(handlers::handle_codex_passthrough))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            // 公网路由鉴权：axum 后注册的 layer 在外层（先执行），故把鉴权放在
+            // DefaultBodyLimit 之后注册 = 最外层 = 最先执行，未授权请求在读 body 前就被拒绝。
+            // 来源判定——本地（回环来源 IP）放行，外部（经隧道/局域网）必须携带 ccsk Bearer key，
+            // 且目标应用必须已开启本地路由（接管）。
+            .layer(axum::middleware::from_fn_with_state(
+                self.state.clone(),
+                public_route_auth_middleware,
+            ))
             .with_state(self.state.clone())
     }
 
@@ -413,13 +446,314 @@ impl ProxyServer {
     }
 }
 
+/// 判断请求是否来自本地可信来源。
+///
+/// 本地来源 = 真实来源 IP 为回环地址（server 层注入 `ConnectInfo`）且未经 Cloudflare 隧道。
+/// - `cf-connecting-ip` 存在 → 必为经 cloudflared 隧道的请求（Cloudflare 边缘覆写该头，
+///   客户端无法伪造），一律按外部鉴权；
+/// - 否则以来源 IP 判定：仅回环（本机 app 直连）放行；LAN/远程来源或缺失来源信息一律外部。
+///
+/// **绝不信任客户端可控的 Host 头**：绑 0.0.0.0（局域网可达）时，攻击者伪造
+/// `Host: 127.0.0.1` 无法绕过——来源 IP 仍是 LAN 地址（#review HIGH Host 头欺骗）。
+pub(crate) fn request_is_local_origin(request: &axum::extract::Request) -> bool {
+    if request.headers().contains_key("cf-connecting-ip") {
+        return false;
+    }
+    match request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+    {
+        Some(info) => info.0.ip().is_loopback(),
+        None => false,
+    }
+}
+
+/// 公网路由鉴权决策：本地来源放行；外部来源（经隧道/局域网直连）必须携带
+/// 公网路由的 ccsk Bearer key，且目标应用必须已开启本地路由（接管）。
+/// 纯函数便于单测，由中间件注入运行时 settings / db。
+pub(crate) fn public_route_auth_decision(
+    is_local_origin: bool,
+    enabled: bool,
+    api_key: Option<&str>,
+    app_enabled: bool,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), ProxyError> {
+    if is_local_origin {
+        return Ok(());
+    }
+    handlers::validate_public_route_auth(enabled, api_key, headers)?;
+    // 限制：仅开启本地路由（接管）的应用才能经公网路由访问（用户需求 2026-08-05）。
+    if !app_enabled {
+        return Err(ProxyError::AuthError(
+            "应用未开启本地路由，无法经公网路由访问".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// 按公网请求路径推断目标应用（与 build_router 的命名空间一致）。
+/// 公共服务（/health /status）返回 None，不按应用门控，但外部请求仍须通过密钥校验。
+fn app_for_public_path(path: &str) -> Option<AppType> {
+    let p = path.trim_end_matches('/');
+    if p == "/health" || p == "/status" {
+        return None;
+    }
+    // 精确路由优先（/v1/messages 是 Claude 命名空间，/v1/* 是 Codex 透传）
+    if p == "/v1/messages" || p == "/claude/v1/messages" {
+        return Some(AppType::Claude);
+    }
+    if p == "/cursor/v1/models" || p.starts_with("/cursor/v1/") {
+        return Some(AppType::Cursor);
+    }
+    if p.starts_with("/claude-desktop/") {
+        return Some(AppType::ClaudeDesktop);
+    }
+    if p.starts_with("/claude/") {
+        return Some(AppType::Claude);
+    }
+    if p.starts_with("/grokbuild/v1/") {
+        return Some(AppType::GrokBuild);
+    }
+    if p.starts_with("/gemini/") || p.starts_with("/v1beta/") {
+        return Some(AppType::Gemini);
+    }
+    if p.starts_with("/codex/v1/") {
+        return Some(AppType::Codex);
+    }
+    // OpenAI 直通（Codex）命名空间
+    if p == "/chat/completions"
+        || p == "/models"
+        || p == "/v1/models"
+        || p == "/responses"
+        || p.starts_with("/responses/compact")
+        || p.starts_with("/v1/chat/completions")
+        || p.starts_with("/v1/responses")
+        || p == "/v1"
+        || p.starts_with("/v1/")
+    {
+        return Some(AppType::Codex);
+    }
+    None
+}
+
+/// 全局公网路由鉴权中间件：在进入任意路由前先做来源判定。
+/// 未启用公网路由时，外部请求一律拒绝（隧道不应运行）。
+async fn public_route_auth_middleware(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, ProxyError> {
+    let settings = crate::settings::get_settings();
+    // 外部请求按路径推断目标应用，检查其本地路由（接管）是否开启
+    let app_enabled = match app_for_public_path(request.uri().path()) {
+        Some(app) => state
+            .db
+            .get_proxy_config_for_app(app.as_str())
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false),
+        None => true, // 公共服务或未映射路径：仅走密钥校验
+    };
+    public_route_auth_decision(
+        request_is_local_origin(&request),
+        settings.public_route_enabled,
+        settings.public_route_api_key.as_deref(),
+        app_enabled,
+        request.headers(),
+    )?;
+    Ok(next.run(request).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::provider::{Provider, ProviderMeta};
-    use axum::http::{header, HeaderMap, StatusCode};
+    use axum::body::Body;
+    use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
     use serde_json::{json, Value};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    fn request_with(source_ip: Option<IpAddr>, cf_connecting_ip: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder();
+        if let Some(ip) = cf_connecting_ip {
+            b = b.header("cf-connecting-ip", ip);
+        }
+        let mut req = b.body(Body::empty()).unwrap();
+        if let Some(ip) = source_ip {
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo::<SocketAddr>(SocketAddr::new(
+                    ip, 15721,
+                )));
+        }
+        req
+    }
+
+    #[test]
+    fn loopback_source_is_trusted() {
+        for ip in [
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ] {
+            assert!(
+                request_is_local_origin(&request_with(Some(ip), None)),
+                "{ip} should be local"
+            );
+        }
+    }
+
+    #[test]
+    fn non_loopback_source_is_external() {
+        // 绑 0.0.0.0 时，LAN 攻击者从非回环来源连入 → 即使伪造 Host 头也是外部，必须鉴权
+        for ip in [
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
+        ] {
+            assert!(
+                !request_is_local_origin(&request_with(Some(ip), None)),
+                "{ip} should be external"
+            );
+        }
+    }
+
+    #[test]
+    fn cf_connecting_ip_forces_external_even_with_loopback_source() {
+        // 隧道请求：来源 IP 是回环（cloudflared 本地转发），但带 cf-connecting-ip → 外部鉴权
+        assert!(!request_is_local_origin(&request_with(
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            Some("203.0.113.5")
+        )));
+    }
+
+    #[test]
+    fn missing_source_info_is_external() {
+        // 无法确认来源 → 按外部处理，要求鉴权（fail-safe）
+        assert!(!request_is_local_origin(&request_with(None, None)));
+    }
+
+    #[test]
+    fn host_header_spoofing_cannot_bypass() {
+        // 关键回归：攻击者伪造 Host: 127.0.0.1，但来源 IP 是 LAN 地址 → 必须按外部鉴权
+        let mut req = Request::builder()
+            .header(header::HOST, "127.0.0.1:15721")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo::<SocketAddr>(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+                9999,
+            )));
+        assert!(
+            !request_is_local_origin(&req),
+            "LAN attacker forging Host: 127.0.0.1 must still be treated as external"
+        );
+    }
+
+    #[test]
+    fn local_origin_skips_auth() {
+        let headers = HeaderMap::new();
+        assert!(public_route_auth_decision(true, true, Some("ccsk-x"), false, &headers).is_ok());
+        assert!(public_route_auth_decision(true, false, None, false, &headers).is_ok());
+    }
+
+    #[test]
+    fn external_origin_requires_matching_key() {
+        let mut ok = HeaderMap::new();
+        ok.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str("Bearer ccsk-x").unwrap(),
+        );
+        assert!(public_route_auth_decision(false, true, Some("ccsk-x"), true, &ok).is_ok());
+
+        let empty = HeaderMap::new();
+        assert!(public_route_auth_decision(false, true, Some("ccsk-x"), true, &empty).is_err());
+
+        let mut wrong = HeaderMap::new();
+        wrong.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str("Bearer ccsk-y").unwrap(),
+        );
+        assert!(public_route_auth_decision(false, true, Some("ccsk-x"), true, &wrong).is_err());
+    }
+
+    #[test]
+    fn external_origin_rejected_when_public_route_disabled() {
+        let mut ok = HeaderMap::new();
+        ok.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str("Bearer ccsk-x").unwrap(),
+        );
+        assert!(public_route_auth_decision(false, false, Some("ccsk-x"), true, &ok).is_err());
+    }
+
+    #[test]
+    fn external_origin_rejected_when_app_routing_disabled() {
+        // 限制：外部请求目标应用未开启本地路由 → 即使密钥正确也拒绝（用户需求）
+        let mut ok = HeaderMap::new();
+        ok.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str("Bearer ccsk-x").unwrap(),
+        );
+        assert!(
+            public_route_auth_decision(false, true, Some("ccsk-x"), false, &ok).is_err(),
+            "external request to an app without local routing must be rejected"
+        );
+    }
+
+    #[test]
+    fn local_origin_bypasses_app_routing_gate() {
+        // 本地直连不受"应用需开启本地路由"限制（本地可信）
+        let headers = HeaderMap::new();
+        assert!(public_route_auth_decision(true, true, Some("ccsk-x"), false, &headers).is_ok());
+    }
+
+    #[test]
+    fn app_for_public_path_maps_namespaces() {
+        assert_eq!(
+            app_for_public_path("/cursor/v1/chat/completions"),
+            Some(AppType::Cursor)
+        );
+        assert_eq!(
+            app_for_public_path("/cursor/v1/models"),
+            Some(AppType::Cursor)
+        );
+        assert_eq!(
+            app_for_public_path("/claude/v1/messages"),
+            Some(AppType::Claude)
+        );
+        assert_eq!(app_for_public_path("/v1/messages"), Some(AppType::Claude));
+        assert_eq!(
+            app_for_public_path("/claude-desktop/v1/messages"),
+            Some(AppType::ClaudeDesktop)
+        );
+        assert_eq!(
+            app_for_public_path("/codex/v1/responses"),
+            Some(AppType::Codex)
+        );
+        assert_eq!(
+            app_for_public_path("/grokbuild/v1/responses"),
+            Some(AppType::GrokBuild)
+        );
+        assert_eq!(
+            app_for_public_path("/gemini/v1beta/models"),
+            Some(AppType::Gemini)
+        );
+        assert_eq!(app_for_public_path("/v1beta/models"), Some(AppType::Gemini));
+        assert_eq!(
+            app_for_public_path("/v1/chat/completions"),
+            Some(AppType::Codex)
+        );
+        assert_eq!(
+            app_for_public_path("/chat/completions"),
+            Some(AppType::Codex)
+        );
+        assert_eq!(app_for_public_path("/models"), Some(AppType::Codex));
+        // 公共服务不按应用门控
+        assert_eq!(app_for_public_path("/health"), None);
+        assert_eq!(app_for_public_path("/status"), None);
+    }
 
     #[derive(Debug)]
     struct CapturedRequest {

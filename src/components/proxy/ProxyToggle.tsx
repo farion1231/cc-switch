@@ -9,6 +9,7 @@ import { Radio, Loader2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { getAppLabel, type ProxyAppId } from "@/config/appConfig";
 
@@ -31,6 +32,16 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
   const handleToggle = async (checked: boolean) => {
     try {
       await setTakeoverForApp({ appType: activeApp, enabled: checked });
+      // Cursor 走本地路由时必须配合公网路由，提示设置入口。
+      if (activeApp === "cursor" && checked) {
+        toast.info(
+          t("proxy.publicRoute.takeoverHint", {
+            defaultValue:
+              "Cursor 经本地路由接管时需要配置公网路由（隧道），请到 设置 → 路由 → 公网路由 查看设置方式",
+          }),
+          { closeButton: true },
+        );
+      }
     } catch (error) {
       console.error("[ProxyToggle] Toggle takeover failed:", error);
     }
