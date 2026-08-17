@@ -150,8 +150,59 @@ fn read_opencode_config_from_path(path: &Path) -> Result<Value, AppError> {
     Ok(value)
 }
 
+/// 已存在的配置文件，按 OpenCode 的**合并顺序**返回（后者覆盖前者），
+/// 即 `OPENCODE_CONFIG_FILE_NAMES` 的倒序。
+fn existing_opencode_config_paths() -> Vec<PathBuf> {
+    let dir = get_opencode_dir();
+
+    OPENCODE_CONFIG_FILE_NAMES
+        .iter()
+        .rev()
+        .map(|name| dir.join(name))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+/// 对齐 OpenCode 的 `mergeConfig`（remeda `mergeDeep`）：对象逐键递归合并，
+/// 其余类型（含数组）由 source 整体替换。
+fn merge_config_into(target: &mut Value, source: Value) {
+    match source {
+        Value::Object(source_obj) if target.is_object() => {
+            let target_obj = target.as_object_mut().expect("checked by the guard");
+
+            for (key, value) in source_obj {
+                match target_obj.get_mut(&key) {
+                    Some(existing) if existing.is_object() && value.is_object() => {
+                        merge_config_into(existing, value);
+                    }
+                    _ => {
+                        target_obj.insert(key, value);
+                    }
+                }
+            }
+        }
+        other => *target = other,
+    }
+}
+
+/// 读取「有效配置」：OpenCode 会把全局目录下的 `config.json`、`opencode.json`、
+/// `opencode.jsonc` 全部读出来依次 `mergeDeep`，只看其中一个文件会漏掉另一个文件里
+/// 的供应商——例如旧版 CC Switch 把供应商写进了 `opencode.json`，而 OpenCode 自己
+/// 建了 `opencode.jsonc`。
 pub fn read_opencode_config() -> Result<Value, AppError> {
-    read_opencode_config_from_path(&get_opencode_config_path())
+    let paths = existing_opencode_config_paths();
+
+    let Some((first, rest)) = paths.split_first() else {
+        // 一个都不存在，保持与单文件读取相同的空配置。
+        return read_opencode_config_from_path(&get_opencode_config_path());
+    };
+
+    let mut merged = read_opencode_config_from_path(first)?;
+    for path in rest {
+        merge_config_into(&mut merged, read_opencode_config_from_path(path)?);
+    }
+
+    Ok(merged)
 }
 
 fn write_opencode_config_to_path_with_contents(
@@ -198,18 +249,47 @@ pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     write_opencode_config_to_path_with_contents(&path, &full_config).map(|_| ())
 }
 
-pub fn remove_provider(id: &str) -> Result<(), AppError> {
-    let _guard = opencode_config_lock().lock()?;
-    let path = get_opencode_config_path();
-    let mut config = read_opencode_config_from_path(&path)?;
+/// 从**每个**已存在的配置文件里删掉 `<section>.<id>`。
+///
+/// 只删最高优先级的那份是不够的：OpenCode 合并全部三个文件，低优先级文件里的同名
+/// 条目会在删除后重新生效，界面显示已删除而 OpenCode 仍在用它。
+///
+/// 只回写真正发生变化的文件——未命中的文件保持原样，避免整份重新序列化把用户的
+/// 注释和格式抹掉。
+fn remove_entry_from_all_configs(section: &str, id: &str) -> Result<(), AppError> {
+    let paths = existing_opencode_config_paths();
 
-    if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
-        providers.remove(id);
-    } else if config.get("provider").is_some() {
-        log::warn!("opencode.json 的 provider 不是对象，无法删除供应商 '{id}'");
+    if paths.is_empty() {
+        // 与此前一致：没有任何配置文件时仍在目标路径落一份空配置。
+        let path = get_opencode_config_path();
+        let config = read_opencode_config_from_path(&path)?;
+        return write_opencode_config_to_path_with_contents(&path, &config).map(|_| ());
     }
 
-    write_opencode_config_to_path_with_contents(&path, &config).map(|_| ())
+    for path in paths {
+        let mut config = read_opencode_config_from_path(&path)?;
+
+        let removed = match config.get_mut(section).and_then(|v| v.as_object_mut()) {
+            Some(entries) => entries.remove(id).is_some(),
+            None => {
+                if config.get(section).is_some() {
+                    log::warn!("{} 的 {section} 不是对象，无法删除 '{id}'", path.display());
+                }
+                false
+            }
+        };
+
+        if removed {
+            write_opencode_config_to_path_with_contents(&path, &config)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn remove_provider(id: &str) -> Result<(), AppError> {
+    let _guard = opencode_config_lock().lock()?;
+    remove_entry_from_all_configs("provider", id)
 }
 
 pub fn get_typed_providers() -> Result<IndexMap<String, OpenCodeProviderConfig>, AppError> {
@@ -265,16 +345,7 @@ pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
 
 pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
     let _guard = opencode_config_lock().lock()?;
-    let path = get_opencode_config_path();
-    let mut config = read_opencode_config_from_path(&path)?;
-
-    if let Some(mcp) = config.get_mut("mcp").and_then(|v| v.as_object_mut()) {
-        mcp.remove(id);
-    } else if config.get("mcp").is_some() {
-        log::warn!("opencode.json 的 mcp 不是对象，无法删除服务器 '{id}'");
-    }
-
-    write_opencode_config_to_path_with_contents(&path, &config).map(|_| ())
+    remove_entry_from_all_configs("mcp", id)
 }
 
 pub fn add_plugin(path: &Path, plugin_name: &str) -> Result<(), AppError> {
@@ -506,6 +577,134 @@ mod tests {
             providers.contains_key("acme"),
             "providers declared in opencode.jsonc must be visible"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_merges_every_config_file_the_way_opencode_does() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 常见的升级态：老版本 CC Switch 把供应商写进了 opencode.json，
+        // 而 OpenCode 自己建了 opencode.jsonc。
+        write_config_named(
+            temp.path(),
+            "config.json",
+            r#"{"provider": {"legacy": {"npm": "old"}}, "model": "from-config-json"}"#,
+        );
+        write_config_named(
+            temp.path(),
+            "opencode.json",
+            r#"{"provider": {"written-by-cc-switch": {"npm": "x"}}, "model": "from-opencode-json"}"#,
+        );
+        write_config_named(
+            temp.path(),
+            "opencode.jsonc",
+            "{\n  // created by OpenCode\n  \"provider\": { \"hand-written\": { \"npm\": \"y\" } }\n}",
+        );
+
+        let providers = get_providers().expect("providers must load");
+        let mut ids: Vec<&String> = providers.keys().collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec!["hand-written", "legacy", "written-by-cc-switch"],
+            "providers from every config file must be visible"
+        );
+
+        let config = read_opencode_config().expect("read");
+        assert_eq!(
+            config["model"], "from-opencode-json",
+            "later files win on conflicting scalars, as OpenCode's mergeDeep does"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_provider_purges_every_config_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        write_config_named(
+            temp.path(),
+            "opencode.json",
+            r#"{"provider": {"acme": {"npm": "stale"}, "keep": {"npm": "z"}}}"#,
+        );
+        write_config_named(
+            temp.path(),
+            "opencode.jsonc",
+            r#"{"provider": {"acme": {"npm": "current"}}}"#,
+        );
+
+        remove_provider("acme").expect("remove must succeed");
+
+        let providers = get_providers().expect("reload");
+        assert!(
+            !providers.contains_key("acme"),
+            "a provider present in several files must not come back from a lower-priority one"
+        );
+        assert!(
+            providers.contains_key("keep"),
+            "unrelated providers must survive"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_provider_leaves_files_without_that_entry_untouched() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        let untouched = "{\n  // hand-written, keep my comments\n  \"model\": \"m\",\n}";
+        write_config_named(temp.path(), "opencode.jsonc", untouched);
+        write_config_named(
+            temp.path(),
+            "opencode.json",
+            r#"{"provider": {"acme": {"npm": "x"}}}"#,
+        );
+
+        remove_provider("acme").expect("remove must succeed");
+
+        let dir = temp.path().join(".config").join("opencode");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("opencode.jsonc")).unwrap(),
+            untouched,
+            "a file that does not hold the entry must not be rewritten"
+        );
+        assert!(
+            !get_providers().unwrap().contains_key("acme"),
+            "the entry must still be gone"
+        );
+    }
+
+    #[test]
+    fn merge_config_recurses_into_objects_and_replaces_everything_else() {
+        let mut target = json!({
+            "provider": {"a": {"npm": "1"}, "b": {"npm": "2"}},
+            "instructions": ["one"],
+            "model": "old",
+        });
+        merge_config_into(
+            &mut target,
+            json!({
+                "provider": {"b": {"npm": "3"}, "c": {"npm": "4"}},
+                "instructions": ["two"],
+                "model": "new",
+            }),
+        );
+
+        assert_eq!(
+            target["provider"]["a"]["npm"], "1",
+            "untouched key survives"
+        );
+        assert_eq!(target["provider"]["b"]["npm"], "3", "conflicting key wins");
+        assert_eq!(target["provider"]["c"]["npm"], "4", "new key is added");
+        assert_eq!(
+            target["instructions"],
+            json!(["two"]),
+            "arrays are replaced, not concatenated, matching mergeDeep"
+        );
+        assert_eq!(target["model"], "new");
     }
 
     #[test]
