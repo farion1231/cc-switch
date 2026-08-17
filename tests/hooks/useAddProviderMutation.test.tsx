@@ -7,6 +7,7 @@ import type { Provider } from "@/types";
 
 const apiMocks = vi.hoisted(() => ({
   add: vi.fn(),
+  update: vi.fn(),
   ensureClaudeDesktopOfficialProvider: vi.fn(),
   ensureCodexOfficialProvider: vi.fn(),
   getAll: vi.fn(),
@@ -17,9 +18,16 @@ const uuidMocks = vi.hoisted(() => ({
   generateUUID: vi.fn(),
 }));
 
+const toastMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+}));
+
 vi.mock("@/lib/api", () => ({
   providersApi: {
     add: (...args: unknown[]) => apiMocks.add(...args),
+    update: (...args: unknown[]) => apiMocks.update(...args),
     ensureClaudeDesktopOfficialProvider: (...args: unknown[]) =>
       apiMocks.ensureClaudeDesktopOfficialProvider(...args),
     ensureCodexOfficialProvider: (...args: unknown[]) =>
@@ -36,10 +44,7 @@ vi.mock("@/utils/uuid", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: {
-    success: vi.fn(),
-    error: vi.fn(),
-  },
+  toast: toastMocks,
 }));
 
 function createWrapper() {
@@ -59,6 +64,7 @@ function createWrapper() {
 
 beforeEach(() => {
   apiMocks.add.mockReset().mockResolvedValue(true);
+  apiMocks.update.mockReset().mockResolvedValue(true);
   apiMocks.ensureClaudeDesktopOfficialProvider
     .mockReset()
     .mockResolvedValue(true);
@@ -66,6 +72,9 @@ beforeEach(() => {
   apiMocks.getAll.mockReset().mockResolvedValue({});
   apiMocks.updateTrayMenu.mockReset().mockResolvedValue(true);
   uuidMocks.generateUUID.mockReset().mockReturnValue("generated-uuid");
+  toastMocks.success.mockReset();
+  toastMocks.error.mockReset();
+  toastMocks.warning.mockReset();
 });
 
 describe("useAddProviderMutation", () => {
@@ -138,7 +147,59 @@ describe("useAddProviderMutation", () => {
     expect(persistedProvider).toEqual(seedProvider);
   });
 
-  it("recreates and returns the fixed Codex official seed", async () => {
+  it("adds a managed Codex account as a separate official card", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("codex"), {
+      wrapper,
+    });
+
+    const persistedProvider = await act(async () =>
+      result.current.mutateAsync({
+        name: "OpenAI Official",
+        settingsConfig: { auth: {}, config: "" },
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "acct-managed",
+          },
+        },
+        ensureCodexOfficialSeed: true,
+      }),
+    );
+
+    expect(apiMocks.ensureCodexOfficialProvider).not.toHaveBeenCalled();
+    expect(apiMocks.getAll).not.toHaveBeenCalled();
+    expect(apiMocks.update).not.toHaveBeenCalled();
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "generated-uuid",
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "acct-managed",
+          },
+        },
+      }),
+      "codex",
+      undefined,
+    );
+    expect(persistedProvider).toEqual(
+      expect.objectContaining({
+        id: "generated-uuid",
+        meta: expect.objectContaining({
+          authBinding: expect.objectContaining({
+            accountId: "acct-managed",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("restores the single native-login card when it is added unbound", async () => {
     const seedProvider: Provider = {
       id: "codex-official",
       name: "OpenAI Official",
@@ -165,6 +226,60 @@ describe("useAddProviderMutation", () => {
     expect(apiMocks.ensureCodexOfficialProvider).toHaveBeenCalledTimes(1);
     expect(apiMocks.getAll).toHaveBeenCalledWith("codex");
     expect(apiMocks.add).not.toHaveBeenCalled();
+    expect(apiMocks.update).not.toHaveBeenCalled();
     expect(persistedProvider).toEqual(seedProvider);
+  });
+
+  it("adds a Pi provider without a separate default-model command", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("pi"), {
+      wrapper,
+    });
+
+    const provider = await act(async () =>
+      result.current.mutateAsync({
+        name: "Pi Provider",
+        providerKey: "pi-provider",
+        settingsConfig: {
+          api: "openai-responses",
+          baseUrl: "https://example.com/v1",
+          apiKey: "secret",
+          models: [{ id: "model-a" }],
+        },
+      }),
+    );
+
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "pi-provider" }),
+      "pi",
+      undefined,
+    );
+    expect(provider.id).toBe("pi-provider");
+  });
+
+  it("reports a Pi provider add failure", async () => {
+    apiMocks.add.mockRejectedValueOnce(new Error("provider add failed"));
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("pi"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({
+          name: "Pi Provider",
+          providerKey: "pi-provider",
+          settingsConfig: { models: [{ id: "model-a" }] },
+        }),
+      ).rejects.toThrow("provider add failed");
+    });
+
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "pi-provider" }),
+      "pi",
+      undefined,
+    );
+    expect(toastMocks.error).toHaveBeenCalled();
+    expect(toastMocks.warning).not.toHaveBeenCalled();
   });
 });

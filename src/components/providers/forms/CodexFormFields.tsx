@@ -12,20 +12,36 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  ChevronsUpDown,
   Download,
   Loader2,
   Plus,
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
+import { CodexOAuthSection } from "./CodexOAuthSection";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
@@ -45,6 +61,7 @@ import type {
   PromptCacheRoutingMode,
   ProviderCategory,
 } from "@/types";
+import type { ManagedAuthProvider } from "@/lib/api";
 import type { AppId } from "@/lib/api";
 
 interface EndpointCandidate {
@@ -67,6 +84,19 @@ interface CodexFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
+  isCodexOauthPreset?: boolean;
+  selectedCodexAccountId?: string | null;
+  onCodexAccountSelect?: (accountId: string | null) => void;
+  onCodexAuthSelectionConfirmed?: () => void;
+  onCodexAuthSelectionInvalidated?: () => void;
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
+  codexOauthSelectionLabel?: string;
+  codexOauthNoneOptionLabel?: string;
+  codexOauthNoneOptionDescription?: string;
+  codexOauthAllowUnboundSelection?: boolean;
+  codexOauthAllowUnboundSelectionWithoutStatus?: boolean;
+  codexOauthNativeLoginOnly?: boolean;
+  codexOauthRequireExplicitSelection?: boolean;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -135,6 +165,12 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.baseInstructions
       ? { baseInstructions: seed.baseInstructions }
       : {}),
+    ...(seed?.reasoningLevels && seed.reasoningLevels.length > 0
+      ? { reasoningLevels: seed.reasoningLevels }
+      : {}),
+    ...(seed?.defaultReasoningLevel
+      ? { defaultReasoningLevel: seed.defaultReasoningLevel }
+      : {}),
   };
 }
 
@@ -158,9 +194,174 @@ function catalogRowsMatchModels(
         (incoming.supportsParallelToolCalls ?? null) &&
       (row.baseInstructions ?? "") === (incoming.baseInstructions ?? "") &&
       JSON.stringify(row.inputModalities ?? []) ===
-        JSON.stringify(incoming.inputModalities ?? [])
+        JSON.stringify(incoming.inputModalities ?? []) &&
+      JSON.stringify(row.reasoningLevels ?? []) ===
+        JSON.stringify(incoming.reasoningLevels ?? []) &&
+      (row.defaultReasoningLevel ?? "") ===
+        (incoming.defaultReasoningLevel ?? "")
     );
   });
+}
+
+// Reasoning effort levels Codex understands, in ascending depth order. The
+// backend drops unknown values, so the UI only offers canonical ones.
+const CODEX_REASONING_LEVELS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const;
+
+// Sentinel for the default-level Select: Radix Select forbids empty item
+// values, so "back to Auto" needs a non-empty value mapped to undefined.
+const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
+
+function ReasoningLevelsEditor({
+  levels,
+  defaultLevel,
+  onLevelsChange,
+  onDefaultLevelChange,
+}: {
+  levels?: string[];
+  defaultLevel?: string;
+  onLevelsChange: (levels: string[] | undefined) => void;
+  onDefaultLevelChange: (level: string | undefined) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const selected = (levels ?? []).filter((level) =>
+    (CODEX_REASONING_LEVELS as readonly string[]).includes(level),
+  );
+
+  const toggleLevel = (level: string) => {
+    const picked = selected.includes(level)
+      ? selected.filter((item) => item !== level)
+      : [...selected, level];
+    // Store in canonical ascending-depth order (not click order): the Codex
+    // picker and the generated catalog both follow array order.
+    const next = (CODEX_REASONING_LEVELS as readonly string[]).filter((item) =>
+      picked.includes(item),
+    );
+    onLevelsChange(next.length > 0 ? next : undefined);
+    if (defaultLevel && !next.includes(defaultLevel)) {
+      onDefaultLevelChange(undefined);
+    }
+  };
+
+  const triggerLabel =
+    selected.length > 0
+      ? selected.join(", ")
+      : t("codexConfig.reasoningLevelsNotSet", {
+          defaultValue: "Not set",
+        });
+
+  return (
+    <Popover modal open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-border-default bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus-visible:outline-none focus:border-border-default focus-visible:border-border-default focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span
+            className={cn(
+              "truncate",
+              selected.length === 0 && "text-muted-foreground",
+            )}
+          >
+            {triggerLabel}
+          </span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        avoidCollisions
+        collisionPadding={8}
+        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
+      >
+        <Command>
+          <CommandInput
+            placeholder={t("codexConfig.reasoningLevelsSearch", {
+              defaultValue: "Search reasoning levels...",
+            })}
+          />
+          <CommandList>
+            <CommandEmpty>
+              {t("codexConfig.reasoningLevelsEmpty", {
+                defaultValue: "No levels",
+              })}
+            </CommandEmpty>
+            <CommandGroup>
+              {CODEX_REASONING_LEVELS.map((level) => (
+                <CommandItem
+                  key={level}
+                  value={level}
+                  onSelect={() => toggleLevel(level)}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      selected.includes(level) ? "opacity-100" : "opacity-0",
+                    )}
+                  />
+                  <span className="flex-1">{level}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+        {selected.length > 0 && (
+          <div className="border-t border-border-default p-2">
+            <span className="text-xs text-muted-foreground">
+              {t("codexConfig.defaultReasoningLevelLabel", {
+                defaultValue: "Default level",
+              })}
+            </span>
+            <Select
+              value={defaultLevel ?? AUTO_DEFAULT_REASONING_LEVEL}
+              onValueChange={(value) =>
+                onDefaultLevelChange(
+                  value === AUTO_DEFAULT_REASONING_LEVEL ? undefined : value,
+                )
+              }
+            >
+              <SelectTrigger className="mt-1 h-8 w-full">
+                <SelectValue
+                  placeholder={t(
+                    "codexConfig.defaultReasoningLevelPlaceholder",
+                    { defaultValue: "Auto" },
+                  )}
+                />
+              </SelectTrigger>
+              {/* Must render above the enclosing z-[1000] popover: the
+                  default SelectContent z-[100] would hide the menu behind
+                  the panel when it flips upward. */}
+              <SelectContent className="z-[1100]">
+                <SelectItem value={AUTO_DEFAULT_REASONING_LEVEL}>
+                  {t("codexConfig.defaultReasoningLevelPlaceholder", {
+                    defaultValue: "Auto",
+                  })}
+                </SelectItem>
+                {selected.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {level}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function CodexFormFields({
@@ -177,6 +378,19 @@ export function CodexFormFields({
   websiteUrl,
   isPartner,
   partnerPromotionKey,
+  isCodexOauthPreset = false,
+  selectedCodexAccountId,
+  onCodexAccountSelect,
+  onCodexAuthSelectionConfirmed,
+  onCodexAuthSelectionInvalidated,
+  onManageAuthAccounts,
+  codexOauthSelectionLabel,
+  codexOauthNoneOptionLabel,
+  codexOauthNoneOptionDescription,
+  codexOauthAllowUnboundSelection,
+  codexOauthAllowUnboundSelectionWithoutStatus,
+  codexOauthNativeLoginOnly,
+  codexOauthRequireExplicitSelection,
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
@@ -236,6 +450,10 @@ export function CodexFormFields({
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
   const isChatFormat = apiFormat === "openai_chat";
   const isAnthropicFormat = apiFormat === "anthropic";
+  // Grok Build 复用本表单，但语义与 Codex 有差异（无模型映射、协议由 TOML 的
+  // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
+  // 对应词条在 grokBuild.* 下。
+  const isGrokBuild = appId === "grokbuild";
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -501,6 +719,31 @@ export function CodexFormFields({
 
   return (
     <>
+      {/* Codex OAuth 账号选择 */}
+      {isCodexOauthPreset && (
+        <CodexOAuthSection
+          mode="select"
+          selectedAccountId={selectedCodexAccountId}
+          onAccountSelect={onCodexAccountSelect}
+          onSelectionConfirmed={onCodexAuthSelectionConfirmed}
+          onSelectionInvalidated={onCodexAuthSelectionInvalidated}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("codex_oauth")
+              : undefined
+          }
+          selectionLabel={codexOauthSelectionLabel}
+          noneOptionLabel={codexOauthNoneOptionLabel}
+          noneOptionDescription={codexOauthNoneOptionDescription}
+          allowUnboundSelection={codexOauthAllowUnboundSelection}
+          allowUnboundSelectionWithoutStatus={
+            codexOauthAllowUnboundSelectionWithoutStatus
+          }
+          nativeLoginOnly={codexOauthNativeLoginOnly}
+          requireExplicitSelection={codexOauthRequireExplicitSelection}
+        />
+      )}
+
       {/* xAI OAuth 认证（Grok 订阅托管账号） */}
       {isXaiOauthPreset && (
         <XaiOAuthSection
@@ -510,7 +753,7 @@ export function CodexFormFields({
       )}
 
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isXaiOauthPreset && (
+      {!isCodexOauthPreset && !isXaiOauthPreset && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"
@@ -560,9 +803,15 @@ export function CodexFormFields({
               id="codexDefaultModel"
               value={codexModel}
               onChange={(event) => onModelChange(event.target.value)}
-              placeholder={t("codexConfig.defaultModelPlaceholder", {
-                defaultValue: "例如: gpt-5.6",
-              })}
+              placeholder={
+                isGrokBuild
+                  ? t("grokBuild.defaultModelPlaceholder", {
+                      defaultValue: "例如: grok-4.5",
+                    })
+                  : t("codexConfig.defaultModelPlaceholder", {
+                      defaultValue: "例如: gpt-5.6",
+                    })
+              }
               className="flex-1"
             />
             <Button
@@ -588,10 +837,15 @@ export function CodexFormFields({
             )}
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {t("codexConfig.defaultModelHint", {
-              defaultValue:
-                "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
-            })}
+            {isGrokBuild
+              ? t("grokBuild.defaultModelHint", {
+                  defaultValue:
+                    "Grok Build 默认请求的模型，随时可改，无需等待预设更新。",
+                })
+              : t("codexConfig.defaultModelHint", {
+                  defaultValue:
+                    "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
+                })}
           </p>
           {isDefaultModelOutsideCatalog && (
             <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-muted-foreground">
@@ -641,10 +895,15 @@ export function CodexFormFields({
           </CollapsibleTrigger>
           {!advancedExpanded && (
             <p className="mt-1 ml-1 text-xs text-muted-foreground">
-              {t("codexConfig.advancedSectionHint", {
-                defaultValue:
-                  "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
-              })}
+              {isGrokBuild
+                ? t("grokBuild.advancedSectionHint", {
+                    defaultValue:
+                      "包含上游格式、思考能力与自定义 User-Agent。使用 Chat Completions / Anthropic Messages 协议的供应商需开启路由接管才能使用。",
+                  })
+                : t("codexConfig.advancedSectionHint", {
+                    defaultValue:
+                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+                  })}
             </p>
           )}
           <CollapsibleContent className="space-y-3 pt-3">
@@ -787,10 +1046,15 @@ export function CodexFormFields({
                       })}
                     />
                     <p className="text-xs leading-relaxed text-muted-foreground">
-                      {t("codexConfig.maxOutputTokensHint", {
-                        defaultValue:
-                          "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
-                      })}
+                      {isGrokBuild
+                        ? t("grokBuild.maxOutputTokensHint", {
+                            defaultValue:
+                              "默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
+                          })
+                        : t("codexConfig.maxOutputTokensHint", {
+                            defaultValue:
+                              "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
+                          })}
                     </p>
                   </div>
                 )}
@@ -892,10 +1156,15 @@ export function CodexFormFields({
                       })}
                     </FormLabel>
                     <p className="text-xs leading-relaxed text-muted-foreground">
-                      {t("codexConfig.reasoningEffortHint", {
-                        defaultValue:
-                          "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
-                      })}
+                      {isGrokBuild
+                        ? t("grokBuild.reasoningEffortHint", {
+                            defaultValue:
+                              "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把请求中的 reasoning effort 转成上游 Chat 参数。",
+                          })
+                        : t("codexConfig.reasoningEffortHint", {
+                            defaultValue:
+                              "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
+                          })}
                     </p>
                   </div>
                   <Switch
@@ -945,7 +1214,7 @@ export function CodexFormFields({
                 {catalogRows.length > 0 && (
                   <div className="space-y-2">
                     {/* 列头：md+ 显示 */}
-                    <div className="hidden grid-cols-[1fr_1fr_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                    <div className="hidden grid-cols-[1fr_1fr_140px_1fr_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                       <span>
                         {t("codexConfig.catalogColumnDisplay", {
                           defaultValue: "菜单显示名",
@@ -961,13 +1230,18 @@ export function CodexFormFields({
                           defaultValue: "上下文窗口",
                         })}
                       </span>
+                      <span>
+                        {t("codexConfig.catalogColumnReasoning", {
+                          defaultValue: "思考等级",
+                        })}
+                      </span>
                       <span />
                     </div>
 
                     {catalogRows.map((row, index) => (
                       <div
                         key={row.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
+                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_1fr_36px]"
                       >
                         <Input
                           value={row.displayName ?? ""}
@@ -1041,6 +1315,20 @@ export function CodexFormFields({
                           aria-label={t("codexConfig.catalogColumnContext", {
                             defaultValue: "上下文窗口",
                           })}
+                        />
+                        <ReasoningLevelsEditor
+                          levels={row.reasoningLevels}
+                          defaultLevel={row.defaultReasoningLevel}
+                          onLevelsChange={(levels) =>
+                            handleUpdateCatalogRow(index, {
+                              reasoningLevels: levels,
+                            })
+                          }
+                          onDefaultLevelChange={(level) =>
+                            handleUpdateCatalogRow(index, {
+                              defaultReasoningLevel: level,
+                            })
+                          }
                         />
                         <Button
                           type="button"

@@ -4,8 +4,6 @@
 //! primitives in [`super::s3`]. Artifact set: `db.sql` + `skills.zip`.
 
 use std::collections::BTreeMap;
-use std::future::Future;
-use std::sync::OnceLock;
 
 use chrono::Utc;
 use serde_json::Value;
@@ -14,6 +12,7 @@ use crate::error::AppError;
 use crate::services::s3::{self, S3Credentials};
 use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 
+pub(crate) use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
     validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
@@ -21,19 +20,9 @@ use super::sync_protocol::{
     PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
-// ─── Sync lock ───────────────────────────────────────────────
-
-pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
-pub async fn run_with_sync_lock<T, Fut>(operation: Fut) -> Result<T, AppError>
-where
-    Fut: Future<Output = Result<T, AppError>>,
-{
-    let _guard = sync_mutex().lock().await;
-    operation.await
+#[cfg(test)]
+pub(crate) fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
+    super::sync_protocol::sync_mutex()
 }
 
 // ─── Public API ──────────────────────────────────────────────
