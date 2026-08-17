@@ -29,28 +29,6 @@ function pickCodexApiKey(
   return extractCodexExperimentalBearerToken(configText) || "";
 }
 
-// Bearer-token mode (preserveCodexOfficialAuthOnSwitch enabled): the config's
-// experimental_bearer_token is the per-provider authoritative key, while the
-// shared auth.json OPENAI_API_KEY may be stale — it can hold another provider's
-// key that was preserved across switches (auth.json is a single shared slot
-// with no provider identity). Lift the bearer into auth.OPENAI_API_KEY so the
-// form displays — and on save persists — the correct key, instead of letting
-// the stale shared key silently converge providers that share a base URL
-// (#6414). Mirrors the backend restore_codex_provider_token_for_backfill lift.
-// No-op when the config has no bearer: default mode keeps auth.json as the
-// active key slot (in sync with the current provider), and manual live auth
-// edits are preserved exactly.
-function reconcileCodexAuthKey(
-  auth: Record<string, unknown>,
-  configText: string,
-): Record<string, unknown> {
-  const bearer = extractCodexExperimentalBearerToken(configText);
-  if (bearer && auth.OPENAI_API_KEY !== bearer) {
-    return { ...auth, OPENAI_API_KEY: bearer };
-  }
-  return auth;
-}
-
 // 目录行 load 映射（隐藏字段白名单重建）。抽成可导出的纯函数，与
 // normalizeCodexCatalogModelsForSave 成对做 load→save 回环测试——
 // 任一侧丢字段都会静默清空供应商的逐模型声明（reasoningLevels、
@@ -147,10 +125,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
           : "";
       setCodexConfigState(configStr);
 
-      // Set auth.json: in bearer-token mode, reconcile the shared auth.json
-      // OPENAI_API_KEY (which may hold another provider's stale key) with the
-      // config's per-provider experimental_bearer_token (#6414).
-      const auth = reconcileCodexAuthKey((config as any).auth || {}, configStr);
+      // 设置 auth.json
+      const auth = (config as any).auth || {};
       setCodexAuthState(JSON.stringify(auth, null, 2));
 
       const modelCatalog = (config as any).modelCatalog;
@@ -324,11 +300,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       config: string,
       modelCatalogModels: CodexCatalogModel[] = [],
     ) => {
-      // Mirror init: in bearer-token mode, reconcile auth with the config's
-      // bearer so a stale shared key does not keep polluting the form after a
-      // preset switch (#6414).
-      const reconciledAuth = reconcileCodexAuthKey(auth, config);
-      const authString = JSON.stringify(reconciledAuth, null, 2);
+      const authString = JSON.stringify(auth, null, 2);
       setCodexAuth(authString);
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
@@ -336,7 +308,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
 
-      setCodexApiKey(pickCodexApiKey(reconciledAuth, config));
+      setCodexApiKey(pickCodexApiKey(auth, config));
     },
     [setCodexAuth, setCodexConfig, setCodexCatalogModels],
   );
