@@ -142,6 +142,9 @@ impl ConfigService {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
             }
+            AppType::DeepSeekHarness => {
+                // DeepSeek Harness providers are synced through ProviderService.
+            }
         }
 
         Ok(())

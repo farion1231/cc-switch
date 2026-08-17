@@ -531,7 +531,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => false,
     }
 }
 
@@ -606,7 +607,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => Ok(settings.clone()),
     }
 }
 
@@ -666,7 +668,8 @@ fn apply_common_config_to_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => Ok(settings.clone()),
     }
 }
 
@@ -1384,6 +1387,18 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::DeepSeekHarness => {
+            let config = serde_json::from_value::<
+                crate::deepseek_harness_config::DeepSeekHarnessProviderConfig,
+            >(provider.settings_config.clone())
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "Invalid DeepSeek Harness provider '{}': {error}",
+                    provider.id
+                ))
+            })?;
+            crate::deepseek_harness_config::set_provider(&provider.id, &config)?;
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -1665,6 +1680,10 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
+        AppType::DeepSeekHarness => Err(AppError::InvalidInput(
+            "DeepSeek Harness settings are read through its dedicated configuration module"
+                .to_string(),
+        )),
     }
 }
 
@@ -1774,7 +1793,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::DeepSeekHarness => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

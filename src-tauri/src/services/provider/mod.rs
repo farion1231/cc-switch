@@ -5501,6 +5501,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::DeepSeekHarness => crate::deepseek_harness_config::remove_provider()?,
                     _ => {}
                 }
             }
@@ -5569,6 +5570,9 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::DeepSeekHarness => {
+                crate::deepseek_harness_config::remove_provider()?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -5912,6 +5916,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::DeepSeekHarness => crate::deepseek_harness_config::remove_provider(),
                     _ => Ok(()),
                 };
 
@@ -6199,6 +6204,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::DeepSeekHarness => Ok(String::new()),
         }
     }
 
@@ -6217,6 +6223,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::DeepSeekHarness => Ok(String::new()),
         }
     }
 
@@ -6982,6 +6989,18 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::DeepSeekHarness => {
+                serde_json::from_value::<
+                    crate::deepseek_harness_config::DeepSeekHarnessProviderConfig,
+                >(provider.settings_config.clone())
+                .map_err(|error| {
+                    AppError::localized(
+                        "provider.deepseek_harness.settings.invalid",
+                        format!("DeepSeek Harness 配置无效：{error}"),
+                        format!("Invalid DeepSeek Harness configuration: {error}"),
+                    )
+                })?;
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -7189,7 +7208,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::DeepSeekHarness => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config
