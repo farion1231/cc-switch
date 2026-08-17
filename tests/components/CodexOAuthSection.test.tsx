@@ -254,6 +254,55 @@ describe("CodexOAuthSection", () => {
     expect(onAccountSelect).toHaveBeenCalledWith(null);
   });
 
+  it("shows the current-login option as disabled while availability loads", async () => {
+    const user = userEvent.setup();
+    render(
+      <CodexOAuthSection
+        mode="select"
+        selectedAccountId={null}
+        onAccountSelect={vi.fn()}
+        noneOptionLabel="Follow Codex login"
+        allowUnboundSelection
+        unboundSelectionLoading
+        requireExplicitSelection
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox"));
+    const option = await screen.findByRole("option", {
+      name: /Follow Codex login.*正在检查 Codex 登录是否可用/,
+    });
+    expect(option).toHaveAttribute("aria-disabled", "true");
+    expect(option.querySelector(".animate-spin")).toBeInTheDocument();
+  });
+
+  it("explains an availability error and retries it", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(
+      <CodexOAuthSection
+        mode="select"
+        selectedAccountId={null}
+        onAccountSelect={vi.fn()}
+        noneOptionLabel="Follow Codex login"
+        allowUnboundSelection
+        unboundSelectionError
+        onUnboundSelectionRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "无法检查 Codex 登录是否可用，请重试。",
+    );
+    await user.click(screen.getByRole("button", { name: "重试" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("combobox"));
+    expect(
+      await screen.findByRole("option", { name: "Follow Codex login" }),
+    ).toHaveAttribute("aria-disabled", "true");
+  });
+
   it("keeps an offline unbound choice available when account status fails", async () => {
     const user = userEvent.setup();
     const authResult = mocks.useCodexOauth();

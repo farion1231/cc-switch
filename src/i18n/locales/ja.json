@@ -1410,6 +1410,8 @@
     "officialAccountPlaceholder": "ログイン方法を選択",
     "addOrManageAccounts": "ChatGPT アカウントを追加または管理…",
     "explicitSelectionRequired": "ログイン方法を選択してください",
+    "nativeLoginAvailabilityLoading": "Codex ログインが利用可能か確認しています...",
+    "nativeLoginAvailabilityLoadFailed": "Codex ログインが利用可能か確認できませんでした。再試行してください。",
     "useDefaultAccount": "デフォルトアカウントを使用",
     "noneOptionLabel": "Codex のログインに追従",
     "reauthTitle": "再ログインが必要なアカウントがあります",

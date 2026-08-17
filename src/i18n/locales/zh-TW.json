@@ -1411,6 +1411,8 @@
     "officialAccountPlaceholder": "請選擇登入方式",
     "addOrManageAccounts": "新增或管理 ChatGPT 帳號…",
     "explicitSelectionRequired": "請先選擇登入方式",
+    "nativeLoginAvailabilityLoading": "正在檢查 Codex 登入是否可用...",
+    "nativeLoginAvailabilityLoadFailed": "無法檢查 Codex 登入是否可用，請重試。",
     "useDefaultAccount": "使用預設帳號",
     "noneOptionLabel": "跟隨 Codex 登入",
     "reauthTitle": "部分帳號需要重新登入",

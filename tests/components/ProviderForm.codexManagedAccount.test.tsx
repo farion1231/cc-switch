@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -41,6 +47,9 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
     onSelectionConfirmed,
     onSelectionInvalidated,
     allowUnboundSelection = true,
+    unboundSelectionLoading = false,
+    unboundSelectionError = false,
+    onUnboundSelectionRetry,
     nativeLoginOnly = false,
     requireExplicitSelection = false,
   }: {
@@ -48,6 +57,9 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
     onSelectionConfirmed?: () => void;
     onSelectionInvalidated?: () => void;
     allowUnboundSelection?: boolean;
+    unboundSelectionLoading?: boolean;
+    unboundSelectionError?: boolean;
+    onUnboundSelectionRetry?: () => void;
     nativeLoginOnly?: boolean;
     requireExplicitSelection?: boolean;
   }) => (
@@ -57,6 +69,12 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
       </output>
       <output data-testid="explicit-selection-required">
         {requireExplicitSelection ? "true" : "false"}
+      </output>
+      <output data-testid="native-login-loading">
+        {unboundSelectionLoading ? "true" : "false"}
+      </output>
+      <output data-testid="native-login-error">
+        {unboundSelectionError ? "true" : "false"}
       </output>
       <button
         type="button"
@@ -71,6 +89,7 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
       {allowUnboundSelection && (
         <button
           type="button"
+          disabled={unboundSelectionLoading || unboundSelectionError}
           onClick={() => {
             onSelectionConfirmed?.();
             onAccountSelect?.(null);
@@ -78,6 +97,14 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
         >
           select-native-login
         </button>
+      )}
+      {unboundSelectionError && (
+        <div role="alert">
+          native-login-availability-error
+          <button type="button" onClick={onUnboundSelectionRetry}>
+            retry-native-login-lookup
+          </button>
+        </div>
       )}
       <button
         type="button"
@@ -173,8 +200,10 @@ vi.mock("@/lib/query", async (importOriginal) => {
   };
 });
 
-function renderCodexForm(onSubmit: (values: ProviderFormValues) => void) {
-  const queryClient = createTestQueryClient();
+function renderCodexForm(
+  onSubmit: (values: ProviderFormValues) => void,
+  queryClient = createTestQueryClient(),
+) {
   return render(
     <QueryClientProvider client={queryClient}>
       <ProviderForm
@@ -204,6 +233,14 @@ function renderClaudeCodexForm(onSubmit: (values: ProviderFormValues) => void) {
         }}
       />
     </QueryClientProvider>,
+  );
+}
+
+async function waitForNativeLoginLookup() {
+  await waitFor(() =>
+    expect(screen.getByTestId("native-login-loading")).toHaveTextContent(
+      "false",
+    ),
   );
 }
 
@@ -260,6 +297,7 @@ describe("ProviderForm Codex Official managed account", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /OpenAI Official/ }));
     await screen.findByRole("button", { name: "select-managed-account" });
+    await waitForNativeLoginLookup();
     expect(
       screen.queryByRole("button", { name: "select-native-login" }),
     ).not.toBeInTheDocument();
@@ -277,6 +315,7 @@ describe("ProviderForm Codex Official managed account", () => {
     renderCodexForm(onSubmit);
 
     fireEvent.click(screen.getByRole("button", { name: /OpenAI Official/ }));
+    await waitForNativeLoginLookup();
     const nativeLogin = await screen.findByRole("button", {
       name: "select-native-login",
     });
@@ -287,6 +326,80 @@ describe("ProviderForm Codex Official managed account", () => {
     const submitted = onSubmit.mock.calls[0][0] as ProviderFormValues;
     expect(submitted.presetCategory).toBe("official");
     expect(submitted.meta?.authBinding).toBeUndefined();
+  });
+
+  it("rechecks a native choice safely and offers retry on failure", async () => {
+    let lookupState: "ready" | "pending" | "occupied" = "ready";
+    let rejectPendingLookup!: (error: Error) => void;
+    providerApiMocks.getAll.mockImplementation((appId: string) => {
+      if (appId !== "codex" || lookupState === "ready") {
+        return Promise.resolve({});
+      }
+      if (lookupState === "occupied") {
+        return Promise.resolve({ "codex-official": {} });
+      }
+      return new Promise((_, reject) => {
+        rejectPendingLookup = reject;
+      });
+    });
+    const queryClient = createTestQueryClient();
+    const onSubmit = vi.fn();
+    renderCodexForm(onSubmit, queryClient);
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenAI Official/ }));
+    await waitForNativeLoginLookup();
+    fireEvent.click(
+      screen.getByRole("button", { name: "select-native-login" }),
+    );
+
+    lookupState = "pending";
+    act(() => {
+      void queryClient.invalidateQueries({
+        queryKey: ["providers", "codex", "native-login-exists"],
+      });
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("native-login-loading")).toHaveTextContent(
+        "true",
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "select-native-login" }),
+    ).toBeDisabled();
+
+    act(() => rejectPendingLookup(new Error("refetch failed")));
+    await waitFor(() =>
+      expect(screen.getByTestId("native-login-error")).toHaveTextContent(
+        "true",
+      ),
+    );
+    expect(screen.getByTestId("explicit-selection-required")).toHaveTextContent(
+      "false",
+    );
+    expect(
+      screen.getByRole("button", { name: "select-native-login" }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        "无法检查 Codex 登录是否可用，请重试。",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    lookupState = "occupied";
+    fireEvent.click(
+      screen.getByRole("button", { name: "retry-native-login-lookup" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "select-native-login" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("explicit-selection-required")).toHaveTextContent(
+      "true",
+    );
   });
 
   it("does not silently create the current-login card before a choice", async () => {
@@ -333,8 +446,14 @@ describe("ProviderForm Codex Official managed account", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("allows the fixed Official card to switch to a managed account", async () => {
+  it("ignores cached lookup failures for the fixed Official card", async () => {
     const queryClient = createTestQueryClient();
+    await expect(
+      queryClient.fetchQuery({
+        queryKey: ["providers", "codex", "native-login-exists"],
+        queryFn: () => Promise.reject(new Error("cached lookup failure")),
+      }),
+    ).rejects.toThrow("cached lookup failure");
     const onSubmit = vi.fn();
     render(
       <QueryClientProvider client={queryClient}>
@@ -354,6 +473,7 @@ describe("ProviderForm Codex Official managed account", () => {
     );
 
     expect(screen.getByTestId("native-login-only")).toHaveTextContent("false");
+    expect(screen.getByTestId("native-login-error")).toHaveTextContent("false");
     expect(
       screen.getByRole("button", { name: "select-managed-account" }),
     ).toBeEnabled();
@@ -411,7 +531,7 @@ describe("ProviderForm Codex Official managed account", () => {
     });
   });
 
-  it("does not offer the current-login option on a managed Official card", () => {
+  it("does not offer the current-login option on a managed Official card", async () => {
     const queryClient = createTestQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
@@ -439,6 +559,7 @@ describe("ProviderForm Codex Official managed account", () => {
     );
 
     expect(screen.getByTestId("native-login-only")).toHaveTextContent("false");
+    await waitForNativeLoginLookup();
     expect(
       screen.queryByRole("button", { name: "select-native-login" }),
     ).not.toBeInTheDocument();
@@ -473,6 +594,7 @@ describe("ProviderForm Codex Official managed account", () => {
       </QueryClientProvider>,
     );
 
+    await waitForNativeLoginLookup();
     fireEvent.click(
       await screen.findByRole("button", { name: "select-native-login" }),
     );
@@ -510,6 +632,7 @@ describe("ProviderForm Codex Official managed account", () => {
     );
 
     expect(screen.getByTestId("native-login-only")).toHaveTextContent("false");
+    await waitForNativeLoginLookup();
     expect(
       screen.queryByRole("button", { name: "select-native-login" }),
     ).not.toBeInTheDocument();
@@ -553,6 +676,7 @@ describe("ProviderForm Codex Official managed account", () => {
       </QueryClientProvider>,
     );
 
+    await waitForNativeLoginLookup();
     const nativeLogin = await screen.findByRole("button", {
       name: "select-native-login",
     });

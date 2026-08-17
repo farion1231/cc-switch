@@ -95,6 +95,9 @@ interface CodexFormFieldsProps {
   codexOauthNoneOptionDescription?: string;
   codexOauthAllowUnboundSelection?: boolean;
   codexOauthAllowUnboundSelectionWithoutStatus?: boolean;
+  codexOauthUnboundSelectionLoading?: boolean;
+  codexOauthUnboundSelectionError?: boolean;
+  onCodexOauthUnboundSelectionRetry?: () => void;
   codexOauthNativeLoginOnly?: boolean;
   codexOauthRequireExplicitSelection?: boolean;
 
@@ -389,6 +392,9 @@ export function CodexFormFields({
   codexOauthNoneOptionDescription,
   codexOauthAllowUnboundSelection,
   codexOauthAllowUnboundSelectionWithoutStatus,
+  codexOauthUnboundSelectionLoading,
+  codexOauthUnboundSelectionError,
+  onCodexOauthUnboundSelectionRetry,
   codexOauthNativeLoginOnly,
   codexOauthRequireExplicitSelection,
   shouldShowSpeedTest,
@@ -739,6 +745,9 @@ export function CodexFormFields({
           allowUnboundSelectionWithoutStatus={
             codexOauthAllowUnboundSelectionWithoutStatus
           }
+          unboundSelectionLoading={codexOauthUnboundSelectionLoading}
+          unboundSelectionError={codexOauthUnboundSelectionError}
+          onUnboundSelectionRetry={onCodexOauthUnboundSelectionRetry}
           nativeLoginOnly={codexOauthNativeLoginOnly}
           requireExplicitSelection={codexOauthRequireExplicitSelection}
         />

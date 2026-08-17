@@ -56,6 +56,12 @@ interface CodexOAuthSectionProps {
   allowUnboundSelection?: boolean;
   /** 不绑定选项不依赖托管账号状态，可在状态加载失败时继续选择 */
   allowUnboundSelectionWithoutStatus?: boolean;
+  /** 是否仍在确认不绑定选项可用；加载期间保留选项但禁止选择 */
+  unboundSelectionLoading?: boolean;
+  /** 无法确认不绑定选项是否可用 */
+  unboundSelectionError?: boolean;
+  /** 重新确认不绑定选项是否可用 */
+  onUnboundSelectionRetry?: () => void;
   /** 固定展示原生 Codex 当前登录，不允许改绑 */
   nativeLoginOnly?: boolean;
   /** 新建官方卡时不预选登录方式，要求用户明确选择 */
@@ -86,6 +92,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   noneOptionDescription,
   allowUnboundSelection = true,
   allowUnboundSelectionWithoutStatus = false,
+  unboundSelectionLoading = false,
+  unboundSelectionError = false,
+  onUnboundSelectionRetry,
   nativeLoginOnly = false,
   requireExplicitSelection = false,
   fastModeEnabled = false,
@@ -203,6 +212,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       (allowUnboundSelection
         ? (noneOptionLabel ?? t("codexOauth.useDefaultAccount", "使用默认账号"))
         : t("codexOauth.selectAccountPlaceholder", "选择一个 ChatGPT 账号"));
+  const unboundSelectionUnavailable =
+    unboundSelectionLoading || unboundSelectionError;
 
   const accountSelect = (isStatusSuccess ||
     (allowUnboundSelection && allowUnboundSelectionWithoutStatus)) &&
@@ -304,10 +315,18 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             {allowUnboundSelection && (
               <SelectItem
                 value="none"
+                disabled={unboundSelectionUnavailable}
                 className="min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  <span aria-hidden className="h-4 w-4 shrink-0" />
+                  {unboundSelectionLoading ? (
+                    <Loader2
+                      aria-hidden
+                      className="h-4 w-4 shrink-0 animate-spin text-muted-foreground"
+                    />
+                  ) : (
+                    <span aria-hidden className="h-4 w-4 shrink-0" />
+                  )}
                   <span className="shrink-0 text-sm font-medium leading-5">
                     {noneOptionLabel ??
                       t("codexOauth.useDefaultAccount", "使用默认账号")}
@@ -315,6 +334,14 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                   {noneOptionDescription && (
                     <span className="min-w-0 truncate text-sm leading-5 text-muted-foreground">
                       {noneOptionDescription}
+                    </span>
+                  )}
+                  {unboundSelectionLoading && (
+                    <span className="sr-only">
+                      {t(
+                        "codexOauth.nativeLoginAvailabilityLoading",
+                        "正在检查 Codex 登录是否可用...",
+                      )}
                     </span>
                   )}
                 </div>
@@ -381,6 +408,34 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             <RefreshCw className="mr-1 h-3.5 w-3.5" />
             {t("codexOauth.retry", "重试")}
           </Button>
+        </div>
+      )}
+
+      {unboundSelectionError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            {t(
+              "codexOauth.nativeLoginAvailabilityLoadFailed",
+              "无法检查 Codex 登录是否可用，请重试。",
+            )}
+          </span>
+          {onUnboundSelectionRetry && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 shrink-0"
+              disabled={unboundSelectionLoading}
+              onClick={onUnboundSelectionRetry}
+            >
+              <RefreshCw className="mr-1 h-3.5 w-3.5" />
+              {t("codexOauth.retry", "重试")}
+            </Button>
+          )}
         </div>
       )}
 

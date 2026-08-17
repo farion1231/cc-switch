@@ -1410,6 +1410,8 @@
     "officialAccountPlaceholder": "请选择登录方式",
     "addOrManageAccounts": "添加或管理 ChatGPT 账号…",
     "explicitSelectionRequired": "请先选择登录方式",
+    "nativeLoginAvailabilityLoading": "正在检查 Codex 登录是否可用...",
+    "nativeLoginAvailabilityLoadFailed": "无法检查 Codex 登录是否可用，请重试。",
     "useDefaultAccount": "使用默认账号",
     "noneOptionLabel": "跟随 Codex 登录",
     "reauthTitle": "部分账号需要重新登录",

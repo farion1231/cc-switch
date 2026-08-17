@@ -308,22 +308,40 @@ function ProviderFormFull({
   const isEditMode = Boolean(initialData);
   const isCodexNativeLoginProvider =
     appId === "codex" && providerId === CODEX_OFFICIAL_PROVIDER_ID;
+  const shouldCheckCodexNativeLoginProvider =
+    appId === "codex" && !isCodexNativeLoginProvider;
   const startsAsLegacyUnboundCodexOfficial =
     appId === "codex" &&
     isEditMode &&
     providerId !== CODEX_OFFICIAL_PROVIDER_ID &&
     initialData?.category === "official" &&
     !resolveManagedAccountId(initialData.meta, "codex_oauth")?.trim();
-  const { data: codexNativeLoginProviderExists = true } = useQuery({
+  const {
+    data: codexNativeLoginProviderExists,
+    isError: didCodexNativeLoginProviderFail,
+    isFetching: isCodexNativeLoginProviderFetching,
+    refetch: refetchCodexNativeLoginProvider,
+  } = useQuery({
     queryKey: ["providers", "codex", "native-login-exists"],
-    enabled: appId === "codex" && !isCodexNativeLoginProvider,
+    enabled: shouldCheckCodexNativeLoginProvider,
     queryFn: async () => {
       const providers = await providersApi.getAll("codex");
       return Boolean(providers[CODEX_OFFICIAL_PROVIDER_ID]);
     },
   });
+  const isCodexNativeLoginProviderLoading =
+    shouldCheckCodexNativeLoginProvider && isCodexNativeLoginProviderFetching;
+  const isCodexNativeLoginProviderError =
+    shouldCheckCodexNativeLoginProvider &&
+    didCodexNativeLoginProviderFail &&
+    !isCodexNativeLoginProviderLoading;
+  const isCodexNativeLoginProviderUnavailable =
+    isCodexNativeLoginProviderLoading || isCodexNativeLoginProviderError;
+  const isCodexNativeLoginProviderMissing =
+    codexNativeLoginProviderExists === false &&
+    !isCodexNativeLoginProviderUnavailable;
   const canCreateCodexNativeLoginProvider =
-    appId === "codex" && !isEditMode && !codexNativeLoginProviderExists;
+    appId === "codex" && !isEditMode && isCodexNativeLoginProviderMissing;
   const queryClient = useQueryClient();
   const { data: settingsData } = useSettingsQuery();
   const showCommonConfigNotice =
@@ -823,9 +841,23 @@ function ProviderFormFull({
   const canSelectCodexNativeLogin =
     isCodexNativeLoginProvider ||
     canCreateCodexNativeLoginProvider ||
-    (isEditMode && isCodexOfficialProvider && !codexNativeLoginProviderExists);
+    (isEditMode &&
+      isCodexOfficialProvider &&
+      isCodexNativeLoginProviderMissing);
+  const showCodexNativeLoginOption =
+    canSelectCodexNativeLogin || isCodexNativeLoginProviderUnavailable;
   const requiresExplicitCodexOfficialSelection =
-    isCodexOfficialProvider && !hasExplicitCodexOfficialSelection;
+    isCodexOfficialProvider &&
+    (!hasExplicitCodexOfficialSelection ||
+      (!selectedCodexAccountId &&
+        !canSelectCodexNativeLogin &&
+        !isCodexNativeLoginProviderUnavailable));
+  const hasUnconfirmedCodexNativeLoginSelection =
+    isCodexOfficialProvider &&
+    hasExplicitCodexOfficialSelection &&
+    !selectedCodexAccountId &&
+    !canSelectCodexNativeLogin &&
+    isCodexNativeLoginProviderUnavailable;
   const requiresCodexOauthLogin =
     isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound;
 
@@ -1293,6 +1325,18 @@ function ProviderFormFull({
         t("codexOauth.explicitSelectionRequired", {
           defaultValue: "请先选择登录方式",
         }),
+      );
+      return;
+    }
+    if (hasUnconfirmedCodexNativeLoginSelection) {
+      toast.error(
+        isCodexNativeLoginProviderError
+          ? t("codexOauth.nativeLoginAvailabilityLoadFailed", {
+              defaultValue: "无法检查 Codex 登录是否可用，请重试。",
+            })
+          : t("codexOauth.nativeLoginAvailabilityLoading", {
+              defaultValue: "正在检查 Codex 登录是否可用...",
+            }),
       );
       return;
     }
@@ -2482,9 +2526,16 @@ function ProviderFormFull({
               codexOauthNoneOptionDescription={t(
                 "codex.followCodexLoginDescription",
               )}
-              codexOauthAllowUnboundSelection={canSelectCodexNativeLogin}
+              codexOauthAllowUnboundSelection={showCodexNativeLoginOption}
               codexOauthAllowUnboundSelectionWithoutStatus={
                 canSelectCodexNativeLogin
+              }
+              codexOauthUnboundSelectionLoading={
+                isCodexNativeLoginProviderLoading
+              }
+              codexOauthUnboundSelectionError={isCodexNativeLoginProviderError}
+              onCodexOauthUnboundSelectionRetry={() =>
+                void refetchCodexNativeLoginProvider()
               }
               codexOauthRequireExplicitSelection={
                 requiresExplicitCodexOfficialSelection

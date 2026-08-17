@@ -1410,6 +1410,8 @@
     "officialAccountPlaceholder": "Choose a sign-in method",
     "addOrManageAccounts": "Add or manage ChatGPT accounts…",
     "explicitSelectionRequired": "Choose a sign-in method",
+    "nativeLoginAvailabilityLoading": "Checking Codex login availability...",
+    "nativeLoginAvailabilityLoadFailed": "Could not check Codex login availability. Please retry.",
     "useDefaultAccount": "Use default account",
     "noneOptionLabel": "Follow Codex login",
     "reauthTitle": "Some accounts need to sign in again",
