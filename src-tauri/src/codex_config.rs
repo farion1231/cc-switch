@@ -2846,9 +2846,20 @@ pub fn prepare_codex_provider_live_config(
 /// `auth.OPENAI_API_KEY` so the stored provider keeps its canonical shape
 /// and generated live tokens don't leak into stored provider TOML.
 ///
-/// Only intervenes when the live config actually carries a bearer token —
-/// otherwise the function is a no-op so the caller's normal backfill path
-/// (which keeps live `auth` as the authoritative source) is unaffected.
+/// When the live config carries a per-provider `experimental_bearer_token`,
+/// that token is provider-scoped and safe to lift back into the stored auth.
+///
+/// When it does NOT (the default `preserve_codex_official_auth_on_switch =
+/// false` mode keeps the active key in the shared `auth.json` instead), the
+/// live `auth` is a single-slot file with no provider identity. It may hold a
+/// *different* provider's key after a backup/restore cycle, an in-app ChatGPT
+/// login, or any current/live divergence. Adopting it here would overwrite
+/// this provider's stored key with another's, so keys silently converge across
+/// providers that share a base URL (#6414). In that case keep the provider's
+/// own stored `auth` instead — the live `config.toml` changes below the auth
+/// slot are still captured by the caller. This mirrors the #6277 restore-side
+/// rule of never letting the shared live credential clobber per-provider
+/// storage.
 pub fn restore_codex_provider_token_for_backfill(
     settings: &mut Value,
     template_settings: &Value,
@@ -2862,6 +2873,18 @@ pub fn restore_codex_provider_token_for_backfill(
     };
 
     let Some(token) = extract_codex_experimental_bearer_token(&config_text) else {
+        // No per-provider bearer token: do NOT adopt the shared live
+        // `auth.json` — it may belong to another provider. Preserve this
+        // provider's own stored auth so its key is not silently overwritten.
+        if let Some(obj) = settings.as_object_mut() {
+            if let Some(stored_auth) = template_settings
+                .get("auth")
+                .filter(|value| value.is_object())
+                .cloned()
+            {
+                obj.insert("auth".to_string(), stored_auth);
+            }
+        }
         return Ok(());
     };
 
@@ -3734,6 +3757,78 @@ wire_api = "responses"
                 .and_then(|v| v.get("vendor_beta"))
                 .is_some(),
             "backfill should not rewrite user-selected provider tables"
+        );
+    }
+
+    /// Regression for #6414: two third-party Codex providers share a base URL
+    /// but use different API keys. In the default `preserve_codex_official_auth_on_switch
+    /// = false` mode the active key lives in the *shared* `auth.json`, not in a
+    /// per-provider `experimental_bearer_token`. When a switch-away backfill reads a
+    /// live `auth.json` that happens to hold ANOTHER provider's key (after a
+    /// backup/restore cycle, an in-app ChatGPT login, or a current/live divergence),
+    /// the outgoing provider's stored key must NOT be overwritten with that other
+    /// key — otherwise keys silently converge across providers.
+    #[test]
+    fn backfill_keeps_provider_own_key_when_live_auth_holds_another_key() {
+        // Provider A's stored auth carries its own key.
+        let template_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-A" },
+            "config": "model_provider = \"custom\"\nmodel = \"model-A\"\n"
+        });
+
+        // Live snapshot: shared auth.json holds provider B's key, and the
+        // config has no per-provider experimental_bearer_token (default mode).
+        let mut live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-B" },
+            "config": "model_provider = \"custom\"\nmodel = \"model-A\"\n"
+        });
+
+        restore_codex_settings_for_backfill(&mut live_settings, &template_settings, true)
+            .expect("backfill");
+
+        assert_eq!(
+            live_settings
+                .get("auth")
+                .and_then(|a| a.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("sk-A"),
+            "backfill must keep the provider's own stored key, not adopt the shared live auth.json"
+        );
+    }
+
+    /// Positive control for #6414: when the live config DOES carry a per-provider
+    /// `experimental_bearer_token`, the backfill still lifts it back into the
+    /// stored `auth.OPENAI_API_KEY` (this path was already correct).
+    #[test]
+    fn backfill_restores_key_from_live_bearer_token_when_present() {
+        let template_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-A" },
+            "config": "model_provider = \"custom\"\nmodel = \"model-A\"\n"
+        });
+
+        let mut live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-B" },
+            "config": "model_provider = \"custom\"\nmodel = \"model-A\"\nexperimental_bearer_token = \"sk-A\"\n"
+        });
+
+        restore_codex_settings_for_backfill(&mut live_settings, &template_settings, true)
+            .expect("backfill");
+
+        assert_eq!(
+            live_settings
+                .get("auth")
+                .and_then(|a| a.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("sk-A"),
+            "backfill must lift the live experimental_bearer_token into the stored auth"
+        );
+        assert!(
+            !live_settings
+                .get("config")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("experimental_bearer_token"),
+            "backfill must strip the lifted bearer token from the stored config"
         );
     }
 
