@@ -709,6 +709,109 @@ fn test_parse_and_merge_config_deepseek_harness() {
 }
 
 #[test]
+fn test_build_deepseek_harness_provider_preserves_native_config_with_url_overrides() {
+    use super::provider::build_provider_from_request;
+
+    let config = serde_json::json!({
+        "apiKey": "sk-from-config",
+        "baseURL": "https://config.example",
+        "defaultModel": "config-model",
+        "apiKeyEnv": "CUSTOM_DEEPSEEK_KEY",
+        "thinking": "enabled",
+        "reasoningEffort": "low",
+        "defaultReasoningEffort": "max",
+        "maxTokens": 16384,
+        "defaultContextWindow": 131072,
+        "models": [{
+            "id": "config-model",
+            "name": "Config model",
+            "contextWindow": 131072,
+            "maxTokens": 16384
+        }],
+        "retryPolicy": { "mode": "normal", "maxRetries": 4 },
+        "futureNativeField": { "enabled": true }
+    })
+    .to_string();
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("deepseek-harness".to_string()),
+        name: Some("DeepSeek Harness".to_string()),
+        api_key: Some("sk-from-url".to_string()),
+        endpoint: Some("https://url.example,https://fallback.example".to_string()),
+        model: Some("url-model".to_string()),
+        config: Some(BASE64_STANDARD.encode(config.as_bytes())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).expect("merge Harness config");
+    let provider = build_provider_from_request(&AppType::DeepSeekHarness, &merged)
+        .expect("build Harness provider");
+    let settings = provider.settings_config;
+
+    assert_eq!(settings["apiKey"], "sk-from-url");
+    assert_eq!(settings["baseURL"], "https://url.example");
+    assert_eq!(settings["defaultModel"], "url-model");
+    let credential_ref = settings["apiKeyEnv"]
+        .as_str()
+        .expect("generated credential ref");
+    assert!(credential_ref.starts_with("CC_SWITCH_DSH_IMPORT_"));
+    assert_ne!(credential_ref, "CUSTOM_DEEPSEEK_KEY");
+    assert_eq!(settings["thinking"], "enabled");
+    assert_eq!(settings["reasoningEffort"], "low");
+    assert_eq!(settings["defaultReasoningEffort"], "max");
+    assert_eq!(settings["maxTokens"], 16384);
+    assert_eq!(settings["defaultContextWindow"], 131072);
+    assert_eq!(
+        settings["retryPolicy"],
+        serde_json::json!({ "mode": "normal", "maxRetries": 4 })
+    );
+    assert_eq!(
+        settings["futureNativeField"],
+        serde_json::json!({ "enabled": true })
+    );
+    assert_eq!(
+        settings["models"],
+        serde_json::json!([{
+            "id": "config-model",
+            "name": "Config model",
+            "contextWindow": 131072,
+            "maxTokens": 16384
+        }])
+    );
+    crate::dsh_config::validate_settings_config(&settings)
+        .expect("preserved Harness config should pass the live writer schema");
+}
+
+#[test]
+fn test_build_deepseek_harness_provider_drops_untrusted_ref_without_key() {
+    use super::provider::build_provider_from_request;
+
+    let config = serde_json::json!({
+        "apiKeyEnv": "VICTIM_ENV_SECRET",
+        "defaultModel": "deepseek-v4-flash"
+    })
+    .to_string();
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("deepseek-harness".to_string()),
+        name: Some("DeepSeek Harness".to_string()),
+        config: Some(BASE64_STANDARD.encode(config.as_bytes())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).expect("merge Harness config");
+    let provider = build_provider_from_request(&AppType::DeepSeekHarness, &merged)
+        .expect("build Harness provider");
+
+    assert!(provider.settings_config.get("apiKeyEnv").is_none());
+    assert!(provider.settings_config.get("apiKey").is_none());
+}
+
+#[test]
 fn test_parse_and_merge_config_url_override() {
     let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-old","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1"}}"#;
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());

@@ -704,35 +704,9 @@ fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
         return Err(AppError::Config("无法获取用户主目录".to_string()));
     };
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-    }
-
     let json = serde_json::to_string_pretty(&normalized)
         .map_err(|e| AppError::JsonSerialize { source: e })?;
-    #[cfg(unix)]
-    {
-        use std::fs::OpenOptions;
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|e| AppError::io(&path, e))?;
-        file.write_all(json.as_bytes())
-            .map_err(|e| AppError::io(&path, e))?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        fs::write(&path, json).map_err(|e| AppError::io(&path, e))?;
-    }
-
-    Ok(())
+    crate::config::atomic_write_private(&path, json.as_bytes())
 }
 
 static SETTINGS_STORE: OnceLock<RwLock<AppSettings>> = OnceLock::new();
@@ -788,32 +762,38 @@ pub fn get_settings_for_frontend() -> AppSettings {
     settings
 }
 
-pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
-    new_settings.normalize_paths();
-    save_settings_file(&new_settings)?;
-
+/// Replace settings while holding the in-process write lock across both the
+/// read/derive step and persistence. This keeps the JSON file and the memory
+/// cache on the same generation and lets callers merge against the latest
+/// backend-owned fields without a read-then-write race.
+pub(crate) fn update_settings_atomically<F, R>(update: F) -> Result<R, AppError>
+where
+    F: FnOnce(&AppSettings) -> (AppSettings, R),
+{
     let mut guard = settings_store().write().unwrap_or_else(|e| {
         log::warn!("设置锁已毒化，使用恢复值: {e}");
         e.into_inner()
     });
-    *guard = new_settings;
-    Ok(())
+    let (mut next, result) = update(&guard);
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next;
+    Ok(result)
+}
+
+pub fn update_settings(new_settings: AppSettings) -> Result<(), AppError> {
+    update_settings_atomically(|_| (new_settings, ()))
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
     F: FnOnce(&mut AppSettings),
 {
-    let mut guard = settings_store().write().unwrap_or_else(|e| {
-        log::warn!("设置锁已毒化，使用恢复值: {e}");
-        e.into_inner()
-    });
-    let mut next = guard.clone();
-    mutator(&mut next);
-    next.normalize_paths();
-    save_settings_file(&next)?;
-    *guard = next;
-    Ok(())
+    update_settings_atomically(|current| {
+        let mut next = current.clone();
+        mutator(&mut next);
+        (next, ())
+    })
 }
 
 pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
@@ -1249,5 +1229,81 @@ mod tests {
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn atomic_settings_update_keeps_concurrent_backend_pointer_and_file_in_sync() {
+        let temp = tempfile::tempdir().expect("create isolated settings home");
+        let previous_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let previous = get_settings();
+        update_settings(AppSettings::default()).expect("seed isolated settings");
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (update_done_tx, update_done_rx) = std::sync::mpsc::channel();
+        let (pointer_done_tx, pointer_done_rx) = std::sync::mpsc::channel();
+
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                let result = update_settings_atomically(|current| {
+                    entered_tx.send(()).expect("signal locked merge");
+                    release_rx.recv().expect("release locked merge");
+                    let mut next = current.clone();
+                    next.language = Some("zh".to_string());
+                    (next, ())
+                });
+                update_done_tx.send(result).expect("send update result");
+            });
+
+            entered_rx.recv().expect("wait for settings write lock");
+            scope.spawn(move || {
+                let result = set_current_provider(&AppType::DeepSeekHarness, Some("harness-new"));
+                pointer_done_tx
+                    .send(result)
+                    .expect("send pointer update result");
+            });
+
+            assert!(
+                pointer_done_rx
+                    .recv_timeout(std::time::Duration::from_millis(100))
+                    .is_err(),
+                "backend pointer update must wait for the atomic settings commit"
+            );
+            release_tx.send(()).expect("release settings commit");
+            update_done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("atomic update should finish")
+                .expect("atomic update should succeed");
+            pointer_done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("pointer update should finish")
+                .expect("pointer update should succeed");
+        });
+
+        let memory = get_settings();
+        let persisted: AppSettings = serde_json::from_slice(
+            &std::fs::read(temp.path().join(".cc-switch").join("settings.json"))
+                .expect("read persisted settings"),
+        )
+        .expect("parse persisted settings");
+        assert_eq!(memory.language.as_deref(), Some("zh"));
+        assert_eq!(
+            memory.current_provider_deepseek_harness.as_deref(),
+            Some("harness-new")
+        );
+        assert_eq!(persisted.language, memory.language);
+        assert_eq!(
+            persisted.current_provider_deepseek_harness,
+            memory.current_provider_deepseek_harness
+        );
+
+        update_settings(previous).expect("restore process-global settings");
+        match previous_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
     }
 }

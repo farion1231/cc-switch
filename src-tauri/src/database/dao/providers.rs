@@ -277,6 +277,27 @@ impl Database {
         Ok(())
     }
 
+    /// Update only the presentation order for an existing provider.
+    ///
+    /// Re-saving a caller's full provider snapshot here can overwrite a newer
+    /// settings/backfill transaction, or even recreate a concurrently deleted
+    /// row. A narrow UPDATE makes ordering independent from provider contents.
+    pub fn update_provider_sort_index(
+        &self,
+        app_type: &str,
+        id: &str,
+        sort_index: usize,
+    ) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let changed = conn
+            .execute(
+                "UPDATE providers SET sort_index = ?1 WHERE id = ?2 AND app_type = ?3",
+                params![sort_index, id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(changed > 0)
+    }
+
     /// Replace a provider row under a new ID without exposing an intermediate
     /// duplicate or missing row. Existing endpoint and health references move
     /// with the provider, while its current-state bit is preserved.
@@ -803,6 +824,55 @@ impl Database {
         self.save_provider(app_type_str, &provider)?;
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod provider_sort_index_tests {
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::Provider;
+
+    #[test]
+    fn sort_index_update_does_not_replace_provider_contents_or_recreate_deleted_rows() {
+        let db = Database::memory().expect("memory db");
+        let app = AppType::DeepSeekHarness;
+        let mut provider = Provider::with_id(
+            "harness-sort".to_string(),
+            "Before".to_string(),
+            serde_json::json!({ "defaultModel": "deepseek-v4-flash" }),
+            None,
+        );
+        provider.sort_index = Some(0);
+        db.save_provider(app.as_str(), &provider)
+            .expect("seed provider");
+
+        let mut updated = provider.clone();
+        updated.name = "After".to_string();
+        updated.settings_config = serde_json::json!({ "defaultModel": "deepseek-v4-pro" });
+        db.save_provider(app.as_str(), &updated)
+            .expect("commit newer provider contents");
+
+        assert!(db
+            .update_provider_sort_index(app.as_str(), &provider.id, 7)
+            .expect("update sort index"));
+        let stored = db
+            .get_provider_by_id(&provider.id, app.as_str())
+            .expect("read provider")
+            .expect("provider exists");
+        assert_eq!(stored.name, "After");
+        assert_eq!(stored.settings_config, updated.settings_config);
+        assert_eq!(stored.sort_index, Some(7));
+
+        db.delete_provider(app.as_str(), &provider.id)
+            .expect("delete provider");
+        assert!(!db
+            .update_provider_sort_index(app.as_str(), &provider.id, 8)
+            .expect("missing-row update is a no-op"));
+        assert!(db
+            .get_provider_by_id(&provider.id, app.as_str())
+            .expect("read deleted provider")
+            .is_none());
     }
 }
 

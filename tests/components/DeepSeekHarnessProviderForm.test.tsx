@@ -194,8 +194,8 @@ describe("mergeDeepSeekHarnessConfig", () => {
           name: "DeepSeek Official",
           settingsConfig: {
             defaultModel: "deepseek-v4-flash",
-            reasoningEffort: "high",
-            defaultReasoningEffort: "max",
+            reasoningEffort: "max",
+            defaultReasoningEffort: "high",
           },
         }}
       />,
@@ -204,8 +204,8 @@ describe("mergeDeepSeekHarnessConfig", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toMatchObject({
-      reasoningEffort: "high",
-      defaultReasoningEffort: "max",
+      reasoningEffort: "max",
+      defaultReasoningEffort: "high",
     });
 
     const effortTrigger = container.querySelector<HTMLElement>(
@@ -214,13 +214,33 @@ describe("mergeDeepSeekHarnessConfig", () => {
     expect(effortTrigger).not.toBeNull();
     Element.prototype.scrollIntoView = vi.fn();
     await user.click(effortTrigger!);
-    await user.click(screen.getByRole("option", { name: "off" }));
+    await user.click(screen.getByRole("option", { name: "low" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
     expect(JSON.parse(onSubmit.mock.calls[1][0].settingsConfig)).toMatchObject({
-      reasoningEffort: "high",
-      defaultReasoningEffort: "off",
+      reasoningEffort: "max",
+      defaultReasoningEffort: "low",
     });
+  });
+
+  it("round-trips low at both reasoning levels without conflating them", () => {
+    const result = mergeDeepSeekHarnessConfig(
+      { reasoningEffort: "low" },
+      {
+        apiKey: "",
+        includeApiKey: false,
+        defaultModel: "deepseek-v4-flash",
+        apiKeyEnv: "DEEPSEEK_API_KEY",
+        baseURL: "",
+        thinking: "enabled",
+        defaultReasoningEffort: "max",
+        includeDefaultReasoningEffort: true,
+        modelsText: "",
+      },
+    );
+
+    expect(result.reasoningEffort).toBe("low");
+    expect(result.defaultReasoningEffort).toBe("max");
   });
 
   it("keeps private provider fields out of the advanced native profile", () => {

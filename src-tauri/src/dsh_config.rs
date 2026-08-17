@@ -40,6 +40,8 @@ const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 pub struct DshWriteOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_path: Option<String>,
+    #[serde(skip)]
+    pub(crate) rollback_token: Option<DshLiveStateSnapshot>,
 }
 
 #[derive(Debug)]
@@ -51,33 +53,90 @@ struct PreparedConfig {
     api_key_env: String,
 }
 
-#[derive(Debug)]
 enum CredentialAction {
     Keep,
     Set(String),
     Unset,
 }
 
-#[derive(Debug)]
+impl std::fmt::Debug for CredentialAction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Keep => formatter.write_str("Keep"),
+            Self::Set(_) => formatter.write_str("Set([REDACTED])"),
+            Self::Unset => formatter.write_str("Unset"),
+        }
+    }
+}
+
 struct CredentialUpdate {
     path: PathBuf,
     previous: Option<Vec<u8>>,
     next: Vec<u8>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct DshFileTransition {
+    before: Option<Vec<u8>>,
+    committed: Option<Vec<u8>>,
+}
+
+/// Compare-and-restore token produced by the same locked read/modify/write
+/// operation that committed the live Harness files.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct DshLiveStateSnapshot {
+    home: PathBuf,
+    settings: Option<DshFileTransition>,
+    credentials: Option<DshFileTransition>,
+}
+
+impl std::fmt::Debug for DshLiveStateSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DshLiveStateSnapshot")
+            .field("home", &self.home)
+            .field("settings_changed", &self.settings.is_some())
+            .field("credentials_changed", &self.credentials.is_some())
+            .finish()
+    }
+}
+
 /// Cross-process writer lock compatible with DeepSeek Harness' `<file>.lock`
 /// protocol. Harness never removes a contender's lock, so neither do we.
 struct DshFileLock {
-    path: PathBuf,
+    path: Option<PathBuf>,
+}
+
+impl DshFileLock {
+    fn release(mut self) -> Result<(), AppError> {
+        let path = self
+            .path
+            .as_ref()
+            .expect("DeepSeek Harness writer lock must have a path");
+        match fs::remove_file(path) {
+            Ok(()) => {
+                self.path.take();
+                Ok(())
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                self.path.take();
+                Ok(())
+            }
+            Err(error) => Err(AppError::io(path, error)),
+        }
+    }
 }
 
 impl Drop for DshFileLock {
     fn drop(&mut self) {
-        if let Err(error) = fs::remove_file(&self.path) {
+        let Some(path) = self.path.as_ref() else {
+            return;
+        };
+        if let Err(error) = fs::remove_file(path) {
             if error.kind() != ErrorKind::NotFound {
                 log::warn!(
                     "Failed to release DeepSeek Harness writer lock {}: {error}",
-                    self.path.display()
+                    path.display()
                 );
             }
         }
@@ -110,7 +169,9 @@ fn acquire_file_lock(filename: &Path) -> Result<DshFileLock, AppError> {
                     let _ = fs::remove_file(&lock_path);
                     return Err(AppError::io(&lock_path, error));
                 }
-                return Ok(DshFileLock { path: lock_path });
+                return Ok(DshFileLock {
+                    path: Some(lock_path),
+                });
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
                 if Instant::now() >= deadline {
@@ -123,6 +184,95 @@ fn acquire_file_lock(filename: &Path) -> Result<DshFileLock, AppError> {
                 delay = std::cmp::min(delay.saturating_mul(2), LOCK_RETRY_MAX);
             }
             Err(error) => return Err(AppError::io(&lock_path, error)),
+        }
+    }
+}
+
+fn combine_errors(context: &str, first: AppError, second: AppError) -> AppError {
+    AppError::Message(format!("{context}: {first}; additionally: {second}"))
+}
+
+fn release_file_locks(
+    credentials_lock: Option<DshFileLock>,
+    settings_lock: DshFileLock,
+) -> Result<(), AppError> {
+    let settings_result = settings_lock.release();
+    let credentials_result = credentials_lock
+        .map(DshFileLock::release)
+        .transpose()
+        .map(|_| ());
+    match (settings_result, credentials_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(first), Err(second)) => Err(combine_errors(
+            "Failed to release DeepSeek Harness writer locks",
+            first,
+            second,
+        )),
+    }
+}
+
+fn finish_locked<T>(
+    operation: Result<T, AppError>,
+    credentials_lock: Option<DshFileLock>,
+    settings_lock: DshFileLock,
+) -> Result<T, AppError> {
+    let release = release_file_locks(credentials_lock, settings_lock);
+    match (operation, release) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        // Once the live files are committed, returning Err would discard a
+        // rollback token and falsely tell the caller that nothing changed.
+        // Keep the successful outcome; the stale lock itself makes later
+        // conforming writes fail visibly instead of permitting divergence.
+        (Ok(value), Err(error)) => {
+            log::warn!(
+                "DeepSeek Harness files committed, but an explicit writer lock release failed: {error}"
+            );
+            Ok(value)
+        }
+        (Err(first), Err(second)) => Err(combine_errors(
+            "DeepSeek Harness operation and lock release both failed",
+            first,
+            second,
+        )),
+    }
+}
+
+fn acquire_native_file_locks(
+    settings_path: &Path,
+    credentials_path: &Path,
+    include_credentials: bool,
+) -> Result<(Option<DshFileLock>, DshFileLock), AppError> {
+    if !include_credentials {
+        return Ok((None, acquire_file_lock(settings_path)?));
+    }
+
+    if credentials_path < settings_path {
+        let credentials_lock = acquire_file_lock(credentials_path)?;
+        match acquire_file_lock(settings_path) {
+            Ok(settings_lock) => Ok((Some(credentials_lock), settings_lock)),
+            Err(error) => match credentials_lock.release() {
+                Ok(()) => Err(error),
+                Err(release_error) => Err(combine_errors(
+                    "Failed to acquire DeepSeek Harness settings lock",
+                    error,
+                    release_error,
+                )),
+            },
+        }
+    } else {
+        let settings_lock = acquire_file_lock(settings_path)?;
+        match acquire_file_lock(credentials_path) {
+            Ok(credentials_lock) => Ok((Some(credentials_lock), settings_lock)),
+            Err(error) => match settings_lock.release() {
+                Ok(()) => Err(error),
+                Err(release_error) => Err(combine_errors(
+                    "Failed to acquire DeepSeek Harness credentials lock",
+                    error,
+                    release_error,
+                )),
+            },
         }
     }
 }
@@ -161,6 +311,82 @@ fn absolutize_dsh_home(path: &Path) -> PathBuf {
     }
 }
 
+#[cfg(windows)]
+fn is_wsl_unc_path(path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('/', "\\");
+    let lower = normalized.to_ascii_lowercase();
+    let canonical = lower
+        .strip_prefix("\\\\?\\unc\\")
+        .map(|rest| format!("\\\\{rest}"))
+        .unwrap_or(lower);
+    canonical.starts_with("\\\\wsl$\\") || canonical.starts_with("\\\\wsl.localhost\\")
+}
+
+fn ensure_safe_live_write_path(home: &Path) -> Result<(), AppError> {
+    #[cfg(windows)]
+    {
+        if is_wsl_unc_path(home) {
+            return Err(AppError::InvalidInput(format!(
+                "Refusing to write DeepSeek Harness files through Windows WSL UNC path {}; configure and run CC Switch inside WSL so settings and credentials remain owner-only",
+                home.display()
+            )));
+        }
+        let mut resolved_ancestor = Some(home);
+        let resolves_into_wsl = loop {
+            let Some(candidate) = resolved_ancestor else {
+                break false;
+            };
+            match fs::canonicalize(candidate) {
+                Ok(resolved) => break is_wsl_unc_path(&resolved),
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    resolved_ancestor = candidate.parent();
+                }
+                Err(error) => return Err(AppError::io(candidate, error)),
+            }
+        };
+        if resolves_into_wsl {
+            return Err(AppError::InvalidInput(format!(
+                "Refusing to write DeepSeek Harness files through Windows WSL UNC path {}; configure and run CC Switch inside WSL so settings and credentials remain owner-only",
+                home.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
+fn read_optional_string(path: &Path) -> Result<Option<String>, AppError> {
+    match fs::read_to_string(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
+fn read_optional_private_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    use std::io::Read;
+
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(AppError::io(path, error)),
+    };
+    let metadata = file.metadata().map_err(|error| AppError::io(path, error))?;
+    assert_owner_only_metadata(path, &metadata)?;
+
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)
+        .map_err(|error| AppError::io(path, error))?;
+    Ok(Some(contents))
+}
+
 /// Resolve the configured Harness home used by CC Switch.
 pub fn get_dsh_dir() -> PathBuf {
     resolve_dsh_home(crate::settings::get_deepseek_harness_override_dir().as_deref())
@@ -174,6 +400,63 @@ pub fn get_dsh_credentials_path() -> PathBuf {
     get_dsh_dir().join(CREDENTIALS_FILENAME)
 }
 
+impl DshLiveStateSnapshot {
+    pub(crate) fn restore(&self) -> Result<(), AppError> {
+        ensure_safe_live_write_path(&self.home)?;
+        if self.settings.is_none() && self.credentials.is_none() {
+            return Ok(());
+        }
+        let _guard = dsh_write_lock().lock()?;
+        ensure_private_home(&self.home)?;
+
+        let settings_path = self.home.join(SETTINGS_FILENAME);
+        let credentials_path = self.home.join(CREDENTIALS_FILENAME);
+        let (credentials_lock, settings_lock) = acquire_native_file_locks(
+            &settings_path,
+            &credentials_path,
+            self.credentials.is_some(),
+        )?;
+        let operation = (|| {
+            // Compare every tracked file before restoring either one. This
+            // prevents a failed DB transaction from clobbering Harness edits
+            // that landed after CC Switch committed the live files.
+            if let Some(transition) = self.credentials.as_ref() {
+                verify_committed_file(&credentials_path, transition)?;
+            }
+            if let Some(transition) = self.settings.as_ref() {
+                verify_committed_file(&settings_path, transition)?;
+            }
+
+            // Restore the old settings generation first. Reintroducing an old
+            // credential while the newly selected endpoint/ref is still live
+            // could expose that secret to the wrong endpoint. If settings
+            // restoration fails, short-circuit and keep the committed
+            // credential state rather than creating that unsafe combination.
+            restore_settings_then_credentials(
+                || match self.settings.as_ref() {
+                    Some(transition) => restore_file_transition(&settings_path, transition, false),
+                    None => Ok(()),
+                },
+                || match self.credentials.as_ref() {
+                    Some(transition) => {
+                        restore_file_transition(&credentials_path, transition, true)
+                    }
+                    None => Ok(()),
+                },
+            )
+        })();
+        finish_locked(operation, credentials_lock, settings_lock)
+    }
+}
+
+fn restore_settings_then_credentials(
+    restore_settings: impl FnOnce() -> Result<(), AppError>,
+    restore_credentials: impl FnOnce() -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    restore_settings()?;
+    restore_credentials()
+}
+
 /// Read the native DeepSeek profile currently represented by Harness user
 /// settings. Environment-only credentials are intentionally never returned.
 pub fn read_live_settings() -> Result<Option<JsonValue>, AppError> {
@@ -182,6 +465,12 @@ pub fn read_live_settings() -> Result<Option<JsonValue>, AppError> {
 
 /// Write a native DeepSeek profile and make it the default Harness selection.
 pub fn write_live_settings(settings_config: &JsonValue) -> Result<DshWriteOutcome, AppError> {
+    write_live_settings_transactional(settings_config)
+}
+
+pub(crate) fn write_live_settings_transactional(
+    settings_config: &JsonValue,
+) -> Result<DshWriteOutcome, AppError> {
     let backup_root = get_app_config_dir()
         .join("backups")
         .join("deepseek-harness");
@@ -193,11 +482,10 @@ pub fn write_live_settings(settings_config: &JsonValue) -> Result<DshWriteOutcom
 pub fn read_live_config_at(override_dir: Option<&Path>) -> Result<Option<JsonValue>, AppError> {
     let home = resolve_dsh_home(override_dir);
     let settings_path = home.join(SETTINGS_FILENAME);
-    if !settings_path.exists() {
+    let Some(raw) = read_optional_string(&settings_path)? else {
         return Ok(None);
-    }
+    };
 
-    let raw = fs::read_to_string(&settings_path).map_err(|e| AppError::io(&settings_path, e))?;
     let root = parse_settings_document(&raw, &settings_path)?;
     let llm_key = YamlValue::String(LLM_SECTION.to_string());
     let llm = root.get(&llm_key);
@@ -255,6 +543,13 @@ pub fn read_live_config_at(override_dir: Option<&Path>) -> Result<Option<JsonVal
         );
     }
 
+    validate_settings_config(&JsonValue::Object(object.clone())).map_err(|error| {
+        AppError::Config(format!(
+            "Invalid DeepSeek Harness provider settings in {}: {error}",
+            settings_path.display()
+        ))
+    })?;
+
     let api_key_env = object
         .get("apiKeyEnv")
         .and_then(JsonValue::as_str)
@@ -282,10 +577,9 @@ fn write_live_config_at(
 fn get_current_model_at(override_dir: Option<&Path>) -> Result<Option<String>, AppError> {
     let home = resolve_dsh_home(override_dir);
     let path = home.join(SETTINGS_FILENAME);
-    if !path.exists() {
+    let Some(raw) = read_optional_string(&path)? else {
         return Ok(None);
-    }
-    let raw = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
+    };
     let root = parse_settings_document(&raw, &path)?;
     let Some(selection) = read_selection(&root, &path)? else {
         return Ok(None);
@@ -302,6 +596,8 @@ fn write_live_config_inner(
     backup_root: Option<&Path>,
 ) -> Result<DshWriteOutcome, AppError> {
     let prepared = prepare_config(settings_config)?;
+    reject_current_process_env_shadow(&prepared)?;
+    ensure_safe_live_write_path(home)?;
     let _guard = dsh_write_lock().lock()?;
 
     let path = home.join(SETTINGS_FILENAME);
@@ -310,94 +606,194 @@ fn write_live_config_inner(
     // A settings-only switch must not contend with Harness' credential store.
     // Set/Unset operations still acquire both native locks in stable path
     // order so separate CC Switch processes cannot deadlock each other.
-    let (_credentials_lock, _settings_lock): (Option<DshFileLock>, DshFileLock) =
-        match &prepared.credential_action {
-            CredentialAction::Keep => (None, acquire_file_lock(&path)?),
-            CredentialAction::Set(_) | CredentialAction::Unset if credentials_path < path => (
-                Some(acquire_file_lock(&credentials_path)?),
-                acquire_file_lock(&path)?,
-            ),
-            CredentialAction::Set(_) | CredentialAction::Unset => {
-                let settings_lock = acquire_file_lock(&path)?;
-                let credentials_lock = acquire_file_lock(&credentials_path)?;
-                (Some(credentials_lock), settings_lock)
+    let include_credentials = !matches!(prepared.credential_action, CredentialAction::Keep);
+    let (credentials_lock, settings_lock) =
+        acquire_native_file_locks(&path, &credentials_path, include_credentials)?;
+
+    let operation = (|| {
+        // The settings read is protected by its native writer lock. Credential
+        // reads below occur only for Set/Unset, while the credential lock is held.
+        let raw_bytes = read_optional_bytes(&path)?;
+        let raw = raw_bytes
+            .as_deref()
+            .map(|contents| {
+                std::str::from_utf8(contents)
+                    .map(str::to_owned)
+                    .map_err(|_| {
+                        AppError::Config(format!(
+                            "DeepSeek Harness settings at {} must be UTF-8",
+                            path.display()
+                        ))
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let root = parse_settings_document(&raw, &path)?;
+        let credential_update = match &prepared.credential_action {
+            CredentialAction::Keep => None,
+            CredentialAction::Set(api_key) => {
+                prepare_managed_credential(home, &prepared.api_key_env, Some(api_key))?
+            }
+            CredentialAction::Unset => {
+                prepare_managed_credential(home, &prepared.api_key_env, None)?
             }
         };
+        reject_unsafe_credential_generation(&prepared, &root, &path, credential_update.is_some())?;
 
-    // The settings read is protected by its native writer lock. Credential
-    // reads below occur only for Set/Unset, while the credential lock is held.
-    let raw = if path.exists() {
-        fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?
-    } else {
-        String::new()
-    };
-    let root = parse_settings_document(&raw, &path)?;
-
-    let llm_yaml = serde_yaml::to_value(&prepared.profile)
-        .map_err(|e| AppError::Config(format!("Failed to serialize DeepSeek profile: {e}")))?;
-    let mut selection = YamlMapping::new();
-    selection.insert(
-        YamlValue::String("provider".to_string()),
-        YamlValue::String(DSH_PROVIDER_ID.to_string()),
-    );
-    selection.insert(
-        YamlValue::String("model".to_string()),
-        YamlValue::String(prepared.default_model),
-    );
-    if let Some(effort) = prepared.default_reasoning_effort {
+        let llm_yaml = serde_yaml::to_value(&prepared.profile)
+            .map_err(|e| AppError::Config(format!("Failed to serialize DeepSeek profile: {e}")))?;
+        let mut selection = YamlMapping::new();
         selection.insert(
-            YamlValue::String("reasoningEffort".to_string()),
-            YamlValue::String(effort),
+            YamlValue::String("provider".to_string()),
+            YamlValue::String(DSH_PROVIDER_ID.to_string()),
         );
-    }
-
-    let with_llm = patch_top_level_mapping_section(&raw, &root, LLM_SECTION, &llm_yaml)?;
-    let next_root = parse_settings_document(&with_llm, &path)?;
-    let next = patch_top_level_mapping_section(
-        &with_llm,
-        &next_root,
-        DEFAULT_MODEL_SECTION,
-        &YamlValue::Mapping(selection),
-    )?;
-    parse_settings_document(&next, &path)?;
-
-    // Validate and render both documents before changing either one. The
-    // credential is committed first because it is reversible; a settings
-    // failure restores the exact previous credential bytes.
-    let credential_update = match &prepared.credential_action {
-        CredentialAction::Keep => None,
-        CredentialAction::Set(api_key) => {
-            prepare_managed_credential(home, &prepared.api_key_env, Some(api_key))?
+        selection.insert(
+            YamlValue::String("model".to_string()),
+            YamlValue::String(prepared.default_model.clone()),
+        );
+        if let Some(effort) = prepared.default_reasoning_effort.as_ref() {
+            selection.insert(
+                YamlValue::String("reasoningEffort".to_string()),
+                YamlValue::String(effort.clone()),
+            );
         }
-        CredentialAction::Unset => prepare_managed_credential(home, &prepared.api_key_env, None)?,
-    };
 
-    if next == raw && credential_update.is_none() {
-        return Ok(DshWriteOutcome::default());
-    }
+        let with_llm = patch_top_level_mapping_section(&raw, &root, LLM_SECTION, &llm_yaml)?;
+        let next_root = parse_settings_document(&with_llm, &path)?;
+        let next = patch_top_level_mapping_section(
+            &with_llm,
+            &next_root,
+            DEFAULT_MODEL_SECTION,
+            &YamlValue::Mapping(selection),
+        )?;
+        parse_settings_document(&next, &path)?;
 
-    let backup_path = match (backup_root, raw.is_empty()) {
-        (Some(root), false) => Some(create_settings_backup(root, &raw)?),
-        _ => None,
-    };
-    if let Some(update) = credential_update.as_ref() {
-        apply_credential_update(update)?;
-    }
-    if next != raw {
-        if let Err(error) = write_settings_atomic(&path, next.as_bytes()) {
-            if let Some(update) = credential_update.as_ref() {
-                if let Err(rollback_error) = rollback_credential_update(update) {
-                    return Err(AppError::Message(format!(
-                        "Failed to write DeepSeek Harness settings ({error}); credential rollback also failed ({rollback_error})"
-                    )));
+        if next == raw && credential_update.is_none() {
+            return Ok(DshWriteOutcome::default());
+        }
+
+        let backup_path = match (backup_root, raw.is_empty()) {
+            (Some(root), false) => Some(create_settings_backup(root, &raw)?),
+            _ => None,
+        };
+        if let Some(update) = credential_update.as_ref() {
+            apply_credential_update(update)?;
+        }
+        if next != raw {
+            if let Err(error) = write_settings_atomic(&path, next.as_bytes()) {
+                if let Some(update) = credential_update.as_ref() {
+                    if let Err(rollback_error) = rollback_credential_update(update) {
+                        return Err(AppError::Message(format!(
+                            "Failed to write DeepSeek Harness settings ({error}); credential rollback also failed ({rollback_error})"
+                        )));
+                    }
                 }
+                return Err(error);
             }
-            return Err(error);
         }
+        let settings_transition = (next != raw).then(|| DshFileTransition {
+            before: raw_bytes,
+            committed: Some(next.as_bytes().to_vec()),
+        });
+        let credentials_transition = credential_update.as_ref().map(|update| DshFileTransition {
+            before: update.previous.clone(),
+            committed: Some(update.next.clone()),
+        });
+        Ok(DshWriteOutcome {
+            backup_path: backup_path.map(|p| p.display().to_string()),
+            rollback_token: Some(DshLiveStateSnapshot {
+                home: home.to_path_buf(),
+                settings: settings_transition,
+                credentials: credentials_transition,
+            }),
+        })
+    })();
+
+    finish_locked(operation, credentials_lock, settings_lock)
+}
+
+fn reject_unsafe_credential_generation(
+    prepared: &PreparedConfig,
+    root: &YamlMapping,
+    settings_path: &Path,
+    credential_changes: bool,
+) -> Result<(), AppError> {
+    if !credential_changes || !matches!(prepared.credential_action, CredentialAction::Set(_)) {
+        return Ok(());
     }
-    Ok(DshWriteOutcome {
-        backup_path: backup_path.map(|p| p.display().to_string()),
-    })
+
+    let llm_key = YamlValue::String(LLM_SECTION.to_string());
+    let (current_endpoint, current_reference) = match root.get(&llm_key) {
+        None => (None, DEFAULT_API_KEY_ENV.to_string()),
+        Some(YamlValue::Mapping(mapping)) => {
+            let base_url_key = YamlValue::String("baseURL".to_string());
+            let endpoint = match mapping.get(&base_url_key) {
+                None | Some(YamlValue::Null) => None,
+                Some(YamlValue::String(value)) => Some(value.clone()),
+                Some(_) => {
+                    return Err(AppError::Config(format!(
+                        "DeepSeek Harness setting '{LLM_SECTION}.baseURL' must be a string in {}",
+                        settings_path.display()
+                    )))
+                }
+            };
+            let reference_key = YamlValue::String("apiKeyEnv".to_string());
+            let reference = match mapping.get(&reference_key) {
+                None | Some(YamlValue::Null) => DEFAULT_API_KEY_ENV.to_string(),
+                Some(YamlValue::String(value)) => value.clone(),
+                Some(_) => {
+                    return Err(AppError::Config(format!(
+                        "DeepSeek Harness setting '{LLM_SECTION}.apiKeyEnv' must be a string in {}",
+                        settings_path.display()
+                    )))
+                }
+            };
+            validate_credential_ref(&reference).map_err(|error| {
+                AppError::Config(format!(
+                    "Invalid DeepSeek Harness credential reference in {}: {error}",
+                    settings_path.display()
+                ))
+            })?;
+            (endpoint, reference)
+        }
+        Some(_) => {
+            return Err(AppError::Config(format!(
+                "DeepSeek Harness section '{LLM_SECTION}' must be a mapping in {}",
+                settings_path.display()
+            )))
+        }
+    };
+    let target_endpoint = prepared
+        .profile
+        .get("baseURL")
+        .and_then(JsonValue::as_str)
+        .map(ToOwned::to_owned);
+
+    if current_reference == prepared.api_key_env && current_endpoint != target_endpoint {
+        return Err(AppError::InvalidInput(format!(
+            "Refusing to change DeepSeek Harness baseURL and API key under the same credential reference '{}'; use a new apiKeyEnv so the new credential is installed before the endpoint is activated",
+            prepared.api_key_env
+        )));
+    }
+    Ok(())
+}
+
+/// Validate a persisted provider bundle without reading or writing Harness
+/// files. Provider transactions use this before committing non-current rows.
+pub(crate) fn validate_settings_config(settings_config: &JsonValue) -> Result<(), AppError> {
+    prepare_config(settings_config).map(|_| ())
+}
+
+fn reject_current_process_env_shadow(prepared: &PreparedConfig) -> Result<(), AppError> {
+    if !matches!(prepared.credential_action, CredentialAction::Keep)
+        && std::env::var_os(&prepared.api_key_env).is_some_and(|value| !value.is_empty())
+    {
+        return Err(AppError::InvalidInput(format!(
+            "DeepSeek Harness credential '{}' is supplied read-only by the launching environment; unset it before switching",
+            prepared.api_key_env
+        )));
+    }
+    Ok(())
 }
 
 fn prepare_config(settings_config: &JsonValue) -> Result<PreparedConfig, AppError> {
@@ -418,23 +814,28 @@ fn prepare_config(settings_config: &JsonValue) -> Result<PreparedConfig, AppErro
         "default reasoning effort",
     )?;
     if let Some(effort) = requested_default_reasoning_effort.as_deref() {
-        if !matches!(effort, "off" | "high" | "max") {
+        if !matches!(effort, "off" | "low" | "high" | "max") {
             return Err(AppError::InvalidInput(
-                "DeepSeek Harness default reasoning effort must be off, high, or max".to_string(),
+                "DeepSeek Harness default reasoning effort must be off, low, high, or max"
+                    .to_string(),
             ));
         }
     }
 
     let credential_action = match profile.remove("apiKey") {
         None | Some(JsonValue::Null) => CredentialAction::Keep,
-        Some(JsonValue::String(value)) if value.is_empty() => CredentialAction::Unset,
         Some(JsonValue::String(value)) => {
-            if value.chars().any(char::is_control) {
+            let value = value.trim_matches(is_ecmascript_whitespace);
+            if value.is_empty() {
+                CredentialAction::Unset
+            } else if !value.bytes().all(|byte| (0x21..=0x7e).contains(&byte)) {
                 return Err(AppError::InvalidInput(
-                    "DeepSeek Harness API key must not contain control characters".to_string(),
+                    "DeepSeek Harness API key must contain only printable ASCII characters without spaces"
+                        .to_string(),
                 ));
+            } else {
+                CredentialAction::Set(value.to_string())
             }
-            CredentialAction::Set(value)
         }
         Some(_) => {
             return Err(AppError::InvalidInput(
@@ -444,8 +845,8 @@ fn prepare_config(settings_config: &JsonValue) -> Result<PreparedConfig, AppErro
     };
 
     let api_key_env = match profile.get("apiKeyEnv") {
-        None => DEFAULT_API_KEY_ENV.to_string(),
-        Some(JsonValue::String(value)) => value.trim().to_string(),
+        None | Some(JsonValue::Null) => DEFAULT_API_KEY_ENV.to_string(),
+        Some(JsonValue::String(value)) => value.trim_matches(is_ecmascript_whitespace).to_string(),
         Some(_) => {
             return Err(AppError::InvalidInput(
                 "DeepSeek Harness apiKeyEnv must be a string".to_string(),
@@ -453,13 +854,6 @@ fn prepare_config(settings_config: &JsonValue) -> Result<PreparedConfig, AppErro
         }
     };
     validate_credential_ref(&api_key_env)?;
-    if !matches!(credential_action, CredentialAction::Keep)
-        && std::env::var_os(&api_key_env).is_some_and(|value| !value.is_empty())
-    {
-        return Err(AppError::InvalidInput(format!(
-            "DeepSeek Harness credential '{api_key_env}' is supplied read-only by the launching environment; unset it before switching"
-        )));
-    }
     if profile.contains_key("apiKeyEnv") {
         profile.insert(
             "apiKeyEnv".to_string(),
@@ -469,12 +863,14 @@ fn prepare_config(settings_config: &JsonValue) -> Result<PreparedConfig, AppErro
 
     let profile_reasoning_effort = match profile.get("reasoningEffort") {
         None | Some(JsonValue::Null) => None,
-        Some(JsonValue::String(value)) if matches!(value.as_str(), "off" | "high" | "max") => {
+        Some(JsonValue::String(value))
+            if matches!(value.as_str(), "off" | "low" | "high" | "max") =>
+        {
             Some(value.as_str())
         }
         Some(JsonValue::String(_)) => {
             return Err(AppError::InvalidInput(
-                "DeepSeek Harness reasoningEffort must be off, high, or max".to_string(),
+                "DeepSeek Harness reasoningEffort must be off, low, high, or max".to_string(),
             ))
         }
         Some(_) => {
@@ -512,6 +908,7 @@ fn prepare_config(settings_config: &JsonValue) -> Result<PreparedConfig, AppErro
         ));
     }
 
+    validate_optional_string(profile.get("baseURL"), "baseURL")?;
     validate_positive_integer(profile.get("maxTokens"), "maxTokens")?;
     validate_positive_integer(profile.get("defaultContextWindow"), "defaultContextWindow")?;
     if let Some(value) = profile.get("streamIdleTimeoutMs") {
@@ -532,6 +929,28 @@ fn prepare_config(settings_config: &JsonValue) -> Result<PreparedConfig, AppErro
         credential_action,
         api_key_env,
     })
+}
+
+fn is_ecmascript_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'
+            | '\u{000A}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000D}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
 }
 
 fn required_private_string(
@@ -556,6 +975,15 @@ fn optional_private_string(
         None | Some(JsonValue::Null) => Ok(None),
         Some(JsonValue::String(value)) if value.trim().is_empty() => Ok(None),
         Some(JsonValue::String(value)) => Ok(Some(value.trim().to_string())),
+        Some(_) => Err(AppError::InvalidInput(format!(
+            "DeepSeek Harness {label} must be a string"
+        ))),
+    }
+}
+
+fn validate_optional_string(value: Option<&JsonValue>, label: &str) -> Result<(), AppError> {
+    match value {
+        None | Some(JsonValue::Null) | Some(JsonValue::String(_)) => Ok(()),
         Some(_) => Err(AppError::InvalidInput(format!(
             "DeepSeek Harness {label} must be a string"
         ))),
@@ -822,11 +1250,15 @@ fn yaml_to_json(value: &YamlValue, context: &str) -> Result<JsonValue, AppError>
 
 fn read_managed_credential(home: &Path, reference: &str) -> Result<Option<String>, AppError> {
     let path = home.join(CREDENTIALS_FILENAME);
-    if !path.exists() {
+    let Some(raw) = read_optional_private_bytes(&path)? else {
         return Ok(None);
-    }
-    assert_owner_only(&path)?;
-    let raw = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
+    };
+    let raw = String::from_utf8(raw).map_err(|_| {
+        AppError::Config(format!(
+            "DeepSeek Harness credentials at {} must be UTF-8",
+            path.display()
+        ))
+    })?;
     let values = parse_credentials_document(&raw, &path)?;
     Ok(values
         .get(YamlValue::String(reference.to_string()))
@@ -841,12 +1273,7 @@ fn prepare_managed_credential(
 ) -> Result<Option<CredentialUpdate>, AppError> {
     validate_credential_ref(reference)?;
     let path = home.join(CREDENTIALS_FILENAME);
-    let previous = if path.exists() {
-        assert_owner_only(&path)?;
-        Some(fs::read(&path).map_err(|e| AppError::io(&path, e))?)
-    } else {
-        None
-    };
+    let previous = read_optional_private_bytes(&path)?;
     let raw = previous
         .as_deref()
         .map(|bytes| {
@@ -890,12 +1317,38 @@ fn apply_credential_update(update: &CredentialUpdate) -> Result<(), AppError> {
 fn rollback_credential_update(update: &CredentialUpdate) -> Result<(), AppError> {
     match update.previous.as_deref() {
         Some(previous) => write_private_atomic(&update.path, previous),
-        None => {
-            if update.path.exists() {
-                fs::remove_file(&update.path).map_err(|e| AppError::io(&update.path, e))?;
-            }
-            Ok(())
-        }
+        None => remove_file_if_present(&update.path),
+    }
+}
+
+fn remove_file_if_present(path: &Path) -> Result<(), AppError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
+fn verify_committed_file(path: &Path, transition: &DshFileTransition) -> Result<(), AppError> {
+    let current = read_optional_bytes(path)?;
+    if current != transition.committed {
+        return Err(AppError::Conflict(format!(
+            "DeepSeek Harness file {} changed after CC Switch wrote it; refusing to overwrite the newer contents during rollback",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn restore_file_transition(
+    path: &Path,
+    transition: &DshFileTransition,
+    private: bool,
+) -> Result<(), AppError> {
+    match transition.before.as_deref() {
+        Some(contents) if private => write_private_atomic(path, contents),
+        Some(contents) => write_settings_atomic(path, contents),
+        None => remove_file_if_present(path),
     }
 }
 
@@ -938,12 +1391,9 @@ fn parse_credentials_document(raw: &str, path: &Path) -> Result<YamlMapping, App
 }
 
 #[cfg(unix)]
-fn assert_owner_only(path: &Path) -> Result<(), AppError> {
+fn assert_owner_only_metadata(path: &Path, metadata: &fs::Metadata) -> Result<(), AppError> {
     use std::os::unix::fs::PermissionsExt;
-    let mode = fs::metadata(path)
-        .map_err(|e| AppError::io(path, e))?
-        .permissions()
-        .mode();
+    let mode = metadata.permissions().mode();
     if mode & 0o077 != 0 {
         return Err(AppError::Config(format!(
             "DeepSeek Harness credentials file {} must have mode 0600",
@@ -954,18 +1404,29 @@ fn assert_owner_only(path: &Path) -> Result<(), AppError> {
 }
 
 #[cfg(not(unix))]
-fn assert_owner_only(_path: &Path) -> Result<(), AppError> {
+fn assert_owner_only_metadata(_path: &Path, _metadata: &fs::Metadata) -> Result<(), AppError> {
     Ok(())
 }
 
+fn assert_owner_only(path: &Path) -> Result<(), AppError> {
+    let metadata = fs::metadata(path).map_err(|error| AppError::io(path, error))?;
+    assert_owner_only_metadata(path, &metadata)
+}
+
 fn ensure_private_home(home: &Path) -> Result<(), AppError> {
-    fs::create_dir_all(home).map_err(|e| AppError::io(home, e))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(home, fs::Permissions::from_mode(0o700))
-            .map_err(|e| AppError::io(home, e))?;
+        use std::os::unix::fs::DirBuilderExt;
+
+        // `mode` applies only to directories this call creates. In
+        // particular, do not chmod a pre-existing directory or the target of
+        // a symlink supplied as DSH_HOME.
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        builder.create(home).map_err(|e| AppError::io(home, e))?;
     }
+    #[cfg(not(unix))]
+    fs::create_dir_all(home).map_err(|e| AppError::io(home, e))?;
     Ok(())
 }
 
@@ -985,12 +1446,14 @@ fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<(), AppError> {
 }
 
 /// Atomically replace a Harness-owned document without ever materializing its
-/// contents in a group/world-readable temporary file. On Windows the shared
-/// writer already uses `ReplaceFileW` (with its WSL-UNC fallback), so retain
-/// that replacement path; POSIX needs an explicit mode on the initial
-/// `create_new` because chmod-after-rename leaves a crash-persistent exposure
-/// window for credentials.
+/// contents in a group/world-readable temporary file. Windows WSL UNC paths
+/// are rejected because Windows replacement APIs cannot guarantee POSIX mode
+/// 0600 there. POSIX needs an explicit mode on the initial `create_new`
+/// because chmod-after-rename leaves a crash-persistent exposure window.
 fn write_owner_only_atomic(path: &Path, contents: &[u8]) -> Result<(), AppError> {
+    if let Some(home) = path.parent() {
+        ensure_safe_live_write_path(home)?;
+    }
     #[cfg(unix)]
     {
         use std::io::Write;
@@ -1401,9 +1864,15 @@ fn create_settings_backup(root: &Path, source: &str) -> Result<PathBuf, AppError
     let base = format!("settings_{}", Local::now().format("%Y%m%d_%H%M%S"));
     let mut path = root.join(format!("{base}.yaml"));
     let mut counter = 1;
-    while path.exists() {
-        path = root.join(format!("{base}_{counter}.yaml"));
-        counter += 1;
+    loop {
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {
+                path = root.join(format!("{base}_{counter}.yaml"));
+                counter += 1;
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => break,
+            Err(error) => return Err(AppError::io(&path, error)),
+        }
     }
     write_owner_only_atomic(&path, source.as_bytes())?;
     cleanup_settings_backups(root)?;
@@ -1797,5 +2266,542 @@ mod tests {
         let credentials = fs::read_to_string(temp.path().join(CREDENTIALS_FILENAME)).unwrap();
         assert!(!credentials.contains("DEEPSEEK_API_KEY"));
         assert!(credentials.contains("OTHER_KEY: keep-me"));
+    }
+
+    #[test]
+    fn api_key_normalization_matches_harness_credential_rules() {
+        let padded = prepare_config(&json!({
+            "apiKey": "  sk-valid_ascii-123  ",
+            "defaultModel": "deepseek-v4-flash"
+        }))
+        .unwrap();
+        assert!(matches!(
+            padded.credential_action,
+            CredentialAction::Set(ref value) if value == "sk-valid_ascii-123"
+        ));
+        let debug = format!("{padded:?}");
+        assert!(debug.contains("Set([REDACTED])"));
+        assert!(!debug.contains("sk-valid_ascii-123"));
+
+        let bom_padded = prepare_config(&json!({
+            "apiKey": "\u{feff}sk-bom-trimmed\u{feff}",
+            "defaultModel": "deepseek-v4-flash"
+        }))
+        .unwrap();
+        assert!(matches!(
+            bom_padded.credential_action,
+            CredentialAction::Set(ref value) if value == "sk-bom-trimmed"
+        ));
+
+        let whitespace = prepare_config(&json!({
+            "apiKey": " \t\r\n ",
+            "defaultModel": "deepseek-v4-flash"
+        }))
+        .unwrap();
+        assert!(matches!(
+            whitespace.credential_action,
+            CredentialAction::Unset
+        ));
+
+        for invalid in ["sk embedded-space", "密钥", "sk\u{007f}", "\u{0085}"] {
+            let error = prepare_config(&json!({
+                "apiKey": invalid,
+                "defaultModel": "deepseek-v4-flash"
+            }))
+            .unwrap_err();
+            assert!(!error.to_string().contains(invalid));
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        assert!(write_live_config_at(
+            Some(temp.path()),
+            &json!({
+                "apiKey": "\u{0085}",
+                "defaultModel": "deepseek-v4-flash"
+            }),
+        )
+        .is_err());
+        assert_eq!(
+            read_optional_bytes(&temp.path().join(CREDENTIALS_FILENAME)).unwrap(),
+            None
+        );
+        assert_eq!(
+            read_optional_bytes(&temp.path().join(SETTINGS_FILENAME)).unwrap(),
+            None
+        );
+
+        let invalid_ref_home = tempfile::tempdir().unwrap();
+        assert!(write_live_config_at(
+            Some(invalid_ref_home.path()),
+            &json!({
+                "apiKey": "sk-valid",
+                "apiKeyEnv": "\u{0085}VICTIM_ENV",
+                "defaultModel": "deepseek-v4-flash"
+            }),
+        )
+        .is_err());
+        assert_eq!(
+            read_optional_bytes(&invalid_ref_home.path().join(CREDENTIALS_FILENAME)).unwrap(),
+            None
+        );
+        assert_eq!(
+            read_optional_bytes(&invalid_ref_home.path().join(SETTINGS_FILENAME)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn accepts_low_reasoning_effort_in_profile_and_default_selection() {
+        let temp = tempfile::tempdir().unwrap();
+        write_live_config_at(
+            Some(temp.path()),
+            &json!({
+                "defaultModel": "deepseek-v4-pro",
+                "reasoningEffort": "low",
+                "defaultReasoningEffort": "low"
+            }),
+        )
+        .unwrap();
+
+        let settings = fs::read_to_string(temp.path().join(SETTINGS_FILENAME)).unwrap();
+        assert_eq!(settings.matches("reasoningEffort: low").count(), 2);
+        let live = read_live_config_at(Some(temp.path())).unwrap().unwrap();
+        assert_eq!(live["reasoningEffort"], "low");
+        assert_eq!(live["defaultReasoningEffort"], "low");
+    }
+
+    #[test]
+    fn rejects_non_string_base_url_before_touching_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = json!({
+            "defaultModel": "deepseek-v4-flash",
+            "baseURL": ["https://api.example"]
+        });
+
+        assert!(validate_settings_config(&input).is_err());
+        assert!(write_live_config_at(Some(temp.path()), &input).is_err());
+        assert_eq!(
+            read_optional_bytes(&temp.path().join(SETTINGS_FILENAME)).unwrap(),
+            None
+        );
+        assert_eq!(
+            read_optional_bytes(&temp.path().join(CREDENTIALS_FILENAME)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn static_validation_ignores_runtime_env_shadow_but_live_write_rejects_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = json!({
+            "apiKey": "managed-secret",
+            "apiKeyEnv": "TEST_STATIC_VALIDATION_ENV_SHADOW",
+            "defaultModel": "deepseek-v4-flash"
+        });
+        std::env::set_var("TEST_STATIC_VALIDATION_ENV_SHADOW", "inherited-secret");
+        let validation = validate_settings_config(&input);
+        let write = write_live_config_at(Some(temp.path()), &input);
+        std::env::remove_var("TEST_STATIC_VALIDATION_ENV_SHADOW");
+
+        assert!(validation.is_ok());
+        assert!(write.is_err());
+        assert_eq!(
+            read_optional_bytes(&temp.path().join(SETTINGS_FILENAME)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn optional_file_read_only_treats_not_found_as_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+        assert_eq!(read_optional_string(&missing).unwrap(), None);
+
+        let directory = temp.path().join("not-a-file");
+        fs::create_dir(&directory).unwrap();
+        assert!(read_optional_string(&directory).is_err());
+        assert!(read_optional_bytes(&directory).is_err());
+    }
+
+    #[test]
+    fn rejects_endpoint_and_key_generation_change_under_same_reference() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join(SETTINGS_FILENAME);
+        let credentials_path = temp.path().join(CREDENTIALS_FILENAME);
+        let original_settings = concat!(
+            "llm-deepseek:\n",
+            "  apiKeyEnv: TEST_ATOMIC_SAME_REF\n",
+            "  baseURL: https://old.example\n",
+            "agent-default-model:\n",
+            "  provider: deepseek-official\n",
+            "  model: old-model\n",
+        );
+        let original_credentials = "TEST_ATOMIC_SAME_REF: old-secret\n";
+        fs::write(&settings_path, original_settings).unwrap();
+        write_private(&credentials_path, original_credentials);
+
+        let error = write_live_config_at(
+            Some(temp.path()),
+            &json!({
+                "apiKey": "new-secret",
+                "apiKeyEnv": "TEST_ATOMIC_SAME_REF",
+                "baseURL": "https://new.example",
+                "defaultModel": "new-model"
+            }),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("same credential reference"));
+        assert_eq!(
+            fs::read(&settings_path).unwrap(),
+            original_settings.as_bytes()
+        );
+        assert_eq!(
+            fs::read(&credentials_path).unwrap(),
+            original_credentials.as_bytes()
+        );
+    }
+
+    #[test]
+    fn switches_endpoint_and_key_generation_through_a_new_reference() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join(SETTINGS_FILENAME),
+            concat!(
+                "llm-deepseek:\n",
+                "  apiKeyEnv: TEST_ATOMIC_OLD_REF\n",
+                "  baseURL: https://old.example\n",
+                "agent-default-model:\n",
+                "  provider: deepseek-official\n",
+                "  model: old-model\n",
+            ),
+        )
+        .unwrap();
+        write_private(
+            &temp.path().join(CREDENTIALS_FILENAME),
+            "TEST_ATOMIC_OLD_REF: old-secret\n",
+        );
+
+        let outcome = write_live_config_at(
+            Some(temp.path()),
+            &json!({
+                "apiKey": "new-secret",
+                "apiKeyEnv": "TEST_ATOMIC_NEW_REF",
+                "baseURL": "https://new.example",
+                "defaultModel": "new-model"
+            }),
+        )
+        .unwrap();
+
+        let settings = fs::read_to_string(temp.path().join(SETTINGS_FILENAME)).unwrap();
+        assert!(settings.contains("apiKeyEnv: TEST_ATOMIC_NEW_REF"));
+        assert!(settings.contains("baseURL: https://new.example"));
+        let credentials = fs::read_to_string(temp.path().join(CREDENTIALS_FILENAME)).unwrap();
+        assert!(credentials.contains("TEST_ATOMIC_OLD_REF: old-secret"));
+        assert!(credentials.contains("TEST_ATOMIC_NEW_REF: new-secret"));
+        assert!(outcome.rollback_token.is_some());
+        assert!(!format!("{outcome:?}").contains("new-secret"));
+    }
+
+    #[test]
+    fn allows_endpoint_change_when_same_reference_keeps_identical_key_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join(SETTINGS_FILENAME),
+            concat!(
+                "llm-deepseek:\n",
+                "  apiKeyEnv: TEST_ATOMIC_STABLE_REF\n",
+                "  baseURL: https://old.example\n",
+                "agent-default-model:\n",
+                "  provider: deepseek-official\n",
+                "  model: old-model\n",
+            ),
+        )
+        .unwrap();
+        write_private(
+            &temp.path().join(CREDENTIALS_FILENAME),
+            "TEST_ATOMIC_STABLE_REF: stable-secret\n",
+        );
+
+        let outcome = write_live_config_at(
+            Some(temp.path()),
+            &json!({
+                "apiKey": "stable-secret",
+                "apiKeyEnv": "TEST_ATOMIC_STABLE_REF",
+                "baseURL": "https://new.example",
+                "defaultModel": "new-model"
+            }),
+        )
+        .unwrap();
+
+        assert!(fs::read_to_string(temp.path().join(SETTINGS_FILENAME))
+            .unwrap()
+            .contains("baseURL: https://new.example"));
+        assert!(outcome
+            .rollback_token
+            .as_ref()
+            .is_some_and(|token| token.credentials.is_none()));
+    }
+
+    #[test]
+    fn rollback_token_restores_exact_bytes_and_absence() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join(SETTINGS_FILENAME);
+        let credentials_path = temp.path().join(CREDENTIALS_FILENAME);
+        let original_settings = concat!(
+            "# exact settings bytes\n",
+            "llm-deepseek:\n",
+            "  apiKeyEnv: TEST_ROLLBACK_OLD_REF\n",
+            "  baseURL: https://old.example\n",
+            "agent-default-model:\n",
+            "  provider: deepseek-official\n",
+            "  model: old-model\n",
+        );
+        let original_credentials = concat!(
+            "# exact credential bytes\n",
+            "TEST_ROLLBACK_OLD_REF: old-secret\n",
+        );
+        fs::write(&settings_path, original_settings).unwrap();
+        write_private(&credentials_path, original_credentials);
+
+        let outcome = write_live_config_at(
+            Some(temp.path()),
+            &json!({
+                "apiKey": "new-secret",
+                "apiKeyEnv": "TEST_ROLLBACK_NEW_REF",
+                "baseURL": "https://new.example",
+                "defaultModel": "new-model"
+            }),
+        )
+        .unwrap();
+        let token = outcome.rollback_token.unwrap();
+        token.restore().unwrap();
+
+        assert_eq!(
+            fs::read(&settings_path).unwrap(),
+            original_settings.as_bytes()
+        );
+        assert_eq!(
+            fs::read(&credentials_path).unwrap(),
+            original_credentials.as_bytes()
+        );
+        assert!(matches!(token.restore(), Err(AppError::Conflict(_))));
+
+        let empty = tempfile::tempdir().unwrap();
+        let create_outcome = write_live_config_at(
+            Some(empty.path()),
+            &json!({ "defaultModel": "deepseek-v4-flash" }),
+        )
+        .unwrap();
+        create_outcome.rollback_token.unwrap().restore().unwrap();
+        assert_eq!(
+            read_optional_bytes(&empty.path().join(SETTINGS_FILENAME)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn rollback_of_unset_restores_settings_before_target_credential() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join(SETTINGS_FILENAME);
+        let credentials_path = temp.path().join(CREDENTIALS_FILENAME);
+        let original_settings = concat!(
+            "llm-deepseek:\n",
+            "  apiKeyEnv: TEST_UNSET_OLD_REF\n",
+            "  baseURL: https://old.example\n",
+            "agent-default-model:\n",
+            "  provider: deepseek-official\n",
+            "  model: old-model\n",
+        );
+        let original_credentials = concat!(
+            "TEST_UNSET_OLD_REF: old-secret\n",
+            "TEST_UNSET_TARGET_REF: target-secret\n",
+        );
+        fs::write(&settings_path, original_settings).unwrap();
+        write_private(&credentials_path, original_credentials);
+
+        let outcome = write_live_config_at(
+            Some(temp.path()),
+            &json!({
+                "apiKey": "",
+                "apiKeyEnv": "TEST_UNSET_TARGET_REF",
+                "baseURL": "https://new.example",
+                "defaultModel": "new-model"
+            }),
+        )
+        .unwrap();
+        assert!(!fs::read_to_string(&credentials_path)
+            .unwrap()
+            .contains("TEST_UNSET_TARGET_REF"));
+
+        outcome.rollback_token.unwrap().restore().unwrap();
+        assert_eq!(
+            fs::read(&settings_path).unwrap(),
+            original_settings.as_bytes()
+        );
+        assert_eq!(
+            fs::read(&credentials_path).unwrap(),
+            original_credentials.as_bytes()
+        );
+    }
+
+    #[test]
+    fn safe_restore_order_short_circuits_before_credentials_on_settings_error() {
+        use std::cell::Cell;
+
+        let credential_restore_called = Cell::new(false);
+        let result = restore_settings_then_credentials(
+            || Err(AppError::Message("settings restore failed".to_string())),
+            || {
+                credential_restore_called.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(!credential_restore_called.get());
+    }
+
+    #[test]
+    fn rollback_token_preserves_newer_harness_edits_without_partial_restore() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join(SETTINGS_FILENAME);
+        let credentials_path = temp.path().join(CREDENTIALS_FILENAME);
+        fs::write(
+            &settings_path,
+            concat!(
+                "llm-deepseek:\n",
+                "  apiKeyEnv: TEST_CAS_OLD_REF\n",
+                "  baseURL: https://old.example\n",
+                "agent-default-model:\n",
+                "  provider: deepseek-official\n",
+                "  model: old-model\n",
+            ),
+        )
+        .unwrap();
+        write_private(&credentials_path, "TEST_CAS_OLD_REF: old-secret\n");
+
+        let outcome = write_live_config_at(
+            Some(temp.path()),
+            &json!({
+                "apiKey": "new-secret",
+                "apiKeyEnv": "TEST_CAS_NEW_REF",
+                "baseURL": "https://new.example",
+                "defaultModel": "new-model"
+            }),
+        )
+        .unwrap();
+        let committed_credentials = fs::read(&credentials_path).unwrap();
+        let mut newer_settings = fs::read(&settings_path).unwrap();
+        newer_settings.extend_from_slice(b"# Harness changed this after CC Switch\n");
+        fs::write(&settings_path, &newer_settings).unwrap();
+
+        let error = outcome.rollback_token.unwrap().restore().unwrap_err();
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert_eq!(fs::read(&settings_path).unwrap(), newer_settings);
+        assert_eq!(fs::read(&credentials_path).unwrap(), committed_credentials);
+    }
+
+    #[test]
+    fn explicit_lock_release_surfaces_removal_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let document = temp.path().join("document.yaml");
+        let lock = acquire_file_lock(&document).unwrap();
+        let lock_path = lock.path.as_ref().unwrap().clone();
+        fs::remove_file(&lock_path).unwrap();
+        fs::create_dir(&lock_path).unwrap();
+
+        assert!(lock.release().is_err());
+        fs::remove_dir(&lock_path).unwrap();
+    }
+
+    #[test]
+    fn committed_operation_keeps_rollback_outcome_when_lock_release_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let document = temp.path().join("document.yaml");
+        let lock = acquire_file_lock(&document).unwrap();
+        let lock_path = lock.path.as_ref().unwrap().clone();
+        fs::remove_file(&lock_path).unwrap();
+        fs::create_dir(&lock_path).unwrap();
+
+        assert_eq!(finish_locked(Ok(42), None, lock).unwrap(), 42);
+        fs::remove_dir(&lock_path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_home_creation_does_not_chmod_existing_or_symlinked_directories() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let temp = tempfile::tempdir().unwrap();
+        let existing = temp.path().join("existing");
+        fs::create_dir(&existing).unwrap();
+        fs::set_permissions(&existing, fs::Permissions::from_mode(0o750)).unwrap();
+        ensure_private_home(&existing).unwrap();
+        assert_eq!(
+            fs::metadata(&existing).unwrap().permissions().mode() & 0o777,
+            0o750
+        );
+
+        let target = temp.path().join("target");
+        let linked = temp.path().join("linked");
+        fs::create_dir(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+        symlink(&target, &linked).unwrap();
+        ensure_private_home(&linked).unwrap();
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o750
+        );
+
+        let created = temp.path().join("created");
+        ensure_private_home(&created).unwrap();
+        assert_eq!(
+            fs::metadata(&created).unwrap().permissions().mode() & 0o077,
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credential_permissions_are_checked_before_secret_bytes_are_parsed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(CREDENTIALS_FILENAME);
+        fs::write(&path, [0xff, 0xfe, 0xfd]).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let read_error = read_managed_credential(temp.path(), DEFAULT_API_KEY_ENV).unwrap_err();
+        let prepare_error =
+            prepare_managed_credential(temp.path(), DEFAULT_API_KEY_ENV, Some("replacement"))
+                .err()
+                .expect("wide credential permissions must be rejected");
+        assert!(read_error.to_string().contains("mode 0600"));
+        assert!(prepare_error.to_string().contains("mode 0600"));
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_managed_credential(temp.path(), DEFAULT_API_KEY_ENV)
+            .unwrap_err()
+            .to_string()
+            .contains("UTF-8"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn keep_write_fails_closed_for_wsl_unc_before_filesystem_access() {
+        for home in [
+            Path::new(r"\\wsl$\DefinitelyMissing\home\user\.dsh"),
+            Path::new(r"\\wsl.localhost\DefinitelyMissing\home\user\.dsh"),
+            Path::new(r"\\?\UNC\wsl.localhost\DefinitelyMissing\home\user\.dsh"),
+        ] {
+            let error = write_live_config_inner(
+                home,
+                &json!({ "defaultModel": "deepseek-v4-flash" }),
+                None,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("WSL UNC"));
+        }
     }
 }

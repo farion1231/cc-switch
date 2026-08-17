@@ -181,21 +181,44 @@ pub(crate) fn build_provider_from_request(
             ));
         }
         AppType::DeepSeekHarness => {
-            let mut config = serde_json::Map::new();
+            // Keep the complete native Harness profile carried by the inline
+            // config. The URL-facing connection fields below are then applied
+            // on top so their documented precedence remains unchanged.
+            let mut config = extract_deepseek_harness_inline_config(request)?;
+            // Deep links are untrusted input and must not choose a credential
+            // reference. A link-controlled ref could name an environment
+            // variable inherited by a later Harness process; because inherited
+            // env wins over `.credentials.yaml`, that process could send an
+            // unrelated secret to the link-controlled endpoint. Bind every
+            // imported key to a fresh ref that the link cannot predict or
+            // shadow accidentally. Credential-free links keep Harness' native
+            // default and may not smuggle a ref through inline config.
+            config.remove("apiKeyEnv");
             if let Some(api_key) = request.api_key.as_deref() {
                 config.insert("apiKey".to_string(), serde_json::json!(api_key));
+                config.insert(
+                    "apiKeyEnv".to_string(),
+                    serde_json::json!(format!(
+                        "CC_SWITCH_DSH_IMPORT_{}",
+                        uuid::Uuid::new_v4()
+                            .simple()
+                            .to_string()
+                            .to_ascii_uppercase()
+                    )),
+                );
             }
             let endpoint = get_primary_endpoint(request);
             if !endpoint.is_empty() {
                 config.insert("baseURL".to_string(), serde_json::json!(endpoint));
             }
-            config.insert(
-                "defaultModel".to_string(),
-                serde_json::json!(request
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| "deepseek-v4-flash".to_string())),
-            );
+            if let Some(model) = request.model.as_deref() {
+                config.insert("defaultModel".to_string(), serde_json::json!(model));
+            } else if !config.contains_key("defaultModel") {
+                config.insert(
+                    "defaultModel".to_string(),
+                    serde_json::json!("deepseek-v4-flash"),
+                );
+            }
             serde_json::Value::Object(config)
         }
     };
@@ -633,6 +656,58 @@ fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
 // Config Merge Logic
 // =============================================================================
 
+/// Decode an inline config into a JSON value using the same format rules for
+/// both field extraction and provider construction. Keeping this in one place
+/// prevents a valid TOML payload from being merged successfully and then
+/// losing its non-connection fields during construction.
+fn parse_inline_config_value(
+    request: &DeepLinkImportRequest,
+) -> Result<Option<serde_json::Value>, AppError> {
+    let config_content = if let Some(config_b64) = &request.config {
+        let decoded = decode_base64_param("config", config_b64)?;
+        String::from_utf8(decoded)
+            .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in config: {e}")))?
+    } else if request.config_url.is_some() {
+        // Fetch remote config (TODO: implement remote fetching in next phase)
+        return Err(AppError::InvalidInput(
+            "Remote config URL is not yet supported. Use inline config instead.".to_string(),
+        ));
+    } else {
+        return Ok(None);
+    };
+
+    let format = request.config_format.as_deref().unwrap_or("json");
+    let config_value = match format {
+        "json" => serde_json::from_str(&config_content)
+            .map_err(|e| AppError::InvalidInput(format!("Invalid JSON config: {e}")))?,
+        "toml" => {
+            let toml_value: toml::Value = toml::from_str(&config_content)
+                .map_err(|e| AppError::InvalidInput(format!("Invalid TOML config: {e}")))?;
+            serde_json::to_value(toml_value)
+                .map_err(|e| AppError::Message(format!("Failed to convert TOML to JSON: {e}")))?
+        }
+        _ => {
+            return Err(AppError::InvalidInput(format!(
+                "Unsupported config format: {format}"
+            )))
+        }
+    };
+
+    Ok(Some(config_value))
+}
+
+fn extract_deepseek_harness_inline_config(
+    request: &DeepLinkImportRequest,
+) -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
+    match parse_inline_config_value(request)? {
+        Some(serde_json::Value::Object(config)) => Ok(config),
+        Some(_) => Err(AppError::InvalidInput(
+            "DeepSeek Harness config must be a JSON object".to_string(),
+        )),
+        None => Ok(serde_json::Map::new()),
+    }
+}
+
 /// Parse and merge configuration from Base64 encoded config or remote URL
 ///
 /// Priority: URL params > inline config > remote config
@@ -644,39 +719,8 @@ pub fn parse_and_merge_config(
         return Ok(request.clone());
     }
 
-    // Step 1: Get config content
-    let config_content = if let Some(config_b64) = &request.config {
-        // Decode Base64 inline config
-        let decoded = decode_base64_param("config", config_b64)?;
-        String::from_utf8(decoded)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in config: {e}")))?
-    } else if let Some(_config_url) = &request.config_url {
-        // Fetch remote config (TODO: implement remote fetching in next phase)
-        return Err(AppError::InvalidInput(
-            "Remote config URL is not yet supported. Use inline config instead.".to_string(),
-        ));
-    } else {
-        return Ok(request.clone());
-    };
-
-    // Step 2: Parse config based on format
-    let format = request.config_format.as_deref().unwrap_or("json");
-    let config_value: serde_json::Value = match format {
-        "json" => serde_json::from_str(&config_content)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid JSON config: {e}")))?,
-        "toml" => {
-            let toml_value: toml::Value = toml::from_str(&config_content)
-                .map_err(|e| AppError::InvalidInput(format!("Invalid TOML config: {e}")))?;
-            // Convert TOML to JSON for uniform processing
-            serde_json::to_value(toml_value)
-                .map_err(|e| AppError::Message(format!("Failed to convert TOML to JSON: {e}")))?
-        }
-        _ => {
-            return Err(AppError::InvalidInput(format!(
-                "Unsupported config format: {format}"
-            )))
-        }
-    };
+    let config_value = parse_inline_config_value(request)?
+        .ok_or_else(|| AppError::InvalidInput("Missing inline provider config".to_string()))?;
 
     // Step 3: Extract values from config based on app type and merge with URL params
     let mut merged = request.clone();

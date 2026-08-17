@@ -23,10 +23,9 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
+    import_hermes_providers_from_live, import_openclaw_providers_from_live,
     import_opencode_providers_from_live, read_live_settings,
-    should_import_default_config_on_startup, sync_current_to_live,
-    update_toml_common_config_snippet,
+    should_import_default_config_on_startup, update_toml_common_config_snippet,
 };
 
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
@@ -49,6 +48,137 @@ use live::{
     remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
+
+/// Import is a read/decide/commit transaction for Harness: the provider row,
+/// database current, and device-local current must be derived from one locked
+/// view. Other applications retain the existing lock-free import behavior.
+pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+    if matches!(app_type, AppType::DeepSeekHarness) {
+        let _deepseek_harness_guard =
+            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+        return import_deepseek_harness_default_config_locked(state);
+    }
+    live::import_default_config(state, app_type)
+}
+
+fn import_deepseek_harness_default_config_locked(state: &AppState) -> Result<bool, AppError> {
+    let app_type = AppType::DeepSeekHarness;
+    let app_type_str = app_type.as_str();
+
+    // Keep the generic import contract: an official seed alone does not block
+    // importing the user's native configuration, but any real provider does.
+    if state.db.has_non_official_seed_provider(app_type_str)? {
+        return Ok(false);
+    }
+    if state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&app_type)
+    {
+        return Err(AppError::localized(
+            "provider.import.live_taken_over",
+            "Live 配置当前处于代理接管状态（包含占位符），不能导入为供应商。请先关闭代理接管或恢复 Live 配置后重试。",
+            "The live config is currently taken over by the proxy (contains placeholders) and cannot be imported as a provider. Disable proxy takeover or restore the live config first.",
+        ));
+    }
+
+    let settings_config = crate::dsh_config::read_live_settings()?.ok_or_else(|| {
+        AppError::localized(
+            "deepseek_harness.live.missing",
+            "DeepSeek Harness 配置文件不存在",
+            "DeepSeek Harness configuration files are missing",
+        )
+    })?;
+    crate::dsh_config::validate_settings_config(&settings_config)?;
+
+    let mut provider = Provider::with_id(
+        "default".to_string(),
+        "default".to_string(),
+        settings_config,
+        None,
+    );
+    provider.category = Some("custom".to_string());
+
+    let previous_provider = state.db.get_provider_by_id(&provider.id, app_type_str)?;
+    let previous_local_current = crate::settings::get_current_provider(&app_type);
+    let previous_db_current = state.db.get_current_provider(app_type_str)?;
+    let mut provider_saved = false;
+    let mut local_current_committed = false;
+    let commit_result = (|| {
+        state.db.save_provider(app_type_str, &provider)?;
+        provider_saved = true;
+        crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+        local_current_committed = true;
+        state
+            .db
+            .set_current_provider(app_type_str, provider.id.as_str())?;
+        Ok::<(), AppError>(())
+    })();
+
+    if let Err(error) = commit_result {
+        let mut rollback_failures = Vec::new();
+        if local_current_committed {
+            if let Err(rollback_error) =
+                crate::settings::set_current_provider(&app_type, previous_local_current.as_deref())
+            {
+                rollback_failures.push(format!("恢复本地 current 失败: {rollback_error}"));
+            }
+        }
+        if provider_saved {
+            let provider_rollback = match previous_provider.as_ref() {
+                Some(previous) => state.db.save_provider(app_type_str, previous),
+                None => state.db.delete_provider(app_type_str, provider.id.as_str()),
+            };
+            if let Err(rollback_error) = provider_rollback {
+                rollback_failures.push(format!("恢复 Provider 数据失败: {rollback_error}"));
+            }
+        }
+        match state.db.get_current_provider(app_type_str) {
+            Ok(current) if current == previous_db_current => {}
+            Ok(_) => {
+                if let Some(previous_db_current) = previous_db_current.as_deref() {
+                    if let Err(rollback_error) = state
+                        .db
+                        .set_current_provider(app_type_str, previous_db_current)
+                    {
+                        rollback_failures
+                            .push(format!("恢复数据库 current 失败: {rollback_error}"));
+                    }
+                } else {
+                    rollback_failures.push(
+                        "数据库 current 在失败提交后发生变化，且原状态为空，无法安全恢复"
+                            .to_string(),
+                    );
+                }
+            }
+            Err(rollback_error) => {
+                rollback_failures.push(format!("核验数据库 current 失败: {rollback_error}"));
+            }
+        }
+
+        return if rollback_failures.is_empty() {
+            Err(error)
+        } else {
+            Err(AppError::Message(format!(
+                "导入 DeepSeek Harness 默认配置失败: {error}; 回滚同时失败: {}",
+                rollback_failures.join("; ")
+            )))
+        };
+    }
+
+    Ok(true)
+}
+
+/// Serialize the all-app sync with Harness CRUD/switch operations. The live
+/// implementation performs the Harness read/current/write window while this
+/// guard is held; its per-file writer locks still coordinate other processes.
+pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
+    let _deepseek_harness_guard = futures::executor::block_on(
+        state
+            .proxy_service
+            .lock_switch_for_app(AppType::DeepSeekHarness.as_str()),
+    );
+    live::sync_current_to_live(state)
+}
 
 /// Codex official providers are safe to select during takeover: Codex keeps
 /// ownership of the active ChatGPT login and the proxy only forwards the
@@ -120,6 +250,24 @@ pub struct ProviderService;
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
     pub warnings: Vec<String>,
+}
+
+struct DeepSeekHarnessAddRollback<'a> {
+    provider: &'a Provider,
+    previous_provider: Option<&'a Provider>,
+    provider_saved: bool,
+    previous_local_current: Option<&'a str>,
+    local_current_committed: bool,
+    outcome: &'a crate::dsh_config::DshWriteOutcome,
+}
+
+struct DeepSeekHarnessSwitchRollback<'a> {
+    outcome: &'a crate::dsh_config::DshWriteOutcome,
+    previous_local_current: Option<&'a str>,
+    local_current_committed: bool,
+    previous_db_current: Option<&'a str>,
+    previous_provider_before_backfill: Option<&'a Provider>,
+    backfill_completed: bool,
 }
 
 #[cfg(test)]
@@ -430,6 +578,24 @@ mod tests {
             json!({
                 "defaultModel": model,
                 "apiKeyEnv": "TEST_DSH_API_KEY"
+            }),
+            None,
+        )
+    }
+
+    fn deepseek_harness_provider_with_key(
+        id: &str,
+        model: &str,
+        credential_ref: &str,
+        api_key: &str,
+    ) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            format!("Provider {id}"),
+            json!({
+                "defaultModel": model,
+                "apiKeyEnv": credential_ref,
+                "apiKey": api_key
             }),
             None,
         )
@@ -2406,6 +2572,641 @@ requires_openai_auth = true
             assert_eq!(
                 stored.settings_config, original.settings_config,
                 "failed native writes must restore the exact previous provider snapshot"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_deepseek_harness_uses_effective_local_current_before_first_provider_flow() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let provider_a = deepseek_harness_provider("p1", "deepseek-v4-flash");
+            let provider_b = deepseek_harness_provider("p2", "deepseek-v4-pro");
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &provider_a)
+                .expect("save existing provider without DB current");
+            crate::settings::set_current_provider(&AppType::DeepSeekHarness, Some("p1"))
+                .expect("set device-local current");
+            crate::dsh_config::write_live_settings(&provider_a.settings_config)
+                .expect("write existing live provider");
+
+            ProviderService::add(state, AppType::DeepSeekHarness, provider_b.clone(), false)
+                .expect("a valid local current means this is a non-current add");
+
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::DeepSeekHarness).as_deref(),
+                Some("p1")
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::DeepSeekHarness.as_str())
+                    .expect("read DB current"),
+                None,
+                "non-current add must not invent a synced default pointer"
+            );
+            assert_eq!(
+                crate::dsh_config::read_live_settings()
+                    .expect("read Harness live")
+                    .and_then(|settings| settings["defaultModel"].as_str().map(str::to_string))
+                    .as_deref(),
+                Some("deepseek-v4-flash"),
+                "non-current add must not replace live configuration"
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id("p2", AppType::DeepSeekHarness.as_str())
+                    .expect("read added provider")
+                    .expect("provider should be saved")
+                    .settings_config,
+                provider_b.settings_config
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_duplicate_current_deepseek_harness_provider_leaves_db_and_live_unchanged() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let original = deepseek_harness_provider_with_key(
+                "duplicate-harness",
+                "deepseek-v4-flash",
+                "TEST_DSH_DUPLICATE_ORIGINAL_KEY",
+                "original-secret",
+            );
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &original)
+                .expect("save original provider");
+            state
+                .db
+                .set_current_provider(AppType::DeepSeekHarness.as_str(), &original.id)
+                .expect("set DB current");
+            crate::settings::set_current_provider(
+                &AppType::DeepSeekHarness,
+                Some(original.id.as_str()),
+            )
+            .expect("set local current");
+            crate::dsh_config::write_live_settings(&original.settings_config)
+                .expect("write original Harness live files");
+
+            let dsh_home = home.join(".dsh");
+            let settings_before =
+                fs::read(dsh_home.join("settings.yaml")).expect("read settings before add");
+            let credentials_before =
+                fs::read(dsh_home.join(".credentials.yaml")).expect("read credentials before add");
+            let duplicate = deepseek_harness_provider_with_key(
+                &original.id,
+                "deepseek-v4-pro",
+                "TEST_DSH_DUPLICATE_RETRY_KEY",
+                "retry-secret",
+            );
+
+            let error = ProviderService::add(state, AppType::DeepSeekHarness, duplicate, false)
+                .expect_err("duplicate Harness add must be rejected");
+            assert!(
+                error.to_string().contains("already exists"),
+                "unexpected duplicate error: {error}"
+            );
+
+            let stored = state
+                .db
+                .get_provider_by_id(&original.id, AppType::DeepSeekHarness.as_str())
+                .expect("read original provider")
+                .expect("original provider remains");
+            assert_eq!(stored.settings_config, original.settings_config);
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::DeepSeekHarness.as_str())
+                    .expect("read DB current")
+                    .as_deref(),
+                Some(original.id.as_str())
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::DeepSeekHarness).as_deref(),
+                Some(original.id.as_str())
+            );
+            assert_eq!(
+                fs::read(dsh_home.join("settings.yaml")).expect("read settings after add"),
+                settings_before
+            );
+            assert_eq!(
+                fs::read(dsh_home.join(".credentials.yaml")).expect("read credentials after add"),
+                credentials_before
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_first_deepseek_harness_db_current_failure_restores_live_provider_and_local_current() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let baseline = deepseek_harness_provider_with_key(
+                "baseline",
+                "deepseek-v4-flash",
+                "TEST_DSH_BASELINE_KEY",
+                "baseline-secret",
+            );
+            crate::dsh_config::write_live_settings(&baseline.settings_config)
+                .expect("write baseline Harness live files");
+            let dsh_home = home.join(".dsh");
+            let settings_before =
+                fs::read(dsh_home.join("settings.yaml")).expect("read baseline settings bytes");
+            let credentials_before = fs::read(dsh_home.join(".credentials.yaml"))
+                .expect("read baseline credential bytes");
+
+            {
+                let conn = state.db.conn.lock().expect("lock database");
+                conn.execute_batch(
+                    "CREATE TRIGGER reject_first_harness_current_update
+                     BEFORE UPDATE OF is_current ON providers
+                     WHEN NEW.app_type = 'deepseek-harness'
+                       AND NEW.id = 'first-harness'
+                       AND NEW.is_current = 1
+                     BEGIN
+                       SELECT RAISE(ABORT, 'forced first Harness current failure');
+                     END;",
+                )
+                .expect("install first Harness current failure trigger");
+            }
+
+            let provider = deepseek_harness_provider_with_key(
+                "first-harness",
+                "deepseek-v4-pro",
+                "TEST_DSH_FIRST_KEY",
+                "first-secret",
+            );
+            let error =
+                ProviderService::add(state, AppType::DeepSeekHarness, provider.clone(), false)
+                    .expect_err("DB current failure must abort first Harness add");
+            assert!(
+                error
+                    .to_string()
+                    .contains("forced first Harness current failure"),
+                "unexpected add failure: {error}"
+            );
+
+            assert!(state
+                .db
+                .get_provider_by_id(&provider.id, AppType::DeepSeekHarness.as_str())
+                .expect("read rolled-back provider")
+                .is_none());
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::DeepSeekHarness.as_str())
+                    .expect("read rolled-back DB current"),
+                None
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::DeepSeekHarness),
+                None
+            );
+            assert_eq!(
+                fs::read(dsh_home.join("settings.yaml")).expect("read restored settings"),
+                settings_before,
+                "failed first add must restore settings.yaml byte-for-byte"
+            );
+            assert_eq!(
+                fs::read(dsh_home.join(".credentials.yaml")).expect("read restored credentials"),
+                credentials_before,
+                "failed first add must restore .credentials.yaml byte-for-byte"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_deepseek_harness_db_current_failure_restores_live_current_and_backfill() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let provider_a = deepseek_harness_provider_with_key(
+                "harness-a",
+                "deepseek-v4-flash",
+                "TEST_DSH_SWITCH_A_KEY",
+                "switch-secret-a",
+            );
+            let provider_b = deepseek_harness_provider_with_key(
+                "harness-b",
+                "deepseek-v4-pro",
+                "TEST_DSH_SWITCH_B_KEY",
+                "switch-secret-b",
+            );
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &provider_a)
+                .expect("save first provider");
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &provider_b)
+                .expect("save second provider");
+            state
+                .db
+                .set_current_provider(AppType::DeepSeekHarness.as_str(), &provider_a.id)
+                .expect("set initial DB current");
+            crate::settings::set_current_provider(
+                &AppType::DeepSeekHarness,
+                Some(provider_a.id.as_str()),
+            )
+            .expect("set initial local current");
+
+            let mut externally_edited_a = provider_a.clone();
+            externally_edited_a.settings_config["defaultModel"] = json!("deepseek-v4-flash-manual");
+            crate::dsh_config::write_live_settings(&externally_edited_a.settings_config)
+                .expect("write externally edited outgoing live state");
+            let dsh_home = home.join(".dsh");
+            let settings_before =
+                fs::read(dsh_home.join("settings.yaml")).expect("read pre-switch settings bytes");
+            let credentials_before = fs::read(dsh_home.join(".credentials.yaml"))
+                .expect("read pre-switch credential bytes");
+
+            {
+                let conn = state.db.conn.lock().expect("lock database");
+                conn.execute_batch(
+                    "CREATE TRIGGER reject_harness_b_current_update
+                     BEFORE UPDATE OF is_current ON providers
+                     WHEN NEW.app_type = 'deepseek-harness'
+                       AND NEW.id = 'harness-b'
+                       AND NEW.is_current = 1
+                     BEGIN
+                       SELECT RAISE(ABORT, 'forced Harness switch current failure');
+                     END;",
+                )
+                .expect("install Harness switch current failure trigger");
+            }
+
+            let error =
+                ProviderService::switch(state, AppType::DeepSeekHarness, provider_b.id.as_str())
+                    .expect_err("DB current failure must abort Harness switch");
+            assert!(
+                error
+                    .to_string()
+                    .contains("forced Harness switch current failure"),
+                "unexpected switch failure: {error}"
+            );
+
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::DeepSeekHarness).as_deref(),
+                Some(provider_a.id.as_str())
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::DeepSeekHarness.as_str())
+                    .expect("read restored DB current")
+                    .as_deref(),
+                Some(provider_a.id.as_str())
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id(&provider_a.id, AppType::DeepSeekHarness.as_str())
+                    .expect("read restored outgoing provider")
+                    .expect("outgoing provider remains")
+                    .settings_config,
+                provider_a.settings_config,
+                "failed pointer commit must undo the outgoing-provider backfill"
+            );
+            assert_eq!(
+                fs::read(dsh_home.join("settings.yaml")).expect("read restored settings"),
+                settings_before,
+                "failed switch must restore settings.yaml byte-for-byte"
+            );
+            assert_eq!(
+                fs::read(dsh_home.join(".credentials.yaml")).expect("read restored credentials"),
+                credentials_before,
+                "failed switch must restore .credentials.yaml byte-for-byte"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_deepseek_harness_local_current_failure_restores_live_and_backfill() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let provider_a = deepseek_harness_provider_with_key(
+                "local-a",
+                "deepseek-v4-flash",
+                "TEST_DSH_LOCAL_A_KEY",
+                "local-secret-a",
+            );
+            let provider_b = deepseek_harness_provider_with_key(
+                "local-b",
+                "deepseek-v4-pro",
+                "TEST_DSH_LOCAL_B_KEY",
+                "local-secret-b",
+            );
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &provider_a)
+                .expect("save current provider");
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &provider_b)
+                .expect("save target provider");
+            state
+                .db
+                .set_current_provider(AppType::DeepSeekHarness.as_str(), &provider_a.id)
+                .expect("set initial DB current");
+            crate::settings::set_current_provider(
+                &AppType::DeepSeekHarness,
+                Some(provider_a.id.as_str()),
+            )
+            .expect("set initial local current");
+
+            let mut externally_edited_a = provider_a.clone();
+            externally_edited_a.settings_config["defaultModel"] =
+                json!("deepseek-v4-flash-local-edit");
+            crate::dsh_config::write_live_settings(&externally_edited_a.settings_config)
+                .expect("write externally edited outgoing live state");
+            let dsh_home = home.join(".dsh");
+            let settings_before =
+                fs::read(dsh_home.join("settings.yaml")).expect("read live settings bytes");
+            let credentials_before =
+                fs::read(dsh_home.join(".credentials.yaml")).expect("read live credential bytes");
+
+            let settings_path = home.join(".cc-switch").join("settings.json");
+            let settings_backup_path = home.join(".cc-switch").join("settings.json.before-test");
+            fs::rename(&settings_path, &settings_backup_path)
+                .expect("move settings file aside for deterministic write fault");
+            fs::create_dir(&settings_path)
+                .expect("replace settings file path with a directory fault");
+
+            let switch_result =
+                ProviderService::switch(state, AppType::DeepSeekHarness, provider_b.id.as_str());
+            fs::remove_dir(&settings_path).expect("remove settings fault directory");
+            fs::rename(&settings_backup_path, &settings_path)
+                .expect("restore original settings file");
+            let error = switch_result
+                .expect_err("local current persistence failure must abort Harness switch");
+            assert!(
+                error.to_string().contains("settings.json"),
+                "unexpected local-current failure: {error}"
+            );
+
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::DeepSeekHarness).as_deref(),
+                Some(provider_a.id.as_str())
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::DeepSeekHarness.as_str())
+                    .expect("read unchanged DB current")
+                    .as_deref(),
+                Some(provider_a.id.as_str())
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id(&provider_a.id, AppType::DeepSeekHarness.as_str())
+                    .expect("read restored outgoing provider")
+                    .expect("outgoing provider remains")
+                    .settings_config,
+                provider_a.settings_config
+            );
+            assert_eq!(
+                fs::read(dsh_home.join("settings.yaml")).expect("read restored live settings"),
+                settings_before
+            );
+            assert_eq!(
+                fs::read(dsh_home.join(".credentials.yaml"))
+                    .expect("read restored live credentials"),
+                credentials_before
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_deepseek_harness_waits_for_app_lock_before_reading_target_provider() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let provider_a = deepseek_harness_provider_with_key(
+                "lock-a",
+                "deepseek-v4-flash",
+                "TEST_DSH_LOCK_A_KEY",
+                "lock-secret-a",
+            );
+            let provider_b = deepseek_harness_provider_with_key(
+                "lock-b",
+                "deepseek-v4-pro",
+                "TEST_DSH_LOCK_B_KEY",
+                "lock-secret-b",
+            );
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &provider_a)
+                .expect("save current provider");
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &provider_b)
+                .expect("save target provider");
+            state
+                .db
+                .set_current_provider(AppType::DeepSeekHarness.as_str(), &provider_a.id)
+                .expect("set DB current");
+            crate::settings::set_current_provider(
+                &AppType::DeepSeekHarness,
+                Some(provider_a.id.as_str()),
+            )
+            .expect("set local current");
+            crate::dsh_config::write_live_settings(&provider_a.settings_config)
+                .expect("write initial Harness live state");
+
+            let transaction_guard = futures::executor::block_on(
+                state
+                    .proxy_service
+                    .lock_switch_for_app(AppType::DeepSeekHarness.as_str()),
+            );
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    started_tx.send(()).expect("signal switch start");
+                    let result = ProviderService::switch(
+                        state,
+                        AppType::DeepSeekHarness,
+                        provider_b.id.as_str(),
+                    );
+                    done_tx.send(result).expect("send switch result");
+                });
+
+                started_rx.recv().expect("wait for switch task");
+                assert!(
+                    done_rx
+                        .recv_timeout(std::time::Duration::from_millis(100))
+                        .is_err(),
+                    "Harness switch must wait while another transaction owns its app lock"
+                );
+
+                // Mutate the target while the switch is known to be waiting.
+                // Reading providers before acquiring the lock would project the
+                // stale model after the guard is released.
+                let mut updated_b = provider_b.clone();
+                updated_b.settings_config["defaultModel"] = json!("deepseek-v4-pro-updated");
+                state
+                    .db
+                    .save_provider(AppType::DeepSeekHarness.as_str(), &updated_b)
+                    .expect("update target while switch waits");
+                drop(transaction_guard);
+
+                done_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("switch should finish after lock release")
+                    .expect("switch updated target");
+            });
+
+            assert_eq!(
+                crate::dsh_config::read_live_settings()
+                    .expect("read switched Harness live state")
+                    .and_then(|settings| settings["defaultModel"].as_str().map(str::to_string))
+                    .as_deref(),
+                Some("deepseek-v4-pro-updated"),
+                "switch must read the target provider only after acquiring the app lock"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_non_current_deepseek_harness_provider_runs_native_writer_validation() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let current = deepseek_harness_provider("current", "deepseek-v4-flash");
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &current)
+                .expect("save current provider");
+            state
+                .db
+                .set_current_provider(AppType::DeepSeekHarness.as_str(), &current.id)
+                .expect("set DB current");
+            crate::settings::set_current_provider(
+                &AppType::DeepSeekHarness,
+                Some(current.id.as_str()),
+            )
+            .expect("set local current");
+
+            let mut invalid = deepseek_harness_provider("invalid", "deepseek-v4-pro");
+            invalid.settings_config["apiKey"] = json!(42);
+            let error =
+                ProviderService::add(state, AppType::DeepSeekHarness, invalid.clone(), false)
+                    .expect_err("non-current invalid provider must be rejected before DB save");
+            assert!(error.to_string().contains("apiKey must be a string"));
+            assert!(state
+                .db
+                .get_provider_by_id(&invalid.id, AppType::DeepSeekHarness.as_str())
+                .expect("read rejected provider")
+                .is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_deepseek_harness_db_current_failure_rolls_back_provider_and_local_current() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let live = deepseek_harness_provider_with_key(
+                "native",
+                "deepseek-v4-flash",
+                "TEST_DSH_IMPORT_KEY",
+                "import-secret",
+            );
+            crate::dsh_config::write_live_settings(&live.settings_config)
+                .expect("seed Harness live configuration");
+            {
+                let conn = state.db.conn.lock().expect("lock database");
+                conn.execute_batch(
+                    "CREATE TRIGGER reject_imported_harness_current_update
+                     BEFORE UPDATE OF is_current ON providers
+                     WHEN NEW.app_type = 'deepseek-harness'
+                       AND NEW.id = 'default'
+                       AND NEW.is_current = 1
+                     BEGIN
+                       SELECT RAISE(ABORT, 'forced Harness import current failure');
+                     END;",
+                )
+                .expect("install Harness import current failure trigger");
+            }
+
+            let error = import_default_config(state, AppType::DeepSeekHarness)
+                .expect_err("DB current failure must abort Harness import");
+            assert!(
+                error
+                    .to_string()
+                    .contains("forced Harness import current failure"),
+                "unexpected import failure: {error}"
+            );
+            assert!(state
+                .db
+                .get_provider_by_id("default", AppType::DeepSeekHarness.as_str())
+                .expect("read rolled-back imported provider")
+                .is_none());
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::DeepSeekHarness.as_str())
+                    .expect("read DB current"),
+                None
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::DeepSeekHarness),
+                None
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_deepseek_harness_local_current_failure_rolls_back_provider_before_db_current() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let live = deepseek_harness_provider("native", "deepseek-v4-flash");
+            crate::dsh_config::write_live_settings(&live.settings_config)
+                .expect("seed Harness live configuration");
+
+            let settings_path = home.join(".cc-switch").join("settings.json");
+            fs::create_dir_all(
+                settings_path
+                    .parent()
+                    .expect("settings path must have a parent"),
+            )
+            .expect("create settings parent");
+            fs::create_dir(&settings_path)
+                .expect("replace settings file path with a directory fault");
+
+            let error = import_default_config(state, AppType::DeepSeekHarness)
+                .expect_err("local current persistence failure must abort Harness import");
+            fs::remove_dir(&settings_path).expect("remove settings fault directory");
+
+            assert!(
+                error.to_string().contains("settings.json"),
+                "unexpected local-current failure: {error}"
+            );
+            assert!(state
+                .db
+                .get_provider_by_id("default", AppType::DeepSeekHarness.as_str())
+                .expect("read rolled-back imported provider")
+                .is_none());
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::DeepSeekHarness.as_str())
+                    .expect("read DB current"),
+                None,
+                "DB current must not commit before local current"
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::DeepSeekHarness),
+                None
             );
         });
     }
@@ -4623,6 +5424,156 @@ impl ProviderService {
         }
     }
 
+    /// Harness needs the writer-produced compare-and-restore token so pointer
+    /// commit failures can roll back exactly without overwriting a newer native
+    /// edit. Build the same effective settings used by the ordinary live path,
+    /// then retain the writer outcome instead of discarding it.
+    fn write_deepseek_harness_live_transactional(
+        state: &AppState,
+        provider: &Provider,
+    ) -> Result<crate::dsh_config::DshWriteOutcome, AppError> {
+        let app_type = AppType::DeepSeekHarness;
+        let effective_settings =
+            build_effective_settings_with_common_config(state.db.as_ref(), &app_type, provider)?;
+        crate::dsh_config::write_live_settings_transactional(&effective_settings)
+    }
+
+    fn restore_deepseek_harness_live_after_commit_error(
+        outcome: &crate::dsh_config::DshWriteOutcome,
+        rollback_failures: &mut Vec<String>,
+    ) {
+        if let Some(snapshot) = outcome.rollback_token.as_ref() {
+            if let Err(rollback_error) = snapshot.restore() {
+                rollback_failures.push(format!(
+                    "恢复 DeepSeek Harness Live 配置失败: {rollback_error}"
+                ));
+            }
+        }
+    }
+
+    fn deepseek_harness_add_transaction_error(
+        state: &AppState,
+        error: AppError,
+        rollback: DeepSeekHarnessAddRollback<'_>,
+    ) -> AppError {
+        let mut rollback_failures = Vec::new();
+
+        // Restore the native pair first while its compare-and-restore token is
+        // still current. A concurrent Harness edit causes a conflict and is
+        // preserved rather than being overwritten by rollback.
+        Self::restore_deepseek_harness_live_after_commit_error(
+            rollback.outcome,
+            &mut rollback_failures,
+        );
+
+        if rollback.local_current_committed {
+            if let Err(rollback_error) = crate::settings::set_current_provider(
+                &AppType::DeepSeekHarness,
+                rollback.previous_local_current,
+            ) {
+                rollback_failures.push(format!("恢复本地 current 失败: {rollback_error}"));
+            }
+        }
+
+        if rollback.provider_saved {
+            let provider_rollback = match rollback.previous_provider {
+                Some(previous) => state
+                    .db
+                    .save_provider(AppType::DeepSeekHarness.as_str(), previous),
+                None => state.db.delete_provider(
+                    AppType::DeepSeekHarness.as_str(),
+                    rollback.provider.id.as_str(),
+                ),
+            };
+            if let Err(rollback_error) = provider_rollback {
+                rollback_failures.push(format!("恢复 Provider 数据失败: {rollback_error}"));
+            }
+        }
+
+        if rollback_failures.is_empty() {
+            error
+        } else {
+            AppError::Message(format!(
+                "新增首个 DeepSeek Harness provider 失败: {error}; 回滚同时失败: {}",
+                rollback_failures.join("; ")
+            ))
+        }
+    }
+
+    fn deepseek_harness_switch_transaction_error(
+        state: &AppState,
+        error: AppError,
+        rollback: DeepSeekHarnessSwitchRollback<'_>,
+    ) -> AppError {
+        let mut rollback_failures = Vec::new();
+
+        Self::restore_deepseek_harness_live_after_commit_error(
+            rollback.outcome,
+            &mut rollback_failures,
+        );
+
+        if rollback.backfill_completed {
+            if let Some(previous_provider) = rollback.previous_provider_before_backfill {
+                if let Err(rollback_error) = state
+                    .db
+                    .save_provider(AppType::DeepSeekHarness.as_str(), previous_provider)
+                {
+                    rollback_failures.push(format!(
+                        "恢复切换前 Provider 回填快照失败: {rollback_error}"
+                    ));
+                }
+            }
+        }
+
+        if rollback.local_current_committed {
+            if let Err(rollback_error) = crate::settings::set_current_provider(
+                &AppType::DeepSeekHarness,
+                rollback.previous_local_current,
+            ) {
+                rollback_failures.push(format!("恢复本地 current 失败: {rollback_error}"));
+            }
+        }
+
+        // set_current_provider uses one SQLite transaction, so a reported DB
+        // failure normally leaves this untouched. Verify and repair it anyway
+        // when there was a previous pointer, keeping the rollback resilient to
+        // future implementation changes.
+        match state
+            .db
+            .get_current_provider(AppType::DeepSeekHarness.as_str())
+        {
+            Ok(current) if current.as_deref() == rollback.previous_db_current => {}
+            Ok(_) => {
+                if let Some(previous_db_current) = rollback.previous_db_current {
+                    if let Err(rollback_error) = state.db.set_current_provider(
+                        AppType::DeepSeekHarness.as_str(),
+                        previous_db_current,
+                    ) {
+                        rollback_failures
+                            .push(format!("恢复数据库 current 失败: {rollback_error}"));
+                    }
+                } else {
+                    rollback_failures.push(
+                        "数据库 current 在失败提交后发生变化，且原状态为空，无法安全恢复"
+                            .to_string(),
+                    );
+                }
+            }
+            Err(rollback_error) => {
+                rollback_failures.push(format!("核验数据库 current 失败: {rollback_error}"));
+            }
+        }
+
+        if rollback_failures.is_empty() {
+            error
+        } else {
+            AppError::Message(format!(
+                "切换 DeepSeek Harness provider 失败: {error}; 回滚同时失败: {}",
+                rollback_failures.join("; ")
+            ))
+        }
+    }
+
     fn managed_codex_transaction_error(
         operation: &str,
         error: AppError,
@@ -4936,6 +5887,36 @@ impl ProviderService {
             return pi::add(state, provider, add_to_live);
         }
 
+        // Harness provider/current/live state is one logical transaction. Take
+        // the per-app lock before validation or any provider/current read so a
+        // concurrent add/update/switch/delete/import/sync cannot act on a stale
+        // snapshot.
+        let _deepseek_harness_add_guard = if matches!(app_type, AppType::DeepSeekHarness) {
+            Some(futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            ))
+        } else {
+            None
+        };
+
+        // `save_provider` is an upsert. Treating a retried/double-submitted add
+        // as an update would replace a current Harness DB row while the add
+        // path (correctly for a new non-current row) skips its Live projection.
+        // Reject duplicates after taking the app lock so the existence check
+        // and insert decision share one serialized view.
+        if matches!(app_type, AppType::DeepSeekHarness)
+            && state
+                .db
+                .get_provider_by_id(provider.id.as_str(), app_type.as_str())?
+                .is_some()
+        {
+            return Err(AppError::localized(
+                "provider.deepseek_harness.duplicate_id",
+                format!("DeepSeek Harness 供应商 {} 已存在", provider.id),
+                format!("DeepSeek Harness provider {} already exists", provider.id),
+            ));
+        }
+
         let mut provider = provider;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
@@ -5010,13 +5991,59 @@ impl ProviderService {
             return Ok(true);
         }
 
-        // First Harness provider: validate and project the native files before
-        // persisting a provider/current pointer. This avoids a failed native
-        // lock or environment-shadow check leaving a phantom DB provider.
-        let harness_first = matches!(app_type, AppType::DeepSeekHarness)
-            && state.db.get_current_provider(app_type.as_str())?.is_none();
-        if harness_first {
-            write_live_with_common_config_for_state(state, &app_type, &provider)?;
+        // Device-local current is authoritative when valid. Looking only at the
+        // DB bit would misclassify a second provider as the first on devices
+        // whose local selection differs from the synced default.
+        let harness_effective_current = if matches!(app_type, AppType::DeepSeekHarness) {
+            Some(crate::settings::get_effective_current_provider(
+                &state.db, &app_type,
+            )?)
+        } else {
+            None
+        };
+
+        if harness_effective_current
+            .as_ref()
+            .is_some_and(Option::is_none)
+        {
+            let previous_provider = state
+                .db
+                .get_provider_by_id(provider.id.as_str(), app_type.as_str())?;
+            let previous_local_current = crate::settings::get_current_provider(&app_type);
+
+            // The native writer returns a CAS rollback token captured under the
+            // same native locks as the write. It restores exact bytes only if no
+            // newer Harness edit has replaced them.
+            let outcome = Self::write_deepseek_harness_live_transactional(state, &provider)?;
+            let mut provider_saved = false;
+            let mut local_current_committed = false;
+            let commit_result = (|| {
+                state.db.save_provider(app_type.as_str(), &provider)?;
+                provider_saved = true;
+                crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+                local_current_committed = true;
+                state
+                    .db
+                    .set_current_provider(app_type.as_str(), provider.id.as_str())?;
+                Ok::<(), AppError>(())
+            })();
+
+            if let Err(error) = commit_result {
+                return Err(Self::deepseek_harness_add_transaction_error(
+                    state,
+                    error,
+                    DeepSeekHarnessAddRollback {
+                        provider: &provider,
+                        previous_provider: previous_provider.as_ref(),
+                        provider_saved,
+                        previous_local_current: previous_local_current.as_deref(),
+                        local_current_committed,
+                        outcome: &outcome,
+                    },
+                ));
+            }
+
+            return Ok(true);
         }
 
         // Save to database
@@ -5039,26 +6066,17 @@ impl ProviderService {
             return Ok(true);
         }
 
-        // For other apps: Check if sync is needed (if this is current provider, or no current provider)
-        let current = state.db.get_current_provider(app_type.as_str())?;
+        // For other apps: Check if sync is needed (if this is current provider, or no current provider).
+        // Harness reuses the effective pointer read under its transaction lock.
+        let current = match harness_effective_current {
+            Some(current) => current,
+            None => state.db.get_current_provider(app_type.as_str())?,
+        };
         if current.is_none() {
-            // Harness may reject a native writer lock or environment-shadow
-            // conflict. Do not mark the first provider current until its live
-            // projection has succeeded.
-            if !matches!(app_type, AppType::DeepSeekHarness) {
-                state
-                    .db
-                    .set_current_provider(app_type.as_str(), &provider.id)?;
-            }
-            if !harness_first {
-                write_live_with_common_config_for_state(state, &app_type, &provider)?;
-            }
-            if matches!(app_type, AppType::DeepSeekHarness) {
-                state
-                    .db
-                    .set_current_provider(app_type.as_str(), &provider.id)?;
-                crate::settings::set_current_provider(&app_type, Some(&provider.id))?;
-            }
+            state
+                .db
+                .set_current_provider(app_type.as_str(), &provider.id)?;
+            write_live_with_common_config_for_state(state, &app_type, &provider)?;
         }
 
         Ok(true)
@@ -5074,6 +6092,17 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::update(state, original_id, provider);
         }
+
+        // Keep the complete Harness read/validate/DB/live window serialized.
+        // This guard is deliberately separate from the Codex guard below:
+        // only the latter is dropped before proxy helpers that lock internally.
+        let _deepseek_harness_update_guard = if matches!(app_type, AppType::DeepSeekHarness) {
+            Some(futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            ))
+        } else {
+            None
+        };
 
         let mut provider = provider;
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
@@ -5614,6 +6643,14 @@ impl ProviderService {
             return pi::delete(state, id);
         }
 
+        let _deepseek_harness_delete_guard = if matches!(app_type, AppType::DeepSeekHarness) {
+            Some(futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            ))
+        } else {
+            None
+        };
+
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
             // Single DB read shared across all additive-mode sub-paths below.
@@ -5757,6 +6794,17 @@ impl ProviderService {
             return pi::enable(state, id);
         }
 
+        // DSH bypasses proxy takeover below, so it owns one dedicated guard
+        // spanning provider/current reads, backfill, native write, and pointer
+        // commit. `switch_normal` must never acquire this lock again.
+        let _deepseek_harness_switch_guard = if matches!(app_type, AppType::DeepSeekHarness) {
+            Some(futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            ))
+        } else {
+            None
+        };
+
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let _provider = providers
@@ -5879,20 +6927,36 @@ impl ProviderService {
         // Backfill: Backfill current live config to current provider
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+        let deepseek_harness_previous_local_current = matches!(app_type, AppType::DeepSeekHarness)
+            .then(|| crate::settings::get_current_provider(&app_type));
+        let deepseek_harness_previous_db_current = if matches!(app_type, AppType::DeepSeekHarness) {
+            Some(state.db.get_current_provider(app_type.as_str())?)
+        } else {
+            None
+        };
+        let deepseek_harness_provider_before_backfill =
+            if matches!(app_type, AppType::DeepSeekHarness) {
+                current_id
+                    .as_deref()
+                    .and_then(|current_id| providers.get(current_id))
+                    .cloned()
+            } else {
+                None
+            };
         let current_managed_codex_account_id = current_id
             .as_deref()
             .and_then(|current_id| providers.get(current_id))
             .and_then(Self::managed_codex_oauth_account_id);
 
         let mut backfill_completed = false;
-        if let Some(current_id) = current_id {
+        if let Some(current_id) = current_id.as_deref() {
             if current_id != id {
                 // Additive mode apps - all providers coexist in the same file,
                 // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
                 if !app_type.is_additive_mode() {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                        if let Some(mut current_provider) = providers.get(current_id).cloned() {
                             // 切走前先把 live 里的可共享改动（含用户直接在应用内
                             // 装插件/加 hook/改偏好）同步进通用配置片段，再做剥离回填。
                             // 详见 sync_common_config_snippet_from_live 的文档。
@@ -6004,17 +7068,52 @@ impl ProviderService {
                 state.db.set_current_provider(app_type.as_str(), id)?;
             }
 
-            // Sync to live (write_gemini_live handles security flag internally for Gemini).
-            Self::write_preflighted_or_current_live(
-                state,
-                &app_type,
-                provider,
-                preflighted_provider.as_ref(),
-            )?;
+            // Harness retains the native writer's CAS rollback token until both
+            // current pointers commit. Other apps keep the ordinary live path.
+            let deepseek_harness_write_outcome = if commit_current_after_live {
+                Some(Self::write_deepseek_harness_live_transactional(
+                    state, provider,
+                )?)
+            } else {
+                Self::write_preflighted_or_current_live(
+                    state,
+                    &app_type,
+                    provider,
+                    preflighted_provider.as_ref(),
+                )?;
+                None
+            };
 
             if commit_current_after_live {
-                crate::settings::set_current_provider(&app_type, Some(id))?;
-                state.db.set_current_provider(app_type.as_str(), id)?;
+                let mut local_current_committed = false;
+                let pointer_commit = (|| {
+                    crate::settings::set_current_provider(&app_type, Some(id))?;
+                    local_current_committed = true;
+                    state.db.set_current_provider(app_type.as_str(), id)?;
+                    Ok::<(), AppError>(())
+                })();
+
+                if let Err(error) = pointer_commit {
+                    return Err(Self::deepseek_harness_switch_transaction_error(
+                        state,
+                        error,
+                        DeepSeekHarnessSwitchRollback {
+                            outcome: deepseek_harness_write_outcome
+                                .as_ref()
+                                .expect("Harness live write outcome must exist"),
+                            previous_local_current: deepseek_harness_previous_local_current
+                                .as_ref()
+                                .and_then(|current| current.as_deref()),
+                            local_current_committed,
+                            previous_db_current: deepseek_harness_previous_db_current
+                                .as_ref()
+                                .and_then(|current| current.as_deref()),
+                            previous_provider_before_backfill:
+                                deepseek_harness_provider_before_backfill.as_ref(),
+                            backfill_completed,
+                        },
+                    ));
+                }
             }
         }
         // A material-less official Codex provider gets a config-only live
@@ -6122,6 +7221,14 @@ impl ProviderService {
             return sync_current_provider_for_app_to_live(state, &app_type);
         }
 
+        let _deepseek_harness_sync_guard = if matches!(app_type, AppType::DeepSeekHarness) {
+            Some(futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            ))
+        } else {
+            None
+        };
+
         let current_id =
             match crate::settings::get_effective_current_provider(&state.db, &app_type)? {
                 Some(id) => id,
@@ -6145,7 +7252,7 @@ impl ProviderService {
 
         // See the save path above: backup/placeholders are the ownership signal
         // here, not just proxy_config.enabled.
-        if has_live_backup || live_taken_over {
+        if !matches!(app_type, AppType::DeepSeekHarness) && (has_live_backup || live_taken_over) {
             if matches!(app_type, AppType::ClaudeDesktop) {
                 write_live_with_common_config_for_state(state, &app_type, provider)?;
                 return Ok(());
@@ -6977,13 +8084,12 @@ impl ProviderService {
         app_type: AppType,
         updates: Vec<ProviderSortUpdate>,
     ) -> Result<bool, AppError> {
-        let mut providers = state.db.get_all_providers(app_type.as_str())?;
-
         for update in updates {
-            if let Some(provider) = providers.get_mut(&update.id) {
-                provider.sort_index = Some(update.sort_index);
-                state.db.save_provider(app_type.as_str(), provider)?;
-            }
+            state.db.update_provider_sort_index(
+                app_type.as_str(),
+                &update.id,
+                update.sort_index,
+            )?;
         }
 
         Ok(true)
@@ -7151,78 +8257,11 @@ impl ProviderService {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
             AppType::DeepSeekHarness => {
-                let settings = provider.settings_config.as_object().ok_or_else(|| {
-                    AppError::localized(
-                        "provider.deepseek_harness.settings.not_object",
-                        "DeepSeek Harness 配置必须是 JSON 对象",
-                        "DeepSeek Harness configuration must be a JSON object",
-                    )
-                })?;
-
-                if settings
-                    .get("defaultModel")
-                    .and_then(Value::as_str)
-                    .is_none_or(|value| value.trim().is_empty())
-                {
-                    return Err(AppError::localized(
-                        "provider.deepseek_harness.default_model.missing",
-                        "DeepSeek Harness 配置缺少 defaultModel",
-                        "DeepSeek Harness configuration is missing defaultModel",
-                    ));
-                }
-
-                if settings.contains_key("apiKeyEnv")
-                    && settings
-                        .get("apiKeyEnv")
-                        .and_then(Value::as_str)
-                        .is_none_or(|value| value.trim().is_empty())
-                {
-                    return Err(AppError::localized(
-                        "provider.deepseek_harness.api_key_env.invalid",
-                        "DeepSeek Harness apiKeyEnv 必须是非空字符串",
-                        "DeepSeek Harness apiKeyEnv must be a non-empty string",
-                    ));
-                }
-
-                let thinking = settings.get("thinking").and_then(Value::as_str);
-                if settings.contains_key("thinking")
-                    && !matches!(thinking, Some("enabled" | "disabled"))
-                {
-                    return Err(AppError::localized(
-                        "provider.deepseek_harness.thinking.invalid",
-                        "DeepSeek Harness thinking 必须是 enabled 或 disabled",
-                        "DeepSeek Harness thinking must be enabled or disabled",
-                    ));
-                }
-
-                let effort = settings.get("reasoningEffort").and_then(Value::as_str);
-                if settings.contains_key("reasoningEffort")
-                    && !matches!(effort, Some("off" | "high" | "max"))
-                {
-                    return Err(AppError::localized(
-                        "provider.deepseek_harness.reasoning_effort.invalid",
-                        "DeepSeek Harness reasoningEffort 必须是 off、high 或 max",
-                        "DeepSeek Harness reasoningEffort must be off, high, or max",
-                    ));
-                }
-
-                if thinking == Some("disabled") && effort.is_some_and(|value| value != "off") {
-                    return Err(AppError::localized(
-                        "provider.deepseek_harness.thinking_effort.conflict",
-                        "thinking 为 disabled 时 reasoningEffort 只能为 off",
-                        "reasoningEffort must be off when thinking is disabled",
-                    ));
-                }
-
-                if let Some(default_effort) = settings.get("defaultReasoningEffort") {
-                    if !matches!(default_effort.as_str(), Some("off" | "high" | "max")) {
-                        return Err(AppError::localized(
-                            "provider.deepseek_harness.default_reasoning_effort.invalid",
-                            "DeepSeek Harness defaultReasoningEffort 必须是 off、high 或 max",
-                            "DeepSeek Harness defaultReasoningEffort must be off, high, or max",
-                        ));
-                    }
-                }
+                // Use the exact same pure preparation/validation path as the
+                // native writer, including credential-reference combinations.
+                // This is required even for non-current CRUD rows, which may not
+                // be projected to live until a much later switch.
+                crate::dsh_config::validate_settings_config(&provider.settings_config)?;
             }
         }
 

@@ -31,7 +31,7 @@ import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 type DeepSeekHarnessProviderFormProps = Omit<ProviderFormProps, "appId">;
 
 export type DeepSeekThinking = "enabled" | "disabled";
-export type DeepSeekReasoningEffort = "off" | "high" | "max";
+export type DeepSeekReasoningEffort = "off" | "low" | "high" | "max";
 
 export interface DeepSeekHarnessModel {
   id: string;
@@ -207,16 +207,19 @@ export function DeepSeekHarnessProviderForm({
   const [defaultReasoningEffort, setDefaultReasoningEffort] =
     useState<DeepSeekReasoningEffort>(
       initialConfig.defaultReasoningEffort === "off" ||
+        initialConfig.defaultReasoningEffort === "low" ||
         initialConfig.defaultReasoningEffort === "high" ||
         initialConfig.defaultReasoningEffort === "max"
         ? initialConfig.defaultReasoningEffort
         : initialConfig.reasoningEffort === "off" ||
+            initialConfig.reasoningEffort === "low" ||
             initialConfig.reasoningEffort === "max"
           ? initialConfig.reasoningEffort
           : "high",
     );
   const [defaultReasoningConfigured, setDefaultReasoningConfigured] = useState(
     initialConfig.defaultReasoningEffort === "off" ||
+      initialConfig.defaultReasoningEffort === "low" ||
       initialConfig.defaultReasoningEffort === "high" ||
       initialConfig.defaultReasoningEffort === "max",
   );
@@ -454,6 +457,7 @@ export function DeepSeekHarnessProviderForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="off">off</SelectItem>
+                <SelectItem value="low">low</SelectItem>
                 <SelectItem value="high">high</SelectItem>
                 <SelectItem value="max">max</SelectItem>
               </SelectContent>
