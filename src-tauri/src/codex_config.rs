@@ -283,12 +283,9 @@ impl CodexLiveStateSnapshot {
         if auth.get("auth_mode").and_then(Value::as_str) != Some("chatgpt") {
             return None;
         }
-        let account_id = auth
-            .pointer("/tokens/account_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|account_id| !account_id.is_empty())?
-            .to_string();
+        // 必须用 claims 推导的身份：`tokens.account_id` 只是工作区 ID，会把同工作区的
+        // alice / bob 判成同一个账号。
+        let account_id = chatgpt_auth_identity(&auth)?;
         let last_refresh_ms = auth
             .get("last_refresh")
             .and_then(Value::as_str)
@@ -373,12 +370,31 @@ pub(crate) fn codex_managed_oauth_live_auth_marker_exists() -> bool {
     get_codex_managed_oauth_live_auth_marker_path().exists()
 }
 
+/// 从 ChatGPT `auth` 推导账号主键：claims 里的身份优先，完全推不出来才退回
+/// `tokens.account_id`。
+///
+/// 这条 fallback ladder 只能有一份：marker 记录与回滚身份判定若各写一套，改动其中
+/// 一处就会让两边算出不同的 key。
+fn chatgpt_auth_identity(auth: &Value) -> Option<String> {
+    parse_codex_auth_identity(auth)
+        .and_then(|(identity, workspace)| {
+            crate::proxy::providers::codex_oauth_auth::resolve_account_identity_from(
+                &identity, workspace,
+            )
+            .0
+        })
+        .or_else(|| {
+            auth.as_object()
+                .and_then(tokens_account_id)
+                .map(str::to_string)
+        })
+}
+
 /// 从 live/备份的 Codex `auth` 中提取 `account_id`，用于 marker 记录/比对。
 ///
 /// 仅接受 ChatGPT 登录形状（`auth_mode == "chatgpt"`、`OPENAI_API_KEY` 可清空）。
 /// 托管账号写入的完整 bundle 会额外带 `tokens.refresh_token` 与顶层 `last_refresh`，
-/// 这里一并容忍。所有权按 account-scoped 内容判断；Codex CLI 自刷新会轮换
-/// access_token，因此短期 token 指纹不能作为稳定的删除谓词。
+/// 这里一并容忍。
 fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
     let auth_obj = auth.as_object()?;
 
@@ -413,18 +429,45 @@ fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
         return None;
     }
 
-    let account_id = tokens
-        .get("account_id")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|id| !id.is_empty())?;
     tokens
         .get("access_token")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|token| !token.is_empty())?;
 
-    Some(account_id.to_string())
+    chatgpt_auth_identity(auth)
+}
+
+/// 解析 ChatGPT `auth` 里的身份 claims，**不做形状白名单检查**。
+///
+/// 归属判定必须与形状解耦：白名单是给「这是不是托管写入的 bundle」用的，Codex CLI
+/// 之后多写一个字段就会让它落空。落空后若退回 `tokens.account_id`（工作区 ID）比对，
+/// 复合键账号会恒判 false，从此认不出自己的 auth.json。
+fn parse_codex_auth_identity(
+    auth: &Value,
+) -> Option<(
+    crate::proxy::providers::codex_oauth_auth::AccountIdentity,
+    Option<String>,
+)> {
+    if auth.get("auth_mode").and_then(Value::as_str) != Some("chatgpt") {
+        return None;
+    }
+    let tokens = auth.get("tokens")?.as_object()?;
+    let parse = |field: &str| {
+        tokens
+            .get(field)
+            .and_then(Value::as_str)
+            .and_then(crate::proxy::providers::codex_oauth_auth::parse_jwt_claims)
+    };
+    let id_claims = parse("id_token");
+    let access_claims = parse("access_token");
+
+    Some(
+        crate::proxy::providers::codex_oauth_auth::resolve_identity_and_workspace(
+            id_claims.as_ref(),
+            access_claims.as_ref(),
+        ),
+    )
 }
 
 /// Build the native-shaped ChatGPT auth bundle shared by cc-switch and Codex CLI.
@@ -447,10 +490,14 @@ pub fn codex_managed_oauth_auth_value(
         "refresh_token".to_string(),
         Value::String(refresh_token.to_string()),
     );
-    tokens.insert(
-        "account_id".to_string(),
-        Value::String(account_id.to_string()),
-    );
+    // 没有工作区 ID 时整个字段省略：写入空串会让 Codex CLI 发出一个空的
+    // `ChatGPT-Account-Id` header。
+    if !account_id.is_empty() {
+        tokens.insert(
+            "account_id".to_string(),
+            Value::String(account_id.to_string()),
+        );
+    }
     json!({
         "auth_mode": "chatgpt",
         "OPENAI_API_KEY": null,
@@ -483,7 +530,7 @@ pub fn codex_auth_matches_recorded_managed_oauth(
     let Some(auth_account_id) = extract_codex_managed_oauth_account_id(auth) else {
         return Ok(false);
     };
-    if auth_account_id != account_id {
+    if !managed_marker_refers_to_account(&auth_account_id, account_id) {
         return Ok(false);
     }
 
@@ -502,7 +549,32 @@ pub fn codex_auth_matches_recorded_managed_oauth(
     // v1 markers also carry an access-token fingerprint. Serde ignores that
     // legacy extra field, and matching intentionally no longer consults it:
     // the Codex CLI rotates access tokens during normal self-refresh.
-    Ok(matches!(marker.version, 1 | 2) && marker.account_id == account_id)
+    Ok(matches!(marker.version, 1 | 2)
+        && managed_marker_refers_to_account(&marker.account_id, account_id))
+}
+
+/// marker 里记的 key 与请求的 `account_id` 是否指向同一次登录。
+///
+/// marker 一律由 claims 推导，因此是复合键；升级前存下的账号 key 却仍是裸工作区 ID，
+/// 直接字符串比较会恒不相等，导致 marker 既刷不新也清不掉。
+fn managed_marker_refers_to_account(marker_account_id: &str, account_id: &str) -> bool {
+    use crate::proxy::providers::codex_oauth_auth::split_composite_account_id;
+
+    let marker_account_id = marker_account_id.trim();
+    let account_id = account_id.trim();
+    if marker_account_id == account_id {
+        return true;
+    }
+
+    match (
+        split_composite_account_id(marker_account_id),
+        split_composite_account_id(account_id),
+    ) {
+        // 只有「复合键 vs 裸工作区 key」这一种跨形状才等价；两个复合键不相等就是两个人。
+        (Some((_, workspace)), None) => workspace == account_id,
+        (None, Some((_, workspace))) => workspace == marker_account_id,
+        _ => false,
+    }
 }
 
 fn clear_codex_managed_oauth_live_auth_marker_for_account(
@@ -526,7 +598,7 @@ fn clear_codex_managed_oauth_live_auth_marker_for_account(
             return delete_file(&marker_path);
         }
     };
-    if marker.account_id == account_id.trim() {
+    if managed_marker_refers_to_account(&marker.account_id, account_id) {
         delete_file(&marker_path)?;
     }
     Ok(())
@@ -611,9 +683,8 @@ pub fn clear_codex_live_auth_for_managed_account_if_unchanged(
 ///
 /// 托管账号写入的是**完整可刷新 bundle**，与原生浏览器登录形状一致（都含
 /// refresh_token），且 Codex CLI 会轮换 token 使旧的 access_token 指纹失效，因此
-/// 无法再凭形状/哈希区分。这里采用**基于内容的 account_id 判定**：只要是 chatgpt
-/// 模式、且 `tokens.account_id` 命中托管账号，即视为该账号的登录。对同一账号的原生
-/// 登录会被同等处理（同账号，无损）。
+/// 无法再凭形状/哈希区分。判定改为基于 token claims 里的个人身份（细节见下方注释）。
+/// 对同一账号的原生登录会被同等处理（同账号，无损）。
 ///
 /// 用于 Live 备份剥离：避免把托管账号的可刷新 token 持久化进备份配置。
 pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) -> bool {
@@ -633,12 +704,33 @@ pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) 
     if !api_key_clearable {
         return false;
     }
-    obj.get("tokens")
+
+    // 归属只能由 token claims 里的个人身份决定：`tokens.account_id` 只是工作区 ID，
+    // 同工作区另一个成员的登录也会命中它，进而把对方的 live auth 当成自己的，
+    // 采纳或删除掉别人的凭据。
+    //
+    // 升级前存下的账号 key 仍是裸工作区 ID（用户尚未在 UI 重新登录绑定），对这些 key
+    // 只能比到工作区一层——这正是它们在同工作区多成员下会误判的原因，重新登录一次即转为
+    // 复合键。完全解析不出个人 claim 时同样只剩工作区可比。
+    let Some((identity, workspace_id)) = parse_codex_auth_identity(auth) else {
+        return false;
+    };
+
+    crate::proxy::providers::codex_oauth_auth::identity_owns_account_id(
+        &identity,
+        workspace_id.as_deref(),
+        tokens_account_id(obj),
+        account_id,
+    )
+}
+
+fn tokens_account_id(auth: &serde_json::Map<String, Value>) -> Option<&str> {
+    auth.get("tokens")
         .and_then(|tokens| tokens.as_object())
         .and_then(|tokens| tokens.get("account_id"))
         .and_then(|value| value.as_str())
         .map(str::trim)
-        == Some(account_id)
+        .filter(|id| !id.is_empty())
 }
 
 /// 读回 Codex CLI 当前 `~/.codex/auth.json` 中属于 `account_id` 的 refresh_token /
@@ -3464,6 +3556,157 @@ base_url = "https://single.example.com/v1"
         );
     }
 
+    fn unsigned_jwt(payload: &Value) -> String {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"none\"}");
+        let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(payload).unwrap());
+        format!("{header}.{encoded}.")
+    }
+
+    fn chatgpt_bundle(id_claims: Value, tokens_account_id: &str, last_refresh: &str) -> Value {
+        chatgpt_bundle_with_access(id_claims, None, tokens_account_id, last_refresh)
+    }
+
+    fn chatgpt_bundle_with_access(
+        id_claims: Value,
+        access_claims: Option<Value>,
+        tokens_account_id: &str,
+        last_refresh: &str,
+    ) -> Value {
+        let access_token = match access_claims {
+            Some(claims) => unsigned_jwt(&claims),
+            None => "access".to_string(),
+        };
+        json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "id_token": unsigned_jwt(&id_claims),
+                "access_token": access_token,
+                "refresh_token": "refresh",
+                "account_id": tokens_account_id
+            },
+            "last_refresh": last_refresh
+        })
+    }
+
+    #[test]
+    fn rollback_does_not_treat_two_members_of_one_workspace_as_the_same_account() {
+        // A -> B 的事务失败回滚时，只有「同一个账号刷新出了更新的 auth」才可以保留
+        // 盘上的现状。`tokens.account_id` 只是工作区 ID，拿它判定会把 bob 的登录
+        // 当成 alice 的新世代保留下来，留下「cc-switch 认为是 alice、盘上却是 bob 凭据」。
+        let alice = chatgpt_auth_identity(&chatgpt_bundle(
+            json!({ "sub": "alice-sub", "chatgpt_account_id": "team-ws" }),
+            "team-ws",
+            "2026-01-02T03:04:05.000000000Z",
+        ));
+        let bob = chatgpt_auth_identity(&chatgpt_bundle(
+            json!({ "sub": "bob-sub", "chatgpt_account_id": "team-ws" }),
+            "team-ws",
+            "2026-01-02T04:04:05.000000000Z",
+        ));
+
+        assert_eq!(alice.as_deref(), Some("alice-sub::team-ws"));
+        assert_ne!(
+            alice, bob,
+            "two members of one workspace must not share a rollback generation identity"
+        );
+    }
+
+    #[test]
+    fn live_auth_ownership_survives_an_unknown_extra_field() {
+        // Codex CLI 之后多写一个字段就会让形状白名单落空。归属判定必须与形状解耦，
+        // 否则落空后退回工作区比对，所有复合键账号同时认不出自己的 auth.json。
+        let mut auth = chatgpt_bundle(
+            json!({ "sub": "alice-sub", "chatgpt_account_id": "team-ws" }),
+            "team-ws",
+            "2026-01-02T03:04:05.000000000Z",
+        );
+        auth.as_object_mut()
+            .unwrap()
+            .insert("some_new_field".to_string(), json!(true));
+
+        assert!(codex_live_auth_is_managed_chatgpt_login(
+            &auth,
+            "alice-sub::team-ws"
+        ));
+        assert!(!codex_live_auth_is_managed_chatgpt_login(
+            &auth,
+            "bob-sub::team-ws"
+        ));
+    }
+
+    #[test]
+    fn live_auth_ownership_survives_a_changed_claim_set() {
+        // 登录时 id_token 只有 sub，主键定为 `alice-sub::team-ws`。之后 CLI 轮换出的
+        // id_token 多带了 user_id，最优 claim 变成 user_id——只比「当前最优 claim」
+        // 就会认不出这是同一个人，凭据从此孤儿化。必须比对全部候选。
+        let rotated = chatgpt_bundle(
+            json!({
+                "sub": "alice-sub",
+                "chatgpt_account_id": "team-ws",
+                "https://api.openai.com/auth": { "user_id": "alice-user-id" }
+            }),
+            "team-ws",
+            "2026-01-02T03:04:05.000000000Z",
+        );
+        assert_eq!(
+            extract_codex_managed_oauth_account_id(&rotated).as_deref(),
+            Some("alice-user-id::team-ws"),
+            "the rotated token must actually rank user_id above sub"
+        );
+
+        assert!(codex_live_auth_is_managed_chatgpt_login(
+            &rotated,
+            "alice-sub::team-ws"
+        ));
+        assert!(
+            !codex_live_auth_is_managed_chatgpt_login(&rotated, "bob-sub::team-ws"),
+            "a claim that never appeared must not match"
+        );
+    }
+
+    #[test]
+    fn a_workspaceless_account_never_leaks_its_key_into_native_auth() {
+        // 没有工作区 claim 的账号，主键就是裸个人身份（可能是 email）。它绝不能出现在
+        // 原生 auth.json 的 tokens.account_id——Codex CLI 会把该字段当
+        // `ChatGPT-Account-Id` 发给 OpenAI。
+        use crate::proxy::providers::codex_oauth_auth::native_tokens_account_id;
+
+        assert_eq!(
+            native_tokens_account_id(Some("team-ws"), "alice::team-ws"),
+            "team-ws"
+        );
+        assert_eq!(
+            native_tokens_account_id(None, "alice@example.com::team-ws"),
+            "",
+            "a composite key must never reach tokens.account_id"
+        );
+        // 裸 key 保持既有行为：它要么就是工作区 ID，要么没有别的值可写
+        assert_eq!(native_tokens_account_id(None, "team-ws"), "team-ws");
+
+        let auth =
+            codex_managed_oauth_auth_value("", "access", None, "refresh", "2026-01-01T00:00:00Z");
+        assert!(
+            auth.pointer("/tokens/account_id").is_none(),
+            "an empty workspace ID must be omitted, not written as an empty string"
+        );
+
+        let with_workspace = codex_managed_oauth_auth_value(
+            "team-ws",
+            "access",
+            None,
+            "refresh",
+            "2026-01-01T00:00:00Z",
+        );
+        assert_eq!(
+            with_workspace
+                .pointer("/tokens/account_id")
+                .and_then(Value::as_str),
+            Some("team-ws")
+        );
+    }
+
     #[test]
     fn managed_chatgpt_login_matched_by_account_id_including_full_refresh_bundle() {
         // ① 之后托管写入的是含 refresh_token 的完整 bundle；备份剥离必须凭 account_id
@@ -3493,6 +3736,56 @@ base_url = "https://single.example.com/v1"
         assert!(!codex_live_auth_is_managed_chatgpt_login(
             &api_key_auth,
             "acct-managed"
+        ));
+
+        // 同 Team 工作区（相同 tokens.account_id）或同 Email 不同工作区能够被精确区分
+        let team_account_1 = chatgpt_bundle(
+            json!({
+                "email": "user1@example.com",
+                "chatgpt_account_id": "team-workspace-uuid"
+            }),
+            "team-workspace-uuid",
+            "2026-01-02T03:04:05.000000000Z",
+        );
+
+        assert_eq!(
+            extract_codex_managed_oauth_account_id(&team_account_1).as_deref(),
+            Some("user1@example.com::team-workspace-uuid")
+        );
+
+        // id_token 只带 sub + 工作区、email 只在 access_token 里时，marker 必须与
+        // 登录路径算出同一个主键，否则 CLI 轮换的 refresh_token 认不回账号
+        let split_claims_account = chatgpt_bundle_with_access(
+            json!({
+                "sub": "auth0|12345",
+                "chatgpt_account_id": "team-workspace-uuid"
+            }),
+            Some(json!({ "email": "user1@example.com" })),
+            "team-workspace-uuid",
+            "2026-01-02T03:04:05.000000000Z",
+        );
+        // 主键只认 id_token 的 claim：access_token 会被 CLI 轮换，让它参与主键
+        // 会在换代后算出另一个 key。
+        assert_eq!(
+            extract_codex_managed_oauth_account_id(&split_claims_account).as_deref(),
+            Some("auth0|12345::team-workspace-uuid")
+        );
+        assert!(codex_live_auth_is_managed_chatgpt_login(
+            &team_account_1,
+            "user1@example.com::team-workspace-uuid"
+        ));
+        assert!(!codex_live_auth_is_managed_chatgpt_login(
+            &team_account_1,
+            "user2@example.com::team-workspace-uuid"
+        ));
+        assert!(!codex_live_auth_is_managed_chatgpt_login(
+            &team_account_1,
+            "user1@example.com::other-workspace-uuid"
+        ));
+        // 兼容旧版仅以 tokens.account_id 绑定的判定
+        assert!(codex_live_auth_is_managed_chatgpt_login(
+            &team_account_1,
+            "team-workspace-uuid"
         ));
     }
 

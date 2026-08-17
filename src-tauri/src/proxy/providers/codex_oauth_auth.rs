@@ -137,13 +137,15 @@ struct OAuthTokenResponse {
     expires_in: Option<i64>,
 }
 
-/// 解析后的 JWT claims（仅关心 chatgpt_account_id 等字段）
+/// 解析后的 JWT claims（仅关心 chatgpt_account_id、email、user_id、sub 等字段）
 #[derive(Debug, Clone, Default, Deserialize)]
-struct IdTokenClaims {
+pub(crate) struct IdTokenClaims {
     #[serde(default)]
     chatgpt_account_id: Option<String>,
     #[serde(default)]
     email: Option<String>,
+    #[serde(default)]
+    sub: Option<String>,
     #[serde(default)]
     organizations: Vec<OrgClaim>,
     #[serde(default, rename = "https://api.openai.com/auth")]
@@ -151,15 +153,193 @@ struct IdTokenClaims {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-struct OrgClaim {
+pub(crate) struct OrgClaim {
     #[serde(default)]
     id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-struct OpenAiAuthClaim {
+pub(crate) struct OpenAiAuthClaim {
     #[serde(default)]
     chatgpt_account_id: Option<String>,
+    #[serde(default)]
+    user_id: Option<String>,
+}
+
+impl IdTokenClaims {
+    fn extract_chatgpt_account_id(&self) -> Option<String> {
+        self.chatgpt_account_id
+            .as_deref()
+            .or_else(|| {
+                self.openai_auth
+                    .as_ref()
+                    .and_then(|a| a.chatgpt_account_id.as_deref())
+            })
+            .or_else(|| self.organizations.first().and_then(|o| o.id.as_deref()))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
+    fn email_claim(&self) -> Option<&str> {
+        non_empty(self.email.as_deref())
+    }
+
+    fn user_id_claim(&self) -> Option<&str> {
+        non_empty(
+            self.openai_auth
+                .as_ref()
+                .and_then(|auth| auth.user_id.as_deref()),
+        )
+    }
+
+    fn sub_claim(&self) -> Option<&str> {
+        non_empty(self.sub.as_deref())
+    }
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+/// 一个账号从 token claims 里能拿到的全部身份信息。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct AccountIdentity {
+    /// 账号主键使用的个人身份。
+    ///
+    /// 只有 id_token 完全没有个人 claim 时才退到 access_token：access_token 会被
+    /// Codex CLI 自刷新轮换，拿它参与主键会让同一个账号在换代后算出不同的 key，
+    /// 于是 `~/.codex/auth.json` 再也认不回账号、CLI 轮换出的 refresh_token 被孤儿化。
+    primary: Option<String>,
+    /// 两个 token 里出现过的全部个人标识，用于「是否同一个人」的宽容比对。
+    candidates: Vec<String>,
+    /// 展示用 email，跨两个 token 收集（主键不一定用它）。
+    email: Option<String>,
+}
+
+impl AccountIdentity {
+    pub(crate) fn from_claims(
+        id_claims: Option<&IdTokenClaims>,
+        access_claims: Option<&IdTokenClaims>,
+    ) -> Self {
+        let mut candidates = Vec::new();
+        let mut collect = |claims: Option<&IdTokenClaims>| -> Option<String> {
+            let claims = claims?;
+            // 优先级 user_id > sub > email：前两者是 OpenAI 侧不可变的不透明标识，
+            // email 可以被用户改掉，用它当主键会让同一个账号改名后变成两条记录。
+            let mut best = None;
+            for value in [
+                claims.user_id_claim().map(str::to_string),
+                claims.sub_claim().map(str::to_string),
+                claims.email_claim().map(normalize_email),
+            ] {
+                let Some(value) = value else { continue };
+                if !candidates.contains(&value) {
+                    candidates.push(value.clone());
+                }
+                best.get_or_insert(value);
+            }
+            best
+        };
+
+        // 两个 token 都要走一遍，否则 access_token 的候选不会被收集。
+        let from_id_token = collect(id_claims);
+        let from_access_token = collect(access_claims);
+        let email = id_claims
+            .and_then(IdTokenClaims::email_claim)
+            .or_else(|| access_claims.and_then(IdTokenClaims::email_claim))
+            .map(str::to_string);
+
+        Self {
+            primary: from_id_token.or(from_access_token),
+            candidates,
+            email,
+        }
+    }
+
+    /// `user` 是否是这份 claims 描述的同一个人。
+    ///
+    /// 比对全部候选而不是只比 `primary()`：token 换代后 claim 集合可能变化
+    /// （例如新 id_token 不再带 `user_id`），只要原来那个标识仍在就应当认得出来。
+    fn matches_user(&self, user: &str) -> bool {
+        self.candidates.iter().any(|candidate| candidate == user)
+    }
+}
+
+/// email 统一小写：同一个账号在不同登录里回传 `Alice@x` / `alice@x` 时不能变成两条记录。
+fn normalize_email(email: &str) -> String {
+    email.to_lowercase()
+}
+
+/// 账号主键 `用户身份::工作区` 的分隔符。`::` 不会出现在 email / OpenAI 的
+/// user_id / sub 里，因此可用它判断一个 key 是否已是复合键。
+pub(crate) const ACCOUNT_ID_SEPARATOR: &str = "::";
+
+/// 拆开复合主键。返回 `None` 表示这是升级前存下的裸工作区 key。
+pub(crate) fn split_composite_account_id(account_id: &str) -> Option<(&str, &str)> {
+    account_id.split_once(ACCOUNT_ID_SEPARATOR)
+}
+
+/// 这份 claims 是否属于 `account_id` 指向的账号。
+///
+/// 复合键必须个人身份与工作区都命中；裸工作区 key（升级前存量，用户尚未在 UI
+/// 重新绑定）只能比到工作区一层——这正是它在同工作区多成员下会误判的原因。
+pub(crate) fn identity_owns_account_id(
+    identity: &AccountIdentity,
+    claims_workspace_id: Option<&str>,
+    tokens_account_id: Option<&str>,
+    account_id: &str,
+) -> bool {
+    match split_composite_account_id(account_id) {
+        Some((user, workspace)) => {
+            identity.matches_user(user) && claims_workspace_id == Some(workspace)
+        }
+        // 裸 key 有两种：升级前存下的工作区 ID，以及没有工作区 claim 的个人账号。
+        // 字符串本身分不出来，两种都要试。
+        None => {
+            claims_workspace_id == Some(account_id)
+                || (claims_workspace_id.is_none()
+                    && (identity.matches_user(account_id) || tokens_account_id == Some(account_id)))
+        }
+    }
+}
+
+/// 写进原生 `~/.codex/auth.json` 的 `tokens.account_id`。
+///
+/// 复合主键绝不能写出去：它含个人身份（可能是 email），而 Codex CLI 会把这个字段当
+/// `ChatGPT-Account-Id` 发给 OpenAI。裸 key 则保持既有行为原样写入——它要么就是工作区
+/// ID，要么是没有工作区的个人账号，后者本来就没有别的值可写。
+pub(crate) fn native_tokens_account_id<'a>(
+    chatgpt_account_id: Option<&'a str>,
+    account_id: &'a str,
+) -> &'a str {
+    chatgpt_account_id.unwrap_or(match split_composite_account_id(account_id) {
+        Some(_) => "",
+        None => account_id,
+    })
+}
+
+/// 由已解析的 identity 组合出 (account_id, email, workspace)。
+pub(crate) fn resolve_account_identity_from(
+    identity: &AccountIdentity,
+    chatgpt_account_id: Option<String>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let account_id =
+        compose_primary_account_id(identity.primary.clone(), chatgpt_account_id.clone());
+
+    (account_id, identity.email.clone(), chatgpt_account_id)
+}
+
+pub(crate) fn resolve_identity_and_workspace(
+    id_claims: Option<&IdTokenClaims>,
+    access_claims: Option<&IdTokenClaims>,
+) -> (AccountIdentity, Option<String>) {
+    let identity = AccountIdentity::from_claims(id_claims, access_claims);
+    let chatgpt_account_id = id_claims
+        .and_then(IdTokenClaims::extract_chatgpt_account_id)
+        .or_else(|| access_claims.and_then(IdTokenClaims::extract_chatgpt_account_id));
+
+    (identity, chatgpt_account_id)
 }
 
 /// 缓存的 access_token（含过期时间）
@@ -231,11 +411,14 @@ struct PendingDeviceCode {
 /// 持久化的账号数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CodexAccountData {
-    /// chatgpt_account_id（同时作为 HashMap 的 key）
+    /// 账号唯一标识（同时作为 HashMap 的 key，优先使用 email / user_id / sub）
     pub account_id: String,
     /// 账号邮箱（如果可获取）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// OpenAI chatgpt_account_id / workspace ID（如果可获取）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chatgpt_account_id: Option<String>,
     /// Refresh Token（持久化）
     pub refresh_token: String,
     /// 认证时间戳（秒）
@@ -250,16 +433,55 @@ struct CodexAccountData {
     pub token_updated_at_ms: i64,
 }
 
+impl CodexAccountData {
+    /// 已存下的工作区 ID。
+    fn stored_workspace_id(&self) -> Option<String> {
+        non_empty(self.chatgpt_account_id.as_deref()).map(str::to_string)
+    }
+
+    /// 当前 id_token claims 里的工作区 ID。
+    fn claimed_workspace_id(&self) -> Option<String> {
+        self.id_token
+            .as_deref()
+            .and_then(parse_jwt_claims)
+            .and_then(|c| c.extract_chatgpt_account_id())
+    }
+
+    /// 日常读取：已存的字段优先，存量账号没有该字段时才回落到 claims。
+    pub fn effective_chatgpt_account_id(&self) -> Option<String> {
+        self.stored_workspace_id()
+            .or_else(|| self.claimed_workspace_id())
+    }
+
+    /// 刷新 / 采纳新 token 后重新解析工作区 ID。
+    ///
+    /// 与 `effective_chatgpt_account_id()` 的取值顺序相反：先认 claims，工作区变更时
+    /// 才比对得出差异。否则陈旧的工作区会继续被注入 `chatgpt-account-id` 和托管
+    /// auth.json。新 token 不带工作区 claim 时保留旧值。
+    pub fn synced_chatgpt_account_id(&self) -> Option<String> {
+        self.claimed_workspace_id()
+            .or_else(|| self.stored_workspace_id())
+    }
+}
+
 /// 公开的账号信息（返回给前端，复用 GitHubAccount 结构）
 impl From<&CodexAccountData> for GitHubAccount {
     fn from(data: &CodexAccountData) -> Self {
+        let login = match (&data.email, &data.chatgpt_account_id) {
+            (Some(email), Some(ws)) if !ws.trim().is_empty() => {
+                // 按字符截断：workspace ID 来自 JWT claim，不保证是 ASCII UUID，
+                // 按字节切片会在多字节字符中间 panic（这里在 list_accounts 热路径上）。
+                let short_ws: String = ws.trim().chars().take(8).collect();
+                format!("{email} ({short_ws})")
+            }
+            (Some(email), _) => email.clone(),
+            (None, Some(ws)) => format!("ChatGPT ({ws})"),
+            (None, None) => format!("ChatGPT ({})", data.account_id),
+        };
+
         GitHubAccount {
             id: data.account_id.clone(),
-            // 用 email 作为显示名（若无则用 account_id）
-            login: data
-                .email
-                .clone()
-                .unwrap_or_else(|| format!("ChatGPT ({})", &data.account_id)),
+            login,
             avatar_url: None,
             authenticated_at: data.authenticated_at,
             github_domain: "github.com".to_string(),
@@ -286,6 +508,8 @@ pub(crate) struct ManagedTokenBundle {
     pub access_token: String,
     pub id_token: Option<String>,
     pub refresh_token: String,
+    /// OpenAI Workspace / Team ID（chatgpt_account_id，写入 auth.json 里的 tokens.account_id）
+    pub chatgpt_account_id: Option<String>,
     /// access_token 的真实获取时间，RFC3339 纳秒精度 + `Z`（与原生 auth.json 的
     /// `last_refresh` 形状一致）。反映 token 何时真正刷新，而非写盘时刻。
     pub last_refresh: String,
@@ -495,7 +719,7 @@ impl CodexOAuthManager {
             CodexOAuthError::TokenFetchFailed("响应缺少 refresh_token".to_string())
         })?;
 
-        let (account_id, email) = extract_identity_from_tokens(&tokens);
+        let (account_id, email, chatgpt_account_id) = extract_identity_from_tokens(&tokens);
         let account_id = account_id.ok_or_else(|| {
             CodexOAuthError::ParseError("无法从 token 中提取 account_id".to_string())
         })?;
@@ -508,6 +732,7 @@ impl CodexOAuthManager {
                 account_id.clone(),
                 refresh_token,
                 email,
+                chatgpt_account_id,
                 // 空字符串视为缺失，避免写出空的 id_token
                 tokens.id_token.clone().filter(|t| !t.trim().is_empty()),
                 Some(CachedAccessToken {
@@ -727,7 +952,7 @@ impl CodexOAuthManager {
 
         // 如果服务端返回了新的 refresh_token 或 id_token，更新存储
         let mut needs_save = false;
-        let (stored_refresh_token, stored_id_token) = {
+        let (stored_refresh_token, stored_id_token, stored_chatgpt_account_id) = {
             let mut accounts = self.accounts.write().await;
             let account = accounts
                 .get_mut(account_id)
@@ -762,11 +987,21 @@ impl CodexOAuthManager {
                     needs_save = true;
                 }
             }
+            // 同步更新或回填 chatgpt_account_id
+            let effective_chatgpt_id = account.synced_chatgpt_account_id();
+            if account.chatgpt_account_id != effective_chatgpt_id {
+                account.chatgpt_account_id = effective_chatgpt_id.clone();
+                needs_save = true;
+            }
             if account.token_updated_at_ms != obtained_at_ms {
                 account.token_updated_at_ms = obtained_at_ms;
                 needs_save = true;
             }
-            (account.refresh_token.clone(), account.id_token.clone())
+            (
+                account.refresh_token.clone(),
+                account.id_token.clone(),
+                effective_chatgpt_id,
+            )
         };
         if needs_save {
             self.save_to_disk().await?;
@@ -781,8 +1016,10 @@ impl CodexOAuthManager {
         let last_refresh = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(obtained_at_ms)
             .unwrap_or_else(chrono::Utc::now)
             .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+        let live_tokens_account_id =
+            native_tokens_account_id(stored_chatgpt_account_id.as_deref(), account_id);
         let refreshed_auth = crate::codex_config::codex_managed_oauth_auth_value(
-            account_id,
+            live_tokens_account_id,
             &cached.token,
             stored_id_token.as_deref(),
             &stored_refresh_token,
@@ -886,17 +1123,22 @@ impl CodexOAuthManager {
             chrono::DateTime::<chrono::Utc>::from_timestamp_millis(cached.obtained_at_ms)
                 .unwrap_or_else(chrono::Utc::now)
                 .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
-        let (id_token, refresh_token) = {
+        let (id_token, refresh_token, chatgpt_account_id) = {
             let accounts = self.accounts.read().await;
             let account = accounts
                 .get(account_id)
                 .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?;
-            (account.id_token.clone(), account.refresh_token.clone())
+            (
+                account.id_token.clone(),
+                account.refresh_token.clone(),
+                account.effective_chatgpt_account_id(),
+            )
         };
         Ok(ManagedTokenBundle {
             access_token: cached.token,
             id_token,
             refresh_token,
+            chatgpt_account_id,
             last_refresh,
         })
     }
@@ -1099,10 +1341,14 @@ impl CodexOAuthManager {
                     }
                 }
             }
-            // 采纳了 CLI 轮换后的 refresh_token：与之配套的旧 access_token 可能已被
-            // 服务端提前失效。在同一 accounts 写锁内（accounts -> access_tokens 顺序）
-            // 清缓存，避免释放锁后被快路径读到旧 token；下次按新 refresh_token 重取。
+            // 采纳了 CLI 轮换后的 refresh_token / id_token：同步更新 chatgpt_account_id
+            // 并清理舊 access_token 缓存
             if material_replaced {
+                let effective_chatgpt_id = account.synced_chatgpt_account_id();
+                if account.chatgpt_account_id != effective_chatgpt_id {
+                    account.chatgpt_account_id = effective_chatgpt_id;
+                    changed = true;
+                }
                 self.access_tokens.write().await.remove(account_id);
             }
 
@@ -1131,6 +1377,14 @@ impl CodexOAuthManager {
     /// 获取默认账号 ID（热路径使用，避免克隆整个账号 HashMap）
     pub async fn default_account_id(&self) -> Option<String> {
         self.resolve_default_account_id().await
+    }
+
+    /// 获取指定账号关联的 OpenAI Workspace / Team ID（chatgpt_account_id）
+    pub async fn get_chatgpt_account_id_for_account(&self, account_id: &str) -> Option<String> {
+        let accounts = self.accounts.read().await;
+        accounts
+            .get(account_id)
+            .and_then(|a| a.effective_chatgpt_account_id())
     }
 
     // ==================== 多账号管理 ====================
@@ -1294,6 +1548,7 @@ impl CodexOAuthManager {
             account_id.to_string(),
             "test-refresh-token".to_string(),
             Some(format!("{account_id}@example.test")),
+            None,
             id_token.map(|token| token.to_string()),
             Some(CachedAccessToken {
                 token: access_token.to_string(),
@@ -1332,11 +1587,15 @@ impl CodexOAuthManager {
 
     // ==================== 内部方法 ====================
 
+    // 账号身份（account_id / email / workspace）与凭据必须一起原子写入，拆成
+    // 中间结构只会把同一次登录的字段分散到两处。
+    #[allow(clippy::too_many_arguments)]
     async fn add_account_internal(
         &self,
         account_id: String,
         refresh_token: String,
         email: Option<String>,
+        chatgpt_account_id: Option<String>,
         id_token: Option<String>,
         initial_access_token: Option<CachedAccessToken>,
         pending_device_code: Option<&str>,
@@ -1364,6 +1623,7 @@ impl CodexOAuthManager {
         let data = CodexAccountData {
             account_id: account_id.clone(),
             email,
+            chatgpt_account_id,
             refresh_token,
             authenticated_at: now,
             id_token,
@@ -1601,7 +1861,7 @@ fn extract_refresh_error_code(body: &str) -> Option<String> {
 }
 
 /// 解析 JWT 中的 claims
-fn parse_jwt_claims(token: &str) -> Option<IdTokenClaims> {
+pub(crate) fn parse_jwt_claims(token: &str) -> Option<IdTokenClaims> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
         return None;
@@ -1610,46 +1870,37 @@ fn parse_jwt_claims(token: &str) -> Option<IdTokenClaims> {
     serde_json::from_slice(&decoded).ok()
 }
 
-/// 从 token 响应中提取 (account_id, email)
-fn extract_identity_from_tokens(tokens: &OAuthTokenResponse) -> (Option<String>, Option<String>) {
-    let mut account_id: Option<String> = None;
-    let mut email: Option<String> = None;
-
-    if let Some(id_token) = tokens.id_token.as_deref() {
-        if let Some(claims) = parse_jwt_claims(id_token) {
-            account_id = claims
-                .chatgpt_account_id
-                .clone()
-                .or_else(|| {
-                    claims
-                        .openai_auth
-                        .as_ref()
-                        .and_then(|a| a.chatgpt_account_id.clone())
-                })
-                .or_else(|| claims.organizations.first().and_then(|o| o.id.clone()));
-            email = claims.email.clone();
-        }
+/// 组合账号主键：有个人身份且有工作区时用 `user_identity::workspace_id`，
+/// 使同一工作区的多个成员、以及同一成员的多个工作区都不会互相覆盖。
+fn compose_primary_account_id(
+    user_identity: Option<String>,
+    chatgpt_account_id: Option<String>,
+) -> Option<String> {
+    match (user_identity, chatgpt_account_id) {
+        (Some(user), Some(workspace)) => Some(format!("{user}{ACCOUNT_ID_SEPARATOR}{workspace}")),
+        (Some(user), None) => Some(user),
+        (None, Some(workspace)) => Some(workspace),
+        (None, None) => None,
     }
+}
 
-    if account_id.is_none() {
-        if let Some(claims) = parse_jwt_claims(&tokens.access_token) {
-            account_id = claims
-                .chatgpt_account_id
-                .clone()
-                .or_else(|| {
-                    claims
-                        .openai_auth
-                        .as_ref()
-                        .and_then(|a| a.chatgpt_account_id.clone())
-                })
-                .or_else(|| claims.organizations.first().and_then(|o| o.id.clone()));
-            if email.is_none() {
-                email = claims.email.clone();
-            }
-        }
-    }
+/// 从 token 响应中提取 (account_id, email, chatgpt_account_id)
+///
+/// `account_id` 为区分不同个人的唯一标识（Primary Key）：
+/// 个人身份优先级 email > openai_auth.user_id > sub，再拼接工作区 ID；
+/// 完全没有个人 claim 时退化为工作区 ID。
+///
+/// `chatgpt_account_id` 为 OpenAI Workspace/Team ID
+fn extract_identity_from_tokens(
+    tokens: &OAuthTokenResponse,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let id_claims = tokens.id_token.as_deref().and_then(parse_jwt_claims);
+    let access_claims = parse_jwt_claims(&tokens.access_token);
 
-    (account_id, email)
+    let (identity, chatgpt_account_id) =
+        resolve_identity_and_workspace(id_claims.as_ref(), access_claims.as_ref());
+
+    resolve_account_identity_from(&identity, chatgpt_account_id)
 }
 
 #[cfg(test)]
@@ -1776,6 +2027,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1801,6 +2053,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -1809,6 +2062,7 @@ mod tests {
                 "acc-456".to_string(),
                 "rt2".to_string(),
                 Some("b@example.com".to_string()),
+                None,
                 None,
                 None,
                 None,
@@ -2125,6 +2379,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 Some("device-auth-id"),
             )
             .await;
@@ -2152,6 +2407,464 @@ mod tests {
 
         assert!(matches!(result, Err(CodexOAuthError::ExpiredToken)));
         assert!(manager.pending_device_codes.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn same_team_multiple_accounts_coexist_without_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+
+        // 两个属于同一 Team 工作区（相同 chatgpt_account_id）但不同邮箱的账号
+        let team_workspace_id = "e7a7bd67-d460-48dd-b066-0a550abd3778";
+        let acct_1 = format!("user1@example.com::{team_workspace_id}");
+        let acct_2 = format!("user2@example.com::{team_workspace_id}");
+
+        manager
+            .add_account_internal(
+                acct_1.clone(),
+                "rt-user1".to_string(),
+                Some("user1@example.com".to_string()),
+                Some(team_workspace_id.to_string()),
+                Some("id-token-1".to_string()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        manager
+            .add_account_internal(
+                acct_2.clone(),
+                "rt-user2".to_string(),
+                Some("user2@example.com".to_string()),
+                Some(team_workspace_id.to_string()),
+                Some("id-token-2".to_string()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let accounts = manager.list_accounts().await;
+        assert_eq!(accounts.len(), 2, "两个同 Team 账号必须独立并存");
+        assert!(accounts
+            .iter()
+            .any(|a| a.id == acct_1 && a.login == "user1@example.com (e7a7bd67)"));
+        assert!(accounts
+            .iter()
+            .any(|a| a.id == acct_2 && a.login == "user2@example.com (e7a7bd67)"));
+
+        assert_eq!(
+            manager
+                .get_chatgpt_account_id_for_account(&acct_1)
+                .await
+                .as_deref(),
+            Some(team_workspace_id)
+        );
+        assert_eq!(
+            manager
+                .get_chatgpt_account_id_for_account(&acct_2)
+                .await
+                .as_deref(),
+            Some(team_workspace_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn same_user_multiple_teams_coexist_without_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+
+        // 同一个邮箱加入两个不同的 Team 以及一个 Personal 空间
+        let team_1 = "e7a7bd67-d460-48dd-b066-0a550abd3778";
+        let team_2 = "9b32f10a-81c2-48dd-b066-0a550abd9999";
+        let acct_team_1 = format!("user@example.com::{team_1}");
+        let acct_team_2 = format!("user@example.com::{team_2}");
+        let acct_personal = "user@example.com".to_string();
+
+        manager
+            .add_account_internal(
+                acct_team_1.clone(),
+                "rt-team1".to_string(),
+                Some("user@example.com".to_string()),
+                Some(team_1.to_string()),
+                Some("id-team-1".to_string()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        manager
+            .add_account_internal(
+                acct_team_2.clone(),
+                "rt-team2".to_string(),
+                Some("user@example.com".to_string()),
+                Some(team_2.to_string()),
+                Some("id-team-2".to_string()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        manager
+            .add_account_internal(
+                acct_personal.clone(),
+                "rt-personal".to_string(),
+                Some("user@example.com".to_string()),
+                None,
+                Some("id-personal".to_string()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let accounts = manager.list_accounts().await;
+        assert_eq!(
+            accounts.len(),
+            3,
+            "同一用户的多个工作区账号必须全部独立并存"
+        );
+        assert!(accounts
+            .iter()
+            .any(|a| a.id == acct_team_1 && a.login == "user@example.com (e7a7bd67)"));
+        assert!(accounts
+            .iter()
+            .any(|a| a.id == acct_team_2 && a.login == "user@example.com (9b32f10a)"));
+        assert!(accounts
+            .iter()
+            .any(|a| a.id == acct_personal && a.login == "user@example.com"));
+
+        assert_eq!(
+            manager
+                .get_chatgpt_account_id_for_account(&acct_team_1)
+                .await
+                .as_deref(),
+            Some(team_1)
+        );
+        assert_eq!(
+            manager
+                .get_chatgpt_account_id_for_account(&acct_team_2)
+                .await
+                .as_deref(),
+            Some(team_2)
+        );
+        assert_eq!(
+            manager
+                .get_chatgpt_account_id_for_account(&acct_personal)
+                .await
+                .as_deref(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_identity_from_tokens_priority() {
+        // 1. 同时有 user_id / sub / email 时用 user_id::workspace_id：
+        //    user_id 与 sub 是不可变的不透明标识，email 可以被用户改掉
+        let payload1 = serde_json::json!({
+            "email": "user@example.com",
+            "sub": "auth0|12345",
+            "chatgpt_account_id": "team-workspace-uuid",
+            "https://api.openai.com/auth": {
+                "user_id": "user-abcdef",
+                "chatgpt_account_id": "team-workspace-uuid"
+            }
+        });
+        let tokens = OAuthTokenResponse {
+            access_token: "access".to_string(),
+            refresh_token: Some("refresh".to_string()),
+            id_token: Some(unsigned_jwt(payload1)),
+            expires_in: Some(3600),
+        };
+        let (account_id, email, chatgpt_account_id) = extract_identity_from_tokens(&tokens);
+        assert_eq!(
+            account_id.as_deref(),
+            Some("user-abcdef::team-workspace-uuid")
+        );
+        // email 仍然照常解析出来，只是不参与主键
+        assert_eq!(email.as_deref(), Some("user@example.com"));
+        assert_eq!(chatgpt_account_id.as_deref(), Some("team-workspace-uuid"));
+
+        // 2. 缺失 email 时降级使用 user_id::workspace_id
+        let payload2 = serde_json::json!({
+            "sub": "auth0|12345",
+            "https://api.openai.com/auth": {
+                "user_id": "user-abcdef",
+                "chatgpt_account_id": "team-workspace-uuid"
+            }
+        });
+        let tokens2 = OAuthTokenResponse {
+            access_token: "access".to_string(),
+            refresh_token: Some("refresh".to_string()),
+            id_token: Some(unsigned_jwt(payload2)),
+            expires_in: Some(3600),
+        };
+        let (account_id2, email2, chatgpt_account_id2) = extract_identity_from_tokens(&tokens2);
+        assert_eq!(
+            account_id2.as_deref(),
+            Some("user-abcdef::team-workspace-uuid")
+        );
+        assert_eq!(email2, None);
+        assert_eq!(chatgpt_account_id2.as_deref(), Some("team-workspace-uuid"));
+    }
+
+    fn unsigned_jwt(payload: serde_json::Value) -> String {
+        let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"none\"}");
+        let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+        format!("{header}.{encoded}.")
+    }
+
+    #[test]
+    fn identity_falls_back_to_access_token_personal_claims_before_workspace() {
+        // id_token 只带工作区 claim，个人身份只在 access_token 里
+        let id_token = unsigned_jwt(serde_json::json!({
+            "https://api.openai.com/auth": { "chatgpt_account_id": "team-workspace-uuid" }
+        }));
+        let access_token = unsigned_jwt(serde_json::json!({ "email": "user@example.com" }));
+        let tokens = OAuthTokenResponse {
+            access_token,
+            refresh_token: Some("refresh".to_string()),
+            id_token: Some(id_token),
+            expires_in: Some(3600),
+        };
+
+        let (account_id, email, chatgpt_account_id) = extract_identity_from_tokens(&tokens);
+        assert_eq!(
+            account_id.as_deref(),
+            Some("user@example.com::team-workspace-uuid")
+        );
+        assert_eq!(email.as_deref(), Some("user@example.com"));
+        assert_eq!(chatgpt_account_id.as_deref(), Some("team-workspace-uuid"));
+    }
+
+    #[test]
+    fn synced_workspace_id_replaces_a_stale_stored_value() {
+        let account = CodexAccountData {
+            account_id: "user@example.com::old-workspace".to_string(),
+            email: Some("user@example.com".to_string()),
+            chatgpt_account_id: Some("old-workspace".to_string()),
+            refresh_token: "refresh".to_string(),
+            authenticated_at: 0,
+            id_token: Some(unsigned_jwt(serde_json::json!({
+                "email": "user@example.com",
+                "chatgpt_account_id": "new-workspace"
+            }))),
+            token_updated_at_ms: 0,
+        };
+
+        // 存量字段非空时 effective_* 永远返回旧值，同步必须读新 token 的 claims
+        assert_eq!(
+            account.effective_chatgpt_account_id().as_deref(),
+            Some("old-workspace")
+        );
+        assert_eq!(
+            account.synced_chatgpt_account_id().as_deref(),
+            Some("new-workspace")
+        );
+    }
+
+    #[test]
+    fn synced_workspace_id_keeps_stored_value_when_new_token_has_no_claim() {
+        let account = CodexAccountData {
+            account_id: "user@example.com::workspace".to_string(),
+            email: Some("user@example.com".to_string()),
+            chatgpt_account_id: Some("workspace".to_string()),
+            refresh_token: "refresh".to_string(),
+            authenticated_at: 0,
+            id_token: Some(unsigned_jwt(
+                serde_json::json!({ "email": "user@example.com" }),
+            )),
+            token_updated_at_ms: 0,
+        };
+
+        assert_eq!(
+            account.synced_chatgpt_account_id().as_deref(),
+            Some("workspace")
+        );
+    }
+
+    /// v3.20.0 及更早版本存下来的形状：key 是工作区 ID，个人身份只体现在
+    /// email / id_token claims 里。
+    async fn seed_legacy_workspace_account(
+        manager: &CodexOAuthManager,
+        workspace: &str,
+        email: Option<&str>,
+    ) {
+        let id_token = email.map(|email| {
+            unsigned_jwt(serde_json::json!({
+                "email": email,
+                "chatgpt_account_id": workspace,
+            }))
+        });
+        manager
+            .add_account_internal(
+                workspace.to_string(),
+                "rt-legacy".to_string(),
+                email.map(str::to_string),
+                Some(workspace.to_string()),
+                id_token,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn relogin_writes_a_composite_key_and_leaves_the_legacy_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        let workspace = "team-workspace-uuid";
+        seed_legacy_workspace_account(&manager, workspace, Some("alice@example.com")).await;
+
+        // 登录一律写入复合键，不去改写升级前存下的裸工作区 key：那个 key 无法证明
+        // 属于谁（同工作区另一个成员的重新登录长得一模一样），沿用它就可能静默覆盖
+        // 别人的凭据。旧条目原样保留，用户在 UI 重新选一次账号即完成绑定。
+        manager
+            .add_account_internal(
+                format!("alice@example.com::{workspace}"),
+                "rt-alice-new".to_string(),
+                Some("alice@example.com".to_string()),
+                Some(workspace.to_string()),
+                Some(unsigned_jwt(serde_json::json!({
+                    "email": "alice@example.com",
+                    "chatgpt_account_id": workspace,
+                }))),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let accounts = manager.accounts.read().await;
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(
+            accounts.get(workspace).map(|a| a.refresh_token.as_str()),
+            Some("rt-legacy")
+        );
+        assert_eq!(
+            accounts
+                .get(&format!("alice@example.com::{workspace}"))
+                .map(|a| a.refresh_token.as_str()),
+            Some("rt-alice-new")
+        );
+    }
+
+    #[tokio::test]
+    async fn another_member_of_the_same_workspace_gets_its_own_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        let workspace = "team-workspace-uuid";
+        seed_legacy_workspace_account(&manager, workspace, Some("alice@example.com")).await;
+
+        manager
+            .add_account_internal(
+                format!("bob@example.com::{workspace}"),
+                "rt-bob".to_string(),
+                Some("bob@example.com".to_string()),
+                Some(workspace.to_string()),
+                Some(unsigned_jwt(serde_json::json!({
+                    "email": "bob@example.com",
+                    "chatgpt_account_id": workspace,
+                }))),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let accounts = manager.accounts.read().await;
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(
+            accounts.get(workspace).map(|a| a.refresh_token.as_str()),
+            Some("rt-legacy")
+        );
+        assert!(accounts.contains_key(&format!("bob@example.com::{workspace}")));
+    }
+
+    #[tokio::test]
+    async fn the_same_user_in_another_workspace_gets_its_own_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        seed_legacy_workspace_account(&manager, "workspace-a", Some("alice@example.com")).await;
+
+        manager
+            .add_account_internal(
+                "alice@example.com::workspace-b".to_string(),
+                "rt-alice-b".to_string(),
+                Some("alice@example.com".to_string()),
+                Some("workspace-b".to_string()),
+                Some(unsigned_jwt(serde_json::json!({
+                    "email": "alice@example.com",
+                    "chatgpt_account_id": "workspace-b",
+                }))),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let accounts = manager.accounts.read().await;
+        assert_eq!(accounts.len(), 2);
+        assert!(accounts.contains_key("workspace-a"));
+        assert!(accounts.contains_key("alice@example.com::workspace-b"));
+    }
+
+    #[test]
+    fn email_case_does_not_split_one_account_into_two_keys() {
+        // 同一个账号在不同次登录里可能回传不同大小写的 email，主键必须归一化，
+        // 否则会长出两条互不认识的记录。user_id / sub 是不透明标识，不能动。
+        let make = |email: &str| {
+            extract_identity_from_tokens(&OAuthTokenResponse {
+                access_token: unsigned_jwt(serde_json::json!({
+                    "email": email,
+                    "chatgpt_account_id": "workspace",
+                })),
+                refresh_token: Some("refresh".to_string()),
+                id_token: None,
+                expires_in: Some(3600),
+            })
+            .0
+        };
+
+        assert_eq!(
+            make("Alice@Example.com").as_deref(),
+            make("alice@example.com").as_deref()
+        );
+        assert_eq!(
+            make("Alice@Example.com").as_deref(),
+            Some("alice@example.com::workspace")
+        );
+    }
+
+    #[test]
+    fn the_primary_key_ignores_access_token_only_claims() {
+        // id_token 带 sub、email 只在 access_token 里：主键必须取 id_token 的 sub。
+        // access_token 会被 Codex CLI 自刷新轮换，让它参与主键，就会在换代后算出
+        // 另一个 key，auth.json 从此认不回账号、CLI 轮换的 refresh_token 被孤儿化。
+        let id_token = unsigned_jwt(serde_json::json!({
+            "sub": "auth0|12345",
+            "chatgpt_account_id": "team-workspace-uuid"
+        }));
+        let access_token = unsigned_jwt(serde_json::json!({ "email": "alice@example.com" }));
+        let tokens = OAuthTokenResponse {
+            access_token,
+            refresh_token: Some("refresh".to_string()),
+            id_token: Some(id_token),
+            expires_in: Some(3600),
+        };
+
+        let (account_id, email, chatgpt_account_id) = extract_identity_from_tokens(&tokens);
+        assert_eq!(
+            account_id.as_deref(),
+            Some("auth0|12345::team-workspace-uuid")
+        );
+        // email 只用于展示，仍然跨两个 token 收集
+        assert_eq!(email.as_deref(), Some("alice@example.com"));
+        assert_eq!(chatgpt_account_id.as_deref(), Some("team-workspace-uuid"));
     }
 
     #[test]
