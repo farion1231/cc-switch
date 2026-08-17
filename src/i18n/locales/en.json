@@ -1061,7 +1061,12 @@
     "contextWindowInvalid": "Context window must be a positive integer",
     "profile": "Client model profile",
     "rawConfig": "config.toml",
-    "invalidToml": "Invalid config.toml: {{error}}"
+    "invalidToml": "Invalid config.toml: {{error}}",
+    "defaultModelPlaceholder": "e.g. grok-4.5",
+    "defaultModelHint": "The model Grok Build requests by default; change it anytime without waiting for a preset update.",
+    "advancedSectionHint": "Includes upstream format, reasoning overrides and custom User-Agent. Providers using the Chat Completions or Anthropic Messages protocol require routing takeover to be enabled.",
+    "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts the request's reasoning effort into the upstream Chat parameter.",
+    "maxOutputTokensHint": "The default 8192 ceiling can truncate long or thinking-heavy responses (stop_reason=max_tokens). This value overrides the request's max_tokens on the Anthropic path. Do not exceed the real output ceiling of the model/gateway or it may 400. Leave empty to use the default 8192."
   },
   "sessionManager": {
     "title": "Session Manager",

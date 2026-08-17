@@ -424,7 +424,11 @@ fn apply_reasoning_options(
     let Some(effort) = body.pointer("/reasoning/effort").and_then(|v| v.as_str()) else {
         return;
     };
-    let Some(mapped) = map_reasoning_effort(effort, config.effort_value_mode.as_deref()) else {
+    let Some(mapped) = map_reasoning_effort(
+        effort,
+        config.effort_value_mode.as_deref(),
+        config.effort_levels.as_deref(),
+    ) else {
         return;
     };
 
@@ -455,7 +459,11 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str> {
+fn map_reasoning_effort<'a>(
+    effort: &str,
+    mode: Option<&str>,
+    effort_levels: Option<&'a [String]>,
+) -> Option<&'a str> {
     let effort = effort.trim().to_ascii_lowercase();
     if matches!(effort.as_str(), "none" | "off" | "disabled") {
         return None;
@@ -486,6 +494,31 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "minimal" => Some("minimal"),
             _ => None,
         },
+        // OpenCode Zen：合法档位逐模型（表数据 = 供应商 modelCatalog 各条目的
+        // reasoningLevels，镜像 models.dev——glm-5.2 仅 high|max、deepseek-v4-flash
+        // 为 low|high|max、kimi-k3 仅 max），opencode 客户端也严格按模型声明发值，
+        // 故不能用统一并集映射。无表（模型未收录目录、或为 toggle/budget 型未声明
+        // effort）→ None，完全不发 reasoning_effort；有表 → 钳到「不小于请求的
+        // 最近合法档」，请求超出最高档则取最高合法档；请求值本身无法识别 → None
+        // （同其他模式的未知值丢弃策略）。
+        "zen" => {
+            let levels = effort_levels?;
+            let requested = zen_effort_rank(&effort)?;
+            levels
+                .iter()
+                .filter_map(|level| zen_effort_rank(level).map(|rank| (rank, level.as_str())))
+                .filter(|(rank, _)| *rank >= requested)
+                .min_by_key(|(rank, _)| *rank)
+                .or_else(|| {
+                    levels
+                        .iter()
+                        .filter_map(|level| {
+                            zen_effort_rank(level).map(|rank| (rank, level.as_str()))
+                        })
+                        .max_by_key(|(rank, _)| *rank)
+                })
+                .map(|(_, level)| level)
+        }
         _ => match effort.as_str() {
             "minimal" => Some("minimal"),
             "low" => Some("low"),
@@ -496,6 +529,21 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "ultra" => Some("ultra"),
             _ => None,
         },
+    }
+}
+
+/// Codex 规范档位序（minimal < low < medium < high < xhigh < max < ultra），供 zen
+/// 逐模型钳制做大小比较；目录里的非法/扩展值（如 "none"）返回 None，查表时被滤掉。
+fn zen_effort_rank(effort: &str) -> Option<u8> {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "minimal" => Some(0),
+        "low" => Some(1),
+        "medium" => Some(2),
+        "high" => Some(3),
+        "xhigh" => Some(4),
+        "max" => Some(5),
+        "ultra" => Some(6),
+        _ => None,
     }
 }
 
@@ -1839,6 +1887,11 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
                 .pointer("/input_tokens_details/cached_tokens")
                 .and_then(Value::as_u64)
         })
+        // DeepSeek Chat 的文档化缓存命中字段（与 usage/parser.rs 的处理对应），末位兜底。
+        // 官方端点目前把同值镜像进未文档化的 prompt_tokens_details.cached_tokens（上面的
+        // 标准字段已命中），故仅当上游只发文档字段、不发镜像时此兜底生效（如部分中转），
+        // 并防御未文档化镜像将来消失；上游发任一标准字段时行为零变化。
+        .or_else(|| usage.get("prompt_cache_hit_tokens").and_then(Value::as_u64))
         .unwrap_or(0);
     let cache_write = usage
         .pointer("/prompt_tokens_details/cache_write_tokens")
@@ -2024,19 +2077,22 @@ mod tests {
     fn map_reasoning_effort_handles_ultra_per_mode() {
         // passthrough 面向枚举未知的通用上游：ultra 与 max/xhigh 一样原值透传，
         // 让声明了该档位的上游能收到用户选择。
-        assert_eq!(map_reasoning_effort("ultra", None), Some("ultra"));
+        assert_eq!(map_reasoning_effort("ultra", None, None), Some("ultra"));
         // 已知枚举的专用模式钳到自身最高合法档，而不是走 None 被静默丢弃。
-        assert_eq!(map_reasoning_effort("ultra", Some("deepseek")), Some("max"));
         assert_eq!(
-            map_reasoning_effort("ultra", Some("low_high")),
+            map_reasoning_effort("ultra", Some("deepseek"), None),
+            Some("max")
+        );
+        assert_eq!(
+            map_reasoning_effort("ultra", Some("low_high"), None),
             Some("high")
         );
         assert_eq!(
-            map_reasoning_effort("ultra", Some("openrouter")),
+            map_reasoning_effort("ultra", Some("openrouter"), None),
             Some("xhigh")
         );
         // 真正的未知值仍然丢弃，防上游 400。
-        assert_eq!(map_reasoning_effort("turbo", None), None);
+        assert_eq!(map_reasoning_effort("turbo", None, None), None);
     }
 
     #[test]
@@ -2530,12 +2586,35 @@ mod tests {
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn chat_usage_to_responses_usage_maps_deepseek_cache_hit_tokens() {
+        // DeepSeek Chat 的文档化缓存命中字段也要进 Responses 的
+        // input_tokens_details（issue #6073 关联）：当上游只发该字段、不镜像
+        // prompt_tokens_details.cached_tokens 时（如部分中转），少了这个兜底，
+        // 路由模式下合成的 response.completed 里 cached_tokens 为 0，
+        // Codex 侧会话记录与本地日志都拿不到缓存命中。
+        let usage = json!({
+            "prompt_tokens": 1000,
+            "completion_tokens": 100,
+            "total_tokens": 1100,
+            "prompt_cache_hit_tokens": 600,
+            "prompt_cache_miss_tokens": 400
+        });
+
+        let result = chat_usage_to_responses_usage(Some(&usage));
+        assert_eq!(result["input_tokens"], 1000);
+        assert_eq!(result["output_tokens"], 100);
+        assert_eq!(result["input_tokens_details"]["cached_tokens"], 600);
+        assert_eq!(result["input_tokens_details"]["cache_write_tokens"], 0);
     }
 
     #[test]
@@ -2549,6 +2628,7 @@ mod tests {
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
             output_format: Some("auto".to_string()),
+            effort_levels: None,
         };
 
         // max 不在 OpenRouter 枚举内（见 openclaw#77350），必须钳成 xhigh，
@@ -2590,6 +2670,7 @@ mod tests {
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
             output_format: Some("auto".to_string()),
+            effort_levels: None,
         };
 
         let input = json!({
@@ -2617,6 +2698,7 @@ mod tests {
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let input = json!({
@@ -2633,6 +2715,138 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_clamps_zen_effort_to_model_declared_levels() {
+        // OpenCode Zen 平台形态 + 逐模型档位钳制（表数据镜像 models.dev：glm-5.2
+        // 仅声明 high|max）。锁定：统一并集映射会把 Codex 默认的 medium 发给只声明
+        // high|max 的 glm-5.2（恰好是预设默认模型），严格校验的网关会报错；
+        // 低档一律上钳到最近合法档，超出最高档（含 Codex 扩展档 ultra）取最高合法档。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec!["high".to_string(), "max".to_string()]),
+        };
+
+        for (input_effort, expected) in [
+            ("minimal", "high"),
+            ("low", "high"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "max"),
+            ("max", "max"),
+            ("ultra", "max"),
+        ] {
+            let input = json!({
+                "model": "glm-5.2",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(
+                result["reasoning_effort"], expected,
+                "effort={input_effort}"
+            );
+            // 写成顶层 reasoning_effort；不发任何 thinking 字段
+            // （网关只认平台归一参数，不认厂商 thinking 形状）。
+            assert!(result.get("thinking").is_none());
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_zen_preserves_low_when_model_declares_it() {
+        // deepseek-v4-flash 声明 low|high|max：low 合法原样透传，medium 上钳 high，
+        // xhigh 上钳 max——回归锁：旧 deepseek 厂商分支把非 max 一律归 high，
+        // 逐模型钳制不得比那更差，也不得发出声明外的值。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec![
+                "low".to_string(),
+                "high".to_string(),
+                "max".to_string(),
+            ]),
+        };
+
+        for (input_effort, expected) in [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "high"),
+            ("xhigh", "max"),
+        ] {
+            let input = json!({
+                "model": "deepseek-v4-flash",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(
+                result["reasoning_effort"], expected,
+                "effort={input_effort}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_zen_single_level_model_clamps_everything_to_max() {
+        // kimi-k3 仅声明 max（全模型交集不存在，统一映射覆盖不了它——必须逐模型）：
+        // 任何请求档都钳到 max。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec!["max".to_string()]),
+        };
+
+        for input_effort in ["minimal", "medium", "high", "max"] {
+            let input = json!({
+                "model": "kimi-k3",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_omits_zen_effort_without_model_levels() {
+        // 模型未在目录声明 effort（toggle/budget 型如 glm-5.1、qwen 系，或目录未收录）
+        // → 完全不发 reasoning_effort，避免给严格校验的网关送无法核实的值。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
+        };
+
+        let input = json!({
+            "model": "glm-5.1",
+            "input": "hello",
+            "reasoning": {"effort": "medium"}
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+
+        assert!(result.get("reasoning_effort").is_none());
+        assert!(result.get("thinking").is_none());
+    }
+
+    #[test]
     fn responses_request_to_chat_maps_thinking_only_provider_without_effort() {
         let input = json!({
             "model": "kimi-k2.6",
@@ -2646,6 +2860,7 @@ mod tests {
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
@@ -2668,6 +2883,7 @@ mod tests {
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();

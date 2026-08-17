@@ -1062,7 +1062,12 @@
     "contextWindowInvalid": "上下文視窗必須是正整數",
     "profile": "用戶端模型檔位",
     "rawConfig": "config.toml",
-    "invalidToml": "config.toml 格式錯誤：{{error}}"
+    "invalidToml": "config.toml 格式錯誤：{{error}}",
+    "defaultModelPlaceholder": "例如: grok-4.5",
+    "defaultModelHint": "Grok Build 預設請求的模型，隨時可改，無需等待軟體更新供應商範本。",
+    "advancedSectionHint": "包含上游格式、思考能力與自訂 User-Agent。使用 Chat Completions / Anthropic Messages 協定的供應商需開啟路由接管才能使用。",
+    "reasoningEffortHint": "上游支援 low/high/max 等思考深度控制時啟用。啟用後會自動啟用思考模式，並把請求中的 reasoning effort 轉成上游 Chat 參數。",
+    "maxOutputTokensHint": "預設上限 8192 容易在長回答或深度思考時被截斷（stop_reason=max_tokens）。此處設定會作為 Anthropic 的 max_tokens 覆蓋請求值。請勿超過該模型／閘道的真實輸出上限，否則可能 400。留空使用預設 8192。"
   },
   "sessionManager": {
     "title": "工作階段管理",

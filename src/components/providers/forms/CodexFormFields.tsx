@@ -450,6 +450,10 @@ export function CodexFormFields({
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
   const isChatFormat = apiFormat === "openai_chat";
   const isAnthropicFormat = apiFormat === "anthropic";
+  // Grok Build 复用本表单，但语义与 Codex 有差异（无模型映射、协议由 TOML 的
+  // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
+  // 对应词条在 grokBuild.* 下。
+  const isGrokBuild = appId === "grokbuild";
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -799,9 +803,15 @@ export function CodexFormFields({
               id="codexDefaultModel"
               value={codexModel}
               onChange={(event) => onModelChange(event.target.value)}
-              placeholder={t("codexConfig.defaultModelPlaceholder", {
-                defaultValue: "例如: gpt-5.6",
-              })}
+              placeholder={
+                isGrokBuild
+                  ? t("grokBuild.defaultModelPlaceholder", {
+                      defaultValue: "例如: grok-4.5",
+                    })
+                  : t("codexConfig.defaultModelPlaceholder", {
+                      defaultValue: "例如: gpt-5.6",
+                    })
+              }
               className="flex-1"
             />
             <Button
@@ -827,10 +837,15 @@ export function CodexFormFields({
             )}
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {t("codexConfig.defaultModelHint", {
-              defaultValue:
-                "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
-            })}
+            {isGrokBuild
+              ? t("grokBuild.defaultModelHint", {
+                  defaultValue:
+                    "Grok Build 默认请求的模型，随时可改，无需等待预设更新。",
+                })
+              : t("codexConfig.defaultModelHint", {
+                  defaultValue:
+                    "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
+                })}
           </p>
           {isDefaultModelOutsideCatalog && (
             <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-muted-foreground">
@@ -880,10 +895,15 @@ export function CodexFormFields({
           </CollapsibleTrigger>
           {!advancedExpanded && (
             <p className="mt-1 ml-1 text-xs text-muted-foreground">
-              {t("codexConfig.advancedSectionHint", {
-                defaultValue:
-                  "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
-              })}
+              {isGrokBuild
+                ? t("grokBuild.advancedSectionHint", {
+                    defaultValue:
+                      "包含上游格式、思考能力与自定义 User-Agent。使用 Chat Completions / Anthropic Messages 协议的供应商需开启路由接管才能使用。",
+                  })
+                : t("codexConfig.advancedSectionHint", {
+                    defaultValue:
+                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+                  })}
             </p>
           )}
           <CollapsibleContent className="space-y-3 pt-3">
@@ -1026,10 +1046,15 @@ export function CodexFormFields({
                       })}
                     />
                     <p className="text-xs leading-relaxed text-muted-foreground">
-                      {t("codexConfig.maxOutputTokensHint", {
-                        defaultValue:
-                          "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
-                      })}
+                      {isGrokBuild
+                        ? t("grokBuild.maxOutputTokensHint", {
+                            defaultValue:
+                              "默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
+                          })
+                        : t("codexConfig.maxOutputTokensHint", {
+                            defaultValue:
+                              "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
+                          })}
                     </p>
                   </div>
                 )}
@@ -1131,10 +1156,15 @@ export function CodexFormFields({
                       })}
                     </FormLabel>
                     <p className="text-xs leading-relaxed text-muted-foreground">
-                      {t("codexConfig.reasoningEffortHint", {
-                        defaultValue:
-                          "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
-                      })}
+                      {isGrokBuild
+                        ? t("grokBuild.reasoningEffortHint", {
+                            defaultValue:
+                              "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把请求中的 reasoning effort 转成上游 Chat 参数。",
+                          })
+                        : t("codexConfig.reasoningEffortHint", {
+                            defaultValue:
+                              "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
+                          })}
                     </p>
                   </div>
                   <Switch

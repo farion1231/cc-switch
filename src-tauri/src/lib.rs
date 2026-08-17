@@ -71,6 +71,8 @@ pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
@@ -382,6 +384,22 @@ pub fn run() {
                 }
             }
         }));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let startup_page_handled = AtomicBool::new(false);
+        builder = builder.on_page_load(move |webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Finished
+                && payload.url().scheme() != "about"
+                && !startup_page_handled.swap(true, Ordering::Relaxed)
+                && !crate::settings::get_settings().silent_startup
+            {
+                let _ = webview.window().show();
+                log::info!("主页面加载完成，主窗口已显示");
+            }
+        });
     }
 
     let builder = builder
@@ -1331,7 +1349,11 @@ pub fn run() {
                     log::info!("静默启动模式：主窗口已隐藏");
                 } else {
                     // 正常启动模式：显示窗口
+                    #[cfg(not(target_os = "windows"))]
                     let _ = window.show();
+                    #[cfg(target_os = "windows")]
+                    log::info!("正常启动模式：等待主页面加载完成后显示主窗口");
+                    #[cfg(not(target_os = "windows"))]
                     log::info!("正常启动模式：主窗口已显示");
 
                     // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
