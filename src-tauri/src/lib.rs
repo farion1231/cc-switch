@@ -1588,6 +1588,13 @@ pub fn run() {
             commands::remove_from_failover_queue,
             commands::get_auto_failover_enabled,
             commands::set_auto_failover_enabled,
+            // Classifier queue management (Claude only)
+            commands::get_classifier_queue,
+            commands::get_available_providers_for_classifier,
+            commands::add_to_classifier_queue,
+            commands::remove_from_classifier_queue,
+            commands::get_classifier_config,
+            commands::set_classifier_config,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_summary_by_app,

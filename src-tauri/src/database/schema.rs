@@ -39,6 +39,7 @@ impl Database {
                 meta TEXT NOT NULL DEFAULT '{}',
                 is_current BOOLEAN NOT NULL DEFAULT 0,
                 in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+                in_classifier_queue BOOLEAN NOT NULL DEFAULT 0,
                 PRIMARY KEY (id, app_type)
             )",
             [],
@@ -128,6 +129,8 @@ impl Database {
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+            classifier_queue_enabled INTEGER NOT NULL DEFAULT 0,
+            classifier_force_thinking_off INTEGER NOT NULL DEFAULT 1,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
             circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
@@ -422,6 +425,21 @@ impl Database {
             [],
         );
 
+        // 确保 in_classifier_queue 列存在（对于已存在的旧数据库）
+        Self::add_column_if_missing(
+            conn,
+            "providers",
+            "in_classifier_queue",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        // 为分类器队列创建索引（基于 providers 表）
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_providers_classifier
+             ON providers(app_type, in_classifier_queue, sort_index)",
+            [],
+        );
+
         Ok(())
     }
 
@@ -535,6 +553,11 @@ impl Database {
                         log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（添加分类器队列）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1562,6 +1585,52 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
+    }
+
+    /// v17 -> v18: 分类器队列（Auto Mode 安全分类器请求的侧信道路由）
+    ///
+    /// 每一步都用 `table_exists` / `has_column` 兜底：迁移可能跑在很旧的库上
+    /// （`add_column_if_missing` 遇到缺表会直接报错），且索引依赖的 `sort_index`
+    /// 在 v4 那种老结构里还不存在。
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "providers")? {
+            Self::add_column_if_missing(
+                conn,
+                "providers",
+                "in_classifier_queue",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+
+            // 索引只是 ORDER BY 的加速，不是功能前提。老库可能还没有 sort_index
+            // （它由 v0->v1 补，v4 起步的升级链走不到那一步），此时跳过即可：
+            // create_tables_on_conn 的幂等尾部会在列齐全后的某次启动补上。
+            if Self::has_column(conn, "providers", "sort_index")? {
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_providers_classifier
+                     ON providers(app_type, in_classifier_queue, sort_index)",
+                    [],
+                )
+                .map_err(|error| AppError::Database(format!("创建分类器队列索引失败: {error}")))?;
+            }
+        }
+
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "classifier_queue_enabled",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            // 默认开启「强制关闭思考」：这是本特性的核心收益，且对分类器请求没有副作用
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "classifier_force_thinking_off",
+                "INTEGER NOT NULL DEFAULT 1",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -3315,6 +3384,98 @@ mod tests {
              VALUES ('pi_session', 'request', 'semantic', 1)",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_adds_classifier_columns_and_index() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        // 回退到 v17 形态，模拟升级前的库
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", [])?;
+        conn.execute("ALTER TABLE providers DROP COLUMN in_classifier_queue", [])?;
+        conn.execute(
+            "ALTER TABLE proxy_config DROP COLUMN classifier_queue_enabled",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE proxy_config DROP COLUMN classifier_force_thinking_off",
+            [],
+        )?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "providers",
+            "in_classifier_queue"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_config",
+            "classifier_queue_enabled"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_config",
+            "classifier_force_thinking_off"
+        )?);
+
+        let index_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_providers_classifier'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(index_exists, 1);
+
+        // 默认值：队列关、强制关思考开
+        let (enabled, thinking_off): (i32, i32) = conn.query_row(
+            "SELECT classifier_queue_enabled, classifier_force_thinking_off
+             FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(enabled, 0);
+        assert_eq!(thinking_off, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_preserves_existing_failover_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        // SQLite 拒绝删除被索引引用的列，必须先删索引
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", [])?;
+        conn.execute("ALTER TABLE providers DROP COLUMN in_classifier_queue", [])?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, in_failover_queue)
+             VALUES ('p1', 'claude', 'P1', '{}', 1)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let (in_failover, in_classifier): (bool, bool) = conn.query_row(
+            "SELECT in_failover_queue, in_classifier_queue FROM providers WHERE id = 'p1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert!(in_failover);
+        assert!(!in_classifier);
+
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_memory_database_has_classifier_columns() -> Result<(), AppError> {
+        // Database::memory() 只跑 create_tables()，不跑迁移 —— 建表语句必须自带新列
+        let db = Database::memory()?;
+        assert!(db.get_classifier_queue("claude")?.is_empty());
         Ok(())
     }
 }

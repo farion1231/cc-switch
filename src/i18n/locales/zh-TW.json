@@ -375,6 +375,10 @@
         "title": "自動故障轉移",
         "description": "設定故障轉移佇列和斷路器策略"
       },
+      "classifier": {
+        "title": "分類器佇列",
+        "description": "為 Auto Mode 的 Bash 安全分類器請求指定專用供應商"
+      },
       "pricing": {
         "title": "成本定價",
         "description": "管理各模型 Token 計費規則"
@@ -2775,6 +2779,11 @@
       "takeoverRequired": "請先接管 {{app}}，再啟用故障轉移"
     }
   },
+  "classifier": {
+    "enabled": "分類器佇列已啟用",
+    "disabled": "分類器佇列已關閉",
+    "toggleFailed": "操作失敗"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "服務位址",
@@ -2906,6 +2915,27 @@
       "reorderSuccess": "佇列順序已更新",
       "reorderFailed": "更新順序失敗",
       "toggleFailed": "狀態更新失敗"
+    },
+    "classifier": {
+      "proxyRequired": "需要先啟動路由服務並接管 Claude，才能設定分類器佇列",
+      "enable": "啟用分類器佇列",
+      "enableDescription": "開啟後，Claude Code Auto Mode 的 Bash 安全分類器請求將按佇列順序發往專用供應商；佇列為空或全部斷路時自動回退到常規路由鏈，不會報錯。",
+      "forceThinkingOff": "強制關閉思考",
+      "forceThinkingOffDescription": "分類器請求發出前移除 thinking / reasoning_effort / output_config，避免思考往返撞上用戶端的逾時上限。"
+    },
+    "classifierQueue": {
+      "title": "分類器佇列",
+      "description": "管理 Auto Mode 安全分類器請求的供應商順序",
+      "info": "Claude Code 在執行 Bash 命令前會先發一條安全分類器請求，用戶端對它有硬逾時，逾時即判定分類器不可用並攔下該命令。把回應快、價格低的供應商放進此佇列，可避免因思考往返而逾時。",
+      "selectProvider": "選擇供應商加入佇列",
+      "noAvailableProviders": "沒有可加入的供應商",
+      "empty": "分類器佇列為空。未設定時分類器請求走常規路由鏈。",
+      "orderHint": "佇列順序與首頁供應商列表順序一致，可在首頁拖曳調整順序。",
+      "modelHint": "請確保佇列中的供應商支援用戶端請求的模型；分類器請求為非串流且攜帶完整工作階段上下文（數萬 token 起跳），上下文視窗過小的模型會失敗並順延到下一家。",
+      "addSuccess": "已加入分類器佇列",
+      "addFailed": "加入失敗",
+      "removeSuccess": "已從分類器佇列移除",
+      "removeFailed": "移除失敗"
     },
     "autoFailover": {
       "info": "當故障轉移佇列中設定了多個供應商時，系統會在請求失敗時按優先順序依次嘗試。當某個供應商連續失敗達到閾值時，斷路器會打開並在一段時間內跳過該供應商。",

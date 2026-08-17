@@ -116,6 +116,20 @@ export interface FailoverQueueItem {
   sortIndex?: number;
 }
 
+// 分类器队列条目（Auto Mode 安全分类器请求的专用供应商链）
+export interface ClassifierQueueItem {
+  providerId: string;
+  providerName: string;
+  providerNotes?: string;
+  sortIndex?: number;
+}
+
+// 分类器队列的两个开关（成对读写）
+export interface ClassifierConfig {
+  enabled: boolean;
+  forceThinkingOff: boolean;
+}
+
 // 全局代理配置（统一字段，三行镜像）
 export interface GlobalProxyConfig {
   proxyEnabled: boolean;
@@ -129,6 +143,8 @@ export interface AppProxyConfig {
   appType: string;
   enabled: boolean;
   autoFailoverEnabled: boolean;
+  classifierQueueEnabled: boolean;
+  classifierForceThinkingOff: boolean;
   maxRetries: number;
   streamingFirstByteTimeout: number;
   streamingIdleTimeout: number;

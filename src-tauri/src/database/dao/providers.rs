@@ -295,11 +295,17 @@ impl Database {
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let (is_current, in_failover_queue) = tx
+        let (is_current, in_failover_queue, in_classifier_queue) = tx
             .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue, in_classifier_queue FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![original_id, app_type],
-                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, bool>(0)?,
+                        row.get::<_, bool>(1)?,
+                        row.get::<_, bool>(2)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|e| AppError::Database(e.to_string()))?
@@ -331,8 +337,8 @@ impl Database {
             "INSERT INTO providers (
                 id, app_type, name, settings_config, website_url, category,
                 created_at, sort_index, notes, icon, icon_color, meta,
-                is_current, in_failover_queue
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                is_current, in_failover_queue, in_classifier_queue
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 provider.id,
                 app_type,
@@ -352,6 +358,7 @@ impl Database {
                 })?,
                 is_current,
                 in_failover_queue,
+                in_classifier_queue,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

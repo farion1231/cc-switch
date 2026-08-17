@@ -375,6 +375,10 @@
         "title": "自动故障转移",
         "description": "配置故障转移队列和熔断策略"
       },
+      "classifier": {
+        "title": "分类器队列",
+        "description": "为 Auto Mode 的 Bash 安全分类器请求指定专用供应商"
+      },
       "pricing": {
         "title": "成本定价",
         "description": "管理各模型 Token 计费规则"
@@ -2774,6 +2778,11 @@
       "takeoverRequired": "请先接管 {{app}}，再启用故障转移"
     }
   },
+  "classifier": {
+    "enabled": "分类器队列已启用",
+    "disabled": "分类器队列已关闭",
+    "toggleFailed": "操作失败"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "服务地址",
@@ -2905,6 +2914,27 @@
       "reorderSuccess": "队列顺序已更新",
       "reorderFailed": "更新顺序失败",
       "toggleFailed": "状态更新失败"
+    },
+    "classifier": {
+      "proxyRequired": "需要先启动路由服务并接管 Claude，才能配置分类器队列",
+      "enable": "启用分类器队列",
+      "enableDescription": "开启后，Claude Code Auto Mode 的 Bash 安全分类器请求将按队列顺序发往专用供应商；队列为空或全部熔断时自动回落到常规路由链，不会报错。",
+      "forceThinkingOff": "强制关闭思考",
+      "forceThinkingOffDescription": "分类器请求发出前移除 thinking / reasoning_effort / output_config，避免思考往返撞上客户端的超时上限。"
+    },
+    "classifierQueue": {
+      "title": "分类器队列",
+      "description": "管理 Auto Mode 安全分类器请求的供应商顺序",
+      "info": "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列，可避免因思考往返而超时。",
+      "selectProvider": "选择供应商添加到队列",
+      "noAvailableProviders": "没有可添加的供应商",
+      "empty": "分类器队列为空。未配置时分类器请求走常规路由链。",
+      "orderHint": "队列顺序与首页供应商列表顺序一致，可在首页拖拽调整顺序。",
+      "modelHint": "请确保队列中的供应商支持客户端请求的模型；分类器请求为非流式且携带完整会话上下文（数万 token 起步），上下文窗口过小的模型会失败并顺延到下一家。",
+      "addSuccess": "已添加到分类器队列",
+      "addFailed": "添加失败",
+      "removeSuccess": "已从分类器队列移除",
+      "removeFailed": "移除失败"
     },
     "autoFailover": {
       "info": "当故障转移队列中配置了多个供应商时，系统会在请求失败时按优先级顺序依次尝试。当某个供应商连续失败达到阈值时，熔断器会打开并在一段时间内跳过该供应商。",

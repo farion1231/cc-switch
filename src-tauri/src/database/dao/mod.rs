@@ -2,6 +2,7 @@
 //!
 //! Database access operations for each domain
 
+pub mod classifier;
 pub mod failover;
 pub mod mcp;
 pub mod profiles;
@@ -17,5 +18,6 @@ pub mod usage_rollup;
 
 // 所有 DAO 方法都通过 Database impl 提供，无需单独导出
 // 导出 FailoverQueueItem / Profile 供外部使用
+pub use classifier::ClassifierQueueItem;
 pub use failover::FailoverQueueItem;
 pub use profiles::Profile;
