@@ -107,6 +107,15 @@ pub fn set_provider(
     {
         config.profile = Some(DESKTOP_PROFILE_NAME.to_string());
     }
+    if config
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        config.base_url = None;
+    }
     let config_value = serde_json::to_value(&config)
         .map_err(|error| AppError::Config(format!("Serialize DeepSeek Harness config: {error}")))?;
     let object = config_value.as_object().ok_or_else(|| {
@@ -356,6 +365,7 @@ mod tests {
                 "official",
                 &DeepSeekHarnessProviderConfig {
                     api_key: Some("rotated".to_string()),
+                    base_url: Some("https://api.deepseek.com/v1".to_string()),
                     ..Default::default()
                 },
             )
@@ -368,6 +378,29 @@ mod tests {
             assert!(error
                 .to_string()
                 .contains("Invalid DeepSeek Harness profile"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn accepts_missing_base_url_for_official_runtime_fallback() {
+        with_temp_home(|home| {
+            for base_url in [None, Some(""), Some("   ")] {
+                let base_url = base_url.map(ToOwned::to_owned);
+                set_provider(
+                    "official",
+                    &DeepSeekHarnessProviderConfig {
+                        api_key: Some("sk-test".to_string()),
+                        base_url,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+
+                let settings = std::fs::read_to_string(home.join("settings.yaml")).unwrap();
+                assert!(settings.contains("llm-deepseek"));
+                assert!(!settings.contains("baseURL"));
+            }
         });
     }
 
