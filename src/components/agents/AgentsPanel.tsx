@@ -43,20 +43,24 @@ export function AgentsPanel({}: AgentsPanelProps) {
   ).length;
 
   const handleImport = async () => {
-    const imports: ImportSkillSelection[] = agentSkills.map((skill) => ({
-      directory: skill.directory,
-      apps: {
-        claude: Boolean(selectedApps[skill.directory]?.claude),
-        codex: Boolean(selectedApps[skill.directory]?.codex),
-        gemini: Boolean(selectedApps[skill.directory]?.gemini),
-        grokbuild: Boolean(selectedApps[skill.directory]?.grokbuild),
-        opencode: Boolean(selectedApps[skill.directory]?.opencode),
-        openclaw: Boolean(selectedApps[skill.directory]?.openclaw),
-        hermes: Boolean(selectedApps[skill.directory]?.hermes),
-        pi: false,
-        cursor: Boolean(selectedApps[skill.directory]?.cursor),
-      },
-    }));
+    const imports: ImportSkillSelection[] = agentSkills
+      .filter((skill) =>
+        Object.values(selectedApps[skill.directory] ?? {}).some(Boolean),
+      )
+      .map((skill) => ({
+        directory: skill.directory,
+        apps: {
+          claude: Boolean(selectedApps[skill.directory]?.claude),
+          codex: Boolean(selectedApps[skill.directory]?.codex),
+          gemini: Boolean(selectedApps[skill.directory]?.gemini),
+          grokbuild: Boolean(selectedApps[skill.directory]?.grokbuild),
+          opencode: Boolean(selectedApps[skill.directory]?.opencode),
+          openclaw: Boolean(selectedApps[skill.directory]?.openclaw),
+          hermes: Boolean(selectedApps[skill.directory]?.hermes),
+          pi: false,
+          cursor: Boolean(selectedApps[skill.directory]?.cursor),
+        },
+      }));
     try {
       const imported = await importMutation.mutateAsync(imports);
       toast.success(t("agents.importSuccess", { count: imported.length }), {

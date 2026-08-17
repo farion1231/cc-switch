@@ -234,6 +234,7 @@ fn schema_migration_adds_missing_columns_for_providers() {
         ("mcp_servers", "enabled_cursor"),
         ("prompts", "updated_at"),
         ("skills", "installed_at"),
+        ("skills", "enabled_cursor"),
         ("skill_repos", "enabled"),
     ] {
         assert!(
