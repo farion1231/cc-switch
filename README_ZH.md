@@ -587,7 +587,7 @@ pnpm test:unit --coverage
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=farion1231/cc-switch&type=Date)](https://www.star-history.com/#farion1231/cc-switch&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=farion1231/cc-switch&type=Date)](https://star-history.dera.page/#farion1231/cc-switch&Date)
 
 ## License
 
