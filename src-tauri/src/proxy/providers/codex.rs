@@ -210,10 +210,8 @@ pub fn codex_provider_uses_anthropic(provider: &Provider) -> bool {
         return is_anthropic_wire_api(&wire_api);
     }
 
-    // Grok Build TOML declares the upstream protocol via `api_backend` inside
-    // [model."<profile>"], which the Codex-shaped wire_api probe above can never
-    // match. Codex configs have no [models]/[model.*] tables, so
-    // extract_model_config returns None for them and this branch stays inert.
+    // Same Grok Build `api_backend` probe as codex_provider_uses_chat_completions
+    // above — see there for why it stays inert for Codex configs.
     if let Some(api_backend) = provider
         .settings_config
         .get("config")

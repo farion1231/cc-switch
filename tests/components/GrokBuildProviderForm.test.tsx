@@ -302,6 +302,118 @@ context_window = 250000
     expect(onSubmit.mock.calls[0][0].meta.custom_endpoints).toBeUndefined();
   });
 
+  // 手建/导入的无 meta 供应商，保存后不得写入默认格式 —— 代理转换判定会因
+  // meta 优先而跳过 TOML api_backend 探测（review P2）
+  it("leaves meta.apiFormat absent when the provider had none and the format was not touched", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>('input[name="name"]')!,
+      { target: { value: "Meta-less Relay" } },
+    );
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>("#codexBaseUrl")!,
+      { target: { value: "https://relay.example.com/v1" } },
+    );
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "secret-key" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].meta.apiFormat).toBeUndefined();
+  });
+
+  it("writes meta.apiFormat once the upstream format selector is touched", async () => {
+    // jsdom 未实现 scrollIntoView，Radix Select 打开时对选中项调用会抛错
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>('input[name="name"]')!,
+      { target: { value: "Touched Relay" } },
+    );
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>("#codexBaseUrl")!,
+      { target: { value: "https://relay.example.com/v1" } },
+    );
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "secret-key" },
+    });
+    await user.click(document.querySelector("#codex-upstream-format")!);
+    await user.click(
+      await screen.findByRole("option", { name: /Chat Completions/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].meta.apiFormat).toBe("openai_chat");
+  });
+
+  // 创建流程：先改 raw 里的 api_backend（此时 api_key 未填，配置语义不完整），
+  // 再补 API Key —— 回读不得被语义校验拦下，否则结构化同步会把旧值写回去（review P3）
+  it("keeps an api_backend typed into raw TOML even while other fields are still incomplete", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    const rawTextarea = screen.getByLabelText(
+      "raw-config",
+    ) as HTMLTextAreaElement;
+    expect(rawTextarea.value).toContain('api_backend = "responses"');
+    fireEvent.change(rawTextarea, {
+      target: {
+        value: rawTextarea.value.replace(
+          'api_backend = "responses"',
+          'api_backend = "chat_completions"',
+        ),
+      },
+    });
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>('input[name="name"]')!,
+      { target: { value: "Raw-first Relay" } },
+    );
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>("#codexBaseUrl")!,
+      { target: { value: "https://relay.example.com/v1" } },
+    );
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "secret-key" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const settings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    const config = parseToml(settings.config) as any;
+    expect(config.model[config.models.default].api_backend).toBe(
+      "chat_completions",
+    );
+  });
   // #6427 复用 Codex 表单时把 Codex 专属文案原样带进了 Grok Build 表单。
   // 按 appId 分流后，Grok 表单不得再出现 Codex 字样或不适用条款（模型映射）。
   it("uses Grok-specific copy for the model field and collapsed advanced section", async () => {
