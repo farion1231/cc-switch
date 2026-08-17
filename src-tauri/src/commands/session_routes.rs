@@ -136,17 +136,26 @@ pub async fn set_session_route_provider(
 }
 
 /// 清理过期 session 路由
+///
+/// 只清理指定应用的过期路由，避免用一个应用的 TTL 误删其他应用的会话映射。
 #[tauri::command]
 pub async fn cleanup_expired_session_routes(
     state: tauri::State<'_, AppState>,
-    _app_type: String,
+    app_type: String,
     ttl_seconds: u64,
 ) -> Result<u64, String> {
     let cutoff = chrono::Utc::now().timestamp_millis() - (ttl_seconds as i64 * 1000);
-    state
+    let count = state
         .db
-        .delete_expired_session_routes(cutoff)
-        .map_err(|e| e.to_string())
+        .delete_expired_session_routes(&app_type, cutoff)
+        .map_err(|e| e.to_string())?;
+    log::info!(
+        "[SessionRoutes] 清理过期 session 路由: app={} ttl={}s count={}",
+        app_type,
+        ttl_seconds,
+        count,
+    );
+    Ok(count)
 }
 
 /// 获取每个 provider 的 session 负载统计（含名称）

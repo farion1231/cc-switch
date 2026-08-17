@@ -70,8 +70,8 @@ impl ProxyServer {
     ) -> Self {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
-        // 创建共享的 SessionRouter（session 级 provider 路由）
-        let session_router = Arc::new(SessionRouter::new(db.clone()));
+        // 创建共享的 SessionRouter（session 级 provider 路由，持有 ProviderRouter 以做熔断检查）
+        let session_router = Arc::new(SessionRouter::new(db.clone(), provider_router.clone()));
         // 创建故障转移切换管理器
         let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
 

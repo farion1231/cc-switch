@@ -130,8 +130,9 @@ impl RequestContext {
         );
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
-        // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        // 如果 Session 路由已启用，优先使用 session 级路由
+        // 注意：Session 路由只在这里决定「pinned provider + 完整故障转移链」，
+        // 熔断放行 / HalfOpen 探测名额的管理全部交给 forwarder 统一处理，
+        // 避免在 handler 里预先占用 HalfOpen 名额却无人释放，导致 provider 卡死在 HalfOpen。
         let mut session_provider: Option<Provider> = None;
         let mut session_providers: Vec<Provider> = Vec::new();
 
@@ -144,28 +145,36 @@ impl RequestContext {
             if session_routing_enabled {
                 // 使用 Session 路由
                 match state.session_router.get_or_assign_provider(&session_id, app_type_str).await {
-                    Ok((p, is_new)) => {
+                    Ok((pinned, is_new)) => {
                         if is_new {
                             log::info!(
                                 "[{}] Session 路由: 新 session 分配到 provider {} (session={})",
-                                tag, p.name, &session_id[..8.min(session_id.len())]
+                                tag, pinned.name, &session_id[..8.min(session_id.len())]
                             );
                         }
-                        // 检查熔断器是否可用，如不可用则故障转移
-                        let allow = state.provider_router.allow_provider_request(&p.id, app_type_str).await;
-                        if allow.allowed {
-                            session_provider = Some(p.clone());
-                            session_providers = vec![p];
+                        // 非占用式熔断检查（is_available 不消耗 HalfOpen 探测名额）：
+                        // - pinned 可用：构建以 pinned 为首的完整故障转移链交给 forwarder，
+                        //   由 forwarder 逐家做熔断检查 / HalfOpen 探测 / 请求内重试；
+                        // - pinned 熔断：session 级故障转移，把路由更新到下一个「可用」的 provider
+                        if state.provider_router.is_available(&pinned.id, app_type_str).await {
+                            session_providers =
+                                state.session_router.build_failover_chain(app_type_str, &pinned);
+                            session_provider = session_providers.first().cloned();
                         } else {
-                            // 当前 provider 熔断，故障转移
-                            match state.session_router.failover(&session_id, app_type_str, &p.id).await {
-                                Ok(failover_p) => {
+                            // 当前 provider 熔断，故障转移到下一个可用 provider
+                            match state.session_router.failover_to_available(
+                                &session_id,
+                                app_type_str,
+                                &pinned.id,
+                            ).await {
+                                Ok(next) => {
                                     log::warn!(
                                         "[{}] Session 路由故障转移: session={} → {}",
-                                        tag, &session_id[..8.min(session_id.len())], failover_p.name
+                                        tag, &session_id[..8.min(session_id.len())], next.name
                                     );
-                                    session_provider = Some(failover_p.clone());
-                                    session_providers = vec![failover_p];
+                                    session_providers =
+                                        state.session_router.build_failover_chain(app_type_str, &next);
+                                    session_provider = session_providers.first().cloned();
                                 }
                                 Err(_) => {
                                     log::warn!("[{}] Session 路由故障转移失败，回退到普通路由", tag);

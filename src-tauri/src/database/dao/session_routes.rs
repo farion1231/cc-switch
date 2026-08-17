@@ -191,13 +191,17 @@ impl Database {
         Ok(counts)
     }
 
-    /// 删除过期 session 路由
-    pub fn delete_expired_session_routes(&self, cutoff_ms: i64) -> Result<u64, AppError> {
+    /// 删除指定应用下的过期 session 路由
+    pub fn delete_expired_session_routes(
+        &self,
+        app_type: &str,
+        cutoff_ms: i64,
+    ) -> Result<u64, AppError> {
         let conn = lock_conn!(self.conn);
         let count = conn
             .execute(
-                "DELETE FROM session_routes WHERE last_used_at < ?1",
-                rusqlite::params![cutoff_ms],
+                "DELETE FROM session_routes WHERE app_type = ?1 AND last_used_at < ?2",
+                rusqlite::params![app_type, cutoff_ms],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(count as u64)
