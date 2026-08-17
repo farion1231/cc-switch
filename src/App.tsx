@@ -915,6 +915,28 @@ function App() {
   }, [activeApp, confirmAction, piCurrentState?.defaultProviderId, t]);
 
   const handleOpenTerminal = async (provider: Provider) => {
+    if (activeApp === "codex") {
+      try {
+        const supported = await providersApi.openTerminal(
+          provider.id,
+          activeApp,
+          { validateOnly: true },
+        );
+        if (!supported) {
+          toast.error(
+            t("provider.terminalRoutingUnsupported", {
+              defaultValue:
+                "当前提供商依赖本地路由转换，当前版本暂不支持从隔离终端启动",
+            }),
+          );
+          return;
+        }
+      } catch (error) {
+        toast.error(extractErrorMessage(error));
+        return;
+      }
+    }
+
     try {
       const selectedDir = await settingsApi.pickDirectory();
       if (!selectedDir) {
@@ -1142,7 +1164,9 @@ function App() {
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
                       onOpenTerminal={
-                        activeApp === "claude" ? handleOpenTerminal : undefined
+                        activeApp === "claude" || activeApp === "codex"
+                          ? handleOpenTerminal
+                          : undefined
                       }
                       onCreate={() => setIsAddOpen(true)}
                       onSetAsDefault={

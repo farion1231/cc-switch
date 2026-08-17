@@ -649,18 +649,31 @@ pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) 
 pub fn read_codex_live_auth_refresh_for_account(
     account_id: &str,
 ) -> Option<(String, Option<String>, Option<i64>)> {
+    read_codex_auth_refresh_for_account_at(&get_codex_auth_path(), account_id)
+}
+
+pub(crate) fn read_codex_auth_refresh_for_account_at(
+    auth_path: &Path,
+    account_id: &str,
+) -> Option<(String, Option<String>, Option<i64>)> {
+    if !auth_path.exists() {
+        return None;
+    }
+    let auth: Value = read_json_file(auth_path).ok()?;
+    read_codex_auth_refresh_for_account(&auth, account_id)
+}
+
+pub(crate) fn read_codex_auth_refresh_for_account(
+    auth: &Value,
+    account_id: &str,
+) -> Option<(String, Option<String>, Option<i64>)> {
     let account_id = account_id.trim();
     if account_id.is_empty() {
         return None;
     }
-    let auth_path = get_codex_auth_path();
-    if !auth_path.exists() {
-        return None;
-    }
-    let auth: Value = read_json_file(&auth_path).ok()?;
     // 仅在磁盘上确是「该 account_id 的 ChatGPT 登录」时才采纳其 refresh_token，
     // 避免从非 chatgpt/异常 auth 里误取 token。
-    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+    if !codex_live_auth_is_managed_chatgpt_login(auth, account_id) {
         return None;
     }
     let tokens = auth.get("tokens")?.as_object()?;
@@ -2009,9 +2022,17 @@ pub fn prepare_codex_config_text_with_model_catalog(
     profile: CodexCatalogToolProfile,
 ) -> Result<String, AppError> {
     let catalog_path = get_codex_model_catalog_path();
+    prepare_codex_config_text_with_model_catalog_at(settings, config_text, profile, &catalog_path)
+}
 
+pub(crate) fn prepare_codex_config_text_with_model_catalog_at(
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+    catalog_path: &Path,
+) -> Result<String, AppError> {
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
-        let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
+        let config_text = set_codex_model_catalog_json_field(config_text, Some(catalog_path))?;
         // Disable web_search only for native gateways on the reject blacklist
         // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
         // Everything else — relays, DouBao, web-search-capable Qwen models,
@@ -2026,7 +2047,7 @@ pub fn prepare_codex_config_text_with_model_catalog(
             CodexCatalogToolProfile::ProxyChat => false,
         };
         let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
-        write_json_file(&catalog_path, &catalog)?;
+        write_json_file(catalog_path, &catalog)?;
         Ok(config_text)
     } else {
         let config_text = set_codex_model_catalog_json_field(config_text, None)?;
@@ -2036,6 +2057,93 @@ pub fn prepare_codex_config_text_with_model_catalog(
         let disable_web_search = profile == CodexCatalogToolProfile::Anthropic;
         set_codex_native_web_search_field(&config_text, disable_web_search)
     }
+}
+
+pub(crate) fn set_codex_terminal_isolation(
+    config_text: &str,
+    sqlite_home: &Path,
+    terminal_provider_id: &str,
+    cwd: Option<&Path>,
+) -> Result<(String, String), AppError> {
+    let mut config = config_text
+        .parse::<toml::Value>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let active_provider = config
+        .get("model_provider")
+        .and_then(toml::Value::as_str)
+        .unwrap_or("openai")
+        .to_string();
+    let provider_config = config
+        .get("model_providers")
+        .and_then(toml::Value::as_table)
+        .and_then(|providers| providers.get(&active_provider))
+        .cloned();
+    let isolated_provider = if let Some(provider_config) = provider_config {
+        config
+            .get_mut("model_providers")
+            .and_then(toml::Value::as_table_mut)
+            .expect("model_providers was just read as a table")
+            .insert(terminal_provider_id.to_string(), provider_config);
+        terminal_provider_id.to_string()
+    } else {
+        active_provider
+    };
+
+    let root = config
+        .as_table_mut()
+        .ok_or_else(|| AppError::Message("Codex config.toml must be a table".to_string()))?;
+    root.insert(
+        "model_provider".to_string(),
+        toml::Value::String(isolated_provider.clone()),
+    );
+    root.insert(
+        "sqlite_home".to_string(),
+        toml::Value::String(sqlite_home.to_string_lossy().to_string()),
+    );
+    root.insert(
+        "cli_auth_credentials_store".to_string(),
+        toml::Value::String("file".to_string()),
+    );
+    root.insert(
+        "mcp_oauth_credentials_store".to_string(),
+        toml::Value::String("file".to_string()),
+    );
+    let untrusted_project = || {
+        let mut project = toml::Table::new();
+        project.insert(
+            "trust_level".to_string(),
+            toml::Value::String("untrusted".to_string()),
+        );
+        toml::Value::Table(project)
+    };
+    let projects = root
+        .entry("projects".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if !projects.is_table() {
+        *projects = toml::Value::Table(toml::Table::new());
+    }
+    let projects = projects
+        .as_table_mut()
+        .expect("projects was just normalized to a table");
+    for (_, project) in projects.iter_mut() {
+        *project = untrusted_project();
+    }
+    if let Some(cwd) = cwd {
+        projects.insert(cwd.to_string_lossy().to_string(), untrusted_project());
+        if let Some(project_root) = cwd
+            .ancestors()
+            .find(|ancestor| ancestor.join(".git").exists())
+        {
+            projects.insert(
+                project_root.to_string_lossy().to_string(),
+                untrusted_project(),
+            );
+        }
+    }
+    let config = toml::to_string(&config).map_err(|error| {
+        AppError::Message(format!("Failed to serialize Codex config.toml: {error}"))
+    })?;
+    Ok((config, isolated_provider))
 }
 
 /// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
@@ -5455,6 +5563,84 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert!(
             result.is_err(),
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
+        );
+    }
+
+    #[test]
+    fn terminal_isolation_forces_file_auth_and_local_sqlite() {
+        let (config, provider_id) = set_codex_terminal_isolation(
+            "cli_auth_credentials_store = \"keyring\"\nsqlite_home = \"/old\"\n",
+            Path::new("/tmp/isolated-codex"),
+            "cc-switch-terminal-test",
+            Some(Path::new("/tmp/project")),
+        )
+        .expect("prepare terminal config");
+        let parsed: toml::Value = toml::from_str(&config).expect("parse terminal config");
+
+        assert_eq!(
+            parsed
+                .get("cli_auth_credentials_store")
+                .and_then(toml::Value::as_str),
+            Some("file")
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_oauth_credentials_store")
+                .and_then(toml::Value::as_str),
+            Some("file")
+        );
+        assert_eq!(
+            parsed.get("sqlite_home").and_then(toml::Value::as_str),
+            Some("/tmp/isolated-codex")
+        );
+        assert_eq!(provider_id, "openai");
+        assert_eq!(
+            parsed.get("model_provider").and_then(toml::Value::as_str),
+            Some("openai")
+        );
+        assert_eq!(
+            parsed["projects"]["/tmp/project"]["trust_level"].as_str(),
+            Some("untrusted")
+        );
+    }
+
+    #[test]
+    fn terminal_isolation_uses_an_uncollidable_copy_of_custom_provider() {
+        let (config, provider_id) = set_codex_terminal_isolation(
+            "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://example.com/v1\"\nwire_api = \"responses\"\n",
+            Path::new("/tmp/isolated-codex"),
+            "cc-switch-terminal-test",
+            None,
+        )
+        .expect("prepare terminal config");
+        let parsed: toml::Value = toml::from_str(&config).expect("parse terminal config");
+
+        assert_eq!(provider_id, "cc-switch-terminal-test");
+        assert_eq!(
+            parsed.get("model_provider").and_then(toml::Value::as_str),
+            Some("cc-switch-terminal-test")
+        );
+        assert_eq!(
+            parsed["model_providers"]["cc-switch-terminal-test"]["base_url"].as_str(),
+            Some("https://example.com/v1")
+        );
+    }
+
+    #[test]
+    fn terminal_isolation_copies_inline_custom_provider() {
+        let (config, provider_id) = set_codex_terminal_isolation(
+            "model_provider = \"custom\"\nmodel_providers = { custom = { name = \"Inline\", base_url = \"https://example.com/v1\", wire_api = \"responses\" } }\n",
+            Path::new("/tmp/isolated-codex"),
+            "cc-switch-terminal-inline",
+            None,
+        )
+        .expect("prepare terminal config");
+        let parsed: toml::Value = toml::from_str(&config).expect("parse terminal config");
+
+        assert_eq!(provider_id, "cc-switch-terminal-inline");
+        assert_eq!(
+            parsed["model_providers"]["cc-switch-terminal-inline"]["base_url"].as_str(),
+            Some("https://example.com/v1")
         );
     }
 }

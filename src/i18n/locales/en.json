@@ -152,6 +152,7 @@
     "openTerminal": "Open Terminal",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
+    "terminalRoutingUnsupported": "This provider requires local routing and cannot be launched in an isolated terminal yet",
     "name": "Provider Name",
     "namePlaceholder": "e.g., Claude Official",
     "websiteUrl": "Website URL",

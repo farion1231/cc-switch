@@ -1212,6 +1212,115 @@ fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path
 }
 
 #[cfg_attr(windows, allow(dead_code))]
+fn codex_terminal_config_overrides(
+    home: &Path,
+    model_provider: &str,
+    official: bool,
+    official_api_key: bool,
+) -> Vec<String> {
+    let mut overrides = vec![
+        format!("model_provider={model_provider}"),
+        format!("sqlite_home={}", home.to_string_lossy()),
+        "cli_auth_credentials_store=file".to_string(),
+        "mcp_oauth_credentials_store=file".to_string(),
+    ];
+    if official_api_key {
+        overrides.push("openai_base_url=https://api.openai.com/v1".to_string());
+    } else if official {
+        overrides.push("chatgpt_base_url=https://chatgpt.com/backend-api/".to_string());
+    }
+    overrides
+}
+
+#[cfg_attr(windows, allow(dead_code))]
+fn build_codex_terminal_command(
+    home: &Path,
+    cwd: Option<&Path>,
+    model_provider: &str,
+    official: bool,
+    official_api_key: bool,
+    needs_auth_sync: bool,
+) -> String {
+    let shell = get_user_shell();
+    let config_args =
+        codex_terminal_config_overrides(home, model_provider, official, official_api_key)
+            .into_iter()
+            .map(|value| format!("-c {}", shell_single_quote(&value)))
+            .collect::<Vec<_>>()
+            .join(" ");
+    let codex = format!(
+        "env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_ORGANIZATION -u OPENAI_PROJECT -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN -u CODEX_REFRESH_TOKEN_URL_OVERRIDE -u CODEX_REVOKE_TOKEN_URL_OVERRIDE -u CODEX_APP_SERVER_LOGIN_CLIENT_ID CODEX_HOME={home} CODEX_SQLITE_HOME={home} codex {config_args}",
+        home = shell_single_quote(&home.to_string_lossy())
+    );
+    let codex = cwd
+        .map(|dir| {
+            format!(
+                "cd {} && {codex}",
+                shell_single_quote(&dir.to_string_lossy())
+            )
+        })
+        .unwrap_or(codex);
+    let run_codex = format!(
+        "{} {} {}",
+        shell_single_quote(&shell),
+        provider_command_flag_for_shell(&shell),
+        shell_single_quote(&codex)
+    );
+    let finished = shell_single_quote(&home.join(CODEX_TERMINAL_FINISHED_MARKER).to_string_lossy());
+    let synced = shell_single_quote(&home.join(CODEX_TERMINAL_SYNCED_MARKER).to_string_lossy());
+    let deferred = shell_single_quote(
+        &home
+            .join(CODEX_TERMINAL_DEFERRED_CLEANUP_MARKER)
+            .to_string_lossy(),
+    );
+    let cleanup = shell_single_quote(&home.to_string_lossy());
+
+    let cleanup_after_codex = if needs_auth_sync {
+        format!(
+            ": > {finished}\ni=0\nwhile [ \"$i\" -lt 50 ] && [ ! -e {synced} ]; do sleep 0.1; i=$((i + 1)); done\nif [ -e {synced} ]; then\n  rm -rf {cleanup}\nelse\n  : > {deferred}\n  if [ -e {synced} ]; then\n    rm -rf {cleanup}\n  else\n    echo \"[cc-switch] Credential sync did not finish; isolated data remains at: {home_display}\"\n  fi\nfi",
+            home_display = home.to_string_lossy(),
+        )
+    } else {
+        format!("rm -rf {cleanup}")
+    };
+
+    format!(
+        "{run_codex}\n{cleanup_after_codex}\nrm -f \"$0\"\n{}{}",
+        build_final_shell_cd_command(&shell, cwd),
+        build_exec_line(&shell, cwd),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_codex_terminal_command(
+    home: &Path,
+    cwd: Option<&Path>,
+    model_provider: &str,
+    official: bool,
+    official_api_key: bool,
+    needs_auth_sync: bool,
+) -> String {
+    let config_args =
+        codex_terminal_config_overrides(home, model_provider, official, official_api_key)
+            .into_iter()
+            .map(|value| format!("-c \"{}\"", escape_windows_batch_value(&value)))
+            .collect::<Vec<_>>()
+            .join(" ");
+    let home = escape_windows_batch_value(&home.to_string_lossy());
+    let cleanup_after_codex = if needs_auth_sync {
+        format!(
+            "type nul > \"{home}\\{finished}\"\r\nfor /L %%i in (1,1,5) do (\r\n  if exist \"{home}\\{synced}\" goto cc_switch_auth_synced\r\n  timeout /t 1 /nobreak >nul\r\n)\r\n:cc_switch_auth_synced\r\nif exist \"{home}\\{synced}\" (\r\n  rmdir /s /q \"{home}\" >nul 2>&1\r\n) else (\r\n  type nul > \"{home}\\{deferred}\"\r\n  if exist \"{home}\\{synced}\" (\r\n    rmdir /s /q \"{home}\" >nul 2>&1\r\n  ) else (\r\n    echo [cc-switch] Credential sync did not finish; isolated data remains at: {home}\r\n  )\r\n)"
+        )
+    } else {
+        format!("rmdir /s /q \"{home}\" >nul 2>&1")
+    };
+    format!(
+        "{cwd}set \"OPENAI_API_KEY=\"\r\nset \"OPENAI_BASE_URL=\"\r\nset \"OPENAI_ORGANIZATION=\"\r\nset \"OPENAI_PROJECT=\"\r\nset \"CODEX_API_KEY=\"\r\nset \"CODEX_ACCESS_TOKEN=\"\r\nset \"CODEX_REFRESH_TOKEN_URL_OVERRIDE=\"\r\nset \"CODEX_REVOKE_TOKEN_URL_OVERRIDE=\"\r\nset \"CODEX_APP_SERVER_LOGIN_CLIENT_ID=\"\r\nset \"CODEX_HOME={home}\"\r\nset \"CODEX_SQLITE_HOME={home}\"\r\ncall codex {config_args}\r\nset \"CODEX_HOME=\"\r\nset \"CODEX_SQLITE_HOME=\"\r\n{cleanup_after_codex}",
+        cwd = build_windows_cwd_command(cwd),
+    )
+}
+
+#[cfg_attr(windows, allow(dead_code))]
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
@@ -3606,10 +3715,7 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
     }
 }
 
-/// 打开指定提供商的终端
-///
-/// 根据提供商配置的环境变量启动一个带有该提供商特定设置的终端
-/// 无需检查是否为当前激活的提供商，任何提供商都可以打开终端
+/// 打开指定 Claude 或 Codex 提供商的隔离终端。
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn open_provider_terminal(
@@ -3617,9 +3723,15 @@ pub async fn open_provider_terminal(
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
+    #[allow(non_snake_case)] validateOnly: Option<bool>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let launch_cwd = resolve_launch_cwd(cwd)?;
+    let validate_only = validateOnly.unwrap_or(false);
+    let launch_cwd = if validate_only {
+        None
+    } else {
+        resolve_launch_cwd(cwd)?
+    };
 
     // 获取提供商配置
     let providers = ProviderService::list(state.inner(), app_type.clone())
@@ -3629,15 +3741,662 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
-    // 从提供商配置中提取环境变量
-    let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
+    match app_type {
+        AppType::Claude => {
+            if validate_only {
+                return Ok(true);
+            }
+            let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
+            launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+                .map_err(|e| format!("启动终端失败: {e}"))?;
+        }
+        AppType::Codex => {
+            let mut effective_provider = crate::services::provider::
+                build_effective_provider_for_live_with_codex_oauth_manager(
+                    state.db.as_ref(),
+                    &app_type,
+                    provider,
+                    &state.codex_oauth_manager,
+                )
+                .map_err(|e| e.to_string())?;
+            if codex_terminal_needs_local_routing(&effective_provider) {
+                if validate_only {
+                    return Ok(false);
+                }
+                return Err(
+                    "当前提供商依赖本地路由转换，当前版本暂不支持从隔离终端启动".to_string()
+                );
+            }
+            if validate_only {
+                return Ok(true);
+            }
 
-    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+            let provider_is_current = state
+                .db
+                .get_current_provider(app_type.as_str())
+                .map_err(|e| e.to_string())?
+                .as_deref()
+                == Some(provider.id.as_str());
+            hydrate_native_codex_terminal_auth(&mut effective_provider)?;
+            let auth_sync = codex_terminal_auth_sync(
+                &effective_provider,
+                state.codex_oauth_manager.clone(),
+                provider_is_current,
+            );
+            launch_codex_terminal(&effective_provider, launch_cwd.as_deref(), auth_sync)?;
+        }
+        _ => {
+            if validate_only {
+                return Ok(true);
+            }
+            let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
+            launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+                .map_err(|e| format!("启动终端失败: {e}"))?;
+        }
+    }
 
     Ok(true)
+}
+
+fn codex_terminal_needs_local_routing(provider: &crate::provider::Provider) -> bool {
+    let managed_codex_official = provider.category.as_deref() == Some("official")
+        && provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            .is_some_and(|account_id| !account_id.trim().is_empty());
+    let proxy_metadata = provider.meta.as_ref().is_some_and(|meta| {
+        meta.custom_user_agent
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || meta
+                .local_proxy_request_overrides
+                .as_ref()
+                .is_some_and(|overrides| !overrides.is_empty())
+    });
+
+    provider.is_github_copilot()
+        || provider.is_xai_oauth()
+        || (provider.is_codex_oauth() && !managed_codex_official)
+        || proxy_metadata
+        || provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false)
+        || codex_terminal_has_complete_endpoint(provider)
+        || codex_terminal_has_routed_api_format(provider)
+}
+
+fn codex_terminal_has_routed_api_format(provider: &crate::provider::Provider) -> bool {
+    fn is_routed(value: &str) -> bool {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "chat"
+                | "chat_completions"
+                | "chat-completions"
+                | "openai_chat"
+                | "openai-chat"
+                | "openai_chat_completions"
+                | "anthropic"
+                | "anthropic_messages"
+                | "anthropic-messages"
+                | "claude"
+                | "messages"
+        )
+    }
+
+    if provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .is_some_and(is_routed)
+        || provider
+            .settings_config
+            .get("api_format")
+            .and_then(|value| value.as_str())
+            .is_some_and(is_routed)
+        || provider
+            .settings_config
+            .get("apiFormat")
+            .and_then(|value| value.as_str())
+            .is_some_and(is_routed)
+    {
+        return true;
+    }
+
+    let Some(config) = provider
+        .settings_config
+        .get("config")
+        .and_then(|value| value.as_str())
+        .and_then(|config| config.parse::<toml::Value>().ok())
+    else {
+        return false;
+    };
+    if config
+        .get("wire_api")
+        .and_then(|value| value.as_str())
+        .is_some_and(is_routed)
+    {
+        return true;
+    }
+    config
+        .get("model_provider")
+        .and_then(|value| value.as_str())
+        .and_then(|active| config.get("model_providers")?.get(active))
+        .and_then(|provider| provider.get("wire_api"))
+        .and_then(|value| value.as_str())
+        .is_some_and(is_routed)
+}
+
+fn codex_terminal_has_complete_endpoint(provider: &crate::provider::Provider) -> bool {
+    let mut base_urls = provider
+        .settings_config
+        .get("base_url")
+        .or_else(|| provider.settings_config.get("baseURL"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(base_url) = provider
+        .settings_config
+        .get("config")
+        .and_then(|value| value.as_str())
+        .and_then(crate::codex_config::extract_codex_base_url)
+    {
+        base_urls.push(base_url);
+    }
+    base_urls.iter().any(|base_url| {
+        let Ok(url) = url::Url::parse(base_url) else {
+            return false;
+        };
+        let path = url.path().trim_end_matches('/').to_ascii_lowercase();
+        [
+            "/responses",
+            "/responses/compact",
+            "/chat/completions",
+            "/messages",
+        ]
+        .iter()
+        .any(|suffix| path.ends_with(suffix))
+    })
+}
+
+fn hydrate_native_codex_terminal_auth(
+    provider: &mut crate::provider::Provider,
+) -> Result<(), String> {
+    if provider.id != crate::database::CODEX_OFFICIAL_PROVIDER_ID {
+        return Ok(());
+    }
+
+    let auth_path = crate::codex_config::get_codex_auth_path();
+    hydrate_native_codex_terminal_auth_at(provider, &auth_path)
+}
+
+fn hydrate_native_codex_terminal_auth_at(
+    provider: &mut crate::provider::Provider,
+    auth_path: &Path,
+) -> Result<(), String> {
+    let auth = if auth_path.exists() {
+        let auth = crate::config::read_json_file(auth_path).map_err(|e| e.to_string())?;
+        if crate::codex_config::codex_auth_has_login_material(&auth) {
+            auth
+        } else {
+            serde_json::json!({})
+        }
+    } else {
+        serde_json::json!({})
+    };
+    provider
+        .settings_config
+        .as_object_mut()
+        .ok_or_else(|| "Codex 供应商配置必须是 JSON 对象".to_string())?
+        .insert("auth".to_string(), auth);
+    Ok(())
+}
+
+enum CodexTerminalAuthSync {
+    Managed {
+        manager: std::sync::Arc<crate::proxy::providers::codex_oauth_auth::CodexOAuthManager>,
+        account_id: String,
+        sync_live: bool,
+    },
+    Native {
+        expected_account_id: Option<String>,
+    },
+}
+
+fn codex_terminal_auth_sync(
+    provider: &crate::provider::Provider,
+    manager: std::sync::Arc<crate::proxy::providers::codex_oauth_auth::CodexOAuthManager>,
+    provider_is_current: bool,
+) -> Option<CodexTerminalAuthSync> {
+    if let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+    {
+        return Some(CodexTerminalAuthSync::Managed {
+            manager,
+            account_id,
+            sync_live: provider_is_current,
+        });
+    }
+
+    if provider.id != crate::database::CODEX_OFFICIAL_PROVIDER_ID {
+        return None;
+    }
+    if provider
+        .settings_config
+        .get("auth")
+        .and_then(crate::codex_config::extract_codex_auth_api_key)
+        .is_some_and(|token| !token.trim().is_empty())
+    {
+        return None;
+    }
+    let expected_account_id = provider
+        .settings_config
+        .pointer("/auth/tokens/account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    Some(CodexTerminalAuthSync::Native {
+        expected_account_id,
+    })
+}
+
+fn launch_codex_terminal(
+    provider: &crate::provider::Provider,
+    cwd: Option<&Path>,
+    auth_sync: Option<CodexTerminalAuthSync>,
+) -> Result<(), String> {
+    let temp_home = tempfile::Builder::new()
+        .prefix("cc-switch-codex-")
+        .tempdir()
+        .map_err(|e| format!("创建 Codex 临时配置目录失败: {e}"))?;
+    let settings = provider
+        .settings_config
+        .as_object()
+        .ok_or_else(|| "Codex 供应商配置必须是 JSON 对象".to_string())?;
+    let auth = settings
+        .get("auth")
+        .ok_or_else(|| "Codex 供应商配置缺少 'auth' 字段".to_string())?;
+    let config_text = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let catalog_path = temp_home
+        .path()
+        .join(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+    let terminal_provider_id = format!("cc-switch-terminal-{}", uuid::Uuid::new_v4().simple());
+    let official = provider.category.as_deref() == Some("official");
+    let official_api_key = official
+        && crate::codex_config::extract_codex_auth_api_key(auth)
+            .is_some_and(|token| !token.trim().is_empty());
+    let (config, model_provider) =
+        crate::codex_config::prepare_codex_config_text_with_model_catalog_at(
+            &provider.settings_config,
+            config_text,
+            profile,
+            &catalog_path,
+        )
+        .and_then(|config| prepare_codex_terminal_live_config(auth, &config, official))
+        .and_then(|config| {
+            crate::codex_config::set_codex_terminal_isolation(
+                &config,
+                temp_home.path(),
+                &terminal_provider_id,
+                cwd,
+            )
+        })
+        .map_err(|e| e.to_string())?;
+
+    crate::config::atomic_write_private(&temp_home.path().join("config.toml"), config.as_bytes())
+        .map_err(|e| e.to_string())?;
+    write_isolated_codex_terminal_auth(temp_home.path(), auth)?;
+    let needs_auth_sync = auth_sync.is_some();
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let command = build_codex_terminal_command(
+        temp_home.path(),
+        cwd,
+        &model_provider,
+        official,
+        official_api_key,
+        needs_auth_sync,
+    );
+    #[cfg(target_os = "windows")]
+    let command = build_windows_codex_terminal_command(
+        temp_home.path(),
+        cwd,
+        &model_provider,
+        official,
+        official_api_key,
+        needs_auth_sync,
+    );
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    return Err("不支持的操作系统".to_string());
+
+    let label = format!(
+        "codex_provider_{}",
+        temp_home
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("terminal")
+    );
+    launch_terminal_running(&command, &label)?;
+    if needs_auth_sync {
+        spawn_codex_terminal_auth_sync(temp_home.path().to_path_buf(), auth_sync);
+    }
+    let _ = temp_home.keep();
+    Ok(())
+}
+
+fn prepare_codex_terminal_live_config(
+    auth: &serde_json::Value,
+    config: &str,
+    official: bool,
+) -> Result<String, crate::error::AppError> {
+    if official {
+        let mut prepared = config.parse::<toml::Value>().map_err(|error| {
+            crate::error::AppError::Message(format!("Invalid Codex config.toml: {error}"))
+        })?;
+        prepared
+            .as_table_mut()
+            .ok_or_else(|| {
+                crate::error::AppError::Message("Codex config.toml must be a table".to_string())
+            })?
+            .insert(
+                "model_provider".to_string(),
+                toml::Value::String("openai".to_string()),
+            );
+        toml::to_string(&prepared).map_err(|error| {
+            crate::error::AppError::Message(format!(
+                "Failed to serialize Codex config.toml: {error}"
+            ))
+        })
+    } else {
+        let parsed = config.parse::<toml::Value>().map_err(|error| {
+            crate::error::AppError::Message(format!("Invalid Codex config.toml: {error}"))
+        })?;
+        let provider_id = parsed
+            .get("model_provider")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|id| crate::codex_config::is_custom_codex_model_provider_id(id))
+            .ok_or_else(|| {
+                crate::error::AppError::Message(
+                    "Codex 第三方供应商缺少有效的自定义 model_provider，无法安全启动隔离终端"
+                        .to_string(),
+                )
+            })?;
+        let provider_table = parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .and_then(|providers| providers.get(provider_id))
+            .and_then(toml::Value::as_table)
+            .ok_or_else(|| {
+                crate::error::AppError::Message(format!(
+                    "Codex 第三方供应商缺少 [model_providers.{provider_id}]，无法安全启动隔离终端"
+                ))
+            })?;
+        let selected_token = crate::codex_config::extract_codex_auth_api_key(auth)
+            .or_else(|| crate::codex_config::extract_codex_experimental_bearer_token(config));
+        if provider_table.contains_key("env_key") && selected_token.is_none() {
+            return Err(crate::error::AppError::Message(format!(
+                "Codex 第三方供应商 {provider_id} 没有保存在 CC Switch 中的 API Key，无法安全启动隔离终端"
+            )));
+        }
+        let prepared = crate::codex_config::prepare_codex_provider_live_config(auth, config)?;
+        if selected_token.is_none() {
+            return Ok(prepared);
+        }
+        let mut prepared = prepared.parse::<toml::Value>().map_err(|error| {
+            crate::error::AppError::Message(format!("Invalid Codex config.toml: {error}"))
+        })?;
+        if let Some(provider) = prepared
+            .get_mut("model_providers")
+            .and_then(toml::Value::as_table_mut)
+            .and_then(|providers| providers.get_mut(provider_id))
+            .and_then(toml::Value::as_table_mut)
+        {
+            provider.remove("env_key");
+            provider.remove("env_key_instructions");
+        }
+        toml::to_string(&prepared).map_err(|error| {
+            crate::error::AppError::Message(format!(
+                "Failed to serialize Codex config.toml: {error}"
+            ))
+        })
+    }
+}
+
+fn write_isolated_codex_terminal_auth(home: &Path, auth: &serde_json::Value) -> Result<(), String> {
+    if !crate::codex_config::codex_auth_has_login_material(auth) {
+        return Ok(());
+    }
+    let auth =
+        serde_json::to_vec_pretty(auth).map_err(|e| format!("序列化 Codex 临时认证失败: {e}"))?;
+    crate::config::atomic_write_private(&home.join("auth.json"), &auth).map_err(|e| e.to_string())
+}
+
+const CODEX_TERMINAL_FINISHED_MARKER: &str = ".cc-switch-terminal-finished";
+const CODEX_TERMINAL_SYNCED_MARKER: &str = ".cc-switch-terminal-synced";
+const CODEX_TERMINAL_DEFERRED_CLEANUP_MARKER: &str = ".cc-switch-terminal-cleanup-deferred";
+static CODEX_TERMINAL_AUTH_SYNC_LOCK: Lazy<std::sync::Mutex<()>> =
+    Lazy::new(|| std::sync::Mutex::new(()));
+
+fn spawn_codex_terminal_auth_sync(home: PathBuf, auth_sync: Option<CodexTerminalAuthSync>) {
+    if let Err(error) = std::thread::Builder::new()
+        .name("codex-terminal-auth-sync".to_string())
+        .spawn(move || {
+            let finished = home.join(CODEX_TERMINAL_FINISHED_MARKER);
+            while home.exists() && !finished.exists() {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            if !home.exists() {
+                return;
+            }
+            let synced = match auth_sync.as_ref() {
+                Some(sync) => match sync_codex_terminal_auth(&home.join("auth.json"), sync) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        log::warn!("同步 Codex 终端 OAuth 凭据失败: {error}");
+                        false
+                    }
+                },
+                None => true,
+            };
+            if synced {
+                if let Err(error) = std::fs::write(home.join(CODEX_TERMINAL_SYNCED_MARKER), []) {
+                    log::warn!("同步 Codex 终端 OAuth 凭据失败: {error}");
+                } else if home.join(CODEX_TERMINAL_DEFERRED_CLEANUP_MARKER).exists() {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    if let Err(error) = std::fs::remove_dir_all(&home) {
+                        log::warn!("清理 Codex 隔离终端目录失败: {error}");
+                    }
+                }
+            }
+        })
+    {
+        log::warn!("启动 Codex 终端 OAuth 同步线程失败: {error}");
+    }
+}
+
+fn sync_codex_terminal_auth(
+    auth_path: &Path,
+    auth_sync: &CodexTerminalAuthSync,
+) -> Result<(), String> {
+    let _guard = CODEX_TERMINAL_AUTH_SYNC_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match auth_sync {
+        CodexTerminalAuthSync::Managed {
+            manager,
+            account_id,
+            sync_live,
+        } => {
+            let terminal_auth = match std::fs::read(auth_path) {
+                Ok(contents) => {
+                    serde_json::from_slice(&contents).map_err(|error| error.to_string())?
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error.to_string()),
+            };
+            let Some((_, refresh_token, id_token, last_refresh_ms)) =
+                codex_auth_refresh_generation(&terminal_auth, Some(account_id))?
+            else {
+                return Ok(());
+            };
+            let outcome =
+                tauri::async_runtime::block_on(manager.adopt_account_refresh_token_with_outcome(
+                    account_id,
+                    refresh_token,
+                    id_token,
+                    last_refresh_ms,
+                ))
+                .map_err(|error| error.to_string())?;
+            match outcome {
+                crate::proxy::providers::codex_oauth_auth::RefreshTokenAdoptionOutcome::Adopted
+                | crate::proxy::providers::codex_oauth_auth::RefreshTokenAdoptionOutcome::Synchronized { .. } => {
+                    if *sync_live {
+                        sync_live_codex_terminal_auth(auth_path, Some(account_id))?;
+                    }
+                }
+                crate::proxy::providers::codex_oauth_auth::RefreshTokenAdoptionOutcome::Ambiguous => {
+                    return Err(format!(
+                        "隔离终端中的账号 {account_id} 凭据已变化，但无法安全判断新旧；隔离目录已保留"
+                    ));
+                }
+                crate::proxy::providers::codex_oauth_auth::RefreshTokenAdoptionOutcome::NotManaged => {
+                    return Err(format!(
+                        "所选托管账号 {account_id} 已不存在；隔离终端凭据未被删除"
+                    ));
+                }
+                crate::proxy::providers::codex_oauth_auth::RefreshTokenAdoptionOutcome::ProvablyOlder => {}
+            }
+        }
+        CodexTerminalAuthSync::Native {
+            expected_account_id,
+        } => sync_live_codex_terminal_auth(auth_path, expected_account_id.as_deref())?,
+    }
+    Ok(())
+}
+
+type CodexAuthRefreshGeneration = (String, String, Option<String>, Option<i64>);
+
+fn codex_auth_refresh_generation(
+    auth: &serde_json::Value,
+    expected_account_id: Option<&str>,
+) -> Result<Option<CodexAuthRefreshGeneration>, String> {
+    if !crate::codex_config::codex_auth_has_login_material(auth) {
+        return Ok(None);
+    }
+    let account_id = auth
+        .pointer("/tokens/account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "隔离终端产生了无法安全同步的非 ChatGPT 凭据；隔离目录已保留".to_string())?;
+    if expected_account_id.is_some_and(|expected| expected.trim() != account_id) {
+        return Err(format!(
+            "隔离终端登录账号 {account_id} 与所选账号不一致；隔离目录已保留"
+        ));
+    }
+    let (refresh_token, id_token, last_refresh) =
+        crate::codex_config::read_codex_auth_refresh_for_account(auth, account_id)
+            .ok_or_else(|| "隔离终端中的 ChatGPT 凭据不完整；隔离目录已保留".to_string())?;
+    Ok(Some((
+        account_id.to_string(),
+        refresh_token,
+        id_token,
+        last_refresh,
+    )))
+}
+
+fn terminal_refresh_is_newer(
+    terminal_refresh: &str,
+    terminal_time: Option<i64>,
+    target_refresh: &str,
+    target_time: Option<i64>,
+) -> Result<bool, String> {
+    if terminal_refresh == target_refresh {
+        return Ok(false);
+    }
+    match (terminal_time, target_time) {
+        (Some(terminal), Some(target)) if terminal > target => Ok(true),
+        (Some(terminal), Some(target)) if terminal < target => Ok(false),
+        _ => Err("Codex 凭据已变化，但缺少可安全比较的刷新时间；隔离目录已保留".to_string()),
+    }
+}
+
+fn sync_live_codex_terminal_auth(
+    auth_path: &Path,
+    expected_account_id: Option<&str>,
+) -> Result<(), String> {
+    sync_live_codex_terminal_auth_at(
+        auth_path,
+        &crate::codex_config::get_codex_auth_path(),
+        expected_account_id,
+    )
+}
+
+fn sync_live_codex_terminal_auth_at(
+    auth_path: &Path,
+    live_auth_path: &Path,
+    expected_account_id: Option<&str>,
+) -> Result<(), String> {
+    let terminal_contents = match std::fs::read(auth_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let terminal_auth: serde_json::Value =
+        serde_json::from_slice(&terminal_contents).map_err(|error| error.to_string())?;
+    let Some((account_id, terminal_refresh, _, terminal_time)) =
+        codex_auth_refresh_generation(&terminal_auth, expected_account_id)?
+    else {
+        return Ok(());
+    };
+    let live_contents = match std::fs::read(live_auth_path) {
+        Ok(contents) => Some(contents),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    let should_write = match live_contents.as_deref() {
+        Some(contents) => {
+            let live_auth: serde_json::Value =
+                serde_json::from_slice(contents).map_err(|error| error.to_string())?;
+            match codex_auth_refresh_generation(&live_auth, Some(&account_id))? {
+                Some((_, live_refresh, _, live_time)) => terminal_refresh_is_newer(
+                    &terminal_refresh,
+                    terminal_time,
+                    &live_refresh,
+                    live_time,
+                )?,
+                None if expected_account_id.is_none() => true,
+                None => {
+                    return Err("Codex 登录状态已在外部改变；隔离目录已保留".to_string());
+                }
+            }
+        }
+        None if expected_account_id.is_none() => true,
+        None => return Err("Codex 登录状态已在外部移除；隔离目录已保留".to_string()),
+    };
+    if !should_write {
+        return Ok(());
+    }
+
+    crate::services::proxy::replace_codex_live_auth_if_unchanged(
+        live_auth_path,
+        live_contents,
+        terminal_contents,
+    )
 }
 
 /// 从提供商配置中提取环境变量
@@ -4627,6 +5386,560 @@ mod tests {
             ),
             r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
+    }
+
+    #[test]
+    fn codex_terminal_command_isolates_home_auth_and_working_directory() {
+        let command = build_codex_terminal_command(
+            Path::new("/tmp/codex home"),
+            Some(Path::new("/tmp/project O'Brien")),
+            "cc-switch-terminal-test",
+            true,
+            false,
+            true,
+        );
+
+        assert!(command.contains("-u OPENAI_API_KEY"));
+        assert!(command.contains("-u OPENAI_BASE_URL"));
+        assert!(command.contains("-u OPENAI_ORGANIZATION"));
+        assert!(command.contains("-u OPENAI_PROJECT"));
+        assert!(command.contains("-u CODEX_API_KEY"));
+        assert!(command.contains("-u CODEX_ACCESS_TOKEN"));
+        assert!(command.contains("-u CODEX_REFRESH_TOKEN_URL_OVERRIDE"));
+        assert!(command.contains("-u CODEX_REVOKE_TOKEN_URL_OVERRIDE"));
+        assert!(command.contains("-u CODEX_APP_SERVER_LOGIN_CLIENT_ID"));
+        assert!(command.contains("CODEX_HOME="));
+        assert!(command.contains("CODEX_SQLITE_HOME="));
+        assert!(command.contains("model_provider=cc-switch-terminal-test"));
+        assert!(command.contains("sqlite_home=/tmp/codex home"));
+        assert!(command.contains("cli_auth_credentials_store=file"));
+        assert!(command.contains("mcp_oauth_credentials_store=file"));
+        assert!(command.contains("chatgpt_base_url=https://chatgpt.com/backend-api/"));
+        assert!(command.contains(CODEX_TERMINAL_FINISHED_MARKER));
+        assert!(command.contains(CODEX_TERMINAL_SYNCED_MARKER));
+        assert!(command.contains(CODEX_TERMINAL_DEFERRED_CLEANUP_MARKER));
+        assert!(command.contains("rm -rf '/tmp/codex home'"));
+        assert!(command.contains("if [ -e"));
+        assert!(command.contains("rm -f \"$0\""));
+        assert!(command.contains("project O"));
+    }
+
+    #[test]
+    fn official_api_key_terminal_uses_builtin_openai_config() {
+        let auth = serde_json::json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "sk-test"
+        });
+        let prepared = prepare_codex_terminal_live_config(
+            &auth,
+            "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://example.com/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+            true,
+        )
+        .expect("prepare config");
+        let parsed: toml::Value = toml::from_str(&prepared).expect("parse config");
+        assert_eq!(
+            parsed.get("model_provider").and_then(toml::Value::as_str),
+            Some("openai")
+        );
+
+        let command = build_codex_terminal_command(
+            Path::new("/tmp/codex-home"),
+            None,
+            "openai",
+            true,
+            true,
+            false,
+        );
+        assert!(command.contains("openai_base_url=https://api.openai.com/v1"));
+        assert!(!command.contains("chatgpt_base_url="));
+        assert!(!command.contains(CODEX_TERMINAL_FINISHED_MARKER));
+        assert!(command.contains("rm -rf '/tmp/codex-home'"));
+    }
+
+    #[test]
+    fn third_party_terminal_requires_an_explicit_custom_provider() {
+        let auth = serde_json::json!({ "OPENAI_API_KEY": "third-party-token" });
+
+        assert!(prepare_codex_terminal_live_config(
+            &auth,
+            "base_url = \"https://example.com/v1\"\n",
+            false,
+        )
+        .is_err());
+        assert!(prepare_codex_terminal_live_config(
+            &auth,
+            "model_provider = \"openai\"\nopenai_base_url = \"https://example.com/v1\"\n",
+            false,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn third_party_terminal_uses_the_selected_key_instead_of_env_key() {
+        let auth = serde_json::json!({ "OPENAI_API_KEY": "selected-token" });
+        let config = "model_provider = \"azure\"\n[model_providers.azure]\nbase_url = \"https://example.com/openai/v1\"\nwire_api = \"responses\"\nenv_key = \"AZURE_OPENAI_API_KEY\"\nenv_key_instructions = \"Set the key\"\n";
+
+        let prepared =
+            prepare_codex_terminal_live_config(&auth, config, false).expect("prepare config");
+        let parsed: toml::Value = toml::from_str(&prepared).expect("parse config");
+        let provider = parsed["model_providers"]["azure"]
+            .as_table()
+            .expect("provider table");
+        assert_eq!(
+            provider
+                .get("experimental_bearer_token")
+                .and_then(toml::Value::as_str),
+            Some("selected-token")
+        );
+        assert!(!provider.contains_key("env_key"));
+        assert!(!provider.contains_key("env_key_instructions"));
+
+        assert!(prepare_codex_terminal_live_config(&serde_json::json!({}), config, false).is_err());
+    }
+
+    #[test]
+    fn official_api_key_terminal_does_not_schedule_oauth_sync() {
+        let data_dir = tempfile::tempdir().expect("oauth data dir");
+        let manager = std::sync::Arc::new(
+            crate::proxy::providers::codex_oauth_auth::CodexOAuthManager::new(
+                data_dir.path().to_path_buf(),
+            ),
+        );
+        let provider = crate::provider::Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            serde_json::json!({
+                "auth": {
+                    "auth_mode": "apikey",
+                    "OPENAI_API_KEY": "sk-test"
+                },
+                "config": ""
+            }),
+            None,
+        );
+
+        assert!(codex_terminal_auth_sync(&provider, manager, true).is_none());
+    }
+
+    #[test]
+    fn managed_oauth_terminal_tracks_whether_it_is_current() {
+        let data_dir = tempfile::tempdir().expect("oauth data dir");
+        let manager = std::sync::Arc::new(
+            crate::proxy::providers::codex_oauth_auth::CodexOAuthManager::new(
+                data_dir.path().to_path_buf(),
+            ),
+        );
+        let mut provider = crate::provider::Provider::with_id(
+            "managed".to_string(),
+            "Managed".to_string(),
+            serde_json::json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("account".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        let sync =
+            codex_terminal_auth_sync(&provider, manager, true).expect("managed auth should sync");
+        assert!(matches!(
+            sync,
+            CodexTerminalAuthSync::Managed {
+                sync_live: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn codex_terminal_rejects_provider_shapes_that_require_local_routing() {
+        let provider = |config: serde_json::Value, meta: Option<crate::provider::ProviderMeta>| {
+            let mut provider = crate::provider::Provider::with_id(
+                "provider".to_string(),
+                "Provider".to_string(),
+                config,
+                None,
+            );
+            provider.meta = meta;
+            provider
+        };
+
+        let responses = provider(
+            serde_json::json!({
+                "config": "model_provider = \"custom\"\n[model_providers.custom]\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        assert!(!codex_terminal_needs_local_routing(&responses));
+
+        let chat = provider(
+            serde_json::json!({
+                "config": "model_provider = \"custom\"\n[model_providers.custom]\nwire_api = \"chat\"\n"
+            }),
+            None,
+        );
+        assert!(codex_terminal_needs_local_routing(&chat));
+
+        let anthropic = provider(
+            serde_json::json!({}),
+            Some(crate::provider::ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            }),
+        );
+        assert!(codex_terminal_needs_local_routing(&anthropic));
+
+        let copilot = provider(
+            serde_json::json!({}),
+            Some(crate::provider::ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            }),
+        );
+        assert!(codex_terminal_needs_local_routing(&copilot));
+
+        let xai = provider(
+            serde_json::json!({}),
+            Some(crate::provider::ProviderMeta {
+                provider_type: Some("xai_oauth".to_string()),
+                ..Default::default()
+            }),
+        );
+        assert!(codex_terminal_needs_local_routing(&xai));
+
+        let mut official = chat;
+        official.category = Some("official".to_string());
+        assert!(codex_terminal_needs_local_routing(&official));
+
+        let complete_endpoint = provider(
+            serde_json::json!({
+                "config": "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://example.com/v1/responses\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        assert!(codex_terminal_needs_local_routing(&complete_endpoint));
+
+        let conflicting_endpoints = provider(
+            serde_json::json!({
+                "base_url": "https://example.com/v1",
+                "config": "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://example.com/v1/responses\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        assert!(codex_terminal_needs_local_routing(&conflicting_endpoints));
+
+        let proxy_metadata = provider(
+            serde_json::json!({}),
+            Some(crate::provider::ProviderMeta {
+                custom_user_agent: Some("custom-agent".to_string()),
+                ..Default::default()
+            }),
+        );
+        assert!(codex_terminal_needs_local_routing(&proxy_metadata));
+
+        let conflicting_formats = provider(
+            serde_json::json!({
+                "config": "model_provider = \"custom\"\n[model_providers.custom]\nwire_api = \"chat\"\n"
+            }),
+            Some(crate::provider::ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            }),
+        );
+        assert!(codex_terminal_needs_local_routing(&conflicting_formats));
+    }
+
+    #[test]
+    fn native_codex_terminal_uses_current_live_auth_instead_of_stored_snapshot() {
+        let dir = tempfile::tempdir().expect("auth dir");
+        let auth_path = dir.path().join("auth.json");
+        let mut provider = crate::provider::Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            serde_json::json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "tokens": { "account_id": "old", "refresh_token": "old-refresh" }
+                },
+                "config": ""
+            }),
+            None,
+        );
+        let live = serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": { "account_id": "current", "refresh_token": "current-refresh" }
+        });
+        crate::config::atomic_write_private(
+            &auth_path,
+            &serde_json::to_vec(&live).expect("serialize auth"),
+        )
+        .expect("write auth");
+
+        hydrate_native_codex_terminal_auth_at(&mut provider, &auth_path).expect("hydrate auth");
+
+        assert_eq!(provider.settings_config["auth"], live);
+    }
+
+    #[test]
+    fn managed_codex_terminal_adopts_rotated_refresh_token() {
+        let data_dir = tempfile::tempdir().expect("oauth data dir");
+        let terminal_home = tempfile::tempdir().expect("terminal home");
+        let manager = std::sync::Arc::new(
+            crate::proxy::providers::codex_oauth_auth::CodexOAuthManager::new(
+                data_dir.path().to_path_buf(),
+            ),
+        );
+        tauri::async_runtime::block_on(async {
+            manager
+                .add_test_account_with_access_token("account", "access", Some("id-old"))
+                .await
+                .expect("seed account");
+            manager.test_set_token_updated_at_ms("account", 1_000).await;
+        });
+        let auth = serde_json::json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": "1970-01-01T00:00:02Z",
+            "tokens": {
+                "access_token": "access-new",
+                "refresh_token": "refresh-new",
+                "id_token": "id-new",
+                "account_id": "account"
+            }
+        });
+        write_isolated_codex_terminal_auth(terminal_home.path(), &auth).expect("write auth");
+
+        sync_codex_terminal_auth(
+            &terminal_home.path().join("auth.json"),
+            &CodexTerminalAuthSync::Managed {
+                manager: manager.clone(),
+                account_id: "account".to_string(),
+                sync_live: false,
+            },
+        )
+        .expect("sync auth");
+
+        assert_eq!(
+            tauri::async_runtime::block_on(manager.test_refresh_token_for_account("account")),
+            Some("refresh-new".to_string())
+        );
+    }
+
+    #[test]
+    fn managed_codex_terminal_does_not_adopt_an_older_refresh_token() {
+        let data_dir = tempfile::tempdir().expect("oauth data dir");
+        let terminal_home = tempfile::tempdir().expect("terminal home");
+        let manager = std::sync::Arc::new(
+            crate::proxy::providers::codex_oauth_auth::CodexOAuthManager::new(
+                data_dir.path().to_path_buf(),
+            ),
+        );
+        tauri::async_runtime::block_on(async {
+            manager
+                .add_test_account_with_access_token("account", "access", Some("id-current"))
+                .await
+                .expect("seed account");
+            manager.test_set_token_updated_at_ms("account", 3_000).await;
+        });
+        let auth = serde_json::json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": "1970-01-01T00:00:02Z",
+            "tokens": {
+                "access_token": "access-old",
+                "refresh_token": "refresh-old",
+                "id_token": "id-old",
+                "account_id": "account"
+            }
+        });
+        write_isolated_codex_terminal_auth(terminal_home.path(), &auth).expect("write auth");
+
+        sync_codex_terminal_auth(
+            &terminal_home.path().join("auth.json"),
+            &CodexTerminalAuthSync::Managed {
+                manager: manager.clone(),
+                account_id: "account".to_string(),
+                sync_live: false,
+            },
+        )
+        .expect("sync auth");
+
+        assert_eq!(
+            tauri::async_runtime::block_on(manager.test_refresh_token_for_account("account")),
+            Some("test-refresh-token".to_string())
+        );
+    }
+
+    #[test]
+    fn noncurrent_native_terminal_still_syncs_with_live_auth() {
+        let data_dir = tempfile::tempdir().expect("oauth data dir");
+        let manager = std::sync::Arc::new(
+            crate::proxy::providers::codex_oauth_auth::CodexOAuthManager::new(
+                data_dir.path().to_path_buf(),
+            ),
+        );
+        let provider = crate::provider::Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            serde_json::json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "last_refresh": "1970-01-01T00:00:01Z",
+                    "tokens": {
+                        "access_token": "access-old",
+                        "refresh_token": "refresh-old",
+                        "account_id": "account"
+                    }
+                },
+                "config": ""
+            }),
+            None,
+        );
+
+        assert!(matches!(
+            codex_terminal_auth_sync(&provider, manager, false),
+            Some(CodexTerminalAuthSync::Native {
+                expected_account_id: Some(account_id),
+            }) if account_id == "account"
+        ));
+    }
+
+    #[test]
+    fn newer_terminal_refresh_replaces_same_account_live_auth() {
+        let dir = tempfile::tempdir().expect("auth dir");
+        let terminal_path = dir.path().join("terminal.json");
+        let live_path = dir.path().join("live.json");
+        let auth = |time: u8, suffix: &str| {
+            serde_json::json!({
+                "auth_mode": "chatgpt",
+                "last_refresh": format!("1970-01-01T00:00:0{time}Z"),
+                "tokens": {
+                    "access_token": format!("access-{suffix}"),
+                    "refresh_token": format!("refresh-{suffix}"),
+                    "account_id": "account"
+                }
+            })
+        };
+        let terminal = auth(2, "new");
+        crate::config::atomic_write_private(
+            &terminal_path,
+            &serde_json::to_vec(&terminal).unwrap(),
+        )
+        .unwrap();
+        crate::config::atomic_write_private(
+            &live_path,
+            &serde_json::to_vec(&auth(1, "old")).unwrap(),
+        )
+        .unwrap();
+
+        sync_live_codex_terminal_auth_at(&terminal_path, &live_path, Some("account")).unwrap();
+
+        let synced: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(live_path).unwrap()).unwrap();
+        assert_eq!(synced, terminal);
+    }
+
+    #[test]
+    fn first_native_login_populates_an_empty_live_auth() {
+        let dir = tempfile::tempdir().expect("auth dir");
+        let terminal_path = dir.path().join("terminal.json");
+        let live_path = dir.path().join("live.json");
+        let terminal = serde_json::json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": "1970-01-01T00:00:02Z",
+            "tokens": {
+                "access_token": "access-new",
+                "refresh_token": "refresh-new",
+                "account_id": "new-account"
+            }
+        });
+        crate::config::atomic_write_private(
+            &terminal_path,
+            &serde_json::to_vec(&terminal).unwrap(),
+        )
+        .unwrap();
+
+        sync_live_codex_terminal_auth_at(&terminal_path, &live_path, None).unwrap();
+
+        let synced: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(live_path).unwrap()).unwrap();
+        assert_eq!(synced, terminal);
+    }
+
+    #[test]
+    fn native_account_change_is_preserved_as_a_sync_conflict() {
+        let dir = tempfile::tempdir().expect("auth dir");
+        let terminal_path = dir.path().join("terminal.json");
+        let live_path = dir.path().join("live.json");
+        let auth = |account: &str, suffix: &str| {
+            serde_json::json!({
+                "auth_mode": "chatgpt",
+                "last_refresh": "1970-01-01T00:00:02Z",
+                "tokens": {
+                    "access_token": format!("access-{suffix}"),
+                    "refresh_token": format!("refresh-{suffix}"),
+                    "account_id": account
+                }
+            })
+        };
+        let terminal = auth("account-b", "b");
+        let live = auth("account-a", "a");
+        crate::config::atomic_write_private(
+            &terminal_path,
+            &serde_json::to_vec(&terminal).unwrap(),
+        )
+        .unwrap();
+        crate::config::atomic_write_private(&live_path, &serde_json::to_vec(&live).unwrap())
+            .unwrap();
+
+        let result =
+            sync_live_codex_terminal_auth_at(&terminal_path, &live_path, Some("account-a"));
+
+        assert!(result.is_err());
+        let unchanged: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(live_path).unwrap()).unwrap();
+        assert_eq!(unchanged, live);
+        assert!(terminal_path.exists());
+    }
+
+    #[test]
+    fn missing_refresh_timestamp_never_authorizes_an_overwrite() {
+        let dir = tempfile::tempdir().expect("auth dir");
+        let terminal_path = dir.path().join("terminal.json");
+        let live_path = dir.path().join("live.json");
+        let terminal = serde_json::json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": "1970-01-01T00:00:02Z",
+            "tokens": {
+                "access_token": "access-terminal",
+                "refresh_token": "refresh-terminal",
+                "account_id": "account"
+            }
+        });
+        let live = serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "access-live",
+                "refresh_token": "refresh-live",
+                "account_id": "account"
+            }
+        });
+        crate::config::atomic_write_private(
+            &terminal_path,
+            &serde_json::to_vec(&terminal).unwrap(),
+        )
+        .unwrap();
+        crate::config::atomic_write_private(&live_path, &serde_json::to_vec(&live).unwrap())
+            .unwrap();
+
+        let result = sync_live_codex_terminal_auth_at(&terminal_path, &live_path, Some("account"));
+
+        assert!(result.is_err());
+        let unchanged: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(live_path).unwrap()).unwrap();
+        assert_eq!(unchanged, live);
     }
 
     #[test]

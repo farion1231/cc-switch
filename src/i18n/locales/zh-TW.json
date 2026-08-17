@@ -152,6 +152,7 @@
     "openTerminal": "開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
+    "terminalRoutingUnsupported": "目前供應商依賴本機路由轉換，目前版本暫不支援從隔離終端機啟動",
     "name": "供應商名稱",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官網連結",
