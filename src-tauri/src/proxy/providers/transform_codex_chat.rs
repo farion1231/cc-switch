@@ -892,6 +892,28 @@ fn flush_pending_tool_calls(
     // new assistant tool-call turn. Consecutive outputs do not enter here
     // because `pending_tool_calls` is empty after the first output.
     flush_pending_chat_tool_media(messages, pending_media);
+
+    // A Responses turn may emit a commentary `message` item followed by one
+    // or more tool-call items. Chat Completions represents that as one
+    // assistant message containing both `content` and `tool_calls`. Keeping
+    // the items as two consecutive assistant messages teaches chat models
+    // that a text-only progress update is a complete turn, so they can stop
+    // before emitting the tool call on the next sample.
+    if let Some(previous) = messages.last_mut().filter(|message| {
+        message.get("role").and_then(Value::as_str) == Some("assistant")
+            && message.get("tool_calls").is_none()
+    }) {
+        if let Some(previous_obj) = previous.as_object_mut() {
+            previous_obj.insert(
+                "tool_calls".to_string(),
+                Value::Array(std::mem::take(pending_tool_calls)),
+            );
+            attach_unique_pending_reasoning_to_assistant(previous, pending_reasoning);
+            *last_assistant_index = Some(messages.len() - 1);
+            return;
+        }
+    }
+
     let mut message = json!({
         "role": "assistant",
         "content": null,
@@ -1020,6 +1042,30 @@ fn attach_pending_reasoning_to_assistant(
 
     if let Some(obj) = message.as_object_mut() {
         append_reasoning_content(obj, &reasoning);
+    }
+}
+
+fn attach_unique_pending_reasoning_to_assistant(
+    message: &mut Value,
+    pending_reasoning: &mut Option<String>,
+) {
+    let Some(reasoning) = pending_reasoning.take() else {
+        return;
+    };
+    let reasoning = reasoning.trim();
+    if reasoning.is_empty() {
+        return;
+    }
+
+    let Some(obj) = message.as_object_mut() else {
+        return;
+    };
+    let already_present = obj
+        .get("reasoning_content")
+        .and_then(Value::as_str)
+        .is_some_and(|existing| existing.contains(reasoning));
+    if !already_present {
+        append_reasoning_content(obj, reasoning);
     }
 }
 
@@ -3318,6 +3364,54 @@ mod tests {
         assert_eq!(messages[1]["reasoning_content"], "second thought");
         assert_eq!(messages[2]["role"], "user");
         assert!(messages[2].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_coalesces_commentary_and_following_tool_call() {
+        // One Responses model turn can contain a commentary message and a
+        // function call as separate output items. Chat Completions must see
+        // them as one assistant message; otherwise a chat model can imitate
+        // the commentary-only message and finish before producing the call.
+        let input = json!({
+            "model": "qwen3.8",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "need to update the file"}]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": "Part 1 written. Appending sections 4-5."
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "apply_patch",
+                    "arguments": "{\"patch\":\"next section\"}",
+                    "reasoning_content": "need to update the file"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "Success"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(
+            messages[0]["content"],
+            "Part 1 written. Appending sections 4-5."
+        );
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[0]["reasoning_content"], "need to update the file");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
     }
 
     #[test]
