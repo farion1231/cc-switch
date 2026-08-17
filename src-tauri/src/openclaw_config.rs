@@ -990,7 +990,8 @@ mod tests {
         // Regression test for #6467: when the source file has no comments,
         // newly inserted root-level keys must be quoted so the file remains
         // parsable by strict JSON consumers.
-        let source = "{\n  \"models\": {\n    \"mode\": \"merge\",\n    \"providers\": {}\n  }\n}\n";
+        let source =
+            "{\n  \"models\": {\n    \"mode\": \"merge\",\n    \"providers\": {}\n  }\n}\n";
 
         with_test_paths(source, |_| {
             set_default_model(&OpenClawDefaultModel {
