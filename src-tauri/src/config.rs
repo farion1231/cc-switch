@@ -47,6 +47,11 @@ pub fn get_default_claude_mcp_path() -> PathBuf {
     get_home_dir().join(".claude.json")
 }
 
+/// 获取 ZCode 配置目录路径
+pub fn get_zcode_config_dir() -> PathBuf {
+    get_home_dir().join(".zcode")
+}
+
 fn normalize_path_lexically(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
 
