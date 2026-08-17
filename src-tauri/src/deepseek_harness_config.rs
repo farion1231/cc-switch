@@ -383,6 +383,42 @@ mod tests {
 
     #[test]
     #[serial]
+    fn preserves_custom_providers_when_switching_managed_route() {
+        with_temp_home(|home| {
+            std::fs::write(
+                home.join("settings.yaml"),
+                "llm-pi-ai:\n  providers:\n    k3:\n      displayName: K3\nother-plugin: keep\n",
+            )
+            .unwrap();
+            std::fs::write(home.join(".credentials.yaml"), "K3_API_KEY: keep\n").unwrap();
+
+            set_provider(
+                "official",
+                &DeepSeekHarnessProviderConfig {
+                    api_key: Some("sk-test".to_string()),
+                    base_url: Some("https://api.deepseek.com".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+            let settings = std::fs::read_to_string(home.join("settings.yaml")).unwrap();
+            assert!(settings.contains("llm-pi-ai"));
+            assert!(settings.contains("displayName: K3"));
+            assert!(settings.contains("llm-deepseek"));
+            let credentials = std::fs::read_to_string(home.join(".credentials.yaml")).unwrap();
+            assert!(credentials.contains("K3_API_KEY: keep"));
+
+            remove_provider().unwrap();
+
+            let settings = std::fs::read_to_string(home.join("settings.yaml")).unwrap();
+            assert!(!settings.contains("llm-deepseek"));
+            assert!(settings.contains("displayName: K3"));
+        });
+    }
+
+    #[test]
+    #[serial]
     fn accepts_missing_base_url_for_official_runtime_fallback() {
         with_temp_home(|home| {
             for base_url in [None, Some(""), Some("   ")] {
