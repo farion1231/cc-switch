@@ -3252,5 +3252,28 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "sharedMemory": {
+    "title": "Shared Memory",
+    "endpoint": "Endpoint URL",
+    "token": "Access Token",
+    "tokenPlaceholder": "Required for pushing",
+    "hint": "CC Switch is the unified channel for cross-platform shared memory: Pull loads from the cloud, Push saves to the cloud (overwrites). Reading needs no token; pushing does.",
+    "openWeb": "Open Web Editor",
+    "openWebFailed": "Failed to open web editor",
+    "settingsSaved": "Settings saved",
+    "settingsSaveFailed": "Failed to save settings",
+    "loadSettingsFailed": "Failed to load settings",
+    "fetch": "Pull",
+    "push": "Push",
+    "fetchSuccess": "Pulled from cloud",
+    "fetchFailed": "Pull failed",
+    "pushSuccess": "Pushed to cloud",
+    "pushFailed": "Push failed",
+    "lastUpdated": "Last updated {{time}}",
+    "neverUpdated": "Never updated",
+    "bytes": "{{count}} bytes",
+    "notSynced": "Not synced yet",
+    "charCount": "{{count}} characters"
   }
 }
