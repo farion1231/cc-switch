@@ -22,6 +22,14 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./tests/setupGlobals.ts", "./tests/setupTests.ts"],
     globals: true,
+    // Cap fork concurrency: 16 logical cores oversubscribed 10 physical ones,
+    // causing timeout flakes under full parallel runs.
+    poolOptions: {
+      forks: {
+        minForks: 1,
+        maxForks: 6,
+      },
+    },
     coverage: {
       reporter: ["text", "lcov"],
     },
