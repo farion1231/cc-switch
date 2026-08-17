@@ -103,13 +103,7 @@ struct CodexAuthFileTransaction {
 
 impl CodexAuthFileTransaction {
     fn begin(expected: &CodexAuthFileSnapshot) -> Result<Self, String> {
-        Self::begin_at(crate::codex_config::get_codex_auth_path(), expected)
-    }
-
-    fn begin_at(
-        path: std::path::PathBuf,
-        expected: &CodexAuthFileSnapshot,
-    ) -> Result<Self, String> {
+        let path = crate::codex_config::get_codex_auth_path();
         let mut transaction = Self {
             path: path.clone(),
             quarantined: None,
@@ -389,17 +383,6 @@ impl Drop for CodexAuthFileTransaction {
             }
         }
     }
-}
-
-pub(crate) fn replace_codex_live_auth_if_unchanged(
-    path: &std::path::Path,
-    expected: Option<Vec<u8>>,
-    replacement: Vec<u8>,
-) -> Result<(), String> {
-    let snapshot = CodexAuthFileSnapshot { contents: expected };
-    let mut transaction = CodexAuthFileTransaction::begin_at(path.to_path_buf(), &snapshot)?;
-    transaction.install(Some(replacement))?;
-    transaction.commit()
 }
 
 #[derive(Clone)]
