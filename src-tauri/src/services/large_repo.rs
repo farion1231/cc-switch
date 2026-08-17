@@ -1268,6 +1268,7 @@ fn resolve_materialize_dir<'a>(dir: &'a str, repo_name: &str) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tempfile::tempdir;
 
     /// Mock 后端：用预构造的 RepoFile 列表 + blob 内容映射模拟仓库，
