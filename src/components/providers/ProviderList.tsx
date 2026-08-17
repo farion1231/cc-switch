@@ -476,7 +476,7 @@ export function ProviderList({
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
-                onTest={handleTest}
+                onTest={appId === "deepseek-harness" ? undefined : handleTest}
                 isTesting={isChecking(provider.id)}
                 isProxyRunning={supportsFailover && isProxyRunning}
                 isProxyTakeover={supportsFailover && isProxyTakeover}

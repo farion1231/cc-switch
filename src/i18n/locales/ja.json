@@ -791,6 +791,8 @@
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
+    "deepseekHarnessConfigDir": "DeepSeek Harness 設定ディレクトリ",
+    "deepseekHarnessConfigDirDescription": "DeepSeek Harness のホームディレクトリ（settings.yaml と .credentials.yaml）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -799,6 +801,7 @@
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
+    "browsePlaceholderDeepSeekHarness": "例: /home/<your-username>/.dsh",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -910,7 +913,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "deepseek-harness": "DeepSeek Harness"
   },
   "pi": {
     "empty": {
@@ -1054,6 +1058,23 @@
   },
   "appSwitcher": {
     "more": "その他のアプリ"
+  },
+  "deepseekHarness": {
+    "defaultProviderName": "DeepSeek 公式",
+    "apiKey": "API Key",
+    "apiKeyEnv": "認証情報の参照",
+    "apiKeyEnvRequired": "認証情報の参照を入力してください",
+    "baseURL": "ベース URL",
+    "defaultModel": "デフォルトモデル",
+    "defaultModelRequired": "デフォルトモデルを入力してください",
+    "thinking": "思考ポリシー",
+    "disabled": "無効",
+    "reasoningEffort": "デフォルトの推論強度",
+    "models": "モデル一覧（1 行に 1 ID）",
+    "modelsHint": "一覧にないパススルー ID もデフォルトモデルに指定できます。",
+    "advancedJson": "高度な llm-deepseek 設定（JSON）",
+    "advancedHint": "未表示のネイティブ設定フィールドは保持され、保存時は上の構造化フィールドが優先されます。",
+    "invalidAdvancedJson": "高度な JSON が無効です：{{error}}"
   },
   "grokBuild": {
     "apiBackend": "API Backend",

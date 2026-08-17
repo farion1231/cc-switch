@@ -83,6 +83,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
+import { DeepSeekHarnessProviderForm } from "./DeepSeekHarnessProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { PiProviderForm } from "./PiProviderForm";
@@ -281,6 +282,9 @@ export function ProviderForm(props: ProviderFormProps) {
   }
   if (props.appId === "grokbuild") {
     return <GrokBuildProviderForm {...props} />;
+  }
+  if (props.appId === "deepseek-harness") {
+    return <DeepSeekHarnessProviderForm {...props} />;
   }
 
   return <ProviderFormFull {...props} />;

@@ -72,8 +72,9 @@ describe("useDirectorySettings", () => {
       if (app === "grokbuild") return "/remote/grok";
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
+      if (app === "hermes") return "/remote/hermes";
       if (app === "pi") return "/remote/pi";
-      return "/remote/hermes";
+      return "/remote/deepseek-harness";
     });
     selectConfigDirectoryMock.mockReset();
   });
@@ -98,6 +99,7 @@ describe("useDirectorySettings", () => {
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
       pi: "/remote/pi",
+      "deepseek-harness": "/remote/deepseek-harness",
     });
   });
 
@@ -241,6 +243,56 @@ describe("useDirectorySettings", () => {
       openclawConfigDir: "/picked/openclaw",
     });
     expect(result.current.resolvedDirs.openclaw).toBe("/picked/openclaw");
+  });
+
+  it("updates DeepSeek Harness directory when browsing succeeds", async () => {
+    selectConfigDirectoryMock.mockResolvedValue("/picked/deepseek-harness");
+
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings({ deepseekHarnessConfigDir: undefined }),
+        onUpdateSettings,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.browseDirectory("deepseek-harness");
+    });
+
+    expect(selectConfigDirectoryMock).toHaveBeenCalledWith(
+      "/remote/deepseek-harness",
+    );
+    expect(onUpdateSettings).toHaveBeenCalledWith({
+      deepseekHarnessConfigDir: "/picked/deepseek-harness",
+    });
+    expect(result.current.resolvedDirs["deepseek-harness"]).toBe(
+      "/picked/deepseek-harness",
+    );
+  });
+
+  it("resets DeepSeek Harness to the backend-resolved DSH_HOME", async () => {
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings({
+          deepseekHarnessConfigDir: "/custom/deepseek-harness",
+        }),
+        onUpdateSettings,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await act(async () => {
+      await result.current.resetDirectory("deepseek-harness");
+    });
+
+    expect(onUpdateSettings).toHaveBeenCalledWith({
+      deepseekHarnessConfigDir: undefined,
+    });
+    expect(result.current.resolvedDirs["deepseek-harness"]).toBe(
+      "/remote/deepseek-harness",
+    );
   });
 
   it("resetAllDirectories applies provided resolved values", async () => {

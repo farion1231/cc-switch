@@ -110,6 +110,7 @@ import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
+  isMcpAppId,
   isProxyAppId,
 } from "@/config/appConfig";
 
@@ -226,7 +227,7 @@ function App() {
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
-    if (currentView === "mcp" && sharedFeatureApp === "pi") {
+    if (currentView === "mcp" && !isMcpAppId(sharedFeatureApp)) {
       setCurrentView("providers");
       return;
     }
@@ -244,6 +245,17 @@ function App() {
       setCurrentView("providers");
     }
   }, [sharedFeatureApp, currentView]);
+
+  // Phase 1 exposes DeepSeek Harness as an exclusive provider-list app only.
+  useEffect(() => {
+    if (
+      activeApp === "deepseek-harness" &&
+      currentView !== "providers" &&
+      currentView !== "settings"
+    ) {
+      setCurrentView("providers");
+    }
+  }, [activeApp, currentView]);
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
@@ -307,7 +319,8 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "deepseek-harness";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -317,7 +330,7 @@ function App() {
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
     sharedFeatureApp === "pi";
-  const hasMcpSupport = sharedFeatureApp !== "pi";
+  const hasMcpSupport = isMcpAppId(sharedFeatureApp);
 
   const {
     addProvider,
@@ -1139,7 +1152,11 @@ function App() {
                           : undefined
                       }
                       onDuplicate={handleDuplicateProvider}
-                      onConfigureUsage={setUsageProvider}
+                      onConfigureUsage={
+                        activeApp === "deepseek-harness"
+                          ? undefined
+                          : setUsageProvider
+                      }
                       onOpenWebsite={handleOpenWebsite}
                       onOpenTerminal={
                         activeApp === "claude" ? handleOpenTerminal : undefined
@@ -1389,6 +1406,7 @@ function App() {
                 </div>
               )}
             {currentView === "providers" &&
+              activeApp !== "deepseek-harness" &&
               (settingsData?.showProfileSwitcher ?? true) && (
                 <div
                   className="flex shrink-0 items-center"
@@ -1570,9 +1588,11 @@ function App() {
                               ? "openclaw"
                               : activeApp === "hermes"
                                 ? "hermes"
-                                : activeApp === "grokbuild"
-                                  ? "grokbuild"
-                                  : "default"
+                                : activeApp === "deepseek-harness"
+                                  ? "deepseek-harness"
+                                  : activeApp === "grokbuild"
+                                    ? "grokbuild"
+                                    : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1669,7 +1689,7 @@ function App() {
                                 <History className="w-4 h-4" />
                               </Button>
                             </>
-                          ) : (
+                          ) : activeApp === "deepseek-harness" ? null : (
                             <>
                               <Button
                                 variant="ghost"

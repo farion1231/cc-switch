@@ -20,6 +20,28 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { generateUUID } from "@/utils/uuid";
 
+const DEEPSEEK_HARNESS_PRIVATE_FIELDS = ["apiKey", "apiKeyEnv"] as const;
+
+/**
+ * Harness credentials are shared live state, while a provider's credential
+ * fields belong to that stored provider. Refresh native settings without
+ * adopting a different live credential reference (or its resolved secret).
+ */
+export function mergeDeepSeekHarnessLiveSettings(
+  liveSettings: Record<string, unknown>,
+  storedSettings: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...liveSettings };
+  for (const key of DEEPSEEK_HARNESS_PRIVATE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(storedSettings, key)) {
+      merged[key] = storedSettings[key];
+    } else {
+      delete merged[key];
+    }
+  }
+  return merged;
+}
+
 interface EditProviderDialogProps {
   open: boolean;
   provider: Provider | null;
@@ -152,29 +174,28 @@ export function EditProviderDialog({
       try {
         const currentId = await providersApi.getCurrent(appId);
         if (currentId && provider.id === currentId) {
-          try {
-            const live = (await vscodeApi.getLiveProviderSettings(
-              appId,
-            )) as Record<string, unknown>;
-            if (!cancelled && live && typeof live === "object") {
-              setLiveSettings(live);
-              setHasLoadedLive(true);
-            }
-          } catch {
-            // 读取实时配置失败则回退到 SSOT（不打断编辑流程）
-            if (!cancelled) {
-              setLiveSettings(null);
-              setHasLoadedLive(true);
-            }
-          }
-        } else {
+          const live = (await vscodeApi.getLiveProviderSettings(
+            appId,
+          )) as Record<string, unknown> | null;
           if (!cancelled) {
-            setLiveSettings(null);
-            setHasLoadedLive(true);
+            setLiveSettings(
+              live && typeof live === "object" && !Array.isArray(live)
+                ? live
+                : null,
+            );
           }
+        } else if (!cancelled) {
+          setLiveSettings(null);
+        }
+      } catch {
+        // Live read failures fall back to the stored provider.
+        if (!cancelled) {
+          setLiveSettings(null);
         }
       } finally {
-        // no-op
+        if (!cancelled) {
+          setHasLoadedLive(true);
+        }
       }
     };
     void load();
@@ -205,6 +226,16 @@ export function EditProviderDialog({
       if (dbCatalog !== undefined) {
         return { ...base, modelCatalog: dbCatalog };
       }
+    }
+
+    if (appId === "deepseek-harness" && liveSettings) {
+      const storedSettings =
+        provider?.settingsConfig &&
+        typeof provider.settingsConfig === "object" &&
+        !Array.isArray(provider.settingsConfig)
+          ? (provider.settingsConfig as Record<string, unknown>)
+          : {};
+      return mergeDeepSeekHarnessLiveSettings(liveSettings, storedSettings);
     }
 
     return base;
@@ -279,7 +310,13 @@ export function EditProviderDialog({
     [appId, onSubmit, closeDialog, provider],
   );
 
-  if (!provider || !initialData) {
+  // The Harness form initializes local state only when it mounts. Wait until
+  // the current native profile has been read so it cannot retain a stale DB
+  // snapshot after the asynchronous live refresh completes.
+  const waitingForDeepSeekHarnessLive =
+    open && appId === "deepseek-harness" && !hasLoadedLive;
+
+  if (!provider || !initialData || waitingForDeepSeekHarnessLive) {
     return null;
   }
 

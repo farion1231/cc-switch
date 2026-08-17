@@ -128,6 +128,13 @@ pub async fn query_usage(
     app_type: AppType,
     provider_id: &str,
 ) -> Result<UsageResult, AppError> {
+    if matches!(app_type, AppType::DeepSeekHarness) {
+        return Err(AppError::localized(
+            "provider.deepseek_harness.usage.unsupported",
+            "DeepSeek Harness 暂不支持用量查询",
+            "DeepSeek Harness usage queries are not supported",
+        ));
+    }
     let (script_code, timeout, api_key, base_url, access_token, user_id, template_type) = {
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let provider = providers.get(provider_id).ok_or_else(|| {
@@ -202,6 +209,13 @@ pub async fn test_usage_script(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
+    if matches!(app_type, AppType::DeepSeekHarness) {
+        return Err(AppError::localized(
+            "provider.deepseek_harness.usage.unsupported",
+            "DeepSeek Harness 暂不支持用量查询",
+            "DeepSeek Harness usage queries are not supported",
+        ));
+    }
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let provider = providers.get(provider_id).ok_or_else(|| {
         AppError::localized(

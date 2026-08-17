@@ -48,6 +48,20 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+
+    // current_provider_* 同样是后端事务维护的设备级指针。前端保存的是一份
+    // 可能早于最近一次 provider switch 的全量设置快照；若接收其中的 current，
+    // 普通设置保存就会把刚提交的切换静默回滚。所有 current 指针都必须以
+    // 当前后端状态为准，切换只能通过 provider service 提交。
+    incoming.current_provider_claude = existing.current_provider_claude.clone();
+    incoming.current_provider_claude_desktop = existing.current_provider_claude_desktop.clone();
+    incoming.current_provider_codex = existing.current_provider_codex.clone();
+    incoming.current_provider_gemini = existing.current_provider_gemini.clone();
+    incoming.current_provider_grokbuild = existing.current_provider_grokbuild.clone();
+    incoming.current_provider_opencode = existing.current_provider_opencode.clone();
+    incoming.current_provider_openclaw = existing.current_provider_openclaw.clone();
+    incoming.current_provider_hermes = existing.current_provider_hermes.clone();
+    incoming.current_provider_deepseek_harness = existing.current_provider_deepseek_harness.clone();
     incoming
 }
 
@@ -63,12 +77,30 @@ pub async fn save_settings(
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
-    let existing = crate::settings::get_settings();
-    let merged = merge_settings_for_save(settings, &existing);
-    let unify_codex_changed =
-        merged.unify_codex_session_history != existing.unify_codex_session_history;
-    let unify_codex_enabled = merged.unify_codex_session_history;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    // The Harness config root and its device-local current pointer participate
+    // in provider transactions. Serialize settings saves with those operations
+    // so one transaction cannot read from one root and write to another.
+    let _deepseek_harness_settings_guard = futures::executor::block_on(
+        state
+            .inner()
+            .proxy_service
+            .lock_switch_for_app(crate::app_config::AppType::DeepSeekHarness.as_str()),
+    );
+
+    // Merge and persist under one settings write lock. In particular, a
+    // provider switch that committed immediately before this save cannot be
+    // replaced by an older frontend snapshot between get_settings and write.
+    let (existing, unify_codex_changed, unify_codex_enabled) =
+        crate::settings::update_settings_atomically(|existing| {
+            let merged = merge_settings_for_save(settings, existing);
+            let result = (
+                existing.clone(),
+                merged.unify_codex_session_history != existing.unify_codex_session_history,
+                merged.unify_codex_session_history,
+            );
+            (merged, result)
+        })
+        .map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
@@ -82,7 +114,13 @@ pub async fn save_settings(
             crate::services::provider::reapply_current_codex_official_live(state.inner())
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
+            // Roll back user-owned settings against the latest locked state.
+            // Backend-owned current pointers and migration markers may have
+            // advanced while Codex Live was being rewritten and must not be
+            // replaced by the pre-save snapshot.
+            if let Err(rollback_err) = crate::settings::update_settings_atomically(|current| {
+                (merge_settings_for_save(existing.clone(), current), ())
+            }) {
                 log::error!("回滚统一会话开关设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -617,6 +655,101 @@ mod tests {
         let merged = merge_settings_for_save(incoming, &existing);
 
         assert!(merged.local_migrations.is_none());
+    }
+
+    #[test]
+    fn save_settings_should_preserve_all_backend_owned_current_provider_pointers() {
+        let existing = AppSettings {
+            current_provider_claude: Some("claude-new".to_string()),
+            current_provider_claude_desktop: Some("desktop-new".to_string()),
+            current_provider_codex: Some("codex-new".to_string()),
+            current_provider_gemini: Some("gemini-new".to_string()),
+            current_provider_grokbuild: Some("grok-new".to_string()),
+            current_provider_opencode: Some("opencode-new".to_string()),
+            current_provider_openclaw: Some("openclaw-new".to_string()),
+            current_provider_hermes: Some("hermes-new".to_string()),
+            current_provider_deepseek_harness: Some("harness-new".to_string()),
+            ..AppSettings::default()
+        };
+        let incoming = AppSettings {
+            current_provider_claude: Some("claude-stale".to_string()),
+            current_provider_claude_desktop: None,
+            current_provider_codex: Some("codex-stale".to_string()),
+            current_provider_gemini: None,
+            current_provider_grokbuild: Some("grok-stale".to_string()),
+            current_provider_opencode: None,
+            current_provider_openclaw: Some("openclaw-stale".to_string()),
+            current_provider_hermes: None,
+            current_provider_deepseek_harness: Some("harness-stale".to_string()),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged.current_provider_claude,
+            existing.current_provider_claude
+        );
+        assert_eq!(
+            merged.current_provider_claude_desktop,
+            existing.current_provider_claude_desktop
+        );
+        assert_eq!(
+            merged.current_provider_codex,
+            existing.current_provider_codex
+        );
+        assert_eq!(
+            merged.current_provider_gemini,
+            existing.current_provider_gemini
+        );
+        assert_eq!(
+            merged.current_provider_grokbuild,
+            existing.current_provider_grokbuild
+        );
+        assert_eq!(
+            merged.current_provider_opencode,
+            existing.current_provider_opencode
+        );
+        assert_eq!(
+            merged.current_provider_openclaw,
+            existing.current_provider_openclaw
+        );
+        assert_eq!(
+            merged.current_provider_hermes,
+            existing.current_provider_hermes
+        );
+        assert_eq!(
+            merged.current_provider_deepseek_harness,
+            existing.current_provider_deepseek_harness
+        );
+    }
+
+    #[test]
+    fn failed_save_rollback_preserves_backend_current_that_advanced_after_commit() {
+        let before_save = AppSettings {
+            language: Some("en".to_string()),
+            current_provider_codex: Some("codex-before".to_string()),
+            current_provider_deepseek_harness: Some("harness-before".to_string()),
+            ..AppSettings::default()
+        };
+        let current_at_rollback = AppSettings {
+            language: Some("ja".to_string()),
+            current_provider_codex: Some("codex-after".to_string()),
+            current_provider_deepseek_harness: Some("harness-after".to_string()),
+            ..AppSettings::default()
+        };
+
+        let rolled_back = merge_settings_for_save(before_save, &current_at_rollback);
+
+        assert_eq!(rolled_back.language.as_deref(), Some("en"));
+        assert_eq!(
+            rolled_back.current_provider_codex.as_deref(),
+            Some("codex-after")
+        );
+        assert_eq!(
+            rolled_back.current_provider_deepseek_harness.as_deref(),
+            Some("harness-after")
+        );
     }
 }
 

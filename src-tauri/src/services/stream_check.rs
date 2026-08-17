@@ -182,6 +182,11 @@ impl StreamCheckService {
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
+            AppType::DeepSeekHarness => Err(AppError::localized(
+                "provider.deepseek_harness.stream_check.unsupported",
+                "DeepSeek Harness 暂不支持连通性检测",
+                "DeepSeek Harness reachability checks are not supported",
+            )),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),

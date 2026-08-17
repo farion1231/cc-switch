@@ -22,6 +22,7 @@ interface DirectorySettingsProps {
   openclawDir?: string;
   hermesDir?: string;
   piDir?: string;
+  deepseekHarnessDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -41,6 +42,7 @@ export function DirectorySettings({
   openclawDir,
   hermesDir,
   piDir,
+  deepseekHarnessDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -183,6 +185,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("pi", val)}
           onBrowse={() => onBrowseDirectory("pi")}
           onReset={() => onResetDirectory("pi")}
+        />
+
+        <DirectoryInput
+          label={t("settings.deepseekHarnessConfigDir")}
+          description={undefined}
+          value={deepseekHarnessDir}
+          resolvedValue={resolvedDirs["deepseek-harness"]}
+          placeholder={t("settings.browsePlaceholderDeepSeekHarness")}
+          onChange={(val) => onDirectoryChange("deepseek-harness", val)}
+          onBrowse={() => onBrowseDirectory("deepseek-harness")}
+          onReset={() => onResetDirectory("deepseek-harness")}
         />
       </section>
     </div>

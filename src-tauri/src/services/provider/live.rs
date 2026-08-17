@@ -531,7 +531,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => false,
     }
 }
 
@@ -606,7 +607,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => Ok(settings.clone()),
     }
 }
 
@@ -666,7 +668,8 @@ fn apply_common_config_to_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => Ok(settings.clone()),
     }
 }
 
@@ -1005,6 +1008,25 @@ fn restore_live_settings_for_provider_backfill(
     provider: &Provider,
     live_settings: Value,
 ) -> Value {
+    if matches!(app_type, AppType::DeepSeekHarness) {
+        let mut settings = live_settings;
+        let Some(object) = settings.as_object_mut() else {
+            return settings;
+        };
+        // The managed credential store is shared native state, not part of the
+        // provider profile being switched away. Preserve the provider-owned
+        // secret/reference instead of absorbing an externally changed key into
+        // the wrong CC Switch snapshot during backfill.
+        object.remove("apiKey");
+        object.remove("apiKeyEnv");
+        if let Some(stored) = provider.settings_config.get("apiKey") {
+            object.insert("apiKey".to_string(), stored.clone());
+        }
+        if let Some(stored) = provider.settings_config.get("apiKeyEnv") {
+            object.insert("apiKeyEnv".to_string(), stored.clone());
+        }
+        return settings;
+    }
     if matches!(app_type, AppType::Claude) {
         let mut settings = live_settings;
         strip_injected_codex_oauth_context_defaults(&mut settings, provider);
@@ -1277,6 +1299,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             // Delegate to write_gemini_live which handles env file writing correctly
             write_gemini_live(provider)?;
         }
+        AppType::DeepSeekHarness => {
+            crate::dsh_config::write_live_settings(&provider.settings_config)?;
+        }
         AppType::GrokBuild => {
             crate::grok_config::write_grok_provider_live(provider)?;
         }
@@ -1477,18 +1502,16 @@ fn sync_current_provider_for_app_respecting_takeover(
 
     // `enabled` is set only after takeover writes complete. During that
     // activation window, backup/live placeholders are the authoritative signal
-    // that normal provider sync must not rewrite the managed live file.
-    if has_live_backup || live_taken_over {
-        if matches!(app_type, AppType::ClaudeDesktop) {
-            write_live_with_common_config_for_state(state, app_type, provider)?;
-        } else {
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-        }
+    // that normal provider sync must not rewrite a proxy-managed live file.
+    // Apps without local-proxy support (including DeepSeek Harness and Claude
+    // Desktop) must ignore stale backup rows and keep using their native writer.
+    if app_type.supports_local_proxy() && (has_live_backup || live_taken_over) {
+        futures::executor::block_on(
+            state
+                .proxy_service
+                .update_live_backup_from_provider(app_type.as_str(), provider),
+        )
+        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
         return Ok(());
     }
 
@@ -1633,6 +1656,15 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_opencode_config()?;
             Ok(config)
         }
+        AppType::DeepSeekHarness => {
+            crate::dsh_config::read_live_settings()?.ok_or_else(|| {
+                AppError::localized(
+                    "deepseek_harness.live.missing",
+                    "DeepSeek Harness 配置文件不存在",
+                    "DeepSeek Harness configuration files are missing",
+                )
+            })
+        }
         AppType::GrokBuild => crate::grok_config::read_grok_live_settings(),
         AppType::OpenClaw => {
             use crate::openclaw_config::{get_openclaw_config_path, read_openclaw_config};
@@ -1773,6 +1805,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
+        AppType::DeepSeekHarness => crate::dsh_config::read_live_settings()?.ok_or_else(|| {
+            AppError::localized(
+                "deepseek_harness.live.missing",
+                "DeepSeek Harness 配置文件不存在",
+                "DeepSeek Harness configuration files are missing",
+            )
+        })?,
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
@@ -2225,7 +2264,123 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
+    use crate::settings::{get_settings, update_settings, AppSettings};
     use serde_json::json;
+    use serial_test::serial;
+    use std::env;
+    use std::ffi::OsString;
+    use tempfile::TempDir;
+
+    struct DeepSeekSyncTestHome {
+        dir: TempDir,
+        original_settings: AppSettings,
+        original_home: Option<OsString>,
+        original_userprofile: Option<OsString>,
+        original_test_home: Option<OsString>,
+        original_dsh_home: Option<OsString>,
+        #[cfg(windows)]
+        original_local_app_data: Option<OsString>,
+    }
+
+    impl DeepSeekSyncTestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create isolated sync home");
+            let original_settings = get_settings();
+            let original_home = env::var_os("HOME");
+            let original_userprofile = env::var_os("USERPROFILE");
+            let original_test_home = env::var_os("CC_SWITCH_TEST_HOME");
+            let original_dsh_home = env::var_os("DSH_HOME");
+            #[cfg(windows)]
+            let original_local_app_data = env::var_os("LOCALAPPDATA");
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            env::set_var("DSH_HOME", dir.path().join(".dsh"));
+            #[cfg(windows)]
+            env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
+
+            update_settings(AppSettings {
+                deepseek_harness_config_dir: Some(
+                    dir.path().join(".dsh").to_string_lossy().into_owned(),
+                ),
+                ..Default::default()
+            })
+            .expect("configure isolated Harness home");
+
+            Self {
+                dir,
+                original_settings,
+                original_home,
+                original_userprofile,
+                original_test_home,
+                original_dsh_home,
+                #[cfg(windows)]
+                original_local_app_data,
+            }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+    }
+
+    impl Drop for DeepSeekSyncTestHome {
+        fn drop(&mut self) {
+            // Restore the process-global settings while writes are still
+            // redirected to the disposable test home.
+            let _ = update_settings(self.original_settings.clone());
+
+            for (name, value) in [
+                ("HOME", &self.original_home),
+                ("USERPROFILE", &self.original_userprofile),
+                ("CC_SWITCH_TEST_HOME", &self.original_test_home),
+                ("DSH_HOME", &self.original_dsh_home),
+            ] {
+                match value {
+                    Some(value) => env::set_var(name, value),
+                    None => env::remove_var(name),
+                }
+            }
+
+            #[cfg(windows)]
+            match &self.original_local_app_data {
+                Some(value) => env::set_var("LOCALAPPDATA", value),
+                None => env::remove_var("LOCALAPPDATA"),
+            }
+        }
+    }
+
+    fn seed_deepseek_sync_state() -> (DeepSeekSyncTestHome, AppState) {
+        let home = DeepSeekSyncTestHome::new();
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        let state = AppState::new(db);
+        let provider = Provider::with_id(
+            "dsh-sync".to_string(),
+            "DeepSeek Sync".to_string(),
+            json!({
+                "defaultModel": "deepseek-v4-pro",
+                "apiKeyEnv": "TEST_DSH_API_KEY",
+                "reasoningEffort": "low"
+            }),
+            None,
+        );
+        state
+            .db
+            .save_provider(AppType::DeepSeekHarness.as_str(), &provider)
+            .expect("seed Harness provider");
+        state
+            .db
+            .set_current_provider(AppType::DeepSeekHarness.as_str(), &provider.id)
+            .expect("set current Harness provider");
+        futures::executor::block_on(
+            state
+                .db
+                .save_live_backup(AppType::DeepSeekHarness.as_str(), "stale-proxy-backup"),
+        )
+        .expect("seed stale Harness proxy backup");
+        (home, state)
+    }
 
     #[test]
     fn kimi_for_coding_effective_settings_backfill_256k_context() {
@@ -3106,5 +3261,49 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    #[test]
+    #[serial]
+    fn single_app_sync_ignores_stale_deepseek_harness_proxy_backup() {
+        let (home, state) = seed_deepseek_sync_state();
+
+        sync_current_provider_for_app_respecting_takeover(&state, &AppType::DeepSeekHarness)
+            .expect("stale proxy state must not divert single-app Harness sync");
+
+        let settings = std::fs::read_to_string(home.path().join(".dsh/settings.yaml"))
+            .expect("read projected Harness settings");
+        assert!(settings.contains("model: deepseek-v4-pro"));
+        assert_eq!(
+            futures::executor::block_on(
+                state.db.get_live_backup(AppType::DeepSeekHarness.as_str())
+            )
+            .expect("read stale backup")
+            .expect("stale backup remains present")
+            .original_config,
+            "stale-proxy-backup"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn aggregate_sync_ignores_stale_deepseek_harness_proxy_backup() {
+        let (home, state) = seed_deepseek_sync_state();
+
+        sync_current_to_live(&state)
+            .expect("aggregate sync must directly project non-proxy Harness providers");
+
+        let settings = std::fs::read_to_string(home.path().join(".dsh/settings.yaml"))
+            .expect("read projected Harness settings");
+        assert!(settings.contains("model: deepseek-v4-pro"));
+        assert_eq!(
+            futures::executor::block_on(
+                state.db.get_live_backup(AppType::DeepSeekHarness.as_str())
+            )
+            .expect("read stale backup")
+            .expect("stale backup remains present")
+            .original_config,
+            "stale-proxy-backup"
+        );
     }
 }

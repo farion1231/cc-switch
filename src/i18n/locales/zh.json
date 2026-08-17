@@ -791,6 +791,8 @@
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "piConfigDir": "Pi 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
+    "deepseekHarnessConfigDir": "DeepSeek Harness 配置目录",
+    "deepseekHarnessConfigDirDescription": "覆盖 DeepSeek Harness 主目录（settings.yaml 与 .credentials.yaml）。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -799,6 +801,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
+    "browsePlaceholderDeepSeekHarness": "例如：/home/<你的用户名>/.dsh",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -910,7 +913,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "deepseek-harness": "DeepSeek Harness"
   },
   "pi": {
     "empty": {
@@ -1054,6 +1058,23 @@
   },
   "appSwitcher": {
     "more": "更多应用"
+  },
+  "deepseekHarness": {
+    "defaultProviderName": "DeepSeek 官方",
+    "apiKey": "API Key",
+    "apiKeyEnv": "凭据引用",
+    "apiKeyEnvRequired": "请填写凭据引用",
+    "baseURL": "基础 URL",
+    "defaultModel": "默认模型",
+    "defaultModelRequired": "请填写默认模型",
+    "thinking": "思考策略",
+    "disabled": "禁用",
+    "reasoningEffort": "默认推理强度",
+    "models": "模型列表（每行一个 ID）",
+    "modelsHint": "默认模型也可以使用未列出的透传 ID。",
+    "advancedJson": "高级 llm-deepseek 配置（JSON）",
+    "advancedHint": "编辑时会保留未展示的原生配置字段；保存时上方结构化字段优先。",
+    "invalidAdvancedJson": "高级 JSON 无效：{{error}}"
   },
   "grokBuild": {
     "apiBackend": "API Backend",

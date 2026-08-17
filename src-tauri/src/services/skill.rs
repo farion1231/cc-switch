@@ -608,6 +608,9 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::DeepSeekHarness => {
+                log::debug!("DeepSeek Harness skill sync is not supported, skipping");
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -625,6 +628,9 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::DeepSeekHarness => {
+                return Err(anyhow!("DeepSeek Harness does not support Skills"));
+            }
         })
     }
 
@@ -682,7 +688,7 @@ impl SkillService {
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop | AppType::DeepSeekHarness) {
                 continue;
             }
             let app_dir = Self::get_app_skills_dir(&app)?;
@@ -2239,7 +2245,7 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::DeepSeekHarness) {
             return Ok(());
         }
 
@@ -2426,7 +2432,7 @@ impl SkillService {
         app: &AppType,
         preserved_path: Option<&Path>,
     ) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::DeepSeekHarness) {
             return Ok(());
         }
 
@@ -2463,7 +2469,10 @@ impl SkillService {
 
     /// Caller must hold either the Skills state read or write guard.
     fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        if matches!(
+            app,
+            AppType::ClaudeDesktop | AppType::Pi | AppType::DeepSeekHarness
+        ) {
             return Ok(());
         }
 
@@ -5523,6 +5532,20 @@ mod tests {
             source.join("SKILL.md").exists(),
             "validation must happen before any source is moved"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn validate_skill_storage_destination_ignores_apps_without_skill_storage() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _pi_dir =
+            crate::pi_config::test_support::TestAgentDir::at(&temp.path().join("pi-agent"));
+        let target = temp.path().join("custom-skills");
+        fs::create_dir_all(&target).expect("create target");
+
+        SkillService::validate_skill_storage_destination(&target)
+            .expect("apps without managed Skills directories must be ignored");
     }
 
     #[test]

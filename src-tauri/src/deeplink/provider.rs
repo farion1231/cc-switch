@@ -41,31 +41,53 @@ pub fn import_provider_from_deeplink(
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
 
-    let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
-    })?;
+    // Parse the app before validating connection fields: Harness can reuse its
+    // native credential store and bundled endpoint when a deep link omits them.
+    let app_type = AppType::from_str(&app_str)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
+    let uses_native_connection_defaults = matches!(app_type, AppType::DeepSeekHarness);
+    let declares_endpoint = merged_request
+        .endpoint
+        .as_deref()
+        .is_some_and(|value| value.split(',').any(|endpoint| !endpoint.trim().is_empty()));
 
-    if api_key.is_empty() {
-        return Err(AppError::InvalidInput(
-            "API key cannot be empty".to_string(),
-        ));
+    match merged_request.api_key.as_ref() {
+        Some(api_key) if api_key.is_empty() => {
+            return Err(AppError::InvalidInput(
+                "API key cannot be empty".to_string(),
+            ));
+        }
+        // A credential-free Harness link is safe only when it also keeps the
+        // native endpoint. Otherwise an imported endpoint could reuse and
+        // exfiltrate a credential from the Harness environment/store.
+        None if !uses_native_connection_defaults || declares_endpoint => {
+            return Err(AppError::InvalidInput(
+                "API key is required (either in URL or config file)".to_string(),
+            ));
+        }
+        _ => {}
     }
 
     // Get endpoint: supports comma-separated multiple URLs (first is primary)
-    let endpoint_str = merged_request.endpoint.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("Endpoint is required (either in URL or config file)".to_string())
-    })?;
-
     // Parse endpoints: split by comma, first is primary
-    let all_endpoints: Vec<String> = endpoint_str
+    let all_endpoints: Vec<String> = merged_request
+        .endpoint
+        .as_deref()
+        .unwrap_or_default()
         .split(',')
         .map(|e| e.trim().to_string())
         .filter(|e| !e.is_empty())
         .collect();
 
-    let primary_endpoint = all_endpoints
-        .first()
-        .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
+    let primary_endpoint = all_endpoints.first();
+    if primary_endpoint.is_none() && !uses_native_connection_defaults {
+        let message = if merged_request.endpoint.is_some() {
+            "Endpoint cannot be empty"
+        } else {
+            "Endpoint is required (either in URL or config file)"
+        };
+        return Err(AppError::InvalidInput(message.to_string()));
+    }
 
     // Auto-infer homepage from endpoint if not provided
     if merged_request
@@ -73,27 +95,28 @@ pub fn import_provider_from_deeplink(
         .as_ref()
         .is_none_or(|s| s.is_empty())
     {
-        merged_request.homepage = infer_homepage_from_endpoint(primary_endpoint);
+        merged_request.homepage =
+            primary_endpoint.and_then(|endpoint| infer_homepage_from_endpoint(endpoint));
     }
 
-    let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("Homepage is required (either in URL or config file)".to_string())
-    })?;
+    if !uses_native_connection_defaults {
+        let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
+            AppError::InvalidInput(
+                "Homepage is required (either in URL or config file)".to_string(),
+            )
+        })?;
 
-    if homepage.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Homepage cannot be empty".to_string(),
-        ));
+        if homepage.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Homepage cannot be empty".to_string(),
+            ));
+        }
     }
 
     let name = merged_request
         .name
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for provider".to_string()))?;
-
-    // Parse app type
-    let app_type = AppType::from_str(&app_str)
-        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
@@ -156,6 +179,47 @@ pub(crate) fn build_provider_from_request(
             return Err(AppError::InvalidInput(
                 "Pi providers must be added from the Pi provider page".to_string(),
             ));
+        }
+        AppType::DeepSeekHarness => {
+            // Keep the complete native Harness profile carried by the inline
+            // config. The URL-facing connection fields below are then applied
+            // on top so their documented precedence remains unchanged.
+            let mut config = extract_deepseek_harness_inline_config(request)?;
+            // Deep links are untrusted input and must not choose a credential
+            // reference. A link-controlled ref could name an environment
+            // variable inherited by a later Harness process; because inherited
+            // env wins over `.credentials.yaml`, that process could send an
+            // unrelated secret to the link-controlled endpoint. Bind every
+            // imported key to a fresh ref that the link cannot predict or
+            // shadow accidentally. Credential-free links keep Harness' native
+            // default and may not smuggle a ref through inline config.
+            config.remove("apiKeyEnv");
+            if let Some(api_key) = request.api_key.as_deref() {
+                config.insert("apiKey".to_string(), serde_json::json!(api_key));
+                config.insert(
+                    "apiKeyEnv".to_string(),
+                    serde_json::json!(format!(
+                        "CC_SWITCH_DSH_IMPORT_{}",
+                        uuid::Uuid::new_v4()
+                            .simple()
+                            .to_string()
+                            .to_ascii_uppercase()
+                    )),
+                );
+            }
+            let endpoint = get_primary_endpoint(request);
+            if !endpoint.is_empty() {
+                config.insert("baseURL".to_string(), serde_json::json!(endpoint));
+            }
+            if let Some(model) = request.model.as_deref() {
+                config.insert("defaultModel".to_string(), serde_json::json!(model));
+            } else if !config.contains_key("defaultModel") {
+                config.insert(
+                    "defaultModel".to_string(),
+                    serde_json::json!("deepseek-v4-flash"),
+                );
+            }
+            serde_json::Value::Object(config)
         }
     };
 
@@ -592,6 +656,58 @@ fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
 // Config Merge Logic
 // =============================================================================
 
+/// Decode an inline config into a JSON value using the same format rules for
+/// both field extraction and provider construction. Keeping this in one place
+/// prevents a valid TOML payload from being merged successfully and then
+/// losing its non-connection fields during construction.
+fn parse_inline_config_value(
+    request: &DeepLinkImportRequest,
+) -> Result<Option<serde_json::Value>, AppError> {
+    let config_content = if let Some(config_b64) = &request.config {
+        let decoded = decode_base64_param("config", config_b64)?;
+        String::from_utf8(decoded)
+            .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in config: {e}")))?
+    } else if request.config_url.is_some() {
+        // Fetch remote config (TODO: implement remote fetching in next phase)
+        return Err(AppError::InvalidInput(
+            "Remote config URL is not yet supported. Use inline config instead.".to_string(),
+        ));
+    } else {
+        return Ok(None);
+    };
+
+    let format = request.config_format.as_deref().unwrap_or("json");
+    let config_value = match format {
+        "json" => serde_json::from_str(&config_content)
+            .map_err(|e| AppError::InvalidInput(format!("Invalid JSON config: {e}")))?,
+        "toml" => {
+            let toml_value: toml::Value = toml::from_str(&config_content)
+                .map_err(|e| AppError::InvalidInput(format!("Invalid TOML config: {e}")))?;
+            serde_json::to_value(toml_value)
+                .map_err(|e| AppError::Message(format!("Failed to convert TOML to JSON: {e}")))?
+        }
+        _ => {
+            return Err(AppError::InvalidInput(format!(
+                "Unsupported config format: {format}"
+            )))
+        }
+    };
+
+    Ok(Some(config_value))
+}
+
+fn extract_deepseek_harness_inline_config(
+    request: &DeepLinkImportRequest,
+) -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
+    match parse_inline_config_value(request)? {
+        Some(serde_json::Value::Object(config)) => Ok(config),
+        Some(_) => Err(AppError::InvalidInput(
+            "DeepSeek Harness config must be a JSON object".to_string(),
+        )),
+        None => Ok(serde_json::Map::new()),
+    }
+}
+
 /// Parse and merge configuration from Base64 encoded config or remote URL
 ///
 /// Priority: URL params > inline config > remote config
@@ -603,39 +719,8 @@ pub fn parse_and_merge_config(
         return Ok(request.clone());
     }
 
-    // Step 1: Get config content
-    let config_content = if let Some(config_b64) = &request.config {
-        // Decode Base64 inline config
-        let decoded = decode_base64_param("config", config_b64)?;
-        String::from_utf8(decoded)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in config: {e}")))?
-    } else if let Some(_config_url) = &request.config_url {
-        // Fetch remote config (TODO: implement remote fetching in next phase)
-        return Err(AppError::InvalidInput(
-            "Remote config URL is not yet supported. Use inline config instead.".to_string(),
-        ));
-    } else {
-        return Ok(request.clone());
-    };
-
-    // Step 2: Parse config based on format
-    let format = request.config_format.as_deref().unwrap_or("json");
-    let config_value: serde_json::Value = match format {
-        "json" => serde_json::from_str(&config_content)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid JSON config: {e}")))?,
-        "toml" => {
-            let toml_value: toml::Value = toml::from_str(&config_content)
-                .map_err(|e| AppError::InvalidInput(format!("Invalid TOML config: {e}")))?;
-            // Convert TOML to JSON for uniform processing
-            serde_json::to_value(toml_value)
-                .map_err(|e| AppError::Message(format!("Failed to convert TOML to JSON: {e}")))?
-        }
-        _ => {
-            return Err(AppError::InvalidInput(format!(
-                "Unsupported config format: {format}"
-            )))
-        }
-    };
+    let config_value = parse_inline_config_value(request)?
+        .ok_or_else(|| AppError::InvalidInput("Missing inline provider config".to_string()))?;
 
     // Step 3: Extract values from config based on app type and merge with URL params
     let mut merged = request.clone();
@@ -653,6 +738,30 @@ pub fn parse_and_merge_config(
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" => {
             merge_additive_config(&mut merged, &config_value)?;
+        }
+        "deepseek-harness" | "deepseek_harness" | "dsh" => {
+            if merged.api_key.as_ref().is_none_or(|value| value.is_empty()) {
+                merged.api_key = config_value
+                    .get("apiKey")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+            }
+            if merged
+                .endpoint
+                .as_ref()
+                .is_none_or(|value| value.is_empty())
+            {
+                merged.endpoint = config_value
+                    .get("baseURL")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+            }
+            if merged.model.as_ref().is_none_or(|value| value.is_empty()) {
+                merged.model = config_value
+                    .get("defaultModel")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+            }
         }
         "" => {
             // No app specified, skip merging

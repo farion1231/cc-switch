@@ -19,6 +19,19 @@ fn parse_known_apps_case_insensitive_and_trim() {
         Ok(AppType::Claude)
     ));
     assert!(matches!(AppType::from_str("\tcoDeX\t"), Ok(AppType::Codex)));
+    for alias in ["deepseek-harness", "deepseek_harness", "DSH"] {
+        assert!(matches!(
+            AppType::from_str(alias),
+            Ok(AppType::DeepSeekHarness)
+        ));
+    }
+    assert_eq!(AppType::DeepSeekHarness.as_str(), "deepseek-harness");
+    assert!(!AppType::DeepSeekHarness.is_additive_mode());
+    assert!(AppType::all().any(|app| matches!(app, AppType::DeepSeekHarness)));
+    assert_eq!(
+        serde_json::to_string(&AppType::DeepSeekHarness).unwrap(),
+        "\"deepseek-harness\""
+    );
 }
 
 #[test]

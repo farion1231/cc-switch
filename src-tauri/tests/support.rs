@@ -32,6 +32,7 @@ pub fn reset_test_fs() {
         ".cc-switch",
         ".gemini",
         ".grok",
+        ".dsh",
         ".config",
         ".openclaw",
         "profiles",

@@ -138,6 +138,7 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
     }
 
     const directBaseUrl =
+      object.baseURL ||
       object.baseUrl ||
       object.base_url ||
       object.options?.baseURL ||
@@ -266,7 +267,9 @@ export function ProviderCard({
     return true;
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
-  const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
+  const supportsUsage = appId !== "deepseek-harness";
+  const usageEnabled =
+    supportsUsage && (provider.meta?.usage_script?.enabled ?? false);
   const isOfficial = isOfficialProvider(provider, appId);
   const supportsOfficialSubscription =
     isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
@@ -624,7 +627,7 @@ export function ProviderCard({
         <div className="flex items-center ml-auto min-w-0 gap-3">
           <div className="ml-auto">
             <div className="flex items-center gap-1">
-              {isCopilot ? (
+              {!supportsUsage ? null : isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
                   inline={true}
@@ -717,11 +720,14 @@ export function ProviderCard({
                 // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
                 // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
                 // 官方是原生 1P 模式，根本不在请求路径上）。
-                onTest && provider.category !== "official"
+                appId !== "deepseek-harness" &&
+                onTest &&
+                provider.category !== "official"
                   ? () => onTest(provider)
                   : undefined
               }
               onConfigureUsage={
+                !supportsUsage ||
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
                 isCodexOauth ||
@@ -729,6 +735,8 @@ export function ProviderCard({
                   ? undefined
                   : () => onConfigureUsage(provider)
               }
+              showConnectivity={appId !== "deepseek-harness"}
+              showUsage={supportsUsage}
               onDelete={() => onDelete(provider)}
               onRemoveFromConfig={
                 onRemoveFromConfig
