@@ -12,7 +12,7 @@ use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use crate::services::provider::{
     build_effective_provider_for_live_with_codex_oauth_manager,
-    build_effective_settings_with_common_config,
+    build_effective_settings_with_common_config, ensure_claude_settings_watcher,
     write_live_with_common_config_for_codex_oauth_manager,
 };
 use serde_json::{json, Map, Value};
@@ -49,7 +49,7 @@ const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-8";
 const CLAUDE_TAKEOVER_FABLE_MODEL: &str = "claude-fable-5";
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
-const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
+const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1m]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeTakeoverAuthPolicy {
@@ -453,11 +453,9 @@ impl ProxyService {
             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken
         };
         // Copilot/Codex 接管时 live config 可能还是旧供应商；显示模型必须跟随目标 provider。
-        let takeover_model_fields = if provider.uses_managed_account_auth() {
-            Self::build_claude_takeover_model_fields(&provider.settings_config)
-        } else {
-            Self::build_claude_takeover_model_fields(config)
-        };
+        // live 配置可能已 sanitize / 残留旧供应商；模型字段一律从 effective provider 构建。
+        let takeover_model_fields =
+            Self::build_claude_takeover_model_fields(&provider.settings_config);
 
         Self::apply_claude_takeover_fields_with_policy_and_models(
             config,
@@ -465,6 +463,29 @@ impl ProxyService {
             auth_policy,
             takeover_model_fields,
         );
+        Self::sync_claude_takeover_context_window_env(config, provider);
+    }
+
+    /// takeover 出口刷新 ACW/MAX：一律按 effective provider 的目标值刷新，
+    /// provider 无目标则清掉陈旧自动值（userExplicit 来源已移除，不再保留）。
+    fn sync_claude_takeover_context_window_env(config: &mut Value, effective_provider: &Provider) {
+        let Some(env) = config.get_mut("env").and_then(Value::as_object_mut) else {
+            return;
+        };
+        let provider_env = effective_provider
+            .settings_config
+            .get("env")
+            .and_then(Value::as_object);
+        for (env_key, _) in crate::claude_desktop_config::CLAUDE_CONTEXT_WINDOW_LEDGER_KEYS {
+            match provider_env.and_then(|provider_env| provider_env.get(env_key)) {
+                Some(target) => {
+                    env.insert(env_key.to_string(), target.clone());
+                }
+                None => {
+                    env.remove(env_key);
+                }
+            }
+        }
     }
 
     fn apply_claude_takeover_fields_with_policy(
@@ -591,37 +612,37 @@ impl ProxyService {
         Self::push_claude_takeover_role_fields(
             &mut fields,
             env,
+            config,
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
             CLAUDE_TAKEOVER_HAIKU_MODEL,
-            false,
             haiku_model,
         );
         Self::push_claude_takeover_role_fields(
             &mut fields,
             env,
+            config,
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
             CLAUDE_TAKEOVER_SONNET_MODEL,
-            true,
             sonnet_model,
         );
         Self::push_claude_takeover_role_fields(
             &mut fields,
             env,
+            config,
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             CLAUDE_TAKEOVER_OPUS_MODEL,
-            true,
             opus_model,
         );
         Self::push_claude_takeover_role_fields(
             &mut fields,
             env,
+            config,
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
             "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
             CLAUDE_TAKEOVER_FABLE_MODEL,
-            true,
             fable_model,
         );
         if let Some(subagent_model) = subagent_model {
@@ -633,10 +654,10 @@ impl ProxyService {
     fn push_claude_takeover_role_fields(
         fields: &mut Vec<(&'static str, String)>,
         env: &Map<String, Value>,
+        config: &Value,
         model_key: &'static str,
         name_key: &'static str,
         takeover_model: &'static str,
-        supports_one_m: bool,
         upstream_model: Option<&str>,
     ) {
         let Some(upstream_model) = upstream_model else {
@@ -644,11 +665,19 @@ impl ProxyService {
         };
 
         let mut client_model = takeover_model.to_string();
-        if supports_one_m && Self::has_claude_one_m_marker(upstream_model) {
+        // 只要该角色配置了窗口（contextWindows 或旧后缀，任意大小 > 0），就追加
+        // [1m] 标记：Claude Code（2.1.233 实测）只在带 [1m] 标记（或未知名）的模型上
+        // 采纳 MAX/ACW env 的上下文窗口，无标记的 claude-* 别名会落到 200K 默认。
+        // 上游转发前会剥掉该标记（forwarder 的 strip_one_m_suffix_for_upstream_from_body），
+        // 不会泄漏给供应商 API；无窗口的角色保持裸别名（Claude 原生行为）。
+        let has_configured_window =
+            Self::claude_takeover_source_key(env, model_key).is_some_and(|window_key| {
+                crate::claude_desktop_config::resolve_context_window(config, window_key).is_some()
+            });
+        if has_configured_window {
             client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
         }
         fields.push((model_key, client_model));
-
         let display_name = Self::claude_env_string(env, name_key)
             .map(str::to_string)
             .unwrap_or_else(|| Self::strip_claude_one_m_marker(upstream_model));
@@ -657,18 +686,56 @@ impl ProxyService {
         }
     }
 
+    const CLAUDE_ROLE_SOURCE_FALLBACK: &[(&str, &[&str])] = &[
+        (
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            &[
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_SMALL_FAST_MODEL",
+                "ANTHROPIC_MODEL",
+            ],
+        ),
+        (
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            &[
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_SMALL_FAST_MODEL",
+            ],
+        ),
+        (
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            &[
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_SMALL_FAST_MODEL",
+            ],
+        ),
+        (
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            &["ANTHROPIC_DEFAULT_FABLE_MODEL"],
+        ),
+    ];
+
+    fn claude_takeover_source_key(
+        env: &Map<String, Value>,
+        model_key: &str,
+    ) -> Option<&'static str> {
+        let candidates = Self::CLAUDE_ROLE_SOURCE_FALLBACK
+            .iter()
+            .find(|(role, _)| *role == model_key)
+            .map(|(_, keys)| *keys)?;
+        candidates
+            .iter()
+            .find(|key| Self::claude_env_string(env, key).is_some())
+            .copied()
+    }
+
     fn claude_env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
         env.get(key)
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-    }
-
-    fn has_claude_one_m_marker(model: &str) -> bool {
-        model
-            .trim_end()
-            .to_ascii_lowercase()
-            .ends_with(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
     }
 
     fn strip_claude_one_m_marker(model: &str) -> String {
@@ -705,6 +772,12 @@ impl ProxyService {
             &effective_provider,
         );
         self.write_claude_live(&effective_settings)?;
+        ensure_claude_settings_watcher(
+            self.db.as_ref(),
+            &AppType::Claude,
+            provider,
+            &effective_settings,
+        );
         Ok(())
     }
 
@@ -2013,6 +2086,7 @@ impl ProxyService {
                 &claude_provider,
             );
             self.write_claude_live(&live_config)?;
+            self.ensure_claude_watcher_from_current_provider();
             log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
         }
 
@@ -2071,6 +2145,7 @@ impl ProxyService {
                     &claude_provider,
                 );
                 self.write_claude_live(&live_config)?;
+                self.ensure_claude_watcher_from_current_provider();
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
             }
             AppType::Codex => {
@@ -2128,12 +2203,17 @@ impl ProxyService {
                         .get_current_provider_for_app(&AppType::Claude)
                         .ok()
                         .flatten();
-                    if let Some(provider) = claude_provider.as_ref() {
-                        let provider = self.claude_provider_with_effective_settings(provider)?;
+                    let effective_claude_provider = match claude_provider.as_ref() {
+                        Some(provider) => {
+                            Some(self.claude_provider_with_effective_settings(provider)?)
+                        }
+                        None => None,
+                    };
+                    if let Some(provider) = effective_claude_provider.as_ref() {
                         Self::apply_claude_takeover_fields_for_provider(
                             &mut live_config,
                             &proxy_url,
-                            &provider,
+                            provider,
                         );
                     } else {
                         Self::apply_claude_takeover_fields_with_policy(
@@ -2142,7 +2222,9 @@ impl ProxyService {
                             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken,
                         );
                     }
-                    let _ = self.write_claude_live(&live_config);
+                    if self.write_claude_live(&live_config).is_ok() {
+                        self.ensure_claude_watcher_from_current_provider();
+                    }
                 }
             }
             AppType::Codex if self.read_codex_live().is_ok() => {
@@ -2216,9 +2298,13 @@ impl ProxyService {
         match app_type {
             AppType::Claude => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("claude").await {
-                    let config: Value = serde_json::from_str(&backup.original_config)
+                    let mut config: Value = serde_json::from_str(&backup.original_config)
                         .map_err(|e| format!("解析 Claude 备份失败: {e}"))?;
+                    crate::services::provider::strip_legacy_suffixes_from_claude_models(
+                        &mut config,
+                    );
                     self.write_claude_live(&config)?;
+                    self.ensure_claude_watcher_from_current_provider();
                     log::info!("Claude Live 配置已恢复");
                 }
             }
@@ -2299,8 +2385,11 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
         if let Some(backup) = backup {
-            let config: Value = serde_json::from_str(&backup.original_config)
+            let mut config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
+            if matches!(app_type, AppType::Claude) {
+                crate::services::provider::strip_legacy_suffixes_from_claude_models(&mut config);
+            }
 
             // 备份若是代理占位符（异常历史：上次 stop 失败导致 Live 留在了代理状态，
             // 下次接管时又被错误地备份成"原始 Live"），不能直接用 — 否则 stop 后
@@ -2347,12 +2436,60 @@ impl ProxyService {
 
     fn write_live_config_for_app(&self, app_type: &AppType, config: &Value) -> Result<(), String> {
         match app_type {
-            AppType::Claude => self.write_claude_live(config),
+            AppType::Claude => {
+                self.write_claude_live(config)?;
+                self.ensure_claude_watcher_from_current_provider();
+                Ok(())
+            }
             AppType::Codex => self.write_codex_restore_backup(config),
             AppType::Gemini => self.write_gemini_live(config),
             AppType::GrokBuild => self.write_grok_live(config),
             _ => Err("该应用不支持代理功能".to_string()),
         }
+    }
+
+    /// Claude live 写成功后，从 DB 当前 provider 替换 watcher；无 provider 时跳过。
+    fn ensure_claude_watcher_from_current_provider(&self) {
+        let current_id = match self.db.get_current_provider(AppType::Claude.as_str()) {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                // 无当前 provider 时 watcher 没有可绑定的供应商，跳过替换。
+                return;
+            }
+            Err(e) => {
+                log::warn!("读取 Claude 当前 provider 失败，跳过 watcher 替换: {e}");
+                return;
+            }
+        };
+
+        let provider = match self
+            .db
+            .get_provider_by_id(&current_id, AppType::Claude.as_str())
+        {
+            Ok(Some(provider)) => provider,
+            Ok(None) => {
+                log::debug!("Claude 当前 provider {current_id} 不存在，跳过 watcher 替换");
+                return;
+            }
+            Err(e) => {
+                log::warn!("读取 Claude 当前 provider 失败，跳过 watcher 替换: {e}");
+                return;
+            }
+        };
+
+        let effective_provider = match self.claude_provider_with_effective_settings(&provider) {
+            Ok(provider) => provider,
+            Err(e) => {
+                log::warn!("构建 Claude watcher effective 配置失败，跳过 watcher 替换: {e}");
+                return;
+            }
+        };
+        ensure_claude_settings_watcher(
+            self.db.as_ref(),
+            &AppType::Claude,
+            &effective_provider,
+            &effective_provider.settings_config,
+        );
     }
 
     pub fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
@@ -2565,7 +2702,10 @@ impl ProxyService {
             env.remove("ANTHROPIC_BASE_URL");
         }
 
+        crate::services::provider::strip_legacy_suffixes_from_claude_models(&mut config);
+
         self.write_claude_live(&config)?;
+        self.ensure_claude_watcher_from_current_provider();
         Ok(())
     }
 
@@ -2703,7 +2843,7 @@ impl ProxyService {
         false
     }
 
-    fn is_claude_live_taken_over(config: &Value) -> bool {
+    pub(crate) fn is_claude_live_taken_over(config: &Value) -> bool {
         let env = match config.get("env").and_then(|v| v.as_object()) {
             Some(env) => env,
             None => return false,
@@ -4050,6 +4190,101 @@ mod tests {
         assert_eq!(env.get(key).and_then(|value| value.as_str()), expected);
     }
 
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = env::var_os(key);
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = env::var_os(key);
+            env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
+
+    struct WatcherSlotGuard;
+
+    impl Drop for WatcherSlotGuard {
+        fn drop(&mut self) {
+            crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+        }
+    }
+
+    fn seed_claude_current_provider(db: &Database, provider: &Provider) {
+        db.save_provider("claude", provider).expect("save provider");
+        db.set_current_provider("claude", &provider.id)
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some(&provider.id))
+            .expect("set local current provider");
+    }
+
+    fn seed_non_managed_claude_1m_provider(db: &Arc<Database>) -> Provider {
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "provider-key",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model"
+                },
+                "contextWindows": { "ANTHROPIC_DEFAULT_SONNET_MODEL": 1000000 }
+            }),
+            None,
+        );
+        seed_claude_current_provider(db, &provider);
+        provider
+    }
+
+    async fn seed_non_managed_claude_live(service: &ProxyService) {
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "live-key",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model"
+                }
+            }))
+            .expect("seed Claude live");
+    }
+
+    async fn assert_takeover_live_sources_one_m_from_provider(service: &ProxyService) {
+        let live = service.read_claude_live().expect("read taken-over live");
+        assert_eq!(
+            live.pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(Value::as_str),
+            Some("claude-sonnet-4-6[1m]")
+        );
+        assert!(live.get("contextWindows").is_none());
+        // 接管开启瞬间同样写入 contextWindows 派生的 ACW/MAX 静态注入。
+        assert_eq!(
+            live.pointer("/env/CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+                .and_then(Value::as_str),
+            Some("1000000"),
+            "takeover must inject MAX from the provider contextWindows"
+        );
+        assert_eq!(
+            live.pointer("/env/CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+                .and_then(Value::as_str),
+            Some("950000"),
+            "takeover must inject ACW = MAX * 0.95 default ratio"
+        );
+    }
+
     async fn use_ephemeral_proxy_port(db: &Arc<Database>) {
         let mut proxy_config = db.get_proxy_config().await.expect("get test proxy config");
         proxy_config.listen_port = 0;
@@ -4090,6 +4325,50 @@ mod tests {
             .expect("serialize models_cache"),
         )
         .expect("write models_cache.json");
+    }
+
+    #[test]
+    fn takeover_appends_one_m_marker_for_any_configured_window() {
+        // 方向 A：任何配置了窗口（contextWindows 或旧后缀，>0）的角色别名都带 [1m]，
+        // 让 Claude Code（2.1.233 实测）采纳 MAX/ACW env 的上下文窗口。
+        let cases: Vec<Value> = vec![
+            json!({
+                "env": { "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2" },
+                "contextWindows": { "ANTHROPIC_DEFAULT_SONNET_MODEL": 200000 }
+            }),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2"
+                },
+                "contextWindows": {
+                    "ANTHROPIC_MODEL": 1000000,
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": 200000
+                }
+            }),
+            json!({
+                "env": { "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2[200k]" },
+                "contextWindows": { "ANTHROPIC_DEFAULT_SONNET_MODEL": 200000 }
+            }),
+            json!({
+                "env": { "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2" },
+                "contextWindows": { "ANTHROPIC_DEFAULT_SONNET_MODEL": 1000000 }
+            }),
+            json!({ "env": { "ANTHROPIC_MODEL": "fallback[1M]" } }),
+        ];
+        for config in cases {
+            let fields = ProxyService::build_claude_takeover_model_fields(&config);
+            let sonnet = fields
+                .iter()
+                .find(|(k, _)| *k == "ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .unwrap()
+                .1
+                .clone();
+            assert!(
+                sonnet.contains("[1m]"),
+                "configured window must carry the [1m] marker: {sonnet} for {config}"
+            );
+        }
     }
 
     #[test]
@@ -4250,6 +4529,83 @@ mod tests {
             .and_then(|value| value.as_object())
             .expect("env should exist");
         assert_env_str(env, "CLAUDE_CODE_SUBAGENT_MODEL", None);
+    }
+
+    #[test]
+    fn claude_takeover_refreshes_auto_source_acw_max_from_effective_provider() {
+        // 异常状态下前一供应商直连残留的陈旧 ACW/MAX 在接管后必须刷新为
+        // effective provider 的目标值（无 userExplicit 账本时按自动来源处理）。
+        let provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                    "ANTHROPIC_MODEL": "deepseek-v3",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "152000",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "160000"
+                }
+            }),
+            None,
+        );
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_MODEL": "stale-model",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "99999",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "88888"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env should exist");
+        assert_env_str(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW", Some("152000"));
+        assert_env_str(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS", Some("160000"));
+    }
+
+    #[test]
+    fn claude_takeover_clears_stale_acw_max_when_provider_has_no_target() {
+        // effective provider 没有 ACW/MAX 目标时，接管应清掉残留的陈旧自动值。
+        let provider = Provider::with_id(
+            "plain".to_string(),
+            "Plain".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_MODEL": "claude-haiku-4.5"
+                }
+            }),
+            None,
+        );
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_MODEL": "stale-model",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env should exist");
+        assert_env_str(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW", None);
+        assert_env_str(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS", None);
     }
 
     #[test]
@@ -6962,7 +7318,7 @@ model = "gpt-5.1-codex"
             live_env
                 .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
                 .and_then(|v| v.as_str()),
-            Some("claude-sonnet-4-6[1M]"),
+            Some("claude-sonnet-4-6[1m]"),
             "Sonnet role should carry the local 1M declaration for Claude Code"
         );
         assert_eq!(
@@ -6976,7 +7332,7 @@ model = "gpt-5.1-codex"
             live_env
                 .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
                 .and_then(|v| v.as_str()),
-            Some("claude-opus-4-8[1M]"),
+            Some("claude-opus-4-8[1m]"),
             "Opus role should preserve the current provider 1M capability marker"
         );
         assert_eq!(
@@ -6993,14 +7349,96 @@ model = "gpt-5.1-codex"
             Some("deepseek-v4-pro[1M]"),
             "subagent model should follow the target provider during hot switch"
         );
+        // 路由模式热切换同样注入 contextWindows 派生的 ACW/MAX（静态注入），
+        // 与直连模式一致，不依赖 autoSyncContextWindow 开关。
+        assert_eq!(
+            live_env
+                .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+                .and_then(|v| v.as_str()),
+            Some("1000000"),
+            "hot switch must inject MAX from the migrated contextWindows"
+        );
+        assert_eq!(
+            live_env
+                .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+                .and_then(|v| v.as_str()),
+            Some("950000"),
+            "hot switch must inject ACW = MAX * 0.95 default ratio"
+        );
 
         let backup = db
             .get_live_backup("claude")
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
-        assert_eq!(backup.original_config, expected);
+        // 热切换备份保存 effective settings：迁移后的 contextWindows、注入的
+        // ACW/MAX、staticInjected，以及被清理的模型名，供接管释放后回填。
+        let backup_config: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup config");
+        let backup_env = backup_config
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("backup env object");
+
+        assert_eq!(
+            backup_config["contextWindows"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            json!(1_000_000)
+        );
+        assert_eq!(
+            backup_config["contextWindows"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            json!(1_000_000)
+        );
+        assert_eq!(
+            backup_config["contextWindows"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+            json!(1_000_000)
+        );
+
+        assert_eq!(
+            backup_env
+                .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-pro")
+        );
+        assert_eq!(
+            backup_env
+                .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-ultra")
+        );
+
+        let expected_writes = crate::claude_settings_watcher::build_env_writes(
+            1_000_000,
+            crate::claude_settings_watcher::provider_compact_ratio(&provider_b),
+        );
+        for (key, value) in expected_writes {
+            assert_eq!(
+                backup_env.get(key).and_then(Value::as_str),
+                Some(value.as_str()),
+                "backup should carry injected {key}"
+            );
+        }
+        assert_eq!(
+            backup_config["autoSyncState"]["staticInjected"]["ACW"],
+            json!("950000")
+        );
+        assert_eq!(
+            backup_config["autoSyncState"]["staticInjected"]["MAX"],
+            json!("1000000")
+        );
+
+        assert_eq!(
+            backup_env.get("ANTHROPIC_API_KEY").and_then(Value::as_str),
+            Some("b-key")
+        );
+        assert_eq!(
+            backup_env.get("ANTHROPIC_BASE_URL").and_then(Value::as_str),
+            Some("https://api.b.example")
+        );
+        assert_eq!(
+            backup_config.get("permissions"),
+            provider_b.settings_config.get("permissions"),
+            "non-internal provider fields should remain in the effective backup"
+        );
     }
 
     #[tokio::test]
@@ -7094,6 +7532,330 @@ model = "gpt-5.1-codex"
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_c.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn proxy_sync_claude_live_does_not_spawn_watcher_by_default_in_tests() {
+        let _home = TempHome::new();
+        let _test_watcher_unset = EnvVarGuard::remove("CC_SWITCH_TEST_WATCHER");
+        let _slot_guard = WatcherSlotGuard;
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "provider-key" } }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        service
+            .sync_claude_live_from_provider_while_proxy_active(&provider)
+            .await
+            .expect("sync Claude live");
+        assert!(
+            crate::claude_settings_watcher::watcher_slot_is_empty_for_tests(),
+            "proxy sync must not spawn or replace the Claude watcher by default in tests"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn proxy_sync_claude_live_starts_watcher_with_test_opt_in() {
+        let _home = TempHome::new();
+        let _test_watcher = EnvVarGuard::set("CC_SWITCH_TEST_WATCHER", "1");
+        let _slot_guard = WatcherSlotGuard;
+        let _disable_watcher_removed = EnvVarGuard::remove("CC_SWITCH_DISABLE_WATCHER");
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "provider-key" } }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        service
+            .sync_claude_live_from_provider_while_proxy_active(&provider)
+            .await
+            .expect("sync Claude live");
+        assert!(
+            !crate::claude_settings_watcher::watcher_slot_is_empty_for_tests(),
+            "CC_SWITCH_TEST_WATCHER=1 must allow watcher replacement after proxy sync"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn proxy_sync_claude_live_injects_acw_max_from_context_windows() {
+        // 路由模式热切换：provider 带 contextWindows（900K sonnet / 200K opus），
+        // 开关关闭、压缩比例 0.9。live 里残留上一个供应商的 ACW/MAX 应被
+        // 静态注入的目标值覆盖（MAX = 最大窗口 900000，ACW = 900000*0.9）。
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "provider-key",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-model"
+                },
+                "contextWindows": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": 900000,
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": 200000
+                },
+                "autoSyncContextWindow": false,
+                "autoSyncCompactRatio": 0.9
+            }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "stale-sonnet",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000"
+                }
+            }))
+            .expect("seed taken-over live file");
+        service
+            .sync_claude_live_from_provider_while_proxy_active(&provider)
+            .await
+            .expect("sync Claude live");
+        let live = service.read_claude_live().expect("read live config");
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("live env");
+        assert_eq!(
+            env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+                .and_then(Value::as_str),
+            Some("900000"),
+            "MAX should be injected from max contextWindows (auto-sync switch off)"
+        );
+        assert_eq!(
+            env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+                .and_then(Value::as_str),
+            Some("810000"),
+            "ACW should be 900000 * 0.9 compact ratio"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn takeover_live_configs_sources_one_m_window_from_effective_provider() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let _provider = seed_non_managed_claude_1m_provider(&db);
+        seed_non_managed_claude_live(&service).await;
+        service
+            .takeover_live_configs()
+            .await
+            .expect("takeover all live configs");
+        assert_takeover_live_sources_one_m_from_provider(&service).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn takeover_live_config_strict_sources_one_m_window_from_effective_provider() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let _provider = seed_non_managed_claude_1m_provider(&db);
+        seed_non_managed_claude_live(&service).await;
+        service
+            .takeover_live_config_strict(&AppType::Claude)
+            .await
+            .expect("strictly take over Claude live");
+        assert_takeover_live_sources_one_m_from_provider(&service).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn takeover_live_config_best_effort_sources_one_m_window_from_effective_provider() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let _provider = seed_non_managed_claude_1m_provider(&db);
+        seed_non_managed_claude_live(&service).await;
+        service
+            .takeover_live_config_best_effort(&AppType::Claude)
+            .await
+            .expect("best-effort take over Claude live");
+        assert_takeover_live_sources_one_m_from_provider(&service).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn takeover_live_configs_starts_watcher_with_test_opt_in() {
+        let _home = TempHome::new();
+        let _test_watcher = EnvVarGuard::set("CC_SWITCH_TEST_WATCHER", "1");
+        let _slot_guard = WatcherSlotGuard;
+        let _disable_watcher_removed = EnvVarGuard::remove("CC_SWITCH_DISABLE_WATCHER");
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "provider-key" } }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        service
+            .write_claude_live(&json!({ "env": { "ANTHROPIC_API_KEY": "live-key" } }))
+            .expect("seed Claude live");
+        service
+            .takeover_live_configs()
+            .await
+            .expect("take over Claude live");
+        assert!(
+            !crate::claude_settings_watcher::watcher_slot_is_empty_for_tests(),
+            "CC_SWITCH_TEST_WATCHER=1 must allow watcher replacement after takeover"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn takeover_live_config_strict_starts_watcher_with_test_opt_in() {
+        let _home = TempHome::new();
+        let _test_watcher = EnvVarGuard::set("CC_SWITCH_TEST_WATCHER", "1");
+        let _slot_guard = WatcherSlotGuard;
+        let _disable_watcher_removed = EnvVarGuard::remove("CC_SWITCH_DISABLE_WATCHER");
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "provider-key" } }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        service
+            .write_claude_live(&json!({ "env": { "ANTHROPIC_API_KEY": "live-key" } }))
+            .expect("seed Claude live");
+        service
+            .takeover_live_config_strict(&AppType::Claude)
+            .await
+            .expect("strictly take over Claude live");
+        assert!(
+            !crate::claude_settings_watcher::watcher_slot_is_empty_for_tests(),
+            "CC_SWITCH_TEST_WATCHER=1 must allow watcher replacement after strict takeover"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn takeover_live_config_best_effort_starts_watcher_with_test_opt_in() {
+        let _home = TempHome::new();
+        let _disable_watcher_removed = EnvVarGuard::remove("CC_SWITCH_DISABLE_WATCHER");
+        let _test_watcher = EnvVarGuard::set("CC_SWITCH_TEST_WATCHER", "1");
+        let _slot_guard = WatcherSlotGuard;
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "provider-key" } }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        service
+            .write_claude_live(&json!({ "env": { "ANTHROPIC_API_KEY": "live-key" } }))
+            .expect("seed Claude live");
+        service
+            .takeover_live_config_best_effort(&AppType::Claude)
+            .await
+            .expect("best effort take over Claude live");
+        assert!(
+            !crate::claude_settings_watcher::watcher_slot_is_empty_for_tests(),
+            "CC_SWITCH_TEST_WATCHER=1 must allow watcher replacement after best effort takeover"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn takeover_live_config_best_effort_watcher_keeps_internal_sync_fields() {
+        let _home = TempHome::new();
+        let _disable_watcher_removed = EnvVarGuard::remove("CC_SWITCH_DISABLE_WATCHER");
+        let _test_watcher = EnvVarGuard::set("CC_SWITCH_TEST_WATCHER", "1");
+        let _slot_guard = WatcherSlotGuard;
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "provider-key",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model"
+                },
+                "autoSyncContextWindow": true,
+                "autoSyncCompactRatio": 0.8,
+                "contextWindows": { "ANTHROPIC_DEFAULT_SONNET_MODEL": 200000 },
+                "autoSyncState": { "lastWritten": {} }
+            }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        service
+            .write_claude_live(&json!({ "env": { "ANTHROPIC_API_KEY": "live-key" } }))
+            .expect("seed Claude live");
+        service
+            .takeover_live_config_best_effort(&AppType::Claude)
+            .await
+            .expect("best effort take over Claude live");
+        let snapshot = crate::claude_settings_watcher::watcher_provider_settings_config_for_tests()
+            .expect("watcher slot must hold a provider snapshot");
+        assert_eq!(
+            snapshot
+                .get("autoSyncContextWindow")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            snapshot.get("autoSyncCompactRatio").and_then(Value::as_f64),
+            Some(0.8)
+        );
+        assert_eq!(
+            snapshot
+                .get("contextWindows")
+                .and_then(Value::as_object)
+                .and_then(|windows| windows.get("ANTHROPIC_DEFAULT_SONNET_MODEL"))
+                .and_then(Value::as_u64),
+            Some(200000)
+        );
+        assert!(
+            snapshot
+                .get("autoSyncState")
+                .and_then(Value::as_object)
+                .is_some(),
+            "watcher snapshot must keep autoSyncState"
+        );
     }
 
     #[tokio::test]
@@ -8910,6 +9672,240 @@ requires_openai_auth = true
         assert!(
             !crate::codex_config::get_codex_auth_path().exists(),
             "empty-auth restore must delete auth.json rather than write an empty one"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_live_config_for_app_inner_strips_model_suffixes_from_backup_before_writing_live(
+    ) {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let backup = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "fallback-model[200k]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[1M]",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "subagent-model[1M]"
+            }
+        });
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&backup).expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        service
+            .restore_live_config_for_app_inner(&AppType::Claude)
+            .await
+            .expect("restore claude live");
+
+        let live = service.read_claude_live().expect("read live");
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("live env");
+        for key in [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ] {
+            let model = env.get(key).and_then(Value::as_str).expect("model key");
+            assert!(
+                !model.to_ascii_lowercase().contains("[1m]")
+                    && !model.to_ascii_lowercase().contains("[200k]"),
+                "restored model {key} still carries a suffix: {model}"
+            );
+        }
+        assert_eq!(
+            env.get("ANTHROPIC_MODEL").and_then(Value::as_str),
+            Some("fallback-model")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(Value::as_str),
+            Some("sonnet-model")
+        );
+        assert_eq!(
+            env.get("CLAUDE_CODE_SUBAGENT_MODEL")
+                .and_then(Value::as_str),
+            Some("subagent-model")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_live_config_for_app_inner_starts_watcher_with_test_opt_in() {
+        let _home = TempHome::new();
+        let _disable_watcher_removed = EnvVarGuard::remove("CC_SWITCH_DISABLE_WATCHER");
+        let _test_watcher = EnvVarGuard::set("CC_SWITCH_TEST_WATCHER", "1");
+        let _slot_guard = WatcherSlotGuard;
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "provider-key" } }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        let backup = json!({ "env": { "ANTHROPIC_API_KEY": "restored-key" } });
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&backup).expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        service
+            .restore_live_config_for_app_inner(&AppType::Claude)
+            .await
+            .expect("restore Claude live");
+        assert!(
+            !crate::claude_settings_watcher::watcher_slot_is_empty_for_tests(),
+            "CC_SWITCH_TEST_WATCHER=1 must allow watcher replacement after restore"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn write_live_config_for_app_starts_watcher_with_test_opt_in() {
+        let _home = TempHome::new();
+        let _disable_watcher_removed = EnvVarGuard::remove("CC_SWITCH_DISABLE_WATCHER");
+        let _test_watcher = EnvVarGuard::set("CC_SWITCH_TEST_WATCHER", "1");
+        let _slot_guard = WatcherSlotGuard;
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "provider-key" } }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+
+        service
+            .write_live_config_for_app(
+                &AppType::Claude,
+                &json!({ "env": { "ANTHROPIC_API_KEY": "backup-key" } }),
+            )
+            .expect("write Claude live through generic helper");
+        assert!(
+            !crate::claude_settings_watcher::watcher_slot_is_empty_for_tests(),
+            "CC_SWITCH_TEST_WATCHER=1 must allow watcher replacement after generic live write"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cleanup_claude_takeover_placeholders_starts_watcher_with_test_opt_in() {
+        let _home = TempHome::new();
+        let _disable_watcher_removed = EnvVarGuard::remove("CC_SWITCH_DISABLE_WATCHER");
+        let _test_watcher = EnvVarGuard::set("CC_SWITCH_TEST_WATCHER", "1");
+        let _slot_guard = WatcherSlotGuard;
+        crate::settings::reload_settings().expect("reload settings");
+        crate::claude_settings_watcher::clear_watcher_slot_for_tests();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "provider-key" } }),
+            None,
+        );
+        seed_claude_current_provider(&db, &provider);
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                }
+            }))
+            .expect("seed taken-over Claude live");
+
+        service
+            .cleanup_claude_takeover_placeholders_in_live()
+            .expect("cleanup Claude takeover placeholders");
+        assert!(
+            !crate::claude_settings_watcher::watcher_slot_is_empty_for_tests(),
+            "CC_SWITCH_TEST_WATCHER=1 must allow watcher replacement after cleanup"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_claude_takeover_placeholders_strips_model_suffixes_for_no_backup_fallback() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_MODEL": "fallback-model[200k]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[1M]",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "subagent-model[1m]"
+                }
+            }),
+        )
+        .expect("seed taken-over live file");
+
+        service
+            .cleanup_takeover_placeholders_in_live_for_app(&AppType::Claude)
+            .expect("cleanup Claude takeover placeholders");
+
+        let live = service.read_claude_live().expect("read live");
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("live env");
+        assert!(
+            env.get("ANTHROPIC_BASE_URL").is_none(),
+            "cleanup should remove local proxy base URL"
+        );
+        assert!(
+            env.get("ANTHROPIC_API_KEY").is_none(),
+            "cleanup should remove proxy token placeholder"
+        );
+        for key in [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ] {
+            let model = env.get(key).and_then(Value::as_str).expect("model key");
+            assert!(
+                !model.to_ascii_lowercase().contains("[1m]")
+                    && !model.to_ascii_lowercase().contains("[200k]"),
+                "cleanup must strip suffix from {key}, got: {model}"
+            );
+        }
+        assert_eq!(
+            env.get("ANTHROPIC_MODEL").and_then(Value::as_str),
+            Some("fallback-model")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(Value::as_str),
+            Some("sonnet-model")
+        );
+        assert_eq!(
+            env.get("CLAUDE_CODE_SUBAGENT_MODEL")
+                .and_then(Value::as_str),
+            Some("subagent-model")
         );
     }
 
