@@ -107,7 +107,7 @@ export function useSubscriptionQuota(
 
 export interface UseCodexOauthQuotaOptions {
   enabled?: boolean;
-  /** 是否启用自动轮询（5 分钟）与窗口 focus 重取 */
+  /** 是否启用自动轮询与窗口 focus 重取 */
   autoQuery?: boolean;
   autoQueryIntervalMinutes?: number;
 }
@@ -129,9 +129,10 @@ export function useCodexOauthQuotaByAccountId(
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
-  const interval = Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000;
   const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0 ? interval : false;
+    autoQuery && autoQueryIntervalMinutes > 0
+      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+      : false;
   const query = useQuery({
     queryKey: ["codex_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getCodexOauthQuota(accountId),
@@ -139,7 +140,10 @@ export function useCodexOauthQuotaByAccountId(
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),
     refetchOnWindowFocus: Boolean(refetchInterval),
-    staleTime: autoQueryIntervalMinutes > 0 ? interval : REFETCH_INTERVAL,
+    staleTime:
+      autoQueryIntervalMinutes > 0
+        ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+        : REFETCH_INTERVAL,
     retry: 1,
   });
 

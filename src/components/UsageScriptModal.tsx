@@ -339,10 +339,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       ) {
         return createUsageScript({
           enabled: isBoundCodexOfficial ? normalizedScript.enabled : false,
-          autoQueryInterval:
-            savedScript.autoQueryInterval ??
-            savedScript.autoIntervalMinutes ??
-            5,
         });
       }
       // 已有配置：如果是 coding_plan 但没有 codingPlanProvider，自动检测填充
@@ -536,10 +532,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
         const { subscriptionApi } = await import("@/lib/api/subscription");
         const accountId = isBoundCodexOfficial
-          ? resolveManagedAccountId(
+          ? (resolveManagedAccountId(
               provider.meta,
               PROVIDER_TYPES.CODEX_OAUTH,
-            )?.trim() || null
+            ) ?? null)
           : null;
         const quota = isBoundCodexOfficial
           ? await subscriptionApi.getCodexOauthQuota(accountId)

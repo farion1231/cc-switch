@@ -639,7 +639,7 @@ export function ProviderCard({
                     meta={provider.meta}
                     inline={true}
                     isCurrent={isCurrent}
-                    autoQueryIntervalMinutes={
+                    autoQueryInterval={
                       isBoundCodexOfficial
                         ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
                         : undefined

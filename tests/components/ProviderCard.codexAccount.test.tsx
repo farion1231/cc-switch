@@ -123,7 +123,9 @@ describe("ProviderCard Codex Official account identity", () => {
 
     renderCard(provider, { isCurrent: true, onConfigureUsage });
 
-    expect(codexQuotaFooterProps).toHaveBeenCalled();
+    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
+      expect.objectContaining({ autoQueryInterval: 5 }),
+    );
     await user.click(screen.getByRole("button", { name: "configure-usage" }));
     expect(onConfigureUsage).toHaveBeenCalledWith(provider);
   });
@@ -144,6 +146,23 @@ describe("ProviderCard Codex Official account identity", () => {
     expect(
       screen.getByRole("button", { name: "configure-usage" }),
     ).toBeInTheDocument();
+  });
+
+  it("passes the saved polling interval to managed OAuth quota", () => {
+    const provider = managedProvider("Work account");
+    provider.meta!.usage_script = {
+      enabled: true,
+      language: "javascript",
+      code: "",
+      templateType: "official_subscription",
+      autoQueryInterval: 12,
+    };
+
+    renderCard(provider, { isCurrent: true });
+
+    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
+      expect.objectContaining({ autoQueryInterval: 12 }),
+    );
   });
 
   it("keeps a custom nickname and safely truncates a long account login", () => {
@@ -240,9 +259,21 @@ describe("ProviderCard Codex Official account identity", () => {
       name: "Legacy Official",
       category: "official",
       settingsConfig: {},
+      meta: {
+        providerType: "codex_oauth",
+        usage_script: {
+          enabled: true,
+          language: "javascript",
+          code: "",
+          autoQueryInterval: 0,
+        },
+      },
     };
     renderCard(provider, { isCurrent: true, onEdit });
 
+    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
+      expect.objectContaining({ autoQueryInterval: undefined }),
+    );
     expect(screen.getByText("尚未选择账号").parentElement).toHaveClass(
       "text-sm",
     );
