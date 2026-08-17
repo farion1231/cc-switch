@@ -1509,7 +1509,6 @@
     "editCommonConfig": "編輯通用設定",
     "editCommonConfigTitle": "編輯 Codex 通用設定片段",
     "commonConfigHint": "該片段會在勾選「套用通用設定」時附加到 config.toml 末尾",
-    "enableGoalMode": "啟用 Goal mode",
     "enableRemoteCompaction": "啟用遠端壓縮",
     "remoteCompactionHint": "開啟後會將目前 model_providers 條目的 name 寫為 OpenAI，讓 Codex 嘗試使用遠端壓縮。",
     "apiUrlLabel": "API 請求位址",

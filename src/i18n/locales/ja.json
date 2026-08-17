@@ -1508,7 +1508,6 @@
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
     "commonConfigHint": "「共通設定を適用」がオンの場合、config.toml の末尾に追記されます",
-    "enableGoalMode": "Goal mode を有効化",
     "enableRemoteCompaction": "リモート圧縮を有効化",
     "remoteCompactionHint": "有効にすると、現在の model_providers エントリの name を OpenAI に設定し、Codex がリモート圧縮を試行できるようにします。",
     "apiUrlLabel": "API リクエスト URL",

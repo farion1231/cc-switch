@@ -9,10 +9,8 @@ import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
 import {
   extractCodexTopLevelInt,
-  isCodexGoalModeEnabled,
   isCodexRemoteCompactionEnabled,
   removeCodexTopLevelField,
-  setCodexGoalMode,
   setCodexRemoteCompaction,
   setCodexTopLevelInt,
 } from "@/utils/providerConfigUtils";
@@ -160,20 +158,9 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
     [onChange],
   );
 
-  const goalModeEnabled = useMemo(
-    () => isCodexGoalModeEnabled(localValue),
-    [localValue],
-  );
   const remoteCompactionEnabled = useMemo(
     () => isCodexRemoteCompactionEnabled(localValue),
     [localValue],
-  );
-
-  const handleGoalModeToggle = useCallback(
-    (checked: boolean) => {
-      handleLocalChange(setCodexGoalMode(localValueRef.current || "", checked));
-    },
-    [handleLocalChange],
   );
 
   const handleRemoteCompactionToggle = useCallback(
@@ -268,16 +255,6 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         </label>
 
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={goalModeEnabled}
-              onChange={(e) => handleGoalModeToggle(e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            {t("codexConfig.enableGoalMode")}
-          </label>
-
           {showRemoteCompaction && (
             <label
               className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
