@@ -150,10 +150,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       // Set auth.json: in bearer-token mode, reconcile the shared auth.json
       // OPENAI_API_KEY (which may hold another provider's stale key) with the
       // config's per-provider experimental_bearer_token (#6414).
-      const auth = reconcileCodexAuthKey(
-        (config as any).auth || {},
-        configStr,
-      );
+      const auth = reconcileCodexAuthKey((config as any).auth || {}, configStr);
       setCodexAuthState(JSON.stringify(auth, null, 2));
 
       const modelCatalog = (config as any).modelCatalog;
