@@ -245,22 +245,23 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                 </span>
               </SelectItem>
             )}
-            {!allowUnboundSelection && !selectedAccountId && (
-              <SelectItem value="__managed_account_required__" disabled>
-                <span className="text-muted-foreground">
-                  {accountChoicePlaceholder}
-                </span>
-              </SelectItem>
-            )}
+            {!requireExplicitSelection &&
+              !allowUnboundSelection &&
+              !selectedAccountId && (
+                <SelectItem value="__managed_account_required__" disabled>
+                  <span className="text-muted-foreground">
+                    {accountChoicePlaceholder}
+                  </span>
+                </SelectItem>
+              )}
             {!nativeLoginOnly &&
               accounts.map((account, index) => (
                 <React.Fragment key={account.id}>
                   <SelectItem
                     value={account.id}
-                    className="min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
+                    className="min-w-0 overflow-hidden py-2 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <span aria-hidden className="h-4 w-4 shrink-0" />
                       <span
                         className="min-w-0 truncate text-sm font-medium leading-5"
                         title={account.login}
@@ -284,9 +285,12 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                 </React.Fragment>
               ))}
             {!nativeLoginOnly && onManageAccounts && (
-              <SelectItem value="__manage_accounts__" className="py-2 pl-6">
+              <SelectItem value="__manage_accounts__" className="py-2">
                 <div className="flex items-center gap-2">
-                  <Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <Plus
+                    aria-hidden
+                    className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                  />
                   <span className="truncate text-sm font-medium leading-5">
                     {t(
                       "codexOauth.addOrManageAccounts",
@@ -304,10 +308,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             {allowUnboundSelection && (
               <SelectItem
                 value="none"
-                className="min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
+                className="min-w-0 overflow-hidden py-2 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  <span aria-hidden className="h-4 w-4 shrink-0" />
                   <span className="shrink-0 text-sm font-medium leading-5">
                     {noneOptionLabel ??
                       t("codexOauth.useDefaultAccount", "使用默认账号")}
