@@ -4,7 +4,10 @@ import { useTranslation } from "react-i18next";
 import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
-import { TierBadge } from "@/components/SubscriptionQuotaFooter";
+import {
+  TierBadge,
+  utilizationColor,
+} from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier } from "@/types/subscription";
 import { isAdditiveAppId } from "@/config/appConfig";
 
@@ -41,6 +44,73 @@ function toQuotaTier(data: UsageData): QuotaTier {
     utilization: data.used || 0,
     resetsAt: extra || null,
   };
+}
+
+export function UsageInlineExtra({ extra }: { extra: string }) {
+  const cleanedExtra = extra
+    .replace(/\(ok\)/gi, "")
+    .replace(/\[需启用余额\]/g, "")
+    .replace(/已到期/g, "")
+    .replace(/未知/g, "")
+    .replace(/\(\s*\)/g, "")
+    .trim();
+
+  return (
+    <>
+      {cleanedExtra
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((part, index) => {
+          const usageMatch = part.match(/^(\S+\s*:\s*)(\d+(?:\.\d+)?%)(.+)$/);
+          if (usageMatch) {
+            const [, label, percent, countdown] = usageMatch;
+            return (
+              <span
+                key={`${part}-${index}`}
+                className="flex items-center gap-0.5"
+              >
+                <span className="text-gray-500 dark:text-gray-400">
+                  {label}
+                </span>
+                <span
+                  className={`font-semibold tabular-nums ${utilizationColor(
+                    parseFloat(percent),
+                  )}`}
+                >
+                  {percent}
+                </span>
+                <span className="text-muted-foreground/60 ml-0.5 flex items-center gap-px">
+                  <Clock size={10} />
+                  {countdown}
+                </span>
+              </span>
+            );
+          }
+
+          const countdownMatch = part.match(/^◷:\s*(.+)$/);
+          if (countdownMatch) {
+            return (
+              <span
+                key={`${part}-${index}`}
+                className="text-muted-foreground/60 ml-0.5 flex items-center gap-px"
+              >
+                <Clock size={10} />
+                {countdownMatch[1]}
+              </span>
+            );
+          }
+
+          return (
+            <span
+              key={`${part}-${index}`}
+              className="text-gray-500 dark:text-gray-400"
+            >
+              {part}
+            </span>
+          );
+        })}
+    </>
+  );
 }
 
 const UsageFooter: React.FC<UsageFooterProps> = ({
@@ -219,9 +289,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           </button>
         </div>
 
-        {/* 第二行：用量和剩余 */}
-        <div className="flex items-center gap-2">
-          {/* 已用 */}
+        {/* 第二行：用量、剩余和扩展字段 */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {firstUsage.used !== undefined && (
             <div className="flex items-center gap-0.5">
               <span className="text-gray-500 dark:text-gray-400">
@@ -233,7 +302,6 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             </div>
           )}
 
-          {/* 剩余 */}
           {firstUsage.remaining !== undefined && (
             <div className="flex items-center gap-0.5">
               <span className="text-gray-500 dark:text-gray-400">
@@ -254,22 +322,13 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             </div>
           )}
 
-          {/* 单位 */}
           {firstUsage.unit && (
             <span className="text-gray-500 dark:text-gray-400">
               {firstUsage.unit}
             </span>
           )}
 
-          {/* 扩展字段 extra */}
-          {firstUsage.extra && (
-            <span
-              className="text-gray-500 dark:text-gray-400 truncate max-w-[150px]"
-              title={firstUsage.extra}
-            >
-              {firstUsage.extra}
-            </span>
-          )}
+          {firstUsage.extra && <UsageInlineExtra extra={firstUsage.extra} />}
         </div>
       </div>
     );

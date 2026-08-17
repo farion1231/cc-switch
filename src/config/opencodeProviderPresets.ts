@@ -1,4 +1,8 @@
-import type { ProviderCategory, OpenCodeProviderConfig } from "../types";
+import type {
+  OpenCodeProviderConfig,
+  ProviderCategory,
+  ProviderMeta,
+} from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 
 export interface OpenCodeProviderPreset {
@@ -17,6 +21,7 @@ export interface OpenCodeProviderPreset {
   icon?: string;
   iconColor?: string;
   isCustomTemplate?: boolean;
+  meta?: ProviderMeta;
 }
 
 export const opencodeNpmPackages = [
@@ -1888,6 +1893,58 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         label: "API Key",
         placeholder: "",
         editorValue: "",
+      },
+    },
+    meta: {
+      usage_script: {
+        enabled: true,
+        language: "javascript",
+        templateType: "balance",
+        code: JSON.stringify({
+          request: {
+            url: "{{baseUrl}}/v1/usage",
+            method: "GET",
+            headers: {
+              Authorization: "Bearer {{apiKey}}",
+              "Content-Type": "application/json",
+            },
+          },
+          extractor: `(response) => {
+  const data = typeof response === "string" ? JSON.parse(response) : response;
+  const usage = data.usage || {};
+
+  const formatCountdown = (resetTime) => {
+    const diff = Date.parse(resetTime) - Date.now();
+    if (!Number.isFinite(diff) || diff <= 0) return "";
+
+    const days = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
+    const minutes = Math.floor((diff % 3600000) / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+
+    if (days > 0) return \`\${days}d\${hours}h\`;
+    if (hours > 0) return \`\${hours}h\${minutes}m\`;
+    if (minutes > 0) return \`\${minutes}m\${seconds}s\`;
+    return \`\${seconds}s\`;
+  };
+
+  const windows = [
+    ["5h", usage.rolling || {}],
+    ["7d", usage.weekly || {}],
+    ["30d", usage.monthly || {}],
+  ];
+
+  return {
+    isValid: true,
+    planName: "OpenCode Go",
+    extra: windows
+      .map(([label, item]) => \`\${label}:\${item.percent || 0}%\${formatCountdown(item.resetsAt)}\`)
+      .join(" "),
+  };
+}`,
+        }),
+        timeout: 10,
+        autoQueryInterval: 5,
       },
     },
   },
