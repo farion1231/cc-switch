@@ -157,7 +157,18 @@ pub(crate) fn build_provider_from_request(
                 "Pi providers must be added from the Pi provider page".to_string(),
             ));
         }
-        AppType::WorkBuddy => build_workbuddy_settings(request),
+        // WorkBuddy provider ids must be derived from the gateway host so they
+        // match what `workbuddy_config::get_typed_providers` reports for the live
+        // file. The generic deep-link caller assigns a `name-timestamp` id
+        // instead, which would leave the DB row unable to find or remove its own
+        // live models and would re-import a duplicate host-derived row on the
+        // next startup. Route these through the WorkBuddy provider page, which
+        // reserves the derived id (same as Pi).
+        AppType::WorkBuddy => {
+            return Err(AppError::InvalidInput(
+                "WorkBuddy providers must be added from the WorkBuddy provider page".to_string(),
+            ));
+        }
     };
 
     // Build usage script configuration if provided
@@ -585,38 +596,6 @@ fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
             json!([{ "id": model, "name": model }]),
         );
     }
-
-    json!(config)
-}
-
-/// Build WorkBuddy provider settings.
-///
-/// WorkBuddy's DB `settings_config` mirrors `WorkBuddyProviderConfig`, whose serde
-/// `rename_all = "camelCase"` emits `baseUrl` / `apiKey` plus a `models` array whose
-/// entries carry the per-model fields WorkBuddy's models.json expects (`id` / `model`
-/// / `name` / camelCase capability flags). A deeplink only carries a single model,
-/// so we seed one entry; the gateway url/apiKey are injected per-model at write
-/// time by workbuddy_config::write_all_providers.
-fn build_workbuddy_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    let endpoint = get_primary_endpoint(request);
-
-    let mut config = serde_json::Map::new();
-
-    config.insert("baseUrl".to_string(), json!(endpoint));
-    config.insert(
-        "apiKey".to_string(),
-        json!(request.api_key.clone().unwrap_or_default()),
-    );
-
-    let mut models = Vec::new();
-    if let Some(model) = &request.model {
-        models.push(json!({
-            "id": model,
-            "model": model,
-            "name": request.name.clone().unwrap_or_else(|| model.clone()),
-        }));
-    }
-    config.insert("models".to_string(), json!(models));
 
     json!(config)
 }

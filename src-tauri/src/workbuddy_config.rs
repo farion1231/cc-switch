@@ -149,18 +149,22 @@ pub fn write_models(models: &[Value]) -> Result<(), AppError> {
 }
 
 /// 软链安全的原子写：tmp 与目标同目录，写完 rename 覆盖真实文件。
+///
+/// models.json 里存的是明文 apiKey，因此 tmp 必须以 `0600` 创建：默认 umask
+/// `0022` 下 `File::create` 会得到 `0644`，rename 后连同凭据一起对同机其他用户
+/// 可读，并且会把原本 `0600` 的目标放宽。若目标已存在，则沿用目标自身的权限。
 fn atomic_write_preserve_symlink(real_path: &Path, data: &[u8]) -> Result<(), AppError> {
     let parent = real_path
         .parent()
         .ok_or_else(|| AppError::Config("models.json 路径无 parent".to_string()))?;
-    fs::create_dir_all(parent).map_err(|e| AppError::Config(format!("创建目录失败: {e}")))?;
+    create_private_dir_all(parent)?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let tmp = parent.join(format!("models.json.tmp.{ts}"));
     {
-        let mut f = fs::File::create(&tmp)
+        let mut f = create_private_file(&tmp, real_path)
             .map_err(|e| AppError::Config(format!("创建临时文件失败: {e}")))?;
         f.write_all(data)
             .map_err(|e| AppError::Config(format!("写临时文件失败: {e}")))?;
@@ -172,6 +176,51 @@ fn atomic_write_preserve_symlink(real_path: &Path, data: &[u8]) -> Result<(), Ap
         AppError::Config(format!("原子替换失败: {e}"))
     })?;
     Ok(())
+}
+
+/// 创建目录树；Unix 下新建的目录用 `0700`，避免凭据文件所在目录对外可见。
+fn create_private_dir_all(dir: &Path) -> Result<(), AppError> {
+    if dir.exists() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|e| AppError::Config(format!("创建目录失败: {e}")))
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(dir).map_err(|e| AppError::Config(format!("创建目录失败: {e}")))
+    }
+}
+
+/// 创建临时文件：Unix 下沿用 `target` 现有权限，缺省 `0600`。
+fn create_private_file(tmp: &Path, target: &Path) -> std::io::Result<fs::File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+        // 目标已存在时保留其权限位，避免"写一次就把用户收紧过的权限放宽"。
+        let mode = fs::metadata(target)
+            .map(|meta| meta.mode() & 0o777)
+            .unwrap_or(0o600);
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(tmp)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = target;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(tmp)
+    }
 }
 
 // ============================================================================
@@ -287,15 +336,35 @@ pub fn write_all_providers(
     write_models(&flat)
 }
 
-/// 单个 provider 的展平写入（additive：先读现有、按 provider 的模型 id 覆盖再写回）。
+/// 单个 provider 的展平写入（additive：只更新该 provider 名下的模型）。
 ///
-/// 供 `write_live_with_common_config` 的 WorkBuddy 分支使用：只更新该 provider
-/// 名下的模型，不影响其他 provider 的模型。
-pub fn set_typed_provider(cfg: &WorkBuddyProviderConfig) -> Result<(), AppError> {
+/// `provider_id` 是 CC-Switch DB 里的 provider id，必须由调用方透传（与
+/// `opencode_config` / `openclaw_config` 的同名函数一致）。**不能**在这里用
+/// `provider_id_from_url` 重新推导：
+/// - 用户改了 `baseUrl` 时，重新推导会把新网关当成新 provider 插入，旧网关的
+///   模型仍留在 live 文件里，下次启动又被回填成一个僵尸 provider；
+/// - 冲突场景下 DB 里的 `example-2` 会被写成 `example`，覆盖掉同 host 的另一个
+///   provider。
+///
+/// 以 `provider_id` 为 key 插入会覆盖该 provider 上一次写入的条目（含 baseUrl
+/// 被改的情况）。另外清掉指向同一网关、但挂在别的 key 下的条目，避免两个 DB
+/// provider 指向同一网关时互相残留。
+pub fn set_typed_provider(
+    provider_id: &str,
+    cfg: &WorkBuddyProviderConfig,
+) -> Result<(), AppError> {
     let mut current = get_typed_providers()?;
-    // 用 base_url 定位同一 provider（同网关同 key）
-    let key = provider_id_from_url(&cfg.base_url);
-    current.insert(key, cfg.clone());
+
+    let stale_ids: Vec<String> = current
+        .iter()
+        .filter(|(id, existing)| id.as_str() != provider_id && existing.base_url == cfg.base_url)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in stale_ids {
+        current.shift_remove(&id);
+    }
+
+    current.insert(provider_id.to_string(), cfg.clone());
     write_all_providers(&current)
 }
 
@@ -329,7 +398,11 @@ pub fn remove_provider_by_id(provider_id: &str) -> Result<(), AppError> {
 // Health check（轻量）
 // ============================================================================
 
-/// 校验 models.json 是否为合法 JSON 数组，返回问题描述列表（空=健康）。
+/// 校验 models.json 是否是本模块能安全接管的形状，返回问题描述列表（空=健康）。
+///
+/// 只查 JSON 合法性是不够的：`read_models` 会把 `{}` / `null` / 字符串这类文档
+/// 当成空模型列表，于是下一次新增或同步会**静默覆盖**用户原有的文件。所以这里
+/// 要求根节点是数组，或是显式支持的 `{ "models": [...] }` 包装。
 pub fn scan_health() -> Vec<String> {
     let mut warnings = Vec::new();
     let path = get_workbuddy_models_path();
@@ -338,14 +411,38 @@ pub fn scan_health() -> Vec<String> {
         return warnings;
     }
     match fs::read_to_string(&path) {
-        Ok(content) => {
-            if let Err(e) = serde_json::from_str::<Value>(content.trim()) {
-                warnings.push(format!("models.json 不是合法 JSON: {e}"));
+        Ok(content) => match serde_json::from_str::<Value>(content.trim()) {
+            Ok(Value::Array(_)) => {}
+            Ok(Value::Object(map)) => {
+                if !map.get("models").is_some_and(Value::is_array) {
+                    warnings.push(
+                        "models.json 是 JSON 对象但缺少 models 数组；继续同步会覆盖该文件"
+                            .to_string(),
+                    );
+                }
             }
-        }
+            Ok(other) => {
+                warnings.push(format!(
+                    "models.json 根节点应为模型数组，实际是 {}；继续同步会覆盖该文件",
+                    json_kind(&other)
+                ));
+            }
+            Err(e) => warnings.push(format!("models.json 不是合法 JSON: {e}")),
+        },
         Err(e) => warnings.push(format!("无法读取 models.json: {e}")),
     }
     warnings
+}
+
+fn json_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 // ============================================================================
@@ -497,7 +594,7 @@ mod tests {
             api_key: "sk-C".to_string(),
             models: vec![new_model],
         };
-        set_typed_provider(&cfg).unwrap();
+        set_typed_provider("example", &cfg).unwrap();
         let after_add = get_typed_providers().unwrap();
         assert_eq!(after_add.len(), 3, "新增后 3 个 provider");
         assert!(after_add.contains_key("example"));
@@ -508,6 +605,115 @@ mod tests {
         assert_eq!(after_rm.len(), 2, "删除 alpha 后剩 2 个");
         assert!(!after_rm.contains_key("alpha"));
         assert!(after_rm.contains_key("beta") && after_rm.contains_key("example"));
+    }
+
+    /// 改 baseUrl 后不能留下旧网关的僵尸条目（否则重启会被回填成第二个 provider）。
+    #[test]
+    #[serial]
+    fn editing_base_url_replaces_the_previous_gateway() {
+        let home = TestHome::new();
+        fs::write(
+            home.path().join(".workbuddy/models.json"),
+            sample_models_json(),
+        )
+        .unwrap();
+
+        // DB 里的 provider id 是 "alpha"，用户把网关换成另一个 host
+        let moved = WorkBuddyProviderConfig {
+            base_url: "https://api.gamma.test/v1".to_string(),
+            api_key: "sk-A".to_string(),
+            models: vec![WorkBuddyModelEntry {
+                id: "glm-5.1".to_string(),
+                ..Default::default()
+            }],
+        };
+        set_typed_provider("alpha", &moved).unwrap();
+
+        let after = get_typed_providers().unwrap();
+        assert_eq!(after.len(), 2, "仍是 2 个网关，不能多出僵尸条目");
+        let urls: Vec<&str> = after.values().map(|c| c.base_url.as_str()).collect();
+        assert!(
+            !urls.contains(&"https://api.alpha.test/v1"),
+            "旧网关必须从 live 文件里消失，实际: {urls:?}"
+        );
+        assert!(urls.contains(&"https://api.gamma.test/v1"));
+    }
+
+    /// 同 host 冲突时，DB 里的 `-2` 不能被写成裸 id 覆盖掉兄弟 provider。
+    #[test]
+    #[serial]
+    fn suffixed_id_does_not_overwrite_its_host_sibling() {
+        let home = TestHome::new();
+        fs::write(
+            home.path().join(".workbuddy/models.json"),
+            r#"[
+              {"id":"m1","url":"https://api.alpha.test/v1","apiKey":"sk-A"},
+              {"id":"m2","url":"https://gw.alpha.test/v1","apiKey":"sk-B"}
+            ]"#,
+        )
+        .unwrap();
+
+        let before = get_typed_providers().unwrap();
+        assert_eq!(before.len(), 2);
+        assert!(before.contains_key("alpha") && before.contains_key("alpha-2"));
+
+        // 编辑 alpha-2 名下的模型
+        let cfg = WorkBuddyProviderConfig {
+            base_url: "https://gw.alpha.test/v1".to_string(),
+            api_key: "sk-B".to_string(),
+            models: vec![
+                WorkBuddyModelEntry {
+                    id: "m2".to_string(),
+                    ..Default::default()
+                },
+                WorkBuddyModelEntry {
+                    id: "m3".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+        set_typed_provider("alpha-2", &cfg).unwrap();
+
+        let after = get_typed_providers().unwrap();
+        assert_eq!(after.len(), 2, "两个网关都要保留");
+        assert_eq!(
+            after.get("alpha").map(|c| c.base_url.as_str()),
+            Some("https://api.alpha.test/v1"),
+            "兄弟 provider 不能被覆盖"
+        );
+        assert_eq!(after.get("alpha-2").map(|c| c.models.len()), Some(2));
+    }
+
+    /// 明文 apiKey 落盘，权限不能宽于 0600；已有目标的权限要沿用。
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn models_json_is_not_world_readable() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let home = TestHome::new();
+        let path = home.path().join(".workbuddy/models.json");
+
+        // 首次创建：应为 0600
+        write_models(&[serde_json::json!({
+            "id": "m1",
+            "url": "https://api.alpha.test/v1",
+            "apiKey": "sk-secret"
+        })])
+        .unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "新建的 models.json 应为 0600，实际 {mode:o}");
+
+        // 用户自己收紧到 0400 后，再写一次不能放宽
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+        write_models(&[serde_json::json!({
+            "id": "m2",
+            "url": "https://api.alpha.test/v1",
+            "apiKey": "sk-secret"
+        })])
+        .unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o400, "已有权限应被沿用，实际 {mode:o}");
     }
 
     /// 软链保护逻辑依赖 Unix symlink 语义，Windows 下不参与。
@@ -560,5 +766,24 @@ mod tests {
         .unwrap();
         let warnings = scan_health();
         assert!(!warnings.is_empty(), "非法 JSON 应产生告警");
+    }
+
+    /// 合法 JSON 但不是模型数组时也要告警：否则下一次同步会静默覆盖用户文件。
+    #[test]
+    #[serial]
+    fn scan_health_rejects_non_model_documents() {
+        let home = TestHome::new();
+        let path = home.path().join(".workbuddy/models.json");
+
+        for doc in ["{}", "null", "\"oops\"", "42", "{\"models\": {}}"] {
+            fs::write(&path, doc).unwrap();
+            assert!(!scan_health().is_empty(), "{doc} 不是模型数组，应产生告警");
+        }
+
+        // 支持的两种形状不应告警
+        for doc in ["[]", "{\"models\": []}"] {
+            fs::write(&path, doc).unwrap();
+            assert!(scan_health().is_empty(), "{doc} 应视为健康");
+        }
     }
 }
