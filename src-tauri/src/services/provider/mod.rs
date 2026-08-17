@@ -6199,6 +6199,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::Cursor => Ok(String::new()),
         }
     }
 
@@ -6217,6 +6218,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::Cursor => Ok(String::new()),
         }
     }
 
@@ -6985,6 +6987,16 @@ impl ProviderService {
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
+            AppType::Cursor => {
+                // Cursor providers are configured in the Cursor app
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.cursor.settings.not_object",
+                        "Cursor 配置必须是 JSON 对象",
+                        "Cursor configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -7189,7 +7201,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Cursor => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config

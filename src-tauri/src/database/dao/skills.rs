@@ -42,6 +42,7 @@ impl Database {
                     apps: SkillApps {
                         claude: row.get(8)?,
                         codex: row.get(9)?,
+                        cursor: false,
                         gemini: row.get(10)?,
                         grokbuild: row.get(11)?,
                         opencode: row.get(12)?,
@@ -88,6 +89,7 @@ impl Database {
                 apps: SkillApps {
                     claude: row.get(8)?,
                     codex: row.get(9)?,
+                    cursor: false,
                     gemini: row.get(10)?,
                     grokbuild: row.get(11)?,
                     opencode: row.get(12)?,

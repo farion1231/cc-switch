@@ -12,6 +12,8 @@ pub struct McpApps {
     #[serde(default)]
     pub codex: bool,
     #[serde(default)]
+    pub cursor: bool,
+    #[serde(default)]
     pub gemini: bool,
     #[serde(default)]
     pub grokbuild: bool,
@@ -27,6 +29,7 @@ impl McpApps {
         match app {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
+            AppType::Cursor => self.cursor,
             AppType::Gemini => self.gemini,
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
@@ -42,6 +45,7 @@ impl McpApps {
         match app {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
+            AppType::Cursor => self.cursor = enabled,
             AppType::Gemini => self.gemini = enabled,
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
@@ -60,6 +64,9 @@ impl McpApps {
         }
         if self.codex {
             apps.push(AppType::Codex);
+        }
+        if self.cursor {
+            apps.push(AppType::Cursor);
         }
         if self.gemini {
             apps.push(AppType::Gemini);
@@ -80,6 +87,7 @@ impl McpApps {
     pub fn is_empty(&self) -> bool {
         !self.claude
             && !self.codex
+            && !self.cursor
             && !self.gemini
             && !self.grokbuild
             && !self.opencode
@@ -94,6 +102,8 @@ pub struct SkillApps {
     pub claude: bool,
     #[serde(default)]
     pub codex: bool,
+    #[serde(default)]
+    pub cursor: bool,
     #[serde(default)]
     pub gemini: bool,
     #[serde(default)]
@@ -112,6 +122,7 @@ impl SkillApps {
         match app {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
+            AppType::Cursor => self.cursor,
             AppType::Gemini => self.gemini,
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
@@ -127,6 +138,7 @@ impl SkillApps {
         match app {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
+            AppType::Cursor => self.cursor = enabled,
             AppType::Gemini => self.gemini = enabled,
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
@@ -145,6 +157,9 @@ impl SkillApps {
         }
         if self.codex {
             apps.push(AppType::Codex);
+        }
+        if self.cursor {
+            apps.push(AppType::Cursor);
         }
         if self.gemini {
             apps.push(AppType::Gemini);
@@ -168,6 +183,7 @@ impl SkillApps {
     pub fn is_empty(&self) -> bool {
         !self.claude
             && !self.codex
+            && !self.cursor
             && !self.gemini
             && !self.grokbuild
             && !self.opencode
@@ -304,6 +320,8 @@ pub struct McpRoot {
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub codex: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub cursor: McpConfig,
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub gemini: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub grokbuild: McpConfig,
@@ -327,6 +345,7 @@ impl Default for McpRoot {
             claude: McpConfig::default(),
             claude_desktop: McpConfig::default(),
             codex: McpConfig::default(),
+            cursor: McpConfig::default(),
             gemini: McpConfig::default(),
             grokbuild: McpConfig::default(),
             opencode: McpConfig::default(),
@@ -386,6 +405,7 @@ pub enum AppType {
     )]
     ClaudeDesktop,
     Codex,
+    Cursor,
     Gemini,
     GrokBuild,
     OpenCode,
@@ -400,6 +420,7 @@ impl AppType {
             AppType::Claude => "claude",
             AppType::ClaudeDesktop => "claude-desktop",
             AppType::Codex => "codex",
+            AppType::Cursor => "cursor",
             AppType::Gemini => "gemini",
             AppType::GrokBuild => "grokbuild",
             AppType::OpenCode => "opencode",
@@ -434,6 +455,7 @@ impl AppType {
             AppType::Claude,
             AppType::ClaudeDesktop,
             AppType::Codex,
+            AppType::Cursor,
             AppType::Gemini,
             AppType::GrokBuild,
             AppType::OpenCode,
@@ -454,6 +476,7 @@ impl FromStr for AppType {
             "claude" => Ok(AppType::Claude),
             "claude-desktop" | "claude_desktop" | "claudedesktop" => Ok(AppType::ClaudeDesktop),
             "codex" => Ok(AppType::Codex),
+            "cursor" => Ok(AppType::Cursor),
             "gemini" => Ok(AppType::Gemini),
             "grokbuild" | "grok-build" | "grok_build" | "grok" => Ok(AppType::GrokBuild),
             "opencode" => Ok(AppType::OpenCode),
@@ -498,6 +521,7 @@ impl CommonConfigSnippets {
             AppType::Claude => self.claude.as_ref(),
             AppType::ClaudeDesktop => None,
             AppType::Codex => self.codex.as_ref(),
+            AppType::Cursor => None,
             AppType::Gemini => self.gemini.as_ref(),
             AppType::GrokBuild => None,
             AppType::OpenCode => self.opencode.as_ref(),
@@ -513,6 +537,7 @@ impl CommonConfigSnippets {
             AppType::Claude => self.claude = snippet,
             AppType::ClaudeDesktop => {}
             AppType::Codex => self.codex = snippet,
+            AppType::Cursor => {}
             AppType::Gemini => self.gemini = snippet,
             AppType::GrokBuild => {}
             AppType::OpenCode => self.opencode = snippet,
@@ -763,6 +788,7 @@ impl MultiAppConfig {
         for app in [
             AppType::Claude,
             AppType::Codex,
+            AppType::Cursor,
             AppType::Gemini,
             AppType::GrokBuild,
             AppType::OpenCode,
@@ -842,9 +868,9 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
             AppType::Hermes => &mut config.prompts.hermes.prompts,
-            // Pi was added after prompts moved to SQLite. Keeping it out of
-            // this legacy config avoids a second, unused prompt state.
-            AppType::Pi => return Ok(false),
+            // Pi and Cursor were added after prompts moved to SQLite. Keeping
+            // them out of this legacy config avoids a second, unused prompt state.
+            AppType::Pi | AppType::Cursor => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -876,6 +902,7 @@ impl MultiAppConfig {
         for app in [
             AppType::Claude,
             AppType::Codex,
+            AppType::Cursor,
             AppType::Gemini,
             AppType::OpenCode,
         ] {
@@ -883,6 +910,7 @@ impl MultiAppConfig {
                 AppType::Claude => &self.mcp.claude.servers,
                 AppType::ClaudeDesktop => continue, // Claude Desktop 3P profiles don't use MCP here
                 AppType::Codex => &self.mcp.codex.servers,
+                AppType::Cursor => &self.mcp.cursor.servers,
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::GrokBuild => continue,
                 AppType::OpenCode => &self.mcp.opencode.servers,
@@ -1248,3 +1276,5 @@ mod tests {
         );
     }
 }
+
+

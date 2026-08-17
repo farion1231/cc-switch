@@ -65,6 +65,7 @@ impl Database {
             id TEXT PRIMARY KEY, name TEXT NOT NULL, server_config TEXT NOT NULL,
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cursor BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
@@ -596,6 +597,12 @@ impl Database {
             conn,
             "mcp_servers",
             "enabled_gemini",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_cursor",
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
 

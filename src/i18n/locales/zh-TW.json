@@ -911,7 +911,18 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "cursor": "Cursor"
+  },
+  "agents": {
+    "title": "Agent 技能",
+    "description": "~/.agents/skills 中的技能預設由所有 agent 共用。按應用逐一啟用，讓專屬技能只進入指定應用（包括 Cursor）。",
+    "import": "匯入所選",
+    "empty": "在 ~/.agents/skills 中沒有找到未受管技能。",
+    "refresh": "重新整理",
+    "importSuccess": "已匯入 {{count}} 個 Agent 技能",
+    "perApp": "啟用目標應用（專屬選擇）",
+    "source": "來源："
   },
   "pi": {
     "empty": {
@@ -2009,7 +2020,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",

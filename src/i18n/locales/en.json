@@ -910,7 +910,18 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "cursor": "Cursor"
+  },
+  "agents": {
+    "title": "Agents Skills",
+    "description": "Skills under ~/.agents/skills are shared across agents by default. Enable them per app so dedicated skills only reach the apps you choose (including Cursor).",
+    "import": "Import Selected",
+    "empty": "No unmanaged skills found in ~/.agents/skills.",
+    "refresh": "Refresh",
+    "importSuccess": "Imported {{count}} agent skills",
+    "perApp": "Enable for apps (dedicated selection)",
+    "source": "Source: "
   },
   "pi": {
     "empty": {
@@ -2008,7 +2019,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "User-level MCP path",

@@ -155,6 +155,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
     let mut apps = McpApps {
         claude: false,
         codex: false,
+        cursor: false,
         gemini: false,
         grokbuild: false,
         opencode: false,
@@ -165,6 +166,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         match app.trim() {
             "claude" => apps.claude = true,
             "codex" => apps.codex = true,
+            "cursor" => apps.cursor = true,
             "gemini" => apps.gemini = true,
             "grokbuild" | "grok" => apps.grokbuild = true,
             "opencode" => apps.opencode = true,

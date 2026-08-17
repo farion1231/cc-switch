@@ -910,7 +910,18 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "cursor": "Cursor"
+  },
+  "agents": {
+    "title": "Agent スキル",
+    "description": "~/.agents/skills のスキルは既定ですべての agent で共有されます。アプリごとに有効化して、専用スキルを選択したアプリ（Cursor 含む）だけに届けます。",
+    "import": "選択をインポート",
+    "empty": "~/.agents/skills に未管理のスキルはありません。",
+    "refresh": "更新",
+    "importSuccess": "{{count}} 個の Agent スキルをインポートしました",
+    "perApp": "有効化するアプリ（専用選択）",
+    "source": "ソース："
   },
   "pi": {
     "empty": {
@@ -2008,7 +2019,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",

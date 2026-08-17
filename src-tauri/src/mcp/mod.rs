@@ -13,6 +13,7 @@
 
 mod claude;
 mod codex;
+mod cursor;
 mod gemini;
 mod grokbuild;
 mod hermes;
@@ -26,6 +27,9 @@ pub use claude::{
 };
 pub use codex::{
     import_from_codex, remove_server_from_codex, sync_enabled_to_codex, sync_single_server_to_codex,
+};
+pub use cursor::{
+    import_from_cursor, remove_server_from_cursor, sync_enabled_to_cursor, sync_single_server_to_cursor,
 };
 pub use gemini::{
     import_from_gemini, remove_server_from_gemini, sync_enabled_to_gemini,
