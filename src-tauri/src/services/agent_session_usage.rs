@@ -2361,25 +2361,28 @@ impl TaskSourceScope {
         let candidates = if self.has_time_bound {
             // A ranged task view is usage-driven: node metadata alone cannot
             // prove a contribution inside the requested event interval.
-            "SELECT app_type, root_session_id FROM source_roots"
+            "SELECT app_type, root_session_id, source_activity_at FROM source_roots"
         } else {
-            "SELECT app_type, root_session_id FROM node_roots
+            "SELECT app_type, root_session_id, source_activity_at FROM node_roots
              UNION
-             SELECT app_type, root_session_id FROM source_roots"
+             SELECT app_type, root_session_id, source_activity_at FROM source_roots"
         };
         format!(
             "WITH node_roots AS (
-                 SELECT n.app_type, n.session_id AS root_session_id
+                 SELECT n.app_type, n.session_id AS root_session_id,
+                        CAST(NULL AS INTEGER) AS source_activity_at
                  FROM agent_session_nodes n
                  WHERE n.node_kind <> 'child' {exclude_pending_codex}
                  UNION
-                 SELECT n.app_type, n.root_session_id
+                 SELECT n.app_type, n.root_session_id,
+                        CAST(NULL AS INTEGER) AS source_activity_at
                  FROM agent_session_nodes n
                  WHERE n.node_kind = 'child' {exclude_pending_codex}
              ), source_roots AS (
                  SELECT r.app_type,
                         CASE WHEN n.node_kind = 'child' AND n.root_session_id <> r.session_id
-                             THEN n.root_session_id ELSE r.session_id END AS root_session_id
+                             THEN n.root_session_id ELSE r.session_id END AS root_session_id,
+                        COALESCE(r.last_event_at, r.first_event_at, 0) AS source_activity_at
                  FROM agent_session_usage_rollups r
                  LEFT JOIN agent_session_nodes n
                    ON n.app_type = r.app_type AND n.session_id = r.session_id
@@ -2387,7 +2390,8 @@ impl TaskSourceScope {
                  UNION
                  SELECT l.app_type,
                         CASE WHEN n.node_kind = 'child' AND n.root_session_id <> l.session_id
-                             THEN n.root_session_id ELSE l.session_id END AS root_session_id
+                             THEN n.root_session_id ELSE l.session_id END AS root_session_id,
+                        l.created_at AS source_activity_at
                  FROM proxy_request_logs l
                  LEFT JOIN agent_session_nodes n
                    ON n.app_type = l.app_type AND n.session_id = l.session_id
@@ -2449,10 +2453,13 @@ fn query_task_roots(
                     root_node.title, root_node.project_dir,
                     root_node.created_at, root_node.last_active_at,
                     CASE
-                        WHEN COALESCE(root_node.last_active_at, root_node.created_at, 0)
+                        WHEN COALESCE(root_node.last_active_at, root_node.created_at,
+                                      MAX(c.source_activity_at), 0)
                              > 100000000000
-                        THEN COALESCE(root_node.last_active_at, root_node.created_at, 0) / 1000
-                        ELSE COALESCE(root_node.last_active_at, root_node.created_at, 0)
+                        THEN COALESCE(root_node.last_active_at, root_node.created_at,
+                                      MAX(c.source_activity_at), 0) / 1000
+                        ELSE COALESCE(root_node.last_active_at, root_node.created_at,
+                                      MAX(c.source_activity_at), 0)
                     END AS sort_timestamp,
                     COUNT(DISTINCT CASE
                         WHEN child.node_kind = 'child'
@@ -3112,6 +3119,55 @@ mod tests {
             .map(|item| (&item.app_type, &item.session_id))
             .collect();
         assert_eq!(first_ids, repeated_ids);
+        Ok(())
+    }
+
+    #[test]
+    fn node_less_proxy_task_uses_source_activity_for_pagination() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut node = query_node("claude", "older-node", None);
+        node.created_at = Some(1_000);
+        node.last_active_at = Some(2_000);
+        db.upsert_agent_session_node(&node)?;
+        db.upsert_agent_session_usage_rollup_fact(&query_rollup(
+            "older-node",
+            "1970-01-01",
+            10,
+            1,
+        ))?;
+        let mut rollup_only = query_rollup("rollup-only-session", "1970-01-01", 5, 2);
+        rollup_only.first_event_at = Some(2_500);
+        rollup_only.last_event_at = Some(2_500);
+        db.upsert_agent_session_usage_rollup_fact(&rollup_only)?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, latency_ms, status_code,
+                    session_id, created_at, data_source
+                 ) VALUES (
+                    'proxy-only-request', 'gateway', 'claude', 'claude-model',
+                    3, 4, 0, 200, 'proxy-only-session', 3000, 'proxy'
+                 )",
+                [],
+            )?;
+        }
+
+        let page = list_agent_task_usage(
+            &db,
+            &AgentTaskUsageFilter {
+                app_type: Some("claude".into()),
+                limit: 2,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(page.total, 3);
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].session_id, "proxy-only-session");
+        assert!(page.items[0].root.is_none());
+        assert_eq!(page.items[1].session_id, "rollup-only-session");
+        assert!(page.items[1].root.is_none());
         Ok(())
     }
 

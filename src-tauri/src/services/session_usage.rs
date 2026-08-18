@@ -21,14 +21,13 @@ use crate::services::agent_session_usage::{
 };
 use crate::services::session_usage_pipeline::{
     publish_canonical_batch, publish_canonical_batch_on_conn, reserve_canonical_coverage_on_conn,
-    CanonicalUsageBatch, RawUsageLogRow, SessionUsageAdapter, StaticSessionUsageAdapter,
-    UsagePublishTarget, UsageSourceSpec,
+    CanonicalReplaceScope, CanonicalUsageBatch, RawUsageLogRow, SessionUsageAdapter,
+    StaticSessionUsageAdapter, UsagePublishTarget, UsageSourceSpec,
 };
 use crate::services::usage_stats::{
     effective_usage_log_filter, find_matching_cowork_proxy_usage, find_model_pricing,
-    has_matching_proxy_usage_coverage_for_session, session_insert_outcome,
-    session_insert_outcome_excluding_claimed, DedupKey, MatchingProxyUsageLog,
-    SessionInsertOutcome,
+    has_matching_proxy_usage_coverage_for_session, session_insert_outcome_excluding_claimed,
+    DedupKey, MatchingProxyUsageLog, SessionInsertOutcome,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -428,6 +427,20 @@ struct PreparedClaudeMessage {
     skip_raw: bool,
 }
 
+struct ClaudeFlushState<'a> {
+    file_path: &'a str,
+    last_modified: i64,
+    last_offset: i64,
+    refresh_existing_raw: bool,
+}
+
+struct ParsedClaudeFile {
+    line_offset: i64,
+    current_session_id: Option<String>,
+    messages: HashMap<String, ParsedAssistantUsage>,
+    complete: bool,
+}
+
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
     let projects_dir = get_claude_config_dir().join("projects");
@@ -730,6 +743,110 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     sync_single_file_with_context(db, file_path, identity.as_ref(), node.as_ref())
 }
 
+fn parse_claude_usage_file(
+    file_path: &Path,
+    identity: Option<&ClaudeFileIdentity>,
+    start_offset: i64,
+) -> Result<ParsedClaudeFile, AppError> {
+    let file =
+        fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
+    let reader = BufReader::new(file);
+    let mut parsed_file = ParsedClaudeFile {
+        line_offset: 0,
+        current_session_id: None,
+        messages: HashMap::new(),
+        complete: true,
+    };
+
+    for line_result in reader.lines() {
+        parsed_file.line_offset += 1;
+        if parsed_file.line_offset <= start_offset {
+            continue;
+        }
+
+        let line = match line_result {
+            Ok(line) => line,
+            Err(_) => {
+                parsed_file.complete = false;
+                continue;
+            }
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let value: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(value) => value,
+            Err(_) => {
+                parsed_file.complete = false;
+                continue;
+            }
+        };
+        if parsed_file.current_session_id.is_none() {
+            if let Some(session_id) = value.get("sessionId").and_then(|value| value.as_str()) {
+                parsed_file.current_session_id = Some(session_id.to_string());
+            }
+        }
+        if value.get("type").and_then(|value| value.as_str()) != Some("assistant") {
+            continue;
+        }
+
+        let Some(message) = value.get("message") else {
+            parsed_file.complete = false;
+            continue;
+        };
+        let Some(message_id) = message.get("id").and_then(|value| value.as_str()) else {
+            parsed_file.complete = false;
+            continue;
+        };
+        let Some(usage) = message.get("usage") else {
+            parsed_file.complete = false;
+            continue;
+        };
+        let parsed = ParsedAssistantUsage {
+            message_id: message_id.to_string(),
+            model: message
+                .get("model")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            input_tokens: parse_token_component(usage, "input_tokens"),
+            output_tokens: parse_token_component(usage, "output_tokens"),
+            cache_read_tokens: parse_token_component(usage, "cache_read_input_tokens"),
+            cache_creation_tokens: parse_token_component(usage, "cache_creation_input_tokens"),
+            stop_reason: message
+                .get("stop_reason")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            timestamp: value
+                .get("timestamp")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            session_id: identity
+                .map(|value| value.session_id.clone())
+                .or_else(|| parsed_file.current_session_id.clone()),
+        };
+
+        // Repeated message IDs are progressive snapshots of one Claude
+        // response. Prefer a completed record, otherwise the largest output.
+        let should_replace = match parsed_file.messages.get(message_id) {
+            None => true,
+            Some(existing) if parsed.stop_reason.is_some() && existing.stop_reason.is_none() => {
+                true
+            }
+            Some(existing) if parsed.stop_reason.is_some() == existing.stop_reason.is_some() => {
+                parsed.output_tokens > existing.output_tokens
+            }
+            Some(_) => false,
+        };
+        if should_replace {
+            parsed_file.messages.insert(message_id.to_string(), parsed);
+        }
+    }
+
+    Ok(parsed_file)
+}
+
 /// Incrementally parse one file while retaining the normalized node identity
 /// supplied by the batch pass.  A missing node is fail-closed: no raw row is
 /// admitted because a canonical fact/coverage marker could not be proven.
@@ -762,120 +879,54 @@ fn sync_single_file_with_context(
             canonical_batch,
             &[],
             &[],
-            &file_path_str,
-            last_modified,
-            last_offset,
+            ClaudeFlushState {
+                file_path: &file_path_str,
+                last_modified,
+                last_offset,
+                refresh_existing_raw: false,
+            },
         )?;
         return Ok((0, 0));
     }
 
-    // 从上次偏移位置开始增量解析
-    let file =
-        fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let reader = BufReader::new(file);
-
-    let mut line_offset: i64 = 0;
-    let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
-    // Keep the JSONL identity as a fallback when the incremental cursor starts
-    // after the metadata line.  A sessionId found in the scanned rows still
-    // wins over the fallback, matching the source's stable-ID contract.
-    let fallback_session_id = identity.map(|value| value.session_id.clone());
-    let mut current_session_id: Option<String> = None;
-
-    for line_result in reader.lines() {
-        line_offset += 1;
-
-        // 跳过已处理的行
-        if line_offset <= last_offset {
-            continue;
-        }
-
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => continue, // 容忍不完整的最后一行
-        };
-
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let value: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        // 提取 session ID (从 system 或首条消息)
-        if current_session_id.is_none() {
-            if let Some(sid) = value.get("sessionId").and_then(|v| v.as_str()) {
-                current_session_id = Some(sid.to_string());
-            }
-        }
-
-        // 只处理 assistant 类型的消息
-        if value.get("type").and_then(|t| t.as_str()) != Some("assistant") {
-            continue;
-        }
-
-        let message = match value.get("message") {
-            Some(m) => m,
-            None => continue,
-        };
-
-        let msg_id = match message.get("id").and_then(|v| v.as_str()) {
-            Some(id) => id.to_string(),
-            None => continue,
-        };
-
-        let usage = match message.get("usage") {
-            Some(u) => u,
-            None => continue,
-        };
-
-        let parsed = ParsedAssistantUsage {
-            message_id: msg_id.clone(),
-            model: message
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            input_tokens: parse_token_component(usage, "input_tokens"),
-            output_tokens: parse_token_component(usage, "output_tokens"),
-            cache_read_tokens: parse_token_component(usage, "cache_read_input_tokens"),
-            cache_creation_tokens: parse_token_component(usage, "cache_creation_input_tokens"),
-            stop_reason: message
-                .get("stop_reason")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            timestamp: value
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            session_id: identity
-                .map(|value| value.session_id.clone())
-                .or_else(|| current_session_id.clone()),
-        };
-
-        // 按 message.id 去重：优先保留有 stop_reason 的条目，否则保留最新的
-        let should_replace = match messages.get(&msg_id) {
-            None => true,
-            Some(existing) => {
-                // 新条目有 stop_reason 而旧条目没有 → 替换
-                if parsed.stop_reason.is_some() && existing.stop_reason.is_none() {
-                    true
-                }
-                // 两个都有或都没有 stop_reason → 取 output_tokens 更大的
-                else if parsed.stop_reason.is_some() == existing.stop_reason.is_some() {
-                    parsed.output_tokens > existing.output_tokens
+    // Most appends only parse new lines. A repeated covered message means
+    // Claude appended a later snapshot of an existing response; a truncated
+    // or same-length modified file likewise needs a complete replacement.
+    let mut parsed_file = parse_claude_usage_file(file_path, identity, last_offset)?;
+    let covered_message_seen = {
+        let conn = lock_conn!(db.conn);
+        parsed_file
+            .messages
+            .keys()
+            .try_fold(false, |seen, message_id| {
+                if seen {
+                    Ok(true)
                 } else {
-                    false
+                    let request_id = format!(
+                        "{}{}",
+                        crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX,
+                        message_id
+                    );
+                    Database::has_agent_session_canonical_coverage_on_conn(
+                        &conn,
+                        "claude",
+                        "session_log",
+                        &request_id,
+                    )
                 }
-            }
-        };
-
-        if should_replace {
-            messages.insert(msg_id, parsed);
-        }
+            })?
+    };
+    let requires_full_replacement = covered_message_seen || parsed_file.line_offset <= last_offset;
+    if requires_full_replacement {
+        parsed_file = parse_claude_usage_file(file_path, identity, 0)?;
     }
+    let line_offset = parsed_file.line_offset;
+    let current_session_id = parsed_file.current_session_id;
+    let messages = parsed_file.messages;
+    let mut replacement_is_complete = requires_full_replacement && parsed_file.complete;
+    // Keep the JSONL identity as a fallback when the incremental cursor starts
+    // after the metadata line.
+    let fallback_session_id = identity.map(|value| value.session_id.clone());
 
     // 写入数据库
     let mut imported: u32 = 0;
@@ -884,6 +935,7 @@ fn sync_single_file_with_context(
     let mut proxy_coverage = Vec::new();
     let mut claimed_proxy_request_ids = HashSet::new();
     let mut prepared_messages = Vec::new();
+    let mut canonical_candidates = Vec::new();
     for parsed in messages.values() {
         let mut msg = parsed.clone();
         if msg.session_id.is_none() {
@@ -902,6 +954,7 @@ fn sync_single_file_with_context(
             || parsed_event_timestamp(&msg).is_none()
             || !has_source_token_component(&msg)
         {
+            replacement_is_complete = false;
             skipped += 1;
             continue;
         }
@@ -981,26 +1034,17 @@ fn sync_single_file_with_context(
             }
         };
 
-        // Existing raw rows are only repaired/covered when a durable fact is
-        // missing.  A marker without a raw row can safely be repaired after a
-        // prior interrupted insert, but no new raw row is admitted until its
-        // fact is ready for the same request.
-        let fact = if covered {
-            None
-        } else {
-            node.and_then(|node| claude_rollup_for_message(db, node, &msg))
-        };
-        if !covered && fact.is_none() {
+        let fact = node.and_then(|node| claude_rollup_for_message(db, node, &msg));
+        let Some(fact) = fact else {
+            replacement_is_complete = false;
             skipped += 1;
             continue;
-        }
+        };
 
-        if let Some(fact) = fact {
-            let canonical_session_id = fact.session_id.clone();
-            canonical_batch.observe(request_id.clone(), fact);
-            if let Some(proxy) = matched_proxy.as_ref() {
-                proxy_coverage.push((proxy.clone(), canonical_session_id));
-            }
+        let canonical_session_id = fact.session_id.clone();
+        canonical_candidates.push((request_id.clone(), fact, covered));
+        if let Some(proxy) = matched_proxy.as_ref() {
+            proxy_coverage.push((proxy.clone(), canonical_session_id));
         }
         prepared_messages.push(PreparedClaudeMessage {
             request_id,
@@ -1011,14 +1055,36 @@ fn sync_single_file_with_context(
         });
     }
 
+    if replacement_is_complete {
+        if let Some(node) = node {
+            canonical_batch.replace_scopes.push(CanonicalReplaceScope {
+                app_type: "claude".into(),
+                session_id: node.session_id.clone(),
+                data_source: "session_log".into(),
+            });
+        } else {
+            replacement_is_complete = false;
+        }
+    }
+    for (request_id, fact, covered) in canonical_candidates {
+        if replacement_is_complete {
+            canonical_batch.replace_observe(request_id, fact);
+        } else if !covered {
+            canonical_batch.observe(request_id, fact);
+        }
+    }
+
     let (new_imported, new_skipped) = flush_claude_rollups(
         db,
         canonical_batch,
         &proxy_coverage,
         &prepared_messages,
-        &file_path_str,
-        file_modified,
-        line_offset,
+        ClaudeFlushState {
+            file_path: &file_path_str,
+            last_modified: file_modified,
+            last_offset: line_offset,
+            refresh_existing_raw: replacement_is_complete,
+        },
     )?;
     imported = imported.saturating_add(new_imported);
     skipped = skipped.saturating_add(new_skipped);
@@ -1115,9 +1181,7 @@ fn flush_claude_rollups(
     canonical_batch: CanonicalUsageBatch,
     proxy_coverage: &[(MatchingProxyUsageLog, String)],
     prepared_messages: &[PreparedClaudeMessage],
-    file_path: &str,
-    last_modified: i64,
-    last_offset: i64,
+    state: ClaudeFlushState<'_>,
 ) -> Result<(u32, u32), AppError> {
     let conn = lock_conn!(db.conn);
     let tx = conn.unchecked_transaction().map_err(|error| {
@@ -1151,12 +1215,19 @@ fn flush_claude_rollups(
     let mut imported = 0u32;
     let mut skipped = 0u32;
     for prepared in prepared_messages {
-        if prepared.raw_exists || prepared.matched_proxy.is_some() || prepared.skip_raw {
+        if prepared.matched_proxy.is_some()
+            || prepared.skip_raw
+            || (prepared.raw_exists && !state.refresh_existing_raw)
+        {
             skipped = skipped.saturating_add(1);
             continue;
         }
-        match insert_session_log_entry_on_conn(&tx, &prepared.request_id, &prepared.message, false)
-        {
+        match insert_session_log_entry_on_conn(
+            &tx,
+            &prepared.request_id,
+            &prepared.message,
+            prepared.raw_exists && state.refresh_existing_raw,
+        ) {
             Ok(true) => imported = imported.saturating_add(1),
             Ok(false) => skipped = skipped.saturating_add(1),
             Err(error) => {
@@ -1170,7 +1241,7 @@ fn flush_claude_rollups(
     // The cursor participates in the same commit as raw compatibility rows,
     // canonical facts, and ownership markers.  A failed publish therefore
     // cannot make an admitted Claude event permanently invisible.
-    update_sync_state_on_conn(&tx, file_path, last_modified, last_offset)?;
+    update_sync_state_on_conn(&tx, state.file_path, state.last_modified, state.last_offset)?;
     tx.commit().map_err(|error| {
         AppError::Database(format!("提交 Claude canonical 覆盖事务失败: {error}"))
     })?;
@@ -1253,14 +1324,13 @@ fn claude_raw_request_exists(
 }
 
 /// Connection-scoped Claude raw writer used by the canonical transaction.
-/// `check_dedup` remains enabled for the standalone compatibility helper but
-/// is disabled after the batch arbitration has already reserved a message's
-/// outcome under the same transaction.
+/// A completed repeated message may refresh only its existing Claude-native
+/// row; a proxy-owned request with the same ID remains untouched.
 fn insert_session_log_entry_on_conn(
     conn: &rusqlite::Connection,
     request_id: &str,
     msg: &ParsedAssistantUsage,
-    check_dedup: bool,
+    refresh_existing: bool,
 ) -> Result<bool, AppError> {
     let created_at = parsed_event_timestamp(msg).ok_or_else(|| {
         AppError::InvalidInput("Claude session log 缺少 RFC3339 event timestamp".into())
@@ -1271,25 +1341,6 @@ fn insert_session_log_entry_on_conn(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AppError::InvalidInput("Claude session log 缺少 session_id".into()))?;
-
-    let dedup_key = DedupKey {
-        app_type: "claude",
-        model: &msg.model,
-        input_tokens: token_value_for_raw(msg.input_tokens),
-        output_tokens: token_value_for_raw(msg.output_tokens),
-        cache_read_tokens: token_value_for_raw(msg.cache_read_tokens),
-        cache_creation_tokens: token_value_for_raw(msg.cache_creation_tokens),
-        created_at,
-    };
-    if check_dedup
-        && all_source_token_components_known(msg)
-        && !matches!(
-            session_insert_outcome(conn, request_id, &dedup_key)?,
-            SessionInsertOutcome::Insert
-        )
-    {
-        return Ok(false);
-    }
 
     // 计算费用
     let usage = TokenUsage {
@@ -1344,6 +1395,52 @@ fn insert_session_log_entry_on_conn(
     row.cache_read_cost_usd = cache_read_cost;
     row.cache_creation_cost_usd = cache_creation_cost;
     row.total_cost_usd = total_cost;
+    if refresh_existing {
+        let updated = conn
+            .execute(
+                "UPDATE proxy_request_logs
+                 SET model = ?1, request_model = ?1,
+                     input_tokens = ?2, output_tokens = ?3,
+                     cache_read_tokens = ?4, cache_creation_tokens = ?5,
+                     input_cost_usd = ?6, output_cost_usd = ?7,
+                     cache_read_cost_usd = ?8, cache_creation_cost_usd = ?9,
+                     total_cost_usd = ?10, session_id = ?11, created_at = ?12
+                 WHERE request_id = ?13
+                   AND app_type = 'claude' AND data_source = 'session_log'
+                   AND (
+                       model IS NOT ?1 OR request_model IS NOT ?1
+                       OR input_tokens IS NOT ?2 OR output_tokens IS NOT ?3
+                       OR cache_read_tokens IS NOT ?4 OR cache_creation_tokens IS NOT ?5
+                       OR input_cost_usd IS NOT ?6 OR output_cost_usd IS NOT ?7
+                       OR cache_read_cost_usd IS NOT ?8 OR cache_creation_cost_usd IS NOT ?9
+                       OR total_cost_usd IS NOT ?10 OR session_id IS NOT ?11
+                       OR created_at IS NOT ?12
+                   )",
+                rusqlite::params![
+                    &row.model,
+                    row.input_tokens,
+                    row.output_tokens,
+                    row.cache_read_tokens,
+                    row.cache_creation_tokens,
+                    &row.input_cost_usd,
+                    &row.output_cost_usd,
+                    &row.cache_read_cost_usd,
+                    &row.cache_creation_cost_usd,
+                    &row.total_cost_usd,
+                    &row.session_id,
+                    row.created_at,
+                    &row.request_id,
+                ],
+            )
+            .map_err(|error| {
+                AppError::Database(format!(
+                    "更新 Claude 会话 raw compatibility 行失败: {error}"
+                ))
+            })?;
+        if updated > 0 {
+            return Ok(true);
+        }
+    }
     row.insert_or_ignore_on_conn(conn, UsagePublishTarget::Published)
         .map_err(|error| AppError::Database(format!("插入会话日志失败: {error}")))
 }
@@ -1517,6 +1614,94 @@ mod tests {
         assert_eq!(repeat_raw_count, 1);
 
         drop(conn);
+        Ok(())
+    }
+
+    #[test]
+    fn claude_completed_message_replaces_covered_canonical_and_raw() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let projects = temp.path().join("projects");
+        let project = projects.join("fixture-project");
+        fs::create_dir_all(&project).unwrap();
+        let path = project.join("progressive.jsonl");
+        let provisional = r#"{"type":"assistant","sessionId":"progressive-session","timestamp":"2026-08-13T10:00:00Z","message":{"id":"progressive-message","model":"provisional-model","usage":{"input_tokens":2,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
+        let completed = r#"{"type":"assistant","sessionId":"progressive-session","timestamp":"2026-08-14T10:00:00Z","message":{"id":"progressive-message","model":"completed-model","usage":{"input_tokens":2,"output_tokens":9,"cache_read_input_tokens":3,"cache_creation_input_tokens":1},"stop_reason":"end_turn"}}"#;
+        fs::write(&path, format!("{provisional}\n")).unwrap();
+
+        let first = sync_claude_files(&db, &projects)?;
+        assert_eq!(first.imported, 1);
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(format!("{completed}\n").as_bytes())
+            .unwrap();
+
+        let second = sync_claude_files(&db, &projects)?;
+        assert_eq!(second.imported, 1, "the native raw row should be refreshed");
+        {
+            let conn = lock_conn!(db.conn);
+            let rollups: Vec<(String, String, i64, i64, i64)> = conn
+                .prepare(
+                    "SELECT date, model, request_count, output_tokens, cache_read_tokens
+                     FROM agent_session_usage_rollups
+                     WHERE app_type = 'claude' AND session_id = 'progressive-session'",
+                )?
+                .query_map([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(
+                rollups,
+                vec![("2026-08-14".into(), "completed-model".into(), 1, 9, 3)]
+            );
+            let raw: (i64, String, i64, i64, i64) = conn.query_row(
+                "SELECT COUNT(*), model, output_tokens, cache_read_tokens, created_at
+                 FROM proxy_request_logs
+                 WHERE request_id = 'session:progressive-message'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )?;
+            assert_eq!(raw, (1, "completed-model".into(), 9, 3, 1_786_701_600));
+        }
+
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(format!("{completed}\n").as_bytes())
+            .unwrap();
+        let repeated = sync_claude_files(&db, &projects)?;
+        assert_eq!(repeated.imported, 0);
+        let conn = lock_conn!(db.conn);
+        let counts: (i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM agent_session_usage_rollups
+                 WHERE app_type = 'claude' AND session_id = 'progressive-session'),
+                (SELECT COUNT(*) FROM proxy_request_logs
+                 WHERE request_id = 'session:progressive-message'),
+                (SELECT COUNT(*) FROM agent_session_canonical_coverage
+                 WHERE app_type = 'claude' AND data_source = 'session_log'
+                   AND request_id = 'session:progressive-message')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(counts, (1, 1, 1));
         Ok(())
     }
 
