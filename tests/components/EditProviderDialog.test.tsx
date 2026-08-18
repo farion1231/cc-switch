@@ -19,6 +19,8 @@ let mockCodexManagedAccountSelected = false;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/lib/api", () => ({
+  isCodexAppId: (appId: string) =>
+    appId === "codex" || appId === "codex-desktop",
   providersApi: {
     getCurrent: apiMocks.getCurrent,
   },

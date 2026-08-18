@@ -179,7 +179,11 @@ function App() {
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const sharedFeatureApp: AppId =
-    activeApp === "claude-desktop" ? "claude" : activeApp;
+    activeApp === "claude-desktop"
+      ? "claude"
+      : activeApp === "codex-desktop"
+        ? "codex"
+        : activeApp;
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [skillsDiscoverySource, setSkillsDiscoverySource] =
     useState<SkillsPageSource>("repos");
@@ -279,7 +283,9 @@ function App() {
   } = useProxyStatus();
   const proxyAppId = isProxyAppId(activeApp) ? activeApp : null;
   const currentAppUsesProxy =
-    proxyAppId !== null || activeApp === "claude-desktop";
+    proxyAppId !== null ||
+    activeApp === "claude-desktop" ||
+    activeApp === "codex-desktop";
   const isCurrentAppTakeoverActive = proxyAppId
     ? takeoverStatus?.[proxyAppId] || false
     : false;
@@ -438,8 +444,8 @@ function App() {
     }
   });
 
-  // 应用项目后刷新相关缓存（providers 由既有 provider-switched 监听承接；
-  // proxy 状态由后端直接改 DB，不走 mutation，必须显式刷新）
+  // 应用项目后刷新相关缓存。托盘入口可能在当前页面之外切换供应商，
+  // Desktop 状态和代理状态也都由后端直接修改，因此在统一事件中显式刷新。
   useTauriEvent("profile-applied", async () => {
     await queryClient.invalidateQueries({ queryKey: ["profiles"] });
     await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
@@ -450,6 +456,12 @@ function App() {
     await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
     await queryClient.invalidateQueries({
       queryKey: ["providers", "claude-desktop"],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["providers", "codex-desktop"],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["codexDesktopStatus"],
     });
   });
 
@@ -1369,13 +1381,17 @@ function App() {
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
-              (activeApp === "claude-desktop" || proxyAppId) && (
+              (activeApp === "claude-desktop" ||
+                activeApp === "codex-desktop" ||
+                proxyAppId) && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
                   {activeApp === "claude-desktop" ? (
                     <ClaudeDesktopRouteToggle />
+                  ) : activeApp === "codex-desktop" ? (
+                    <ClaudeDesktopRouteToggle target="codex" />
                   ) : proxyAppId ? (
                     <>
                       {settingsData?.enableLocalProxy && (

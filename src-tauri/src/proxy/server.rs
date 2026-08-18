@@ -319,14 +319,26 @@ impl ProxyServer {
                 "/codex/v1/chat/completions",
                 post(handlers::handle_chat_completions),
             )
+            .route(
+                "/codex-desktop/v1/chat/completions",
+                post(handlers::handle_codex_desktop_chat_completions),
+            )
             // OpenAI Models API (Codex CLI reachability check)
             .route("/models", get(handlers::handle_models))
             .route("/v1/models", get(handlers::handle_models))
+            .route(
+                "/codex-desktop/v1/models",
+                get(handlers::handle_codex_desktop_models),
+            )
             // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
             .route("/responses", post(handlers::handle_responses))
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
+            .route(
+                "/codex-desktop/v1/responses",
+                post(handlers::handle_codex_desktop_responses),
+            )
             // Grok Build uses the Responses protocol but has an independent
             // provider namespace and failover queue.
             .route(
@@ -349,6 +361,10 @@ impl ProxyServer {
             .route(
                 "/codex/v1/responses/compact",
                 post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/codex-desktop/v1/responses/compact",
+                post(handlers::handle_codex_desktop_responses_compact),
             )
             .route(
                 "/grokbuild/v1/responses/compact",
@@ -417,9 +433,13 @@ impl ProxyServer {
 mod tests {
     use super::*;
     use crate::provider::{Provider, ProviderMeta};
-    use axum::http::{header, HeaderMap, StatusCode};
+    use axum::{
+        body::Body,
+        http::{header, HeaderMap, Method, Request, StatusCode},
+    };
     use serde_json::{json, Value};
     use tokio::sync::Mutex;
+    use tower::Service;
 
     #[derive(Debug)]
     struct CapturedRequest {
@@ -624,5 +644,81 @@ mod tests {
             full_url_request.body["commands"]["search_query"][0]["q"],
             "full URL"
         );
+    }
+
+    fn test_router() -> (Router, String) {
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        let token = crate::codex_desktop_config::get_or_create_gateway_token(db.as_ref())
+            .expect("create Codex Desktop gateway token");
+        let server = ProxyServer::new(ProxyConfig::default(), db, None);
+        (server.build_router(), token)
+    }
+
+    fn request(
+        method: Method,
+        path: &str,
+        token: Option<&str>,
+        body: &'static str,
+    ) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Body::from(body)).expect("build request")
+    }
+
+    #[tokio::test]
+    async fn codex_desktop_gateway_routes_require_authentication() {
+        let (router, _) = test_router();
+        let routes = [
+            (Method::GET, "/codex-desktop/v1/models"),
+            (Method::POST, "/codex-desktop/v1/chat/completions"),
+            (Method::POST, "/codex-desktop/v1/responses"),
+            (Method::POST, "/codex-desktop/v1/responses/compact"),
+        ];
+
+        for (method, path) in routes {
+            let mut service = router.clone();
+            let response = service
+                .call(request(method, path, None, "{}"))
+                .await
+                .expect("route request");
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_desktop_gateway_rejects_invalid_token() {
+        let (mut router, _) = test_router();
+        let response = router
+            .call(request(
+                Method::POST,
+                "/codex-desktop/v1/responses",
+                Some("wrong-token"),
+                "{}",
+            ))
+            .await
+            .expect("route request");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn codex_desktop_gateway_accepts_valid_token_before_body_parsing() {
+        let (mut router, token) = test_router();
+        let response = router
+            .call(request(
+                Method::POST,
+                "/codex-desktop/v1/responses",
+                Some(&token),
+                "not-json",
+            ))
+            .await
+            .expect("route request");
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

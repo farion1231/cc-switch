@@ -42,11 +42,15 @@ function hasStoredCodexApiKey(settings: Record<string, unknown>): boolean {
   return nonEmptyString(auth?.OPENAI_API_KEY);
 }
 
+function isCodexApp(appId: AppId): boolean {
+  return appId === "codex" || appId === "codex-desktop";
+}
+
 export function resolveCodexOfficialIdentity(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): CodexOfficialIdentity | null {
-  if (appId !== "codex") return null;
+  if (!isCodexApp(appId)) return null;
 
   const managedAccountId = resolveManagedAccountId(
     provider.meta,
@@ -117,20 +121,25 @@ export function providerNeedsRouting(
   appId: AppId,
   provider: Provider,
 ): boolean {
-  if (
-    provider.category === "official" ||
-    resolveCodexOfficialIdentity(appId, provider)
-  )
-    return false;
-
   const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
+
+  // Codex Desktop is the one official-provider exception: managed account
+  // tokens are injected by its gateway and therefore still require routing.
+  if (appId === "codex-desktop") {
+    if (isManagedOAuth || provider.meta?.codexDesktopMode === "proxy") {
+      return true;
+    }
+    if (provider.meta?.codexDesktopMode === "direct") return false;
+  }
+
+  if (provider.category === "official") return false;
 
   // Desktop 普通供应商由表单模式决定；托管 OAuth 的 token 只能由代理注入。
   if (appId === "claude-desktop") {
     return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
   }
 
-  if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
+  if (appId !== "claude" && !isCodexApp(appId) && appId !== "grokbuild") {
     return false;
   }
 
@@ -143,7 +152,7 @@ export function providerNeedsRouting(
     return provider.meta?.isFullUrl === true || (!!fmt && fmt !== "anthropic");
   }
 
-  if (appId === "codex" || appId === "grokbuild") {
+  if (isCodexApp(appId) || appId === "grokbuild") {
     const fmt = provider.meta?.apiFormat;
     // Codex 原生是 Responses，仅 Chat / Anthropic 需要转换（Responses 直连）。
     if (

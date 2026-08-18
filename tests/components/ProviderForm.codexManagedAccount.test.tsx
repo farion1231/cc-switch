@@ -1,10 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
+import i18n from "i18next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
+import zh from "@/i18n/locales/zh.json";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const authState = vi.hoisted(() => ({
@@ -28,12 +31,14 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
     onSelectionInvalidated,
     allowUnboundSelection = true,
     allowUnboundSelectionWithoutStatus = false,
+    noneOptionDescription,
   }: {
     onAccountSelect?: (accountId: string | null) => void;
     onSelectionConfirmed?: () => void;
     onSelectionInvalidated?: () => void;
     allowUnboundSelection?: boolean;
     allowUnboundSelectionWithoutStatus?: boolean;
+    noneOptionDescription?: string;
   }) => (
     <div>
       <output data-testid="allow-unbound-selection">
@@ -41,6 +46,9 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
       </output>
       <output data-testid="allow-unbound-without-status">
         {allowUnboundSelectionWithoutStatus ? "true" : "false"}
+      </output>
+      <output data-testid="native-login-description">
+        {noneOptionDescription}
       </output>
       <button
         type="button"
@@ -190,10 +198,92 @@ function renderClaudeCodexForm(onSubmit: (values: ProviderFormValues) => void) {
   );
 }
 
+function renderCodexDesktopForm(
+  onSubmit: (values: ProviderFormValues) => void,
+) {
+  const queryClient = createTestQueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ProviderForm
+        appId="codex-desktop"
+        submitLabel="save-provider"
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+        initialData={{
+          name: "Desktop Provider",
+          category: "third_party",
+          settingsConfig: {
+            auth: { OPENAI_API_KEY: "sk-test" },
+            config:
+              'model_provider = "custom"\n\n[model_providers.custom]\nbase_url = "https://api.example.com/v1"\nwire_api = "responses"\n',
+          },
+          meta: {
+            apiFormat: "openai_responses",
+            codexDesktopMode: "direct",
+          },
+        }}
+      />
+    </QueryClientProvider>,
+  );
+}
+
 describe("ProviderForm Codex Official managed account", () => {
   beforeEach(() => {
+    i18n.addResource(
+      "zh",
+      "translation",
+      "codexDesktop.followCodexLoginDescription",
+      "账号会随 Codex Desktop 当前登录变化",
+    );
     authState.codexReauthRequired = false;
     toastMocks.error.mockReset();
+  });
+
+  it("persists the selected Codex Desktop connection mode", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderCodexDesktopForm(onSubmit);
+
+    await user.click(screen.getByRole("combobox", { name: "接入方式" }));
+    await user.click(await screen.findByRole("option", { name: "本地网关" }));
+    await user.click(screen.getByRole("button", { name: "save-provider" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].meta?.codexDesktopMode).toBe("proxy");
+  });
+
+  it("describes native login using the Codex Desktop auth file", () => {
+    i18n.addResource(
+      "zh",
+      "translation",
+      "codexDesktop.followCodexLoginDescription",
+      zh.codexDesktop.followCodexLoginDescription,
+    );
+    const queryClient = createTestQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderForm
+          appId="codex-desktop"
+          providerId="codex-official"
+          submitLabel="save-provider"
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          initialData={{
+            name: "OpenAI Official",
+            category: "official",
+            settingsConfig: { auth: {}, config: "" },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("native-login-description")).toHaveTextContent(
+      "账号会随 Codex Desktop 当前登录变化",
+    );
   });
 
   it("persists the selected managed account while stripping OAuth secrets", async () => {

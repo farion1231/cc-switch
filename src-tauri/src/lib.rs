@@ -5,6 +5,7 @@ mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
+mod codex_desktop_config;
 mod codex_history_migration;
 mod codex_state_db;
 mod commands;
@@ -764,6 +765,15 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
+            // Initialize the Desktop namespace after official providers are seeded.
+            // The copy is one-time so later CLI and Desktop edits remain independent.
+            match app_state.db.initialize_codex_desktop_providers_once() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Initialized {count} Codex Desktop provider(s) from Codex");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to initialize Codex Desktop providers: {e}"),
+            }
             {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -1369,10 +1379,12 @@ pub fn run() {
             commands::switch_provider,
             commands::import_default_config,
             commands::get_claude_desktop_status,
+            commands::get_codex_desktop_status,
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,
             commands::ensure_codex_official_provider,
+            commands::ensure_codex_desktop_official_provider,
             commands::ensure_grokbuild_official_provider,
             commands::get_claude_config_status,
             commands::get_config_status,
@@ -1936,6 +1948,26 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
 /// 则自动启动代理服务并接管对应应用的 Live 配置。
 const PROXY_STARTUP_APP_TYPES: [&str; 4] = ["claude", "codex", "gemini", "grokbuild"];
 
+fn codex_desktop_gateway_required_on_startup(
+    db: &database::Database,
+) -> Result<bool, error::AppError> {
+    let Some(provider_id) =
+        settings::get_effective_current_provider(db, &app_config::AppType::CodexDesktop)?
+    else {
+        return Ok(false);
+    };
+    let Some(provider) =
+        db.get_provider_by_id(&provider_id, app_config::AppType::CodexDesktop.as_str())?
+    else {
+        return Ok(false);
+    };
+
+    Ok(matches!(
+        codex_desktop_config::provider_mode(&provider),
+        provider::CodexDesktopMode::Proxy
+    ))
+}
+
 async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static str> {
     let mut apps = Vec::new();
     for app_type in PROXY_STARTUP_APP_TYPES {
@@ -1953,8 +1985,15 @@ async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static 
 async fn restore_proxy_state_on_startup(state: &store::AppState) {
     // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
     let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
+    let restore_codex_desktop_gateway = match codex_desktop_gateway_required_on_startup(&state.db) {
+        Ok(required) => required,
+        Err(error) => {
+            log::warn!("检查 Codex Desktop 网关恢复状态失败: {error}");
+            false
+        }
+    };
 
-    if apps_to_restore.is_empty() {
+    if apps_to_restore.is_empty() && !restore_codex_desktop_gateway {
         log::debug!("启动时无需恢复代理状态");
         return;
     }
@@ -1982,6 +2021,16 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
                     log::error!("清除 {app_type} 代理状态失败: {clear_err}");
                 }
             }
+        }
+    }
+
+    // Codex Desktop gateway mode shares the proxy server but deliberately does
+    // not use takeover state. Restore the server independently so a Desktop-only
+    // gateway survives an application restart.
+    if restore_codex_desktop_gateway && !state.proxy_service.is_running().await {
+        match state.proxy_service.start().await {
+            Ok(_) => log::info!("✓ 已恢复 Codex Desktop 本地网关"),
+            Err(error) => log::error!("✗ 恢复 Codex Desktop 本地网关失败: {error}"),
         }
     }
 }

@@ -120,6 +120,9 @@ impl McpService {
                 // Codex uses TOML format, must use the correct function
                 mcp::sync_single_server_to_codex(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::CodexDesktop => {
+                log::debug!("Codex Desktop shares the Codex CLI MCP projection, skipping");
+            }
             AppType::Gemini => {
                 mcp::sync_single_server_to_gemini(&Default::default(), &server.id, &server.server)?;
             }
@@ -170,6 +173,9 @@ impl McpService {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
             AppType::Codex => mcp::remove_server_from_codex(id)?,
+            AppType::CodexDesktop => {
+                log::debug!("Codex Desktop shares the Codex CLI MCP projection, skipping");
+            }
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
             AppType::GrokBuild => mcp::remove_server_from_grokbuild(id)?,
             AppType::OpenCode => {
@@ -218,6 +224,12 @@ impl McpService {
     /// 定向重投影，避免把无关应用的失败面（如 ~/.claude.json 坏 JSON）
     /// 牵连进目标应用的关键路径。
     pub fn sync_enabled_for_app(state: &AppState, app: &AppType) -> Result<(), AppError> {
+        if matches!(
+            app,
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::CodexDesktop | AppType::Pi
+        ) {
+            return Ok(());
+        }
         let servers = Self::get_all_servers(state)?;
         Self::project_servers_to_app(state, &servers, app)
     }
@@ -229,7 +241,7 @@ impl McpService {
     ) -> Result<(), AppError> {
         if matches!(
             app,
-            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Pi
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::CodexDesktop | AppType::Pi
         ) {
             return Ok(());
         }

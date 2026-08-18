@@ -13,6 +13,7 @@ import {
   openclawApi,
   providersApi,
   vscodeApi,
+  isCodexAppId,
   type AppId,
   type ManagedAuthProvider,
 } from "@/lib/api";
@@ -192,7 +193,7 @@ export function EditProviderDialog({
     // 若放任 Live 覆盖，编辑界面会显示空映射表，保存后连同数据库里的映射一起清空（数据丢失）。
     // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
     if (
-      appId === "codex" &&
+      isCodexAppId(appId) &&
       liveSettings &&
       provider?.settingsConfig &&
       typeof provider.settingsConfig === "object"
