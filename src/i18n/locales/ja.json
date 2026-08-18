@@ -406,6 +406,8 @@
         "thinkingSignatureDescription": "Anthropic タイプのプロバイダーが thinking 署名の非互換性や不正なリクエストエラーを返した場合、互換性のない thinking 関連ブロックを自動削除し、同じプロバイダーで 1 回リトライします",
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします",
+        "thinkingMode": "Thinking 形状整流",
+        "thinkingModeDescription": "上流が現在使用中の thinking 形状を拒否した場合、エラーから正しい形状を学習して 1 回リトライします（双方向）（\"thinking.type.enabled\" is not supported ⇄ Input tag 'adaptive' does not match expected tags）。学習結果はプロバイダーとモデルごとに記憶されるため、新しくリリースされたモデルは 1 回失敗するだけで自動復旧し、アプリの更新を待つ必要がありません",
         "mediaFallback": "非対応画像フォールバック",
         "mediaFallbackDescription": "プロバイダーが画像入力に対応していない場合（テキストのみの能力が宣言されている、または上流が画像非対応エラーを返した場合）、画像ブロックを [Unsupported Image] マーカーに自動置換し、会話を中断させません",
         "mediaHeuristic": "テキスト専用モデルの事前判定",

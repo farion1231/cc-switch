@@ -1028,6 +1028,9 @@ mod tests {
             provider_router: Arc::new(ProviderRouter::new(db.clone())),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            thinking_capability: Arc::new(
+                crate::proxy::thinking_capability::ThinkingCapabilityStore::new(),
+            ),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
         }

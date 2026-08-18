@@ -102,6 +102,16 @@ pub fn should_rectify_thinking_signature(
         || lower.contains("illegal request")
         || lower.contains("invalid request")
     {
+        // 例外：报文其实是在拒绝 thinking 形状（第三方网关常把它包进
+        // "Invalid request" / invalid_request_error 这种通用信封）。此时不能在这里
+        // 兜底 —— 移除历史 thinking 后重发的仍是同一个形状，上游返回同一个 400，
+        // 而整流重试失败会按客户端错误直接回给客户端，形状整流器再也没机会学习。
+        // 让位给它（`request_thinking_mode` 关闭时没人接手，仍按原兜底处理）。
+        if config.request_thinking_mode
+            && super::thinking_mode_rectifier::looks_like_thinking_mode_error(msg)
+        {
+            return false;
+        }
         return true;
     }
 
@@ -236,10 +246,8 @@ fn should_remove_top_level_thinking(body: &Value, messages: &[Value]) -> bool {
         .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
 }
 
-/// 与 CCH 对齐：请求前不做 thinking type 主动改写。
-pub fn normalize_thinking_type(body: Value) -> Value {
-    body
-}
+// 发送端的 thinking 形状归一化见 `super::thinking_mode_rectifier::normalize_thinking_shape`
+// —— 那里按解析出的模型能力改写，本模块只负责签名相关的整流。
 
 #[cfg(test)]
 mod tests {
@@ -247,32 +255,21 @@ mod tests {
     use serde_json::json;
 
     fn enabled_config() -> RectifierConfig {
-        RectifierConfig {
-            enabled: true,
-            request_thinking_signature: true,
-            request_thinking_budget: true,
-            request_media_fallback: true,
-            request_media_heuristic: true,
-        }
+        RectifierConfig::default()
     }
 
     fn disabled_config() -> RectifierConfig {
         RectifierConfig {
-            enabled: true,
             request_thinking_signature: false,
             request_thinking_budget: false,
-            request_media_fallback: true,
-            request_media_heuristic: true,
+            ..RectifierConfig::default()
         }
     }
 
     fn master_disabled_config() -> RectifierConfig {
         RectifierConfig {
             enabled: false,
-            request_thinking_signature: true,
-            request_thinking_budget: true,
-            request_media_fallback: true,
-            request_media_heuristic: true,
+            ..RectifierConfig::default()
         }
     }
 
@@ -531,6 +528,45 @@ mod tests {
         ));
     }
 
+    /// 第三方网关常把形状拒绝包进通用的 "Invalid request" / invalid_request_error 信封。
+    /// 这种报文必须交给形状整流器 —— 在这里兜底会把学习机会吃掉：移除历史 thinking 后
+    /// 重发的仍是同一形状，同一个 400 回来后就按客户端错误直接返回了。
+    #[test]
+    fn test_invalid_request_envelope_yields_to_thinking_mode_error() {
+        let enabled_shape_rejected = r#"{"type":"error","error":{"type":"invalid_request_error","message":"Invalid request: thinking.type.enabled is not supported for this model, use adaptive with output_config.effort"}}"#;
+        assert!(!should_rectify_thinking_signature(
+            Some(enabled_shape_rejected),
+            &enabled_config()
+        ));
+        // 确认这条报文确实由形状整流器接手
+        assert!(
+            super::super::thinking_mode_rectifier::detect_thinking_mode_error(
+                Some(enabled_shape_rejected),
+                &enabled_config()
+            )
+            .is_some()
+        );
+
+        let adaptive_shape_rejected = r#"{"error":{"message":"invalid request: thinking.type 'adaptive' is not supported, expected 'enabled'"}}"#;
+        assert!(!should_rectify_thinking_signature(
+            Some(adaptive_shape_rejected),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_invalid_request_envelope_still_falls_back_when_mode_rectifier_off() {
+        // 形状整流器被关掉时没人接手，通用兜底照旧生效
+        let config = RectifierConfig {
+            request_thinking_mode: false,
+            ..RectifierConfig::default()
+        };
+        assert!(should_rectify_thinking_signature(
+            Some("Invalid request: thinking.type.enabled is not supported for this model"),
+            &config
+        ));
+    }
+
     #[test]
     fn test_do_not_detect_thinking_type_tag_mismatch() {
         // 与 CCH 对齐：adaptive tag mismatch 不触发签名整流器
@@ -641,82 +677,5 @@ mod tests {
         assert_eq!(content[0]["type"], "text");
         assert!(content[0].get("signature").is_none());
         assert_eq!(body["thinking"]["type"], "adaptive");
-    }
-
-    // ==================== normalize_thinking_type 测试 ====================
-
-    #[test]
-    fn test_normalize_thinking_type_adaptive_unchanged() {
-        let body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "adaptive" }
-        });
-
-        let result = normalize_thinking_type(body);
-
-        assert_eq!(result["thinking"]["type"], "adaptive");
-        assert!(result["thinking"].get("budget_tokens").is_none());
-    }
-
-    #[test]
-    fn test_normalize_thinking_type_enabled_unchanged() {
-        let body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "enabled", "budget_tokens": 2048 }
-        });
-
-        let result = normalize_thinking_type(body);
-
-        assert_eq!(result["thinking"]["type"], "enabled");
-        assert_eq!(result["thinking"]["budget_tokens"], 2048);
-    }
-
-    #[test]
-    fn test_normalize_thinking_type_disabled_unchanged() {
-        let body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "disabled" }
-        });
-
-        let result = normalize_thinking_type(body);
-
-        assert_eq!(result["thinking"]["type"], "disabled");
-    }
-
-    #[test]
-    fn test_normalize_thinking_type_preserves_budget() {
-        let body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "adaptive", "budget_tokens": 5000 }
-        });
-
-        let result = normalize_thinking_type(body);
-
-        assert_eq!(result["thinking"]["type"], "adaptive");
-        assert_eq!(result["thinking"]["budget_tokens"], 5000);
-    }
-
-    #[test]
-    fn test_normalize_thinking_type_no_thinking() {
-        let body = json!({
-            "model": "claude-test"
-        });
-
-        let result = normalize_thinking_type(body);
-
-        assert!(result.get("thinking").is_none());
-    }
-
-    #[test]
-    fn test_normalize_thinking_type_unknown_unchanged() {
-        let body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "unexpected", "budget_tokens": 100 }
-        });
-
-        let result = normalize_thinking_type(body);
-
-        assert_eq!(result["thinking"]["type"], "unexpected");
-        assert_eq!(result["thinking"]["budget_tokens"], 100);
     }
 }

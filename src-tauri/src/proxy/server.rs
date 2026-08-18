@@ -14,6 +14,7 @@ use super::{
     log_codes::srv as log_srv,
     provider_router::ProviderRouter,
     providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+    thinking_capability::ThinkingCapabilityStore,
     types::*,
     ProxyError,
 };
@@ -44,6 +45,8 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
+    /// 从上游报错学到的 thinking 形状（跨请求保持，避免每次都吃一遍 400）
+    pub thinking_capability: Arc<ThinkingCapabilityStore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -79,6 +82,7 @@ impl ProxyServer {
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            thinking_capability: Arc::new(ThinkingCapabilityStore::new()),
             app_handle,
             failover_manager,
         };
