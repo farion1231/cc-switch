@@ -125,9 +125,13 @@ struct ParsedAssistantUsage {
     cache_read_tokens: u32,
     cache_creation_tokens: u32,
     stop_reason: Option<String>,
+    api_error_status: Option<u16>,
+    error_message: Option<String>,
     timestamp: Option<String>,
     session_id: Option<String>,
 }
+
+const CLAUDE_SYNC_CURSOR_VERSION: &str = "api-errors-v1";
 
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
@@ -257,6 +261,8 @@ fn push_jsonl_children(dir: &Path, files: &mut Vec<PathBuf>) {
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
 fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
+    let sync_state_key = format!("{file_path_str}#{CLAUDE_SYNC_CURSOR_VERSION}");
+    let incomplete_tail_key = format!("{sync_state_key}#incomplete-tail");
 
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
@@ -264,23 +270,40 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
+    let (last_modified, last_offset) = get_sync_state(db, &sync_state_key)?;
+    let (incomplete_tail_len, _) = get_sync_state(db, &incomplete_tail_key)?;
+    let legacy_processed_offset = if (last_modified, last_offset) == (0, 0) {
+        get_sync_state(db, &file_path_str)?.1
+    } else {
+        0
+    };
 
     // 文件未变化则跳过
-    if file_modified <= last_modified {
+    if file_modified <= last_modified
+        && (incomplete_tail_len == 0 || incomplete_tail_len == metadata.len() as i64)
+    {
         return Ok((0, 0));
     }
 
     // 从上次偏移位置开始增量解析
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
 
     let mut line_offset: i64 = 0;
-    let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
+    let mut scanned_len: i64 = 0;
+    let mut has_incomplete_tail = false;
+    let mut messages: HashMap<String, (ParsedAssistantUsage, i64)> = HashMap::new();
     let mut current_session_id: Option<String> = None;
+    let mut line_bytes = Vec::new();
 
-    for line_result in reader.lines() {
+    loop {
+        line_bytes.clear();
+        match reader.read_until(b'\n', &mut line_bytes) {
+            Ok(0) => break,
+            Ok(read) => scanned_len += read as i64,
+            Err(e) => return Err(AppError::Config(format!("无法读取文件: {e}"))),
+        }
         line_offset += 1;
 
         // 跳过已处理的行
@@ -288,17 +311,28 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             continue;
         }
 
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => continue, // 容忍不完整的最后一行
+        let has_line_terminator = line_bytes.ends_with(b"\n");
+        let line = match std::str::from_utf8(&line_bytes) {
+            Ok(line) => line,
+            Err(_) if !has_line_terminator => {
+                has_incomplete_tail = true;
+                line_offset -= 1;
+                break;
+            }
+            Err(_) => continue,
         };
 
         if line.trim().is_empty() {
             continue;
         }
 
-        let value: serde_json::Value = match serde_json::from_str(&line) {
+        let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
+            Err(_) if !has_line_terminator => {
+                has_incomplete_tail = true;
+                line_offset -= 1;
+                break;
+            }
             Err(_) => continue,
         };
 
@@ -329,6 +363,15 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             None => continue,
         };
 
+        let api_error_status = value
+            .get("isApiErrorMessage")
+            .and_then(|v| v.as_bool())
+            .filter(|is_error| *is_error)
+            .and_then(|_| value.get("apiErrorStatus"))
+            .and_then(|v| v.as_u64())
+            .filter(|status| (400..=599).contains(status))
+            .map(|status| status as u16);
+
         let parsed = ParsedAssistantUsage {
             message_id: msg_id.clone(),
             model: message
@@ -356,6 +399,13 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
                 .get("stop_reason")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+            api_error_status,
+            error_message: api_error_status.and_then(|_| {
+                value
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            }),
             timestamp: value
                 .get("timestamp")
                 .and_then(|v| v.as_str())
@@ -366,7 +416,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
         // 按 message.id 去重：优先保留有 stop_reason 的条目，否则保留最新的
         let should_replace = match messages.get(&msg_id) {
             None => true,
-            Some(existing) => {
+            Some((existing, _)) => {
                 // 新条目有 stop_reason 而旧条目没有 → 替换
                 if parsed.stop_reason.is_some() && existing.stop_reason.is_none() {
                     true
@@ -381,7 +431,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
         };
 
         if should_replace {
-            messages.insert(msg_id, parsed);
+            messages.insert(msg_id, (parsed, line_offset));
         }
     }
 
@@ -389,7 +439,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
 
-    for msg in messages.values() {
+    for (msg, message_line_offset) in messages.values() {
         // 只要产生了真实计费 token 就导入，不再强制要求 stop_reason 或 output>0。
         //
         // Anthropic 在受理请求时即对 input + cache_read + cache_creation 计费
@@ -406,7 +456,10 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             || msg.output_tokens > 0
             || msg.cache_read_tokens > 0
             || msg.cache_creation_tokens > 0;
-        if !has_billable_tokens {
+        if !has_billable_tokens && msg.api_error_status.is_none() {
+            continue;
+        }
+        if msg.api_error_status.is_none() && *message_line_offset <= legacy_processed_offset {
             continue;
         }
 
@@ -421,13 +474,25 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             Ok(false) => skipped += 1,
             Err(e) => {
                 log::warn!("[SESSION-SYNC] 插入失败 ({}): {e}", msg.message_id);
-                skipped += 1;
+                return Err(e);
             }
         }
     }
 
-    // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, line_offset)?;
+    // 未完成尾行已从 line_offset 中扣除；长度变化后再重试该行。
+    let conn = lock_conn!(db.conn);
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database(format!("开启 Claude 会话游标事务失败: {e}")))?;
+    update_sync_state_on_conn(
+        &tx,
+        &incomplete_tail_key,
+        if has_incomplete_tail { scanned_len } else { 0 },
+        0,
+    )?;
+    update_sync_state_on_conn(&tx, &sync_state_key, file_modified, line_offset)?;
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交 Claude 会话游标事务失败: {e}")))?;
 
     Ok((imported, skipped))
 }
@@ -525,7 +590,8 @@ fn insert_session_log_entry(
         cache_creation_tokens: msg.cache_creation_tokens,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if msg.api_error_status.is_none() && should_skip_session_insert(&conn, request_id, &dedup_key)?
+    {
         return Ok(false);
     }
 
@@ -588,8 +654,8 @@ fn insert_session_log_entry(
                 total_cost,
                 0i64,               // latency_ms: 会话日志无此数据
                 Option::<i64>::None, // first_token_ms
-                200i64,             // status_code: 会话日志中的请求只要产生计费 token 即视为成功
-                Option::<String>::None, // error_message
+                msg.api_error_status.unwrap_or(200) as i64,
+                msg.error_message,
                 msg.session_id,
                 Some("session_log"), // provider_type
                 1i64,               // is_streaming: Claude Code 通常使用流式
@@ -718,6 +784,8 @@ mod tests {
             cache_read_tokens: 5000,
             cache_creation_tokens: 10000,
             stop_reason: None,
+            api_error_status: None,
+            error_message: None,
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
         };
@@ -732,6 +800,8 @@ mod tests {
             cache_read_tokens: 5000,
             cache_creation_tokens: 10000,
             stop_reason: Some("end_turn".to_string()),
+            api_error_status: None,
+            error_message: None,
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
         };
@@ -783,6 +853,8 @@ mod tests {
             cache_read_tokens: 10,
             cache_creation_tokens: 5,
             stop_reason: Some("end_turn".to_string()),
+            api_error_status: None,
+            error_message: None,
             timestamp: Some("1970-01-01T00:16:45Z".to_string()),
             session_id: Some("session-1".to_string()),
         };
@@ -893,6 +965,106 @@ mod tests {
         )?;
         assert!(!empty_exists, "全 0 token 的 message 应被跳过");
         drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_imports_api_error_with_versioned_cursor() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error.jsonl");
+        let old_success = r#"{"type":"assistant","message":{"id":"msg_old_success","model":"claude-sonnet-4-20250514","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:30:00Z","sessionId":"session-error"}"#;
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_api_error","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{old_success}\n{api_error}\n")).unwrap();
+
+        let file_path = file.to_string_lossy();
+        let modified = metadata_modified_nanos(&fs::metadata(&file).unwrap());
+        update_sync_state(&db, &file_path, modified, 2)?;
+
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
+        assert_eq!(sync_single_file(&db, &file)?.0, 0);
+
+        let conn = lock_conn!(db.conn);
+        let (count, status, error): (i64, i64, Option<String>) = conn.query_row(
+            "SELECT COUNT(*), MAX(status_code), MAX(error_message)
+             FROM proxy_request_logs WHERE request_id = 'session:msg_api_error'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(count, 1, "版本化游标重扫必须保持幂等");
+        assert_eq!(status, 403);
+        assert_eq!(error.as_deref(), Some("authentication_failed"));
+        let old_success_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = 'session:msg_old_success')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(
+            !old_success_exists,
+            "旧游标之前的成功记录可能已进入汇总表，不得在版本重扫时重新导入"
+        );
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_versioned_cursor_is_not_advanced_after_insert_failure() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error-retry.jsonl");
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_api_error_retry","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{api_error}\n")).unwrap();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER reject_session_log_insert
+                 BEFORE INSERT ON proxy_request_logs
+                 WHEN NEW.data_source = 'session_log'
+                 BEGIN
+                     SELECT RAISE(FAIL, 'forced insert failure');
+                 END;",
+            )?;
+        }
+
+        assert!(sync_single_file(&db, &file).is_err());
+        let sync_state_key = format!("{}#{CLAUDE_SYNC_CURSOR_VERSION}", file.to_string_lossy());
+        assert_eq!(get_sync_state(&db, &sync_state_key)?, (0, 0));
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch("DROP TRIGGER reject_session_log_insert;")?;
+        }
+
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_incomplete_api_error_tail_is_retried_after_completion() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error-tail.jsonl");
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_api_error_tail","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, &api_error[..api_error.len() - 1]).unwrap();
+
+        assert_eq!(sync_single_file(&db, &file)?.0, 0);
+        let sync_state_key = format!("{}#{CLAUDE_SYNC_CURSOR_VERSION}", file.to_string_lossy());
+        let (partial_mtime, completed_offset) = get_sync_state(&db, &sync_state_key)?;
+        assert!(partial_mtime > 0);
+        assert_eq!(completed_offset, 0, "游标不得越过未完成的第 1 行");
+
+        fs::write(&file, format!("{api_error}\n")).unwrap();
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())
