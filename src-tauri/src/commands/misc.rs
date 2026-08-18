@@ -192,6 +192,7 @@ pub async fn run_tool_lifecycle_action(
     let label = match action {
         ToolLifecycleAction::Install => "tool_install",
         ToolLifecycleAction::Update => "tool_update",
+        ToolLifecycleAction::Uninstall => "tool_uninstall",
     };
 
     // build 阶段含锚定探测（对每个工具跑 `--version` 定位命令行实际命中那处），
@@ -364,6 +365,7 @@ fn normalize_requested_tools(tools: &[String]) -> Vec<&'static str> {
 enum ToolLifecycleAction {
     Install,
     Update,
+    Uninstall,
 }
 
 impl FromStr for ToolLifecycleAction {
@@ -373,6 +375,7 @@ impl FromStr for ToolLifecycleAction {
         match value {
             "install" => Ok(Self::Install),
             "update" => Ok(Self::Update),
+            "uninstall" => Ok(Self::Uninstall),
             _ => Err(format!("Unsupported tool action: {value}")),
         }
     }
@@ -528,6 +531,18 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
     }
 }
 
+/// Official CLI uninstall subcommand args. Keep this list deliberately narrow: Claude
+/// Code and Codex do not expose an `uninstall` subcommand (and Claude interprets an
+/// unknown word as a prompt), so invoking `<tool> uninstall` for either would be unsafe.
+/// Hermes does provide `hermes uninstall --yes`; it removes the managed code/runtime and
+/// shell PATH entry while retaining `~/.hermes/` data unless `--full` is requested.
+fn official_uninstall_args(tool: &str) -> Option<&'static str> {
+    match tool {
+        "hermes" => Some("uninstall --yes"),
+        _ => None,
+    }
+}
+
 fn bare_official_update_command(tool: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{tool} {args}"))
 }
@@ -568,6 +583,10 @@ fn tool_action_shell_command_for_shell(
     }
 
     if tool == "hermes" {
+        // Hermes' official installer puts code plus a managed Python/Node runtime into an
+        // isolated dir (e.g. ~/.hermes). Install/update have static commands, but uninstall
+        // must be anchored to a detected runnable Hermes entry before invoking its official
+        // `hermes uninstall --yes`; there is no safe bare/static uninstall fallback here.
         return Some(
             match (action, shell) {
                 (ToolLifecycleAction::Install, LifecycleCommandShell::Posix) => HERMES_INSTALL_UNIX,
@@ -582,6 +601,9 @@ fn tool_action_shell_command_for_shell(
                 }
                 #[cfg(not(target_os = "windows"))]
                 (_, LifecycleCommandShell::WindowsBatch) => return None,
+                // Uninstall (and any otherwise-unmatched combination) has no static command
+                // for Hermes -> None. The anchored uninstall path handles it separately.
+                _ => return None,
             }
             .to_string(),
         );
@@ -597,6 +619,11 @@ fn tool_action_shell_command_for_shell(
             Some(update) => Some(chain_update_commands(update, install.to_string(), shell)),
             None => Some(install.to_string()),
         },
+        // Uninstall is not built from this static command table. It goes through the
+        // dedicated owner-anchored path in `uninstall_command_for`; returning None here
+        // prevents install/update's best-effort fallback semantics from leaking into a
+        // destructive action.
+        ToolLifecycleAction::Uninstall => None,
     }
 }
 
@@ -626,6 +653,17 @@ fn wsl_tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Opt
         }
         ToolLifecycleAction::Update => {
             tool_action_shell_command_for_shell(tool, action, LifecycleCommandShell::Posix)
+        }
+        // WSL enumeration only sees the Windows host, so ownership of a WSL package-manager
+        // install cannot be proven. Fail closed for every tool except Hermes, whose official
+        // self-uninstall is safe to run inside the selected distro.
+        ToolLifecycleAction::Uninstall => {
+            let command = posix_uninstall_command_for(tool);
+            if command.is_empty() {
+                None
+            } else {
+                Some(command)
+            }
         }
     }
 }
@@ -664,6 +702,13 @@ fn build_tool_action_line(
             ToolLifecycleAction::Install => {
                 static_fallback_command_for(tool, ToolLifecycleAction::Install)
             }
+            // Uninstall anchors to the install the command line actually resolves to and
+            // uses only a proven package-manager owner or verified official CLI. Missing,
+            // ambiguous, broken, or unowned installs fail closed (see `uninstall_plan`).
+            ToolLifecycleAction::Uninstall => {
+                let installs = enumerate_tool_installations(tool);
+                uninstall_command_for(tool, &installs)?
+            }
         };
         if command.is_empty() {
             return Err(format!("Unsupported tool action target: {tool}"));
@@ -689,6 +734,13 @@ fn build_tool_action_line(
                     .unwrap_or_else(|| static_fallback_command(tool))
             }
             ToolLifecycleAction::Install => install_command_for(tool),
+            // Uninstall anchors to the command-line default install like update, but only
+            // executes a proven owner-specific command. Missing, ambiguous, broken, or
+            // unowned installs fail closed (see `uninstall_plan`).
+            ToolLifecycleAction::Uninstall => {
+                let installs = enumerate_tool_installations(tool);
+                uninstall_command_for(tool, &installs)?
+            }
         };
         if command.is_empty() {
             return Err(format!("Unsupported tool action target: {tool}"));
@@ -2083,7 +2135,7 @@ pub struct ToolInstallation {
 }
 
 /// 由可执行文件路径前缀推断安装来源。纯字符串匹配、无副作用。
-/// 顺序敏感：Homebrew 的 Cellar 真身要先于通用规则命中。
+/// 顺序敏感：Homebrew 的 Cellar/Caskroom 真身要先于通用规则命中。
 fn infer_install_source(path: &Path) -> &'static str {
     let s = path
         .to_string_lossy()
@@ -2091,7 +2143,7 @@ fn infer_install_source(path: &Path) -> &'static str {
         .to_ascii_lowercase();
     if s.contains("/.nvm/") {
         "nvm"
-    } else if s.contains("/homebrew/") || s.contains("/cellar/") {
+    } else if s.contains("/homebrew/") || s.contains("/cellar/") || s.contains("/caskroom/") {
         "homebrew"
     // `.volta` 是 macOS/Linux 默认安装(`~/.volta/bin`),`/volta/` 兜底覆盖
     // Windows 的 `%LOCALAPPDATA%\Volta\bin` / `%VOLTA_HOME%\bin`(无前导点)。
@@ -2430,6 +2482,63 @@ fn brew_formula_from_path(real: &str) -> Option<String> {
     None
 }
 
+/// Extract a Homebrew cask token from a canonical target:
+/// `/opt/homebrew/Caskroom/codex/0.147.0/...` -> `Some("codex")`.
+/// Casks are distinct from formulae because uninstall/upgrade must include `--cask`.
+#[cfg(not(target_os = "windows"))]
+fn brew_cask_from_path(real: &str) -> Option<String> {
+    let mut segs = real.split('/');
+    while let Some(seg) = segs.next() {
+        if seg.eq_ignore_ascii_case("Caskroom") {
+            return segs.next().filter(|s| !s.is_empty()).map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// Anthropic's native installer has no CLI uninstall subcommand. Detect its known
+/// layouts so the uninstall planner routes them to manual-removal guidance instead of
+/// accidentally invoking a sibling package manager that may own a different copy.
+fn is_claude_native_install(bin_path: &str, real_target: &str) -> bool {
+    [bin_path, real_target].iter().any(|path| {
+        let normalized = path.replace('\\', "/").to_ascii_lowercase();
+        normalized.contains("/.local/share/claude/")
+            || normalized.contains("/claude/versions/")
+            || normalized.contains("/programs/claude/")
+    })
+}
+
+/// OpenCode's standalone installer uses `~/.opencode/bin`; there is no supported CLI
+/// uninstall command, so package-manager removal is only valid for paths outside it.
+fn is_opencode_native_install(bin_path: &str, real_target: &str) -> bool {
+    [bin_path, real_target].iter().any(|path| {
+        path.replace('\\', "/")
+            .to_ascii_lowercase()
+            .contains("/.opencode/bin/")
+    })
+}
+
+/// The Windows standalone Codex installer is not owned by npm/pnpm/Volta. Even if an
+/// unrelated package-manager executable happens to be nearby, do not let it remove a
+/// different Codex installation.
+fn is_codex_standalone_install(bin_path: &str, real_target: &str) -> bool {
+    [bin_path, real_target].iter().any(|path| {
+        path.replace('\\', "/")
+            .to_ascii_lowercase()
+            .contains("/programs/openai/codex/bin/")
+    })
+}
+
+fn is_known_unowned_native_install(tool: &str, bin_path: &str, real_target: &str) -> bool {
+    match tool {
+        "claude" => is_claude_native_install(bin_path, real_target),
+        "codex" => is_codex_standalone_install(bin_path, real_target),
+        "grok" => is_grok_native_install(bin_path, real_target),
+        "opencode" => is_opencode_native_install(bin_path, real_target),
+        _ => false,
+    }
+}
+
 /// xAI's native installer uses `~/.grok/bin` for its launchers and
 /// `~/.grok/downloads/grok-<platform>` for the downloaded binary. The launcher
 /// directory also covers the default Windows layout, where the executable is
@@ -2443,18 +2552,14 @@ fn is_grok_native_install(bin_path: &str, real_target: &str) -> bool {
     })
 }
 
-/// 含空格才用 POSIX 单引号包一层,否则保持裸路径——命令展示更干净。
-/// claude / brew / volta / bun / npm 五个锚定分支共用,避免"含空格"判定漂移。
-///
-/// **仅按空格判定,不防其他 shell 元字符**(`$` / `` ` `` / `'` / `"` / `;` 等)。
-/// 调用方传入的是探测得到的可执行路径(`enumerate_tool_installations` 里来源于
-/// `Path::display()`),实际 macOS/Linux 上 home dir 名几乎不允许这类字符、
-/// npm/brew/volta/bun 也不会装到含这类字符的路径,与 diff 前内联在 npm 分支里的
-/// `if npm.contains(' ')` 实现等价。若未来要扩广,改成 `shell_single_quote` 无条件
-/// 包裹即可,但会失去"无空格时的清洁展示"。
+/// 普通绝对路径保持裸写；出现空白、shell 元字符或非 ASCII 字符时，用 POSIX
+/// 单引号完整包裹，避免路径字符被 `bash -c` 解释成 shell 语法。
 #[cfg(not(target_os = "windows"))]
 fn quote_path_if_spaced(p: &str) -> String {
-    if p.contains(' ') {
+    let needs_quote = p
+        .chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.')));
+    if needs_quote {
         shell_single_quote(p)
     } else {
         p.to_string()
@@ -2600,6 +2705,23 @@ fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String
     official_update_args(tool).map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
 }
 
+/// Anchored official CLI uninstall command = `<abs bin> uninstall [--yes]`. Mirrors
+/// `anchored_official_update_command`: absolute-path call to the launcher the command
+/// line actually resolves to, so the official self-uninstall removes *that* install
+/// (not a different one the bare CLI name might hit on a narrow GUI PATH). Returns None
+/// for tools with no official uninstall subcommand (Claude, Codex, Gemini, Grok,
+/// OpenCode, and OpenClaw).
+#[cfg(not(target_os = "windows"))]
+fn anchored_official_uninstall_command(tool: &str, bin_path: &str) -> Option<String> {
+    official_uninstall_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
+}
+
+#[cfg(target_os = "windows")]
+fn anchored_official_uninstall_command(tool: &str, bin_path: &str) -> Option<String> {
+    official_uninstall_args(tool)
+        .map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
+}
+
 /// Grok Build 原生安装的升级命令 = `<bin 绝对> update || <官方 installer>`。
 ///
 /// **为什么唯独 native Grok 的 self-update 需要 fallback**（claude native / hermes 都没有）：
@@ -2713,8 +2835,8 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
 /// 对各类损坏都是合理且不会更糟的修复。
 #[cfg(not(target_os = "windows"))]
 fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
-    // brew formula（real 在 Cellar）→ 不归 npm 管，交回 anchored 走 brew upgrade。
-    if brew_formula_from_path(real).is_some() {
+    // Homebrew formula/cask -> not owned by npm; hand back to the brew upgrade path.
+    if brew_formula_from_path(real).is_some() || brew_cask_from_path(real).is_some() {
         return None;
     }
     // 只认会落到 sibling npm 的 node 管理器来源；volta/bun/system/未知交回 anchored。
@@ -2744,6 +2866,13 @@ fn package_manager_anchored_command_from_paths(
     bin_path: &str,
     real_target: &str,
 ) -> Option<String> {
+    if let Some(cask) = brew_cask_from_path(real_target) {
+        let brew = sibling_bin(bin_path, "brew")?;
+        return Some(format!(
+            "{} upgrade --cask {cask}",
+            quote_path_if_spaced(&brew)
+        ));
+    }
     if let Some(formula) = brew_formula_from_path(real_target) {
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
@@ -2800,15 +2929,10 @@ fn package_manager_anchored_command_from_paths(
 ///    "那处 bin 目录的 npm"。
 #[cfg(not(target_os = "windows"))]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
-    let real_lower = real_target.to_ascii_lowercase();
-
     if tool == "hermes" {
         return anchored_official_update_command(tool, bin_path);
     }
-    if tool == "claude"
-        && (real_lower.contains("/.local/share/claude/")
-            || real_lower.contains("/claude/versions/"))
-    {
+    if tool == "claude" && is_claude_native_install(bin_path, real_target) {
         return anchored_official_update_command(tool, bin_path);
     }
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
@@ -2817,7 +2941,7 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         ));
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path, real_target);
-    if brew_formula_from_path(real_target).is_some() {
+    if brew_formula_from_path(real_target).is_some() || brew_cask_from_path(real_target).is_some() {
         return package_command;
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
@@ -3411,6 +3535,317 @@ fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Optio
     anchored_command_from_paths(tool, &inst.path, &real)
 }
 
+/// Compute the uninstall plan for a tool: (command, supported). Pure string
+/// arithmetic — no FS, no subprocess. Enumerating installs (the expensive part, in
+/// `enumerate_tool_installations`) is done by the caller (`probe_tool_installations` /
+/// `build_tool_action_line`); this only decides on the result.
+///
+/// Decision order (first hit wins):
+/// 1. Windows + WSL override (`\\wsl$\<distro>\...`): host enumeration cannot prove
+///    ownership inside the distro. Only Hermes has a safe official self-uninstall;
+///    every package-manager tool fails closed to manual removal.
+/// 2. A missing/ambiguous default install, or a default whose `--version` probe failed,
+///    is not safe to execute. In particular, broken OpenClaw/Hermes launchers cannot
+///    be relied on to run their cleanup subcommands.
+/// 3. Otherwise build an uninstall command anchored to the command-line default. The
+///    command is either Hermes' verified self-uninstall or the package manager proven
+///    to own that exact install (Homebrew cask/formula, Volta, Bun, pnpm, or sibling
+///    npm). If no owner-specific command can be built, fail closed.
+///
+/// Unlike install/update, uninstall deliberately has no bare `npm uninstall -g`
+/// fallback: writing to the wrong location is recoverable, deleting a different copy
+/// is not.
+fn uninstall_plan(tool: &str, installs: &[ToolInstallation]) -> (String, bool) {
+    #[cfg(target_os = "windows")]
+    {
+        // WSL override: enumerate sees only the Windows host. The wrapper returns a
+        // command only for Hermes; every package-manager-backed tool fails closed.
+        if wsl_distro_for_tool(tool).is_some() {
+            return match wsl_tool_action_shell_command(tool, ToolLifecycleAction::Uninstall) {
+                Some(cmd) => (cmd, true),
+                None => (String::new(), false),
+            };
+        }
+    }
+    let Some(default) = default_install(installs) else {
+        return (String::new(), false);
+    };
+    if !default.runnable {
+        return (String::new(), false);
+    }
+    match anchored_uninstall_command(tool, installs) {
+        Some(cmd) if !cmd.is_empty() => (cmd, true),
+        _ => (String::new(), false),
+    }
+}
+
+/// Turn the uninstall plan into an executable result: supported -> Ok(command); not
+/// supported -> Err with a readable message. The Uninstall branch of
+/// `build_tool_action_line` uses this to either execute or surface the error to the
+/// frontend toast.
+fn uninstall_command_for(tool: &str, installs: &[ToolInstallation]) -> Result<String, String> {
+    let (cmd, supported) = uninstall_plan(tool, installs);
+    if supported {
+        Ok(cmd)
+    } else {
+        Err(format!(
+            "{} 的当前安装方式不支持通过 cc-switch 自动卸载,请手动移除。",
+            tool_display_name(tool)
+        ))
+    }
+}
+
+/// Anchored uninstall command: take the command-line default install and forward to
+/// the platform `anchored_uninstall_command_from_paths`. Symmetric with
+/// `installs_anchored_command` and reuses the `inst.real` already canonicalized during
+/// enumerate.
+fn anchored_uninstall_command(tool: &str, installs: &[ToolInstallation]) -> Option<String> {
+    let inst = default_install(installs)?;
+    let real = inst.real.to_string_lossy();
+    anchored_uninstall_command_from_paths(tool, &inst.path, &real)
+}
+
+/// Given the tool, the raw bin path (the entry the command line resolves to) and the
+/// canonicalized real target, infer the anchored uninstall command that removes "the
+/// same install". The POSIX version is a pure function (no FS), symmetric with
+/// `anchored_command_from_paths`, but intentionally has no unanchored fallback.
+///
+/// Decision order (first hit wins):
+/// ① hermes -> `<abs bin> uninstall --yes`. Hermes ships an official `hermes uninstall`
+///    (removes code + cleans shell PATH; `--yes` runs silently; keeps `~/.hermes/` data).
+///    No package-manager fallback: hermes has no npm package and its installer is
+///    isolated, so there's no `npm uninstall -g` to chain. The CLI is the only path.
+/// ② known native installs without a verified self-uninstall (Claude, Codex standalone,
+///    Grok, OpenCode) -> None/manual removal, even if an unrelated package manager is
+///    present nearby.
+/// ③ package-manager-owned installs -> the anchored owner command: Homebrew cask/formula,
+///    Volta, Bun, pnpm, or sibling npm. Claude and Codex are included here because neither
+///    CLI exposes an `uninstall` subcommand.
+/// OpenClaw additionally performs its verified service cleanup before removing the
+/// package, but only after its canonical package-manager owner has been proven.
+#[cfg(not(target_os = "windows"))]
+fn anchored_uninstall_command_from_paths(
+    tool: &str,
+    bin_path: &str,
+    real_target: &str,
+) -> Option<String> {
+    // ① hermes: official CLI uninstall, no package-manager fallback (isolated install,
+    //    no npm package to chain).
+    if tool == "hermes" {
+        return anchored_official_uninstall_command(tool, bin_path);
+    }
+    if tool == "openclaw" {
+        let remove_command = openclaw_package_remove_command(real_target)?;
+        return Some(wrap_openclaw_service_uninstall(bin_path, remove_command));
+    }
+    if is_known_unowned_native_install(tool, bin_path, real_target) {
+        return None;
+    }
+    package_manager_anchored_uninstall_command_from_paths(tool, bin_path, real_target)
+}
+
+#[cfg(target_os = "windows")]
+fn anchored_uninstall_command_from_paths(
+    tool: &str,
+    bin_path: &str,
+    real_target: &str,
+) -> Option<String> {
+    if tool == "openclaw" {
+        return None;
+    }
+    // ① hermes: official CLI uninstall, no package-manager fallback.
+    if tool == "hermes" {
+        return anchored_official_uninstall_command(tool, bin_path);
+    }
+    if is_known_unowned_native_install(tool, bin_path, real_target) {
+        return None;
+    }
+    package_manager_anchored_uninstall_command_from_paths(tool, bin_path)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wrap_openclaw_service_uninstall(bin_path: &str, remove_command: String) -> String {
+    format!(
+        "{} uninstall --service --yes --non-interactive && {remove_command}",
+        quote_path_if_spaced(bin_path)
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn openclaw_package_remove_command(real_target: &str) -> Option<String> {
+    let lower = real_target.to_ascii_lowercase();
+
+    let (owner_entry, manager) = if let Some(cellar) = lower.find("/cellar/") {
+        if brew_formula_from_path(real_target)?.as_str() != "openclaw" {
+            return None;
+        }
+        (
+            Path::new(&real_target[..cellar]).join("bin/openclaw"),
+            "brew",
+        )
+    } else if let Some(tools) = lower.find("/.volta/tools/image/packages/openclaw/") {
+        let volta_home = &real_target[..tools + "/.volta".len()];
+        (Path::new(volta_home).join("bin/openclaw"), "volta")
+    } else if let Some(install) = lower.find("/.bun/install/global/node_modules/openclaw/") {
+        let bun_home = &real_target[..install + "/.bun".len()];
+        (Path::new(bun_home).join("bin/openclaw"), "bun")
+    } else if let Some(global) = lower.rfind("/global/") {
+        let pnpm_home = &real_target[..global];
+        if lower[..global].ends_with("/pnpm") && lower[global..].contains("/node_modules/openclaw/")
+        {
+            (Path::new(pnpm_home).join("openclaw"), "pnpm")
+        } else {
+            return None;
+        }
+    } else if lower.ends_with("/.volta/bin/openclaw") || lower.ends_with("/volta/bin/openclaw") {
+        (Path::new(real_target).to_path_buf(), "volta")
+    } else if lower.ends_with("/pnpm/openclaw") {
+        (Path::new(real_target).to_path_buf(), "pnpm")
+    } else {
+        let marker = "/lib/node_modules/openclaw/";
+        let prefix = &real_target[..lower.rfind(marker)?];
+        let owner_entry = Path::new(prefix).join("bin/openclaw");
+        if prefix.is_empty() || !owner_entry.with_file_name("npm").is_file() {
+            return None;
+        }
+        return anchored_npm_command(
+            &owner_entry.to_string_lossy(),
+            &format!(
+                "uninstall -g openclaw --prefix {}",
+                shell_single_quote(prefix)
+            ),
+        );
+    };
+
+    if !owner_entry.with_file_name(manager).is_file() {
+        return None;
+    }
+    package_manager_anchored_uninstall_command_from_paths(
+        "openclaw",
+        &owner_entry.to_string_lossy(),
+        real_target,
+    )
+}
+
+/// Build an npm uninstall command from a canonical global-package target instead of
+/// guessing from the launcher path. This covers system Node and custom npm prefixes:
+/// `/opt/node/lib/node_modules/@openai/codex/...` proves ownership by the npm rooted at
+/// `/opt/node`, so the command is pinned to `/opt/node/bin/npm` and repeats the prefix
+/// explicitly. Standalone binaries have no matching `lib/node_modules/<pkg>` segment
+/// and therefore fail closed.
+#[cfg(not(target_os = "windows"))]
+fn npm_global_remove_command_from_real_target(tool: &str, real_target: &str) -> Option<String> {
+    let pkg = npm_package_for(tool)?;
+    let marker = format!("/lib/node_modules/{pkg}");
+    let real_lower = real_target.to_ascii_lowercase();
+    let marker_lower = marker.to_ascii_lowercase();
+    let marker_start = real_lower.rfind(marker_lower.as_str())?;
+    let package_end = marker_start + marker.len();
+    let suffix = &real_target[package_end..];
+    if !suffix.is_empty() && !suffix.starts_with('/') {
+        return None;
+    }
+
+    let prefix = &real_target[..marker_start];
+    if prefix.is_empty() || !prefix.starts_with('/') {
+        return None;
+    }
+    let owner_entry = Path::new(prefix).join("bin").join(tool);
+    anchored_npm_command(
+        &owner_entry.to_string_lossy(),
+        &format!("uninstall -g {pkg} --prefix {}", shell_single_quote(prefix)),
+    )
+}
+
+/// POSIX package-manager uninstall command: symmetric with
+/// `package_manager_anchored_command_from_paths` but with uninstall args. Homebrew
+/// cask -> `brew uninstall --cask <token>`; formula -> `brew uninstall <formula>`;
+/// Volta -> `volta uninstall`; Bun ->
+/// `bun remove -g`; nvm/fnm/mise/homebrew npm global packages -> anchored sibling
+/// `npm uninstall -g`. system / pnpm / unknown sources have no sibling npm -> None
+/// (handed back to `uninstall_plan` for static fallback or "not supported").
+#[cfg(not(target_os = "windows"))]
+fn package_manager_anchored_uninstall_command_from_paths(
+    tool: &str,
+    bin_path: &str,
+    real_target: &str,
+) -> Option<String> {
+    if let Some(cask) = brew_cask_from_path(real_target) {
+        let brew = sibling_bin(bin_path, "brew")?;
+        return Some(format!(
+            "{} uninstall --cask {cask}",
+            quote_path_if_spaced(&brew)
+        ));
+    }
+    if let Some(formula) = brew_formula_from_path(real_target) {
+        let brew = sibling_bin(bin_path, "brew")?;
+        return Some(format!(
+            "{} uninstall {formula}",
+            quote_path_if_spaced(&brew)
+        ));
+    }
+    let pkg = npm_package_for(tool)?;
+    match infer_install_source(Path::new(bin_path)) {
+        "volta" => {
+            let volta = sibling_bin(bin_path, "volta")?;
+            Some(format!("{} uninstall {pkg}", quote_path_if_spaced(&volta)))
+        }
+        "bun" => {
+            let bun = sibling_bin(bin_path, "bun")?;
+            Some(format!("{} remove -g {pkg}", quote_path_if_spaced(&bun)))
+        }
+        "pnpm" => {
+            let pnpm = sibling_bin(bin_path, "pnpm")?;
+            Some(format!("{} remove -g {pkg}", quote_path_if_spaced(&pnpm)))
+        }
+        // Node managers that ship a sibling npm: anchor to that npm's uninstall.
+        "nvm" | "fnm" | "mise" | "homebrew" => {
+            anchored_npm_command(bin_path, &format!("uninstall -g {pkg}"))
+        }
+        // A system/custom-prefix launcher is safe only when its canonical target proves
+        // npm ownership. The helper derives the owner prefix from `lib/node_modules`;
+        // standalone binaries return None and are routed to manual removal.
+        _ => npm_global_remove_command_from_real_target(tool, real_target),
+    }
+}
+
+/// Windows package-manager uninstall command: symmetric with the Windows
+/// `package_manager_anchored_command_from_paths`. Volta -> `volta uninstall`; pnpm ->
+/// `pnpm remove -g`; the rest (scoop/choco/winget/nvm-windows/MS Store node/system) ->
+/// sibling `npm uninstall -g`.
+#[cfg(target_os = "windows")]
+fn package_manager_anchored_uninstall_command_from_paths(
+    tool: &str,
+    bin_path: &str,
+) -> Option<String> {
+    let pkg = npm_package_for(tool)?;
+    match infer_install_source(Path::new(bin_path)) {
+        "volta" => {
+            let volta = sibling_bin_with_ext(bin_path, "volta", &["exe", "cmd"])?;
+            Some(format!(
+                "{} uninstall {pkg}",
+                win_quote_path_for_batch(&volta)
+            ))
+        }
+        "pnpm" => {
+            let pnpm = sibling_bin_with_ext(bin_path, "pnpm", &["cmd", "exe"])?;
+            Some(format!(
+                "{} remove -g {pkg}",
+                win_quote_path_for_batch(&pnpm)
+            ))
+        }
+        // Fallback = npm family: the uninstall idiom for a global package is still
+        // sibling `npm.cmd`/`.exe` uninstall -g.
+        _ => {
+            let npm = sibling_bin_with_ext(bin_path, "npm", &["cmd", "exe"])?;
+            Some(format!(
+                "{} uninstall -g {pkg}",
+                win_quote_path_for_batch(&npm)
+            ))
+        }
+    }
+}
+
 /// 静态命令（= 平台可安全静默执行的官方 CLI 自升级 || `npm i -g <pkg>@latest` /
 /// 官方 installer）。锚定探不到默认安装时回退到它；npm fallback 仍等同于
 /// "装到 PATH 第一个 npm"的旧行为。
@@ -3471,6 +3906,23 @@ fn install_command_for(tool: &str) -> String {
     posix_install_command_for(tool)
 }
 
+/// Safe uninstall command for WSL tools. Host-side enumeration cannot prove which
+/// package manager owns an entry inside the distro, so only Hermes' verified official
+/// self-uninstall is allowed. Every other tool returns empty and is routed to manual
+/// removal; there is deliberately no bare `npm uninstall -g` fallback.
+///
+/// `#[cfg(target_os = "windows")]` mirrors the only call site
+/// (`wsl_tool_action_shell_command`, Windows-only): unlike `posix_install_command_for`
+/// there is no non-Windows caller, so without this gate the function is dead code on
+/// Linux/macOS and fails `cargo build` there (CI runs `cargo test` on ubuntu + macos).
+#[cfg(target_os = "windows")]
+fn posix_uninstall_command_for(tool: &str) -> String {
+    match tool {
+        "hermes" => "hermes uninstall --yes".to_string(),
+        _ => String::new(),
+    }
+}
+
 /// 计算某工具的升级命令与"是否需确认"。全平台共用一份:
 /// - **Windows + WSL 工具**(override 是 `\\wsl$\<distro>\...` UNC 路径)的升级规划
 ///   始终走 POSIX 静态命令、不锚定:锚定命令是 Windows 主机绝对路径,跨 `wsl.exe`
@@ -3529,6 +3981,15 @@ pub struct ToolInstallationReport {
     /// 是否成功锚定到某处具体安装。false = 退到裸 fallback 命令（无法确定命令行实际
     /// 命中哪处，或该处无同级 npm）；前端据此给出"默认入口无法确定"的诚实文案。
     anchored: bool,
+    /// Owner-anchored uninstall command (display only; regenerated on execution). Empty
+    /// when the default is missing/ambiguous/broken or its owner cannot be proven. The
+    /// frontend uses this to show the command in the uninstall confirm dialog or switch
+    /// to manual-removal guidance.
+    uninstall_command: String,
+    /// Whether the current default install can be auto-uninstalled via cc-switch. When false,
+    /// `uninstall_command` is empty and the frontend should prompt the user to remove it
+    /// manually instead of executing an uninstall.
+    uninstall_supported: bool,
 }
 
 /// 探测各工具的安装分布：枚举所有安装、标记冲突、生成锚定升级命令。只读、无副作用。
@@ -3548,6 +4009,7 @@ pub async fn probe_tool_installations(
             .map(|tool| {
                 let installs = enumerate_tool_installations(tool);
                 let (command, needs_confirmation, anchored) = plan_command_for(tool, &installs);
+                let (uninstall_command, uninstall_supported) = uninstall_plan(tool, &installs);
                 let is_conflict = is_conflicting(&installs);
                 ToolInstallationReport {
                     tool: tool.to_string(),
@@ -3556,6 +4018,8 @@ pub async fn probe_tool_installations(
                     needs_confirmation,
                     command,
                     anchored,
+                    uninstall_command,
+                    uninstall_supported,
                 }
             })
             .collect()
@@ -5177,6 +5641,176 @@ mod tests {
         }
     }
 
+    /// Windows anchored uninstall command generation: symmetric with
+    /// `anchored_upgrade_windows`. Pins each install source's Windows uninstall command
+    /// (volta/pnpm/npm sibling, plus the official Hermes CLI) and the fail-closed
+    /// contract for native, broken, or unowned installs.
+    /// Helpers are duplicated from `anchored_upgrade_windows` to keep each module
+    /// self-contained (same per-module pattern used elsewhere in this file).
+    #[cfg(target_os = "windows")]
+    mod anchored_uninstall_windows {
+        use super::super::*;
+
+        fn setup_sibling(
+            subdir: &str,
+            entry: &str,
+            siblings: &[&str],
+        ) -> (tempfile::TempDir, std::path::PathBuf, String) {
+            let dir = tempfile::tempdir().unwrap();
+            let sub = if subdir.is_empty() {
+                dir.path().to_path_buf()
+            } else {
+                dir.path().join(subdir)
+            };
+            std::fs::create_dir_all(&sub).unwrap();
+            std::fs::write(sub.join(entry), "").unwrap();
+            for s in siblings {
+                std::fs::write(sub.join(s), "").unwrap();
+            }
+            let bin_path = sub.join(entry).to_string_lossy().to_string();
+            (dir, sub, bin_path)
+        }
+
+        // Mirrors `win_quote_path_for_batch` so expected paths adapt to temp roots that
+        // contain spaces / special chars on the developer's machine (see the rationale
+        // in `anchored_upgrade_windows::expect_quoted_path`).
+        fn expect_quoted_path(p: &str) -> String {
+            let escaped = p.replace('%', "%%%%");
+            let needs_quote = p
+                .chars()
+                .any(|c| matches!(c, ' ' | '&' | '(' | ')' | '^' | ';' | '<' | '>' | '|' | ','));
+            if needs_quote {
+                format!("\"{escaped}\"")
+            } else {
+                escaped
+            }
+        }
+
+        #[test]
+        fn volta_windows_uses_volta_uninstall_only() {
+            let (_dir, sub, bin_path) = setup_sibling("Volta", "codex.cmd", &["volta.exe"]);
+            let cmd = anchored_uninstall_command_from_paths("codex", &bin_path, &bin_path);
+            let volta_full = format!("{}\\volta.exe", sub.to_string_lossy());
+            let expected = format!(
+                "{} uninstall @openai/codex",
+                expect_quoted_path(&volta_full)
+            );
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn pnpm_windows_uses_pnpm_remove_only() {
+            let (_dir, sub, bin_path) = setup_sibling("pnpm", "codex.cmd", &["pnpm.cmd"]);
+            let cmd = anchored_uninstall_command_from_paths("codex", &bin_path, &bin_path);
+            let pnpm_full = format!("{}\\pnpm.cmd", sub.to_string_lossy());
+            let expected = format!("{} remove -g @openai/codex", expect_quoted_path(&pnpm_full));
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn npm_windows_default_uninstall_branch() {
+            // A package-managed system path uses only its sibling npm. Codex has no
+            // official `uninstall` subcommand.
+            let (_dir, sub, bin_path) = setup_sibling("v22.0.0", "codex.cmd", &["npm.cmd"]);
+            let cmd = anchored_uninstall_command_from_paths("codex", &bin_path, &bin_path);
+            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            let expected = format!(
+                "{} uninstall -g @openai/codex",
+                expect_quoted_path(&npm_full)
+            );
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn claude_windows_npm_uses_npm_uninstall_only() {
+            let (_dir, sub, bin_path) = setup_sibling("v22.0.0", "claude.cmd", &["npm.cmd"]);
+            let cmd = anchored_uninstall_command_from_paths("claude", &bin_path, &bin_path);
+            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            let expected = format!(
+                "{} uninstall -g @anthropic-ai/claude-code",
+                expect_quoted_path(&npm_full)
+            );
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn claude_native_windows_is_not_auto_uninstallable() {
+            let (_dir, _sub, bin_path) =
+                setup_sibling("Programs/claude", "claude.exe", &["npm.cmd"]);
+            assert_eq!(
+                anchored_uninstall_command_from_paths("claude", &bin_path, &bin_path),
+                None
+            );
+        }
+
+        #[test]
+        fn codex_standalone_windows_is_not_auto_uninstallable() {
+            let (_dir, _sub, bin_path) =
+                setup_sibling("Programs/OpenAI/Codex/bin", "codex.exe", &["npm.cmd"]);
+            assert_eq!(
+                anchored_uninstall_command_from_paths("codex", &bin_path, &bin_path),
+                None
+            );
+        }
+
+        #[test]
+        fn grok_windows_npm_anchors_to_sibling_npm_uninstall() {
+            // A non-native grok path (nvm-windows-style v22.0.0 dir) anchors to sibling npm.
+            let (_dir, sub, bin_path) = setup_sibling("v22.0.0", "grok.cmd", &["npm.cmd"]);
+            let cmd = anchored_uninstall_command_from_paths("grok", &bin_path, &bin_path);
+            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            let expected = format!(
+                "{} uninstall -g @xai-official/grok",
+                expect_quoted_path(&npm_full)
+            );
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn grok_native_windows_ignores_unrelated_sibling_npm() {
+            let (_dir, _sub, bin_path) = setup_sibling(".grok/bin", "grok.exe", &["npm.cmd"]);
+            assert_eq!(
+                anchored_uninstall_command_from_paths("grok", &bin_path, &bin_path),
+                None
+            );
+        }
+
+        #[test]
+        fn hermes_windows_uses_cli_uninstall_with_yes() {
+            // hermes ships `hermes uninstall --yes`; anchor to the launcher. The sibling
+            // npm.cmd is irrelevant — hermes has no npm package; the official CLI is the
+            // only uninstall path.
+            let (_dir, _sub, bin_path) = setup_sibling("v22.0.0", "hermes.cmd", &["npm.cmd"]);
+            let cmd = anchored_uninstall_command_from_paths("hermes", &bin_path, &bin_path);
+            let expected = format!("{} uninstall --yes", expect_quoted_path(&bin_path));
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn openclaw_windows_requires_manual_owner_resolution() {
+            let (_dir, _sub, bin_path) = setup_sibling("pnpm", "openclaw.cmd", &["pnpm.cmd"]);
+            assert_eq!(
+                anchored_uninstall_command_from_paths("openclaw", &bin_path, &bin_path),
+                None
+            );
+        }
+
+        #[test]
+        fn broken_default_install_requires_manual_removal() {
+            let (_dir, _sub, bin_path) = setup_sibling("v22.0.0", "gemini.cmd", &["npm.cmd"]);
+            let installs = vec![ToolInstallation {
+                path: bin_path.clone(),
+                version: None,
+                runnable: false,
+                error: Some("runtime failed".to_string()),
+                source: infer_install_source(Path::new(&bin_path)).to_string(),
+                is_path_default: true,
+                real: PathBuf::from(&bin_path),
+            }];
+            assert_eq!(uninstall_plan("gemini", &installs), (String::new(), false));
+        }
+    }
+
     /// Windows-only helpers 单测——在 macOS/Linux 上整块通过 cfg 排除,不参与 `cargo test`。
     /// Windows CI(或本机 Windows 跑 cargo test)会激活这些用例。覆盖:①双引号
     /// quoting 镜像 POSIX 版;②sibling_bin_with_ext 在 fs 上按 ext 顺序探到第一个存在的、
@@ -5335,6 +5969,46 @@ mod tests {
                 !install_cmd.contains('|') && install_cmd.contains(" -o $tmp && bash $tmp"),
                 "WSL hermes 安装不应依赖 pipefail,得到: {install_cmd}"
             );
+
+            let uninstall_cmd =
+                wsl_tool_action_shell_command("hermes", ToolLifecycleAction::Uninstall).unwrap();
+            assert_eq!(uninstall_cmd, "hermes uninstall --yes");
+        }
+
+        #[test]
+        fn wsl_package_tools_require_manual_owner_resolution() {
+            for tool in ["claude", "codex", "gemini", "grok", "opencode", "openclaw"] {
+                assert!(
+                    wsl_tool_action_shell_command(tool, ToolLifecycleAction::Uninstall).is_none(),
+                    "{tool} must not fall back to a bare package-manager uninstall in WSL"
+                );
+            }
+        }
+
+        #[test]
+        fn wsl_distro_from_path_recognizes_unc_prefixes() {
+            // `uninstall_plan` / `plan_command_for` gate their WSL special case on this
+            // recognition: a hermes override pointing into WSL must surface as a distro so
+            // the report uses `hermes uninstall --yes` instead of reporting not-supported.
+            use std::path::Path;
+            assert_eq!(
+                wsl_distro_from_path(Path::new(r"\\wsl$\Ubuntu\home\user\.hermes")),
+                Some("Ubuntu".to_string())
+            );
+            assert_eq!(
+                wsl_distro_from_path(Path::new(r"\\wsl.localhost\Ubuntu-22.04\home\user\.hermes")),
+                Some("Ubuntu-22.04".to_string())
+            );
+            assert_eq!(
+                wsl_distro_from_path(Path::new(r"C:\Users\me\.hermes")),
+                None,
+                "plain Windows path is not a WSL override"
+            );
+            assert_eq!(
+                wsl_distro_from_path(Path::new(r"\\server\share\path")),
+                None,
+                "non-WSL UNC share is not a WSL override"
+            );
         }
 
         #[test]
@@ -5456,6 +6130,16 @@ mod tests {
                 "scoop"
             );
         }
+
+        #[test]
+        fn homebrew_caskroom_is_identified() {
+            assert_eq!(
+                infer_install_source(Path::new(
+                    "/opt/homebrew/Caskroom/codex/0.147.0/codex-aarch64-apple-darwin"
+                )),
+                "homebrew"
+            );
+        }
     }
 
     /// 锚定升级命令生成：用真实勘察到的安装路径固化为回归断言——
@@ -5554,6 +6238,19 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some("/opt/homebrew/bin/brew upgrade gemini-cli")
+            );
+        }
+
+        #[test]
+        fn codex_homebrew_cask_uses_cask_upgrade() {
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/opt/homebrew/bin/codex",
+                "/opt/homebrew/Caskroom/codex/0.147.0/codex-aarch64-apple-darwin",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/opt/homebrew/bin/brew upgrade --cask codex")
             );
         }
 
@@ -5874,6 +6571,18 @@ mod tests {
         }
 
         #[test]
+        fn brew_cask_extraction() {
+            assert_eq!(
+                brew_cask_from_path("/opt/homebrew/Caskroom/claude-code/2.1.226/claude").as_deref(),
+                Some("claude-code")
+            );
+            assert_eq!(
+                brew_cask_from_path("/opt/homebrew/Cellar/codex/0.147.0/bin/codex"),
+                None
+            );
+        }
+
+        #[test]
         fn sibling_bin_returns_none_when_bin_path_has_no_directory() {
             // bin_path 不含 `/` → parent_dir 返回空 → sibling_bin 不能拼出绝对路径
             // → None,让上游 anchored_command_from_paths 整体退化为静态命令兜底,
@@ -6065,6 +6774,419 @@ mod tests {
                 make(Some("1.0.0"), true),
                 make(Some("1.0.0"), false)
             ]));
+        }
+    }
+
+    /// Anchored uninstall command generation: symmetric with `anchored_upgrade`, pinning
+    /// each proven owner's uninstall command as a regression assertion. It also locks the
+    /// contract that native, broken, missing, and ambiguous installs fail closed instead
+    /// of falling back to a bare package-manager command.
+    #[cfg(not(target_os = "windows"))]
+    mod anchored_uninstall {
+        use super::super::*;
+        use std::path::Path;
+
+        fn inst(path: &str, is_default: bool) -> ToolInstallation {
+            ToolInstallation {
+                path: path.to_string(),
+                version: None,
+                runnable: true,
+                error: None,
+                source: infer_install_source(Path::new(path)).to_string(),
+                is_path_default: is_default,
+                real: std::path::PathBuf::from(path),
+            }
+        }
+
+        #[test]
+        fn claude_native_requires_manual_removal() {
+            // Claude treats `uninstall` as a prompt rather than a subcommand. Its native
+            // installer is therefore never auto-uninstalled.
+            let cmd = anchored_uninstall_command_from_paths(
+                "claude",
+                "/Users/me/.local/bin/claude",
+                "/Users/me/.local/share/claude/versions/2.1.146",
+            );
+            assert_eq!(cmd, None);
+        }
+
+        #[test]
+        fn grok_native_anchored_is_none_so_not_auto_uninstallable() {
+            // grok native (~/.grok/bin) has no special branch and no sibling npm (system
+            // source) -> the anchored package-manager path returns None. `uninstall_plan`
+            // treats this known-but-unowned install as not auto-uninstallable (a bare
+            // `npm uninstall -g` would delete a different npm copy), so manual removal is
+            // required. See `uninstall_plan_grok_native_is_not_supported`.
+            let cmd = anchored_uninstall_command_from_paths(
+                "grok",
+                "/Users/me/.grok/bin/grok",
+                "/Users/me/.grok/downloads/grok-macos-aarch64",
+            );
+            assert_eq!(cmd, None);
+        }
+
+        #[test]
+        fn grok_nvm_anchors_to_npm_uninstall() {
+            // grok via nvm -> anchored sibling `npm uninstall -g @xai-official/grok` (no
+            // `grok uninstall` chain, per the npm-based workflow).
+            let cmd = anchored_uninstall_command_from_paths(
+                "grok",
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/grok",
+                "/Users/me/.nvm/versions/node/v22.14.0/lib/node_modules/@xai-official/grok/bin/grok",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @xai-official/grok")
+            );
+        }
+
+        #[test]
+        fn codex_nvm_uses_npm_uninstall_only() {
+            // Codex has no `uninstall` subcommand; use only the npm that owns this install.
+            let cmd = anchored_uninstall_command_from_paths(
+                "codex",
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/codex",
+                "/Users/me/.nvm/versions/node/v22.14.0/lib/node_modules/@openai/codex/bin/codex.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex")
+            );
+        }
+
+        #[test]
+        fn claude_nvm_uses_npm_uninstall_only() {
+            // Claude also has no uninstall subcommand; invoking `claude uninstall` can
+            // start a real agent prompt, so only the proven npm owner may run.
+            let cmd = anchored_uninstall_command_from_paths(
+                "claude",
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/claude",
+                "/Users/me/.nvm/versions/node/v22.14.0/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @anthropic-ai/claude-code")
+            );
+        }
+
+        #[test]
+        fn codex_system_node_derives_and_pins_npm_prefix() {
+            let cmd = anchored_uninstall_command_from_paths(
+                "codex",
+                "/usr/local/bin/codex",
+                "/usr/local/lib/node_modules/@openai/codex/bin/codex.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("PATH='/usr/local/bin':\"$PATH\" /usr/local/bin/npm uninstall -g @openai/codex --prefix '/usr/local'")
+            );
+        }
+
+        #[test]
+        fn codex_standalone_without_npm_owner_requires_manual_removal() {
+            assert_eq!(
+                anchored_uninstall_command_from_paths(
+                    "codex",
+                    "/usr/local/bin/codex",
+                    "/usr/local/bin/codex",
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn hermes_uses_cli_uninstall_with_yes() {
+            // Hermes ships an official `hermes uninstall` (removes code + cleans shell
+            // PATH; keeps `~/.hermes/` data). `--yes` skips confirmation so it runs
+            // silently under the non-interactive lifecycle executor. No package-manager
+            // fallback: hermes has no npm package and its installer is isolated.
+            let cmd = anchored_uninstall_command_from_paths(
+                "hermes",
+                "/usr/local/bin/hermes",
+                "/usr/local/bin/hermes",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/usr/local/bin/hermes uninstall --yes")
+            );
+        }
+
+        #[test]
+        fn hermes_uninstall_quotes_shell_metacharacters() {
+            assert_eq!(
+                anchored_uninstall_command_from_paths(
+                    "hermes",
+                    "/opt/O'Brien/bin/hermes",
+                    "/opt/O'Brien/bin/hermes"
+                )
+                .as_deref(),
+                Some("'/opt/O'\"'\"'Brien/bin/hermes' uninstall --yes")
+            );
+        }
+
+        #[test]
+        fn gemini_homebrew_formula_uses_brew_uninstall() {
+            let cmd = anchored_uninstall_command_from_paths(
+                "gemini",
+                "/opt/homebrew/bin/gemini",
+                "/opt/homebrew/Cellar/gemini-cli/0.13.0/libexec/lib/node_modules/@google/gemini-cli/dist/index.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/opt/homebrew/bin/brew uninstall gemini-cli")
+            );
+        }
+
+        #[test]
+        fn codex_homebrew_formula_uses_brew_uninstall() {
+            let cmd = anchored_uninstall_command_from_paths(
+                "codex",
+                "/opt/homebrew/bin/codex",
+                "/opt/homebrew/Cellar/codex/1.2.3/bin/codex",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/opt/homebrew/bin/brew uninstall codex")
+            );
+        }
+
+        #[test]
+        fn codex_homebrew_cask_uses_cask_uninstall() {
+            let cmd = anchored_uninstall_command_from_paths(
+                "codex",
+                "/opt/homebrew/bin/codex",
+                "/opt/homebrew/Caskroom/codex/0.147.0/codex-aarch64-apple-darwin",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/opt/homebrew/bin/brew uninstall --cask codex")
+            );
+        }
+
+        #[test]
+        fn claude_homebrew_cask_uses_cask_uninstall() {
+            let cmd = anchored_uninstall_command_from_paths(
+                "claude",
+                "/opt/homebrew/bin/claude",
+                "/opt/homebrew/Caskroom/claude-code/2.1.226/claude",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/opt/homebrew/bin/brew uninstall --cask claude-code")
+            );
+        }
+
+        #[test]
+        fn gemini_nvm_anchors_to_npm_uninstall() {
+            let cmd = anchored_uninstall_command_from_paths(
+                "gemini",
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/gemini",
+                "/Users/me/.nvm/versions/node/v22.14.0/lib/node_modules/@google/gemini-cli/dist/index.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some(
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @google/gemini-cli"
+                )
+            );
+        }
+
+        #[test]
+        fn codex_volta_uses_volta_uninstall_only() {
+            let cmd = anchored_uninstall_command_from_paths(
+                "codex",
+                "/Users/me/.volta/bin/codex",
+                "/Users/me/.volta/tools/image/packages/codex/lib/node_modules/@openai/codex",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/Users/me/.volta/bin/volta uninstall @openai/codex")
+            );
+        }
+
+        #[test]
+        fn opencode_bun_anchors_to_bun_remove() {
+            let cmd = anchored_uninstall_command_from_paths(
+                "opencode",
+                "/Users/me/.bun/bin/opencode",
+                "/Users/me/.bun/install/global/node_modules/opencode-ai/bin/opencode",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/Users/me/.bun/bin/bun remove -g opencode-ai")
+            );
+        }
+
+        #[test]
+        fn openclaw_manager_shims_use_their_canonical_owner() {
+            for (entry, manager, args) in [
+                ("pnpm/openclaw", "pnpm/pnpm", "remove -g openclaw"),
+                (
+                    ".volta/bin/openclaw",
+                    ".volta/bin/volta",
+                    "uninstall openclaw",
+                ),
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                let entry = dir.path().join(entry);
+                let manager = dir.path().join(manager);
+                std::fs::create_dir_all(manager.parent().unwrap()).unwrap();
+                std::fs::write(&manager, "").unwrap();
+                assert_eq!(
+                    openclaw_package_remove_command(&entry.to_string_lossy()),
+                    Some(format!("{} {args}", manager.display()))
+                );
+            }
+        }
+
+        #[test]
+        fn opencode_native_install_not_anchored() {
+            // ~/.opencode/bin has no sibling npm and opencode has no confirmed uninstall
+            // subcommand -> anchor is None. `uninstall_plan` treats this known-but-unowned
+            // native install as not auto-uninstallable (a bare `npm uninstall -g opencode-ai`
+            // would delete a different npm copy); see
+            // `uninstall_plan_opencode_native_is_not_supported`.
+            let cmd = anchored_uninstall_command_from_paths(
+                "opencode",
+                "/Users/me/.opencode/bin/opencode",
+                "/Users/me/.opencode/bin/opencode",
+            );
+            assert_eq!(cmd, None);
+        }
+
+        #[test]
+        fn uninstall_plan_supports_npm_anchor() {
+            let installs = vec![inst(
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/gemini",
+                true,
+            )];
+            let (cmd, supported) = uninstall_plan("gemini", &installs);
+            assert!(supported);
+            assert!(cmd.contains("npm uninstall -g @google/gemini-cli"), "{cmd}");
+        }
+
+        #[test]
+        fn uninstall_plan_hermes_uses_cli_uninstall() {
+            // hermes now has an official `hermes uninstall --yes` that always anchors ->
+            // supported, with that command.
+            let installs = vec![inst("/usr/local/bin/hermes", true)];
+            let (cmd, supported) = uninstall_plan("hermes", &installs);
+            assert!(supported);
+            assert_eq!(cmd, "/usr/local/bin/hermes uninstall --yes");
+        }
+
+        #[test]
+        fn uninstall_plan_hermes_without_anchor_is_not_supported() {
+            assert_eq!(uninstall_plan("hermes", &[]), (String::new(), false));
+        }
+
+        #[test]
+        fn uninstall_plan_grok_native_is_not_supported() {
+            // grok native (~/.grok/bin) is the known default but has no package-manager
+            // owner. A bare `npm uninstall -g @xai-official/grok` would delete a *different*
+            // npm-managed copy while leaving the selected native install untouched, so
+            // the plan reports it as not auto-uninstallable (manual removal required).
+            let installs = vec![inst("/Users/me/.grok/bin/grok", true)];
+            let mut installs = installs;
+            installs[0].real =
+                std::path::PathBuf::from("/Users/me/.grok/downloads/grok-macos-aarch64");
+            let (cmd, supported) = uninstall_plan("grok", &installs);
+            assert!(!supported);
+            assert!(cmd.is_empty());
+        }
+
+        #[test]
+        fn uninstall_plan_opencode_native_is_not_supported() {
+            // opencode native (~/.opencode/bin) is the known default but unowned (no
+            // sibling npm, no official uninstall subcommand). Bare
+            // `npm uninstall -g opencode-ai` would target a different npm copy -> not
+            // auto-uninstallable (manual removal required).
+            let installs = vec![inst("/Users/me/.opencode/bin/opencode", true)];
+            let (cmd, supported) = uninstall_plan("opencode", &installs);
+            assert!(!supported);
+            assert!(cmd.is_empty());
+        }
+
+        #[test]
+        fn uninstall_plan_without_install_info_is_not_supported() {
+            // No install owner can be proven, so uninstall must not inherit the
+            // install/update path's best-effort fallback.
+            let (cmd, supported) = uninstall_plan("grok", &[]);
+            assert!(!supported);
+            assert!(cmd.is_empty());
+        }
+
+        #[test]
+        fn uninstall_plan_ambiguous_default_is_not_supported() {
+            let installs = vec![
+                inst("/Users/me/.nvm/versions/node/v20/bin/codex", false),
+                inst("/Users/me/.nvm/versions/node/v22/bin/codex", false),
+            ];
+            assert_eq!(uninstall_plan("codex", &installs), (String::new(), false));
+        }
+
+        #[test]
+        fn uninstall_plan_broken_default_is_not_supported() {
+            let mut installs = vec![inst("/Users/me/.nvm/versions/node/v22/bin/openclaw", true)];
+            installs[0].runnable = false;
+            installs[0].error = Some("Node version is too old".to_string());
+            assert_eq!(
+                uninstall_plan("openclaw", &installs),
+                (String::new(), false)
+            );
+        }
+
+        #[test]
+        fn uninstall_command_for_hermes_returns_ok() {
+            // hermes is now auto-uninstallable via its CLI subcommand.
+            let installs = vec![inst("/usr/local/bin/hermes", true)];
+            let cmd = uninstall_command_for("hermes", &installs).expect("hermes uninstallable");
+            assert_eq!(cmd, "/usr/local/bin/hermes uninstall --yes");
+        }
+
+        #[test]
+        fn openclaw_unowned_wrappers_are_not_supported() {
+            for path in [
+                "/Users/me/.local/bin/openclaw",
+                "/Users/me/.openclaw/bin/openclaw",
+                "/opt/pnpm/custom/bin/openclaw",
+            ] {
+                let (command, supported) = uninstall_plan("openclaw", &[inst(path, true)]);
+                assert!(!supported && command.is_empty(), "{path}");
+            }
+        }
+
+        #[test]
+        fn openclaw_npm_requires_real_targets_owner() {
+            let dir = tempfile::tempdir().unwrap();
+            let path_bin = dir.path().join("homebrew/bin");
+            let owner = dir.path().join("owner-prefix");
+            let owner_bin = owner.join("bin");
+            std::fs::create_dir_all(&path_bin).unwrap();
+            std::fs::create_dir_all(&owner_bin).unwrap();
+            let openclaw = path_bin.join("openclaw");
+            let owner_npm = owner_bin.join("npm");
+            let mut installs = vec![inst(&openclaw.to_string_lossy(), true)];
+            installs[0].real = owner.join("lib/node_modules/openclaw/openclaw.mjs");
+            assert_eq!(
+                uninstall_plan("openclaw", &installs),
+                (String::new(), false)
+            );
+
+            std::fs::write(&owner_npm, "").unwrap();
+            let (cmd, supported) = uninstall_plan("openclaw", &installs);
+            assert!(supported);
+            assert_eq!(
+                cmd,
+                format!(
+                    "{} uninstall --service --yes --non-interactive && PATH='{}':\"$PATH\" {} uninstall -g openclaw --prefix '{}'",
+                    openclaw.display(),
+                    owner_bin.display(),
+                    owner_npm.display(),
+                    owner.display()
+                )
+            );
+            assert!(!cmd.contains(path_bin.join("npm").to_string_lossy().as_ref()));
         }
     }
 
