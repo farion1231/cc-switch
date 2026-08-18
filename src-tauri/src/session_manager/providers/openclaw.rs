@@ -265,17 +265,7 @@ fn parse_session(
     }
 
     // Extract last_active_at from tail lines (reverse order)
-    let mut last_active_at: Option<i64> = None;
-    for line in tail.iter().rev() {
-        let value: Value = match serde_json::from_str(line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-        if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
-            last_active_at = Some(ts);
-            break;
-        }
-    }
+    let last_active_at = last_activity_from_tail(&tail);
 
     // Fall back to filename as session ID
     let session_id = session_id.or_else(|| {
@@ -311,6 +301,19 @@ fn parse_session(
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: None, // OpenClaw sessions are gateway-managed, no CLI resume
+    })
+}
+
+pub(crate) fn last_activity_at(path: &Path) -> Option<i64> {
+    let (_, tail) = read_head_tail_lines(path, 0, 30).ok()?;
+    last_activity_from_tail(&tail)
+}
+
+fn last_activity_from_tail(tail: &[String]) -> Option<i64> {
+    tail.iter().rev().find_map(|line| {
+        serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|value| value.get("timestamp").and_then(parse_timestamp_to_ms))
     })
 }
 

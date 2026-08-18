@@ -166,7 +166,7 @@ fn parse_session_file(
         project_dir: cwd.or_else(|| native.and_then(|value| value.cwd.clone())),
         source_path: Some(path.to_string_lossy().to_string()),
         created_at,
-        last_active_at: None,
+        last_active_at: crate::session_manager::providers::openclaw::last_activity_at(path),
         last_synced_at: current_unix_ms(),
     };
 
@@ -428,6 +428,31 @@ mod tests {
         assert_eq!(
             claim.metadata.project_dir.as_deref(),
             Some("/index-project")
+        );
+    }
+
+    #[test]
+    fn tail_timestamp_populates_last_active_at() {
+        let temp = tempdir().expect("tempdir");
+        write_session(
+            temp.path(),
+            "agent",
+            "active.jsonl",
+            concat!(
+                "{\"type\":\"session\",\"id\":\"active\",\"timestamp\":\"2026-08-13T10:00:00Z\"}\n",
+                "{\"type\":\"message\",\"timestamp\":\"2026-08-14T11:30:00Z\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n"
+            ),
+        );
+
+        let result = scan_openclaw_sessions(temp.path());
+        let claim = result.relation_claims.first().expect("active session");
+        assert_eq!(
+            claim.metadata.last_active_at,
+            Some(
+                DateTime::parse_from_rfc3339("2026-08-14T11:30:00Z")
+                    .expect("valid fixture timestamp")
+                    .timestamp_millis()
+            )
         );
     }
 

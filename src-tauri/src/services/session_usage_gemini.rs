@@ -256,7 +256,7 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
         // 生成唯一 request_id
         let request_id = format!("gemini_session:{session_id}:{message_id}");
 
-        let admitted = match insert_gemini_session_entry(
+        let (insert_outcome, canonical_cost) = match insert_gemini_session_entry(
             db,
             &request_id,
             &tokens,
@@ -264,27 +264,30 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
             Some(session_id),
             timestamp,
         ) {
-            Ok(GeminiInsertOutcome::Inserted) => {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!("[GEMINI-SYNC] 插入失败 ({}): {e}", request_id);
+                skipped += 1;
+                continue;
+            }
+        };
+        let admitted = match insert_outcome {
+            GeminiInsertOutcome::Inserted => {
                 imported += 1;
                 true
             }
-            Ok(GeminiInsertOutcome::Existing) => {
+            GeminiInsertOutcome::Existing => {
                 skipped += 1;
                 true
             }
-            Ok(GeminiInsertOutcome::ProxyDuplicate) => {
+            GeminiInsertOutcome::ProxyDuplicate => {
                 // A complete event matching a successful proxy row belongs to
                 // the proxy source only.  Do not create a second direct fact
                 // or coverage marker for the same usage.
                 skipped += 1;
                 false
             }
-            Ok(GeminiInsertOutcome::Rejected) => {
-                skipped += 1;
-                false
-            }
-            Err(e) => {
-                log::warn!("[GEMINI-SYNC] 插入失败 ({}): {e}", request_id);
+            GeminiInsertOutcome::Rejected => {
                 skipped += 1;
                 false
             }
@@ -309,6 +312,20 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
         fact.output_tokens = (tokens.output_known && tokens.thoughts_known)
             .then_some(i64::from(tokens.output.saturating_add(tokens.thoughts)));
         fact.cache_read_tokens = tokens.cached_known.then_some(i64::from(tokens.cached));
+        fact.total_cost_usd = canonical_cost;
+        fact.cost_status = Some(
+            if tokens.has_complete_components() {
+                if fact.total_cost_usd.is_some() {
+                    "complete"
+                } else {
+                    "unknown"
+                }
+            } else {
+                "partial"
+            }
+            .to_string(),
+        );
+        fact.cost_source = Some(GEMINI_SESSION_DATA_SOURCE.to_string());
         fact.first_event_at = Some(event_at);
         fact.last_event_at = Some(event_at);
         canonical_batch.replace_observe(request_id, fact);
@@ -418,7 +435,7 @@ fn insert_gemini_session_entry(
     model: &str,
     session_id: Option<&str>,
     timestamp: Option<&str>,
-) -> Result<GeminiInsertOutcome, AppError> {
+) -> Result<(GeminiInsertOutcome, Option<String>), AppError> {
     if session_id.is_none_or(|id| id.trim().is_empty())
         || parse_gemini_event_timestamp(timestamp).is_none()
         || !tokens.has_any_known_component()
@@ -426,7 +443,7 @@ fn insert_gemini_session_entry(
         // Legacy raw rows require non-null numeric columns, but no caller may
         // use those zero placeholders for an event lacking source identity,
         // event time, or any proven token component.
-        return Ok(GeminiInsertOutcome::Rejected);
+        return Ok((GeminiInsertOutcome::Rejected, None));
     }
     let conn = lock_conn!(db.conn);
 
@@ -461,7 +478,7 @@ fn insert_gemini_session_entry(
         && tokens.has_complete_components()
         && should_skip_session_insert(&conn, request_id, &dedup_key)?
     {
-        return Ok(GeminiInsertOutcome::ProxyDuplicate);
+        return Ok((GeminiInsertOutcome::ProxyDuplicate, None));
     }
 
     // 计算费用
@@ -479,26 +496,26 @@ fn insert_gemini_session_entry(
     // used "0" when no local price was found. The normalized bucket above
     // deliberately keeps this state as `None` instead of copying it.
     let multiplier = Decimal::from(1);
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
-    {
-        Some(p) => {
-            let cost = CostCalculator::calculate_for_app(GEMINI_APP_TYPE, &usage, &p, multiplier);
-            (
+    let calculated_cost = pricing.as_ref().map(|pricing| {
+        CostCalculator::calculate_for_app(GEMINI_APP_TYPE, &usage, pricing, multiplier)
+    });
+    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
+        match calculated_cost.as_ref() {
+            Some(cost) => (
                 cost.input_cost.to_string(),
                 cost.output_cost.to_string(),
                 cost.cache_read_cost.to_string(),
                 cost.cache_creation_cost.to_string(),
                 cost.total_cost.to_string(),
-            )
-        }
-        None => (
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-        ),
-    };
+            ),
+            None => (
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+            ),
+        };
 
     // 使用 UPSERT：新记录插入，已存在记录更新 token 和费用（Gemini 全量重读可能携带更新值）
     conn.execute(
@@ -562,11 +579,14 @@ fn insert_gemini_session_entry(
     .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
 
     let changed = conn.changes() > 0;
-    Ok(if changed {
-        GeminiInsertOutcome::Inserted
-    } else {
-        GeminiInsertOutcome::Existing
-    })
+    Ok((
+        if changed {
+            GeminiInsertOutcome::Inserted
+        } else {
+            GeminiInsertOutcome::Existing
+        },
+        (tokens.has_complete_components() && calculated_cost.is_some()).then(|| total_cost.clone()),
+    ))
 }
 
 /// 查找 Gemini 模型定价
@@ -784,10 +804,11 @@ mod tests {
             assert_eq!((raw.3, raw.4, raw.5), (200, 25, 10));
             assert_ne!(raw.6, initial_cost);
 
-            let canonical: (i64, String, i64, i64, i64) = conn.query_row(
+            let canonical: (i64, String, i64, i64, i64, String) = conn.query_row(
                 "SELECT COUNT(*), COALESCE(MAX(model), ''),
                         COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-                        COALESCE(SUM(cache_read_tokens), 0)
+                        COALESCE(SUM(cache_read_tokens), 0),
+                        COALESCE(MAX(total_cost_usd), '')
                  FROM agent_session_usage_rollups
                  WHERE app_type = 'gemini' AND session_id = ?1
                    AND data_source = 'gemini_session'",
@@ -799,10 +820,14 @@ mod tests {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 },
             )?;
-            assert_eq!(canonical, (1, "gemini-rewrite-v2".to_string(), 200, 25, 10));
+            assert_eq!(
+                canonical,
+                (1, "gemini-rewrite-v2".to_string(), 200, 25, 10, raw.6,)
+            );
         }
 
         clear_gemini_sync_state(&db, &path)?;
