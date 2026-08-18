@@ -2091,7 +2091,7 @@ pub struct ToolInstallation {
 }
 
 /// 由可执行文件路径前缀推断安装来源。纯字符串匹配、无副作用。
-/// 顺序敏感：Homebrew 的 Cellar 真身要先于通用规则命中。
+/// 顺序敏感：Homebrew 的 Cellar / Caskroom 真身要先于通用规则命中。
 fn infer_install_source(path: &Path) -> &'static str {
     let s = path
         .to_string_lossy()
@@ -2099,7 +2099,7 @@ fn infer_install_source(path: &Path) -> &'static str {
         .to_ascii_lowercase();
     if s.contains("/.nvm/") {
         "nvm"
-    } else if s.contains("/homebrew/") || s.contains("/cellar/") {
+    } else if s.contains("/homebrew/") || s.contains("/cellar/") || s.contains("/caskroom/") {
         "homebrew"
     // `.volta` 是 macOS/Linux 默认安装(`~/.volta/bin`),`/volta/` 兜底覆盖
     // Windows 的 `%LOCALAPPDATA%\Volta\bin` / `%VOLTA_HOME%\bin`(无前导点)。
@@ -2483,13 +2483,37 @@ fn parent_dir(p: &str) -> String {
 /// npm 全局包落在 `/opt/homebrew/lib/node_modules`（不含 Cellar）。两者升级命令不同。
 #[cfg(not(target_os = "windows"))]
 fn brew_formula_from_path(real: &str) -> Option<String> {
+    brew_token_from_path(real, "Cellar")
+}
+
+/// 从 canonicalize 后的真身路径提取 Homebrew cask token：
+/// `/opt/homebrew/Caskroom/codex/0.146.0/bin/codex` → `Some("codex")`。
+/// 非 Caskroom 路径返回 None。Cask 是预编译二进制，不走 node；若误判成 Homebrew
+/// npm 全局包，会用 sibling `npm i -g` 覆盖 `/opt/homebrew/bin/<tool>` 并触发 EEXIST。
+#[cfg(not(target_os = "windows"))]
+fn brew_cask_from_path(real: &str) -> Option<String> {
+    brew_token_from_path(real, "Caskroom")
+}
+
+/// Homebrew 安装目录形如 `<prefix>/{Cellar,Caskroom}/<token>/<version>/...`。
+/// 取出 `marker` 后的第一段作为 formula 名或 cask token；大小写不敏感，兼容
+/// `/usr/local/Caskroom`（Intel）与 `/opt/homebrew/Caskroom`（Apple Silicon）。
+#[cfg(not(target_os = "windows"))]
+fn brew_token_from_path(real: &str, marker: &str) -> Option<String> {
     let mut segs = real.split('/');
     while let Some(seg) = segs.next() {
-        if seg.eq_ignore_ascii_case("Cellar") {
+        if seg.eq_ignore_ascii_case(marker) {
             return segs.next().filter(|s| !s.is_empty()).map(|s| s.to_string());
         }
     }
     None
+}
+
+/// Cellar formula 或 Caskroom cask 都由 Homebrew 拥有，升级必须走 brew，
+/// 不能落到 sibling npm。任一命中即视为 brew-managed。
+#[cfg(not(target_os = "windows"))]
+fn is_brew_managed_path(real: &str) -> bool {
+    brew_formula_from_path(real).is_some() || brew_cask_from_path(real).is_some()
 }
 
 /// xAI's native installer uses `~/.grok/bin` for its launchers and
@@ -2764,7 +2788,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
 /// **仅对会锚定到 sibling npm 的 node 管理器来源（nvm/fnm/mise/homebrew npm）生效**：
 /// `runnable=false` 是宽信号（权限 / node 版本 / 任意 `--version` 失败皆可触发），非 npm
 /// 全局安装各有自己的二进制分发与修复方式，无脑套 npm uninstall+install 会出错——Homebrew
-/// formula（real 在 `Cellar/`）本应 `brew upgrade codex`，npm 够不到它反而旁路装第二份 npm
+/// formula / cask（real 在 `Cellar/` 或 `Caskroom/`）本应 `brew upgrade`，npm 够不到它反而旁路装第二份 npm
 /// 全局 codex；Volta/Bun 本应 `volta install`/`bun add`，且 `~/.bun/bin` 下没有 npm、
 /// `sibling_bin` 会拼出不存在的路径；system/未知来源无可靠 sibling npm。这些来源一律返回
 /// None，让上游继续走 source-specific 的 `anchored_command_from_paths`。白名单与
@@ -2775,8 +2799,8 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
 /// 对各类损坏都是合理且不会更糟的修复。
 #[cfg(not(target_os = "windows"))]
 fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
-    // brew formula（real 在 Cellar）→ 不归 npm 管，交回 anchored 走 brew upgrade。
-    if brew_formula_from_path(real).is_some() {
+    // brew formula / cask（real 在 Cellar 或 Caskroom）→ 不归 npm 管，交回 anchored 走 brew upgrade。
+    if is_brew_managed_path(real) {
         return None;
     }
     // 只认会落到 sibling npm 的 node 管理器来源；volta/bun/system/未知交回 anchored。
@@ -2806,6 +2830,15 @@ fn package_manager_anchored_command_from_paths(
     bin_path: &str,
     real_target: &str,
 ) -> Option<String> {
+    // Cask 必须先于 formula：两者互斥（真身不会同时落在 Caskroom 和 Cellar），
+    // 但先拦 cask 能避免未来路径里同时出现这两个段时误走 formula。
+    if let Some(cask) = brew_cask_from_path(real_target) {
+        let brew = sibling_bin(bin_path, "brew")?;
+        return Some(format!(
+            "{} upgrade --cask {cask}",
+            quote_path_if_spaced(&brew)
+        ));
+    }
     if let Some(formula) = brew_formula_from_path(real_target) {
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
@@ -2854,8 +2887,9 @@ fn package_manager_anchored_command_from_paths(
 /// ② Claude / Grok 原生安装器 → `<bin_path 绝对> update`；
 ///    bin_path 指向 launcher,launcher 内部 dispatch update 子命令。它不归 npm 管,
 ///    且在 PATH 里比 nvm/homebrew 更靠前,用 npm 升级会装到别处且被原生那份遮蔽。
-/// ③ Homebrew formula（真身在 `Cellar/<formula>/`）→ `<bin_path 同目录>/brew upgrade <formula>`;
-///    formula 由 Homebrew 拥有,避免 self-update 尝试改动包管理器管理的安装。
+/// ③ Homebrew formula / cask（真身在 `Cellar/<formula>/` 或 `Caskroom/<token>/`）
+///    → `<bin_path 同目录>/brew upgrade [--cask] <name>`；由 Homebrew 拥有,避免
+///    self-update 或 sibling npm 改动包管理器管理的安装。
 /// ④ 其余支持官方自升级的工具 → `<bin_path 绝对> update/upgrade || <原锚定包管理器命令>`；
 ///    Codex 的 self-update 只在部分 release 可用,所以保留 npm/brew/bun/volta fallback。
 /// ⑤ 不支持官方自升级的 npm 全局包(例如 Gemini CLI，以及非 native 的 Grok Build) → 锚定到
@@ -2879,7 +2913,7 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         ));
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path, real_target);
-    if brew_formula_from_path(real_target).is_some() {
+    if is_brew_managed_path(real_target) {
         return package_command;
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
@@ -5518,6 +5552,19 @@ mod tests {
         use std::path::Path;
 
         #[test]
+        fn macos_homebrew_caskroom_is_homebrew() {
+            assert_eq!(
+                infer_install_source(Path::new("/opt/homebrew/Caskroom/codex/0.146.0/bin/codex")),
+                "homebrew"
+            );
+            // Intel prefix 不含 `/homebrew/`，必须靠 `/caskroom/` 本身命中。
+            assert_eq!(
+                infer_install_source(Path::new("/usr/local/Caskroom/codex/0.146.0/bin/codex")),
+                "homebrew"
+            );
+        }
+
+        #[test]
         fn macos_volta_with_dot_prefix() {
             assert_eq!(
                 infer_install_source(Path::new("/Users/me/.volta/bin/codex")),
@@ -5681,6 +5728,37 @@ mod tests {
                 "/opt/homebrew/Cellar/codex/1.2.3/bin/codex",
             );
             assert_eq!(cmd.as_deref(), Some("/opt/homebrew/bin/brew upgrade codex"));
+        }
+
+        #[test]
+        fn codex_homebrew_cask_uses_brew_upgrade_cask() {
+            // `/opt/homebrew/bin/codex` → Caskroom/codex/...:是 brew cask 而非 npm 全局包。
+            // 若误走 sibling `npm i -g @openai/codex`，npm bin-links 会因
+            // `/opt/homebrew/bin/codex` 不属于它而 EEXIST（#6562）。
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/opt/homebrew/bin/codex",
+                "/opt/homebrew/Caskroom/codex/0.146.0/bin/codex",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/opt/homebrew/bin/brew upgrade --cask codex")
+            );
+        }
+
+        #[test]
+        fn intel_homebrew_cask_without_homebrew_prefix_still_uses_brew() {
+            // Intel 默认 prefix 是 `/usr/local`，Caskroom 路径不含 `/homebrew/`。
+            // 真身解析必须靠 `Caskroom` 段本身，不能依赖 prefix 子串。
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/usr/local/bin/codex",
+                "/usr/local/Caskroom/codex/0.146.0/bin/codex",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/usr/local/bin/brew upgrade --cask codex")
+            );
         }
 
         #[test]
@@ -5970,6 +6048,19 @@ mod tests {
         }
 
         #[test]
+        fn brew_cask_path_with_space_is_quoted() {
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/opt/my brew/bin/codex",
+                "/opt/my brew/Caskroom/codex/0.146.0/bin/codex",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("'/opt/my brew/bin/brew' upgrade --cask codex")
+            );
+        }
+
+        #[test]
         fn brew_formula_extraction() {
             assert_eq!(
                 brew_formula_from_path("/opt/homebrew/Cellar/gemini-cli/0.13.0/bin/gemini")
@@ -5983,6 +6074,33 @@ mod tests {
             );
             assert_eq!(
                 brew_formula_from_path("/Users/me/.nvm/versions/node/v22/lib/node_modules/x"),
+                None
+            );
+            // Caskroom 不是 formula。
+            assert_eq!(
+                brew_formula_from_path("/opt/homebrew/Caskroom/codex/0.146.0/bin/codex"),
+                None
+            );
+        }
+
+        #[test]
+        fn brew_cask_extraction() {
+            assert_eq!(
+                brew_cask_from_path("/opt/homebrew/Caskroom/codex/0.146.0/bin/codex").as_deref(),
+                Some("codex")
+            );
+            // Intel prefix 不含 /homebrew/，仍能抽出 token。
+            assert_eq!(
+                brew_cask_from_path("/usr/local/Caskroom/codex/0.146.0/bin/codex").as_deref(),
+                Some("codex")
+            );
+            // formula / npm 全局包都不是 cask。
+            assert_eq!(
+                brew_cask_from_path("/opt/homebrew/Cellar/codex/1.2.3/bin/codex"),
+                None
+            );
+            assert_eq!(
+                brew_cask_from_path("/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js"),
                 None
             );
         }
@@ -6077,6 +6195,26 @@ mod tests {
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
                 Some("/opt/homebrew/bin/brew upgrade codex")
+            );
+        }
+
+        #[test]
+        fn codex_broken_homebrew_cask_uses_brew_not_npm_repair() {
+            // brew cask 装的坏 codex（real 在 Caskroom）：与 formula 同理，必须回落到
+            // `brew upgrade --cask`。误走 npm uninstall+install 会撞 EEXIST，或旁路
+            // 装第二份 npm 全局包争抢同一个 `/opt/homebrew/bin/codex`。
+            let broken = ToolInstallation {
+                path: "/opt/homebrew/bin/codex".to_string(),
+                version: None,
+                runnable: false,
+                error: None,
+                source: "homebrew".to_string(),
+                is_path_default: true,
+                real: std::path::PathBuf::from("/opt/homebrew/Caskroom/codex/0.146.0/bin/codex"),
+            };
+            assert_eq!(
+                installs_anchored_command("codex", &[broken]).as_deref(),
+                Some("/opt/homebrew/bin/brew upgrade --cask codex")
             );
         }
 
