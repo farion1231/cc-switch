@@ -1063,6 +1063,16 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    // `[desktop]` 是 Codex Desktop 自己的界面状态，live 才是唯一来源；回填时
+    // 剥掉，否则切走那一刻的快照会变成供应商「自己的值」，切回来时压过用户
+    // 期间在桌面端改的设置（#6400）。
+    if let Err(err) = crate::codex_config::strip_codex_desktop_from_settings(&mut settings) {
+        log::warn!(
+            "Failed to strip [desktop] while backfilling '{}': {err}",
+            provider.id
+        );
+    }
+
     // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
     // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
     if provider.category.as_deref() == Some("official")
@@ -3146,6 +3156,42 @@ base_url = "https://a.example/v1"
         assert!(
             config_text.contains("model = \"gpt-5.5\""),
             "non-MCP content must survive the strip"
+        );
+    }
+
+    #[test]
+    fn codex_switch_backfill_strips_the_desktop_table() {
+        // [desktop] 是 Codex Desktop 自己的界面状态，live 是唯一来源。回填留下
+        // 快照，切回来时它会以「供应商自己的值」的身份压过用户期间改的设置。
+        let provider = Provider::with_id(
+            "prov".to_string(),
+            "Prov".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "model = \"gpt-5.5\"\n"
+            }),
+            None,
+        );
+
+        let live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": "model = \"gpt-5.5\"\n\n[desktop]\nmac-menu-bar-enabled = false\n"
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        let config_text = result
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config text");
+        assert!(
+            !config_text.contains("desktop"),
+            "backfill must strip [desktop] from the stored provider config, got: {config_text}"
+        );
+        assert!(
+            config_text.contains("model = \"gpt-5.5\""),
+            "non-desktop content must survive the strip"
         );
     }
 
