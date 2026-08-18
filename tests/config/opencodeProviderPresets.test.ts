@@ -102,7 +102,13 @@ describe("OpenCode Go usage script", () => {
     expect(preset?.meta?.usage_script).toBeDefined();
 
     const script = JSON.parse(preset!.meta!.usage_script!.code);
-    expect(script.request.url).toBe("{{baseUrl}}/v1/usage");
+    expect(script.request.url).toBe("{{baseUrl}}/usage");
+    expect(
+      script.request.url.replace(
+        "{{baseUrl}}",
+        preset!.settingsConfig.options.baseURL,
+      ),
+    ).toBe("https://opencode.ai/zen/go/v1/usage");
 
     const extractor = new Function(`return (${script.extractor})`)();
     const now = Date.now();

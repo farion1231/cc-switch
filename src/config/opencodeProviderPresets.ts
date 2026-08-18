@@ -1902,7 +1902,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         templateType: "balance",
         code: JSON.stringify({
           request: {
-            url: "{{baseUrl}}/v1/usage",
+            url: "{{baseUrl}}/usage",
             method: "GET",
             headers: {
               Authorization: "Bearer {{apiKey}}",
