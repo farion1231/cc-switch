@@ -1895,11 +1895,11 @@ fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::p
 }
 
 #[cfg(target_os = "windows")]
-fn run_windows_tool_command(
+fn build_windows_tool_command(
     tool_path: &Path,
     args: &[&str],
     new_path: &str,
-) -> std::io::Result<std::process::Output> {
+) -> std::process::Command {
     use std::process::Command;
 
     if is_windows_command_script(tool_path) {
@@ -1925,19 +1925,27 @@ fn run_windows_tool_command(
             }
         );
         let mut cmd = Command::new("cmd");
-        return cmd
-            .args(["/D", "/S", "/C"])
+        cmd.args(["/D", "/S", "/C"])
             .raw_arg(&command)
             .env("PATH", new_path)
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
+            .creation_flags(CREATE_NO_WINDOW);
+        return cmd;
     }
 
-    Command::new(tool_path)
-        .args(args)
+    let mut cmd = Command::new(tool_path);
+    cmd.args(args)
         .env("PATH", new_path)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
+        .creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tool_command(
+    tool_path: &Path,
+    args: &[&str],
+    new_path: &str,
+) -> std::io::Result<std::process::Output> {
+    build_windows_tool_command(tool_path, args, new_path).output()
 }
 
 #[cfg(target_os = "windows")]
@@ -2210,6 +2218,9 @@ fn resolve_path_default(
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
         .arg(format!("command -v {tool}"))
+        // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
+        // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     isolate_child_process_group(&mut cmd);
@@ -2296,19 +2307,76 @@ fn resolve_path_default(
     Ok(std::fs::canonicalize(preferred).ok())
 }
 
+/// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
+/// 安装跑一次 `--version`，任何一条挂死（.zshrc 阻塞、nvm shim 指向已删除的 node 等）
+/// 都会卡住整个"全部升级"预检——到点整组击杀，该条按探测失败降级，预检继续。
+const INSTALL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 带超时的 `--version` 探测（非 Windows）。与 `scan_cli_version` 的裸 `output()`
+/// 不同：stdin 显式置 null、经 `isolate_child_process_group` 进独立会话，超时可整组击杀。
+/// `new_path` 取 `&OsStr` 而非 `&str`：与 `prepend_search_dir_to_path` 同一约定，
+/// 非 UTF-8 的 PATH 段不能在传递途中被有损转换丢弃。
+#[cfg(not(target_os = "windows"))]
+fn run_probe_version_command(
+    tool_path: &Path,
+    new_path: &std::ffi::OsStr,
+) -> Result<std::process::Output, String> {
+    use std::process::{Command, Stdio};
+
+    let mut cmd = Command::new(tool_path);
+    cmd.arg("--version")
+        .env("PATH", new_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_child_process_group(&mut cmd);
+    let child = cmd.spawn().map_err(|e| e.to_string())?;
+    wait_child_output(
+        child,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+}
+
+/// 带超时的 `--version` 探测（Windows）。命令构造与 `run_windows_tool_version_command`
+/// 完全一致（.cmd/.bat 经 `cmd /C call`、其余直连），但改 spawn + `wait_child_output`：
+/// 挂死的 .cmd shim / CLI 到点由 `terminate_child_tree`（taskkill /T /F）整树击杀，
+/// 预检不再被单个候选卡死。scan 路径保持原 helper 不受影响。
+#[cfg(target_os = "windows")]
+fn run_probe_version_command(
+    tool_path: &Path,
+    new_path: &str,
+) -> Result<std::process::Output, String> {
+    use std::process::Stdio;
+
+    let mut cmd = build_windows_tool_command(tool_path, &["--version"], new_path);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = cmd.spawn().map_err(|e| e.to_string())?;
+    wait_child_output(
+        child,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+}
+
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
 /// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
 fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
-    #[cfg(not(target_os = "windows"))]
-    use std::process::Command;
-
     let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
     let current_path = effective_path_os().unwrap_or_default();
-    let path_default = resolve_path_default(tool, None).ok().flatten();
+    // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
+    // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
+    // 标记，非致命。
+    let path_default = resolve_path_default(
+        tool,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .ok()
+    .flatten();
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
@@ -2330,13 +2398,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                 continue;
             }
 
-            #[cfg(target_os = "windows")]
-            let output = run_windows_tool_version_command(&tool_path, &new_path);
-            #[cfg(not(target_os = "windows"))]
-            let output = Command::new(&tool_path)
-                .arg("--version")
-                .env("PATH", &new_path)
-                .output();
+            let output = run_probe_version_command(&tool_path, &new_path);
 
             let (version, runnable, error) = match output {
                 Ok(out) if out.status.success() => {
@@ -2357,7 +2419,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                     };
                     (None, false, error)
                 }
-                Err(e) => (None, false, Some(e.to_string())),
+                Err(e) => (None, false, Some(e)),
             };
 
             let is_path_default = path_default.as_ref() == Some(&real);
@@ -3012,7 +3074,21 @@ fn terminate_child_tree(child: &mut std::process::Child) -> bool {
 fn isolate_child_process_group(cmd: &mut std::process::Command) {
     use std::os::unix::process::CommandExt;
 
-    cmd.process_group(0);
+    // setsid 而非 process_group(0)：新会话自带新进程组（组长=自身，
+    // terminate_child_tree 的 kill(-pid) 整组击杀语义不变），并额外**脱离控制终端**。
+    // 只隔离进程组时，探测用的交互式 shell（zsh -lic）若还持有控制终端（如 dev 模式
+    // 从终端启动），其作业控制会因处于背景进程组被 SIGTTIN/SIGTTOU 停住，`wait()`
+    // 永远等不到退出；脱离终端后 shell 拿不到 /dev/tty，作业控制自动关闭。
+    // SAFETY: setsid 是 async-signal-safe；fork 出的子进程继承父进程组、必不是组长，
+    // 调用不会因 EPERM 失败。
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
 }
 
 fn wait_child_output(
@@ -4539,6 +4615,44 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
+    /// `/bin/echo --version` 在 macOS/Linux 均即刻成功退出。
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn probe_version_command_captures_healthy_tool_output() {
+        let out = run_probe_version_command(Path::new("/bin/echo"), std::ffi::OsStr::new(""))
+            .expect("probe of /bin/echo should succeed");
+        assert!(out.status.success());
+    }
+
+    /// 超时击杀路径：挂死的子进程到点被整组击杀、wait 返回超时错误而非永等。
+    /// 同时锚定 setsid 改造后的语义——child 是新会话/新进程组组长，
+    /// terminate_child_tree 的 kill(-pid) 仍能命中（回归红线：改回 process_group
+    /// 或去掉隔离都会让本测试的击杀路径失效）。
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn isolated_hung_child_is_killed_on_deadline() {
+        use std::process::{Command, Stdio};
+
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_child_process_group(&mut cmd);
+        let child = cmd.spawn().expect("spawn sleep");
+        let started = std::time::Instant::now();
+        let result = wait_child_output(
+            child,
+            CommandDeadline::from_timeout(Some(std::time::Duration::from_millis(200))),
+        );
+        assert!(result.is_err(), "expected timeout error, got {result:?}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "kill should return promptly instead of waiting out the sleep"
+        );
+    }
 
     #[cfg(target_os = "windows")]
     #[test]
