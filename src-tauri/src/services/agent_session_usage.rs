@@ -2452,15 +2452,21 @@ fn query_task_roots(
                     root_node.node_kind, root_node.relation_confidence,
                     root_node.title, root_node.project_dir,
                     root_node.created_at, root_node.last_active_at,
-                    CASE
-                        WHEN COALESCE(root_node.last_active_at, root_node.created_at,
-                                      MAX(c.source_activity_at), 0)
-                             > 100000000000
-                        THEN COALESCE(root_node.last_active_at, root_node.created_at,
-                                      MAX(c.source_activity_at), 0) / 1000
-                        ELSE COALESCE(root_node.last_active_at, root_node.created_at,
-                                      MAX(c.source_activity_at), 0)
-                    END AS sort_timestamp,
+                    MAX(
+                        CASE
+                            WHEN COALESCE(root_node.last_active_at,
+                                          root_node.created_at, 0) > 100000000000
+                            THEN COALESCE(root_node.last_active_at,
+                                          root_node.created_at, 0) / 1000
+                            ELSE COALESCE(root_node.last_active_at,
+                                          root_node.created_at, 0)
+                        END,
+                        CASE
+                            WHEN COALESCE(MAX(c.source_activity_at), 0) > 100000000000
+                            THEN COALESCE(MAX(c.source_activity_at), 0) / 1000
+                            ELSE COALESCE(MAX(c.source_activity_at), 0)
+                        END
+                    ) AS sort_timestamp,
                     COUNT(DISTINCT CASE
                         WHEN child.node_kind = 'child'
                          AND child.root_session_id = c.root_session_id
@@ -3168,6 +3174,52 @@ mod tests {
         assert!(page.items[0].root.is_none());
         assert_eq!(page.items[1].session_id, "rollup-only-session");
         assert!(page.items[1].root.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn node_backed_task_uses_newer_source_activity_for_pagination() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut stale_root = query_node("claude", "stale-root", None);
+        stale_root.created_at = Some(1_000);
+        stale_root.last_active_at = Some(1_000);
+        let mut competitor = query_node("claude", "competitor", None);
+        competitor.last_active_at = Some(3_000);
+        db.upsert_agent_session_node(&stale_root)?;
+        db.upsert_agent_session_node(&competitor)?;
+
+        let mut active_rollup = query_rollup("stale-root", "1970-01-01", 5, 2);
+        active_rollup.first_event_at = Some(4_000);
+        active_rollup.last_event_at = Some(4_000);
+        db.upsert_agent_session_usage_rollup_fact(&active_rollup)?;
+        let mut competitor_rollup = query_rollup("competitor", "1970-01-01", 3, 1);
+        competitor_rollup.first_event_at = Some(3_000);
+        competitor_rollup.last_event_at = Some(3_000);
+        db.upsert_agent_session_usage_rollup_fact(&competitor_rollup)?;
+
+        let page = list_agent_task_usage(
+            &db,
+            &AgentTaskUsageFilter {
+                app_type: Some("claude".into()),
+                limit: 10,
+                ..Default::default()
+            },
+        )?;
+        assert!(page.total >= 2);
+        let stale_index = page
+            .items
+            .iter()
+            .position(|item| item.session_id == "stale-root")
+            .expect("stale root should remain visible");
+        let competitor_index = page
+            .items
+            .iter()
+            .position(|item| item.session_id == "competitor")
+            .expect("competitor should remain visible");
+        assert!(
+            stale_index < competitor_index,
+            "newer source activity should order the root ahead of the competitor"
+        );
         Ok(())
     }
 
