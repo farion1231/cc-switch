@@ -167,6 +167,14 @@ export function updateGrokBuildConfig(
     delete (config.model as Record<string, unknown>)[previousProfile];
   }
 
+  // models.web_search is a model-table id. If the selected profile was
+  // renamed, the old table is gone — retarget so Grok Build can resolve it.
+  const nextTables = config.model as Record<string, unknown>;
+  const webSearch = asString(updatedModels.web_search).trim();
+  if (webSearch && !(webSearch in nextTables)) {
+    updatedModels.web_search = profile;
+  }
+
   return `${stringifyToml(config).trim()}\n`;
 }
 

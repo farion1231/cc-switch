@@ -180,4 +180,44 @@ context_window = 500000
     expect(parsed.model["new-profile"].model).toBe("grok-upstream");
     expect(parsed.model).not.toHaveProperty("old-profile");
   });
+
+  it("retargets web_search when both profile and upstream model change", () => {
+    const original = buildGrokBuildConfig(
+      {
+        model: "grok-4.5",
+        upstreamModel: "grok-4.5",
+        baseUrl: "https://www.packyapi.ai/v1",
+        name: "PackyCode",
+        apiKey: "secret",
+        apiBackend: "responses",
+        contextWindow: 500000,
+      },
+      {
+        baseUrlMode: "models_endpoint",
+        webSearchModel: "grok-4.5",
+        supportsBackendSearch: false,
+      },
+    );
+
+    const renamed = updateGrokBuildConfig(
+      original,
+      {
+        ...parseGrokBuildConfig(original),
+        model: "custom-profile",
+        upstreamModel: "grok-4",
+      },
+      {
+        baseUrlMode: "models_endpoint",
+        webSearchModel: "grok-4.5",
+        supportsBackendSearch: false,
+      },
+    );
+    const parsed = parseToml(renamed) as any;
+
+    expect(parsed.models.default).toBe("custom-profile");
+    expect(parsed.models.web_search).toBe("custom-profile");
+    expect(parsed.model["custom-profile"].model).toBe("grok-4");
+    expect(parsed.model).not.toHaveProperty("grok-4.5");
+    expect(validateGrokBuildConfig(renamed)).toBeNull();
+  });
 });

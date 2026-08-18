@@ -35,6 +35,8 @@ import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import {
   grokBuildOfficialPreset,
   grokBuildProviderPresets,
+  isKnownPackyCodeEndpoint,
+  resolveGrokBuildConfigOptions,
   type GrokBuildProviderPreset,
 } from "@/config/grokBuildProviderPresets";
 import {
@@ -160,10 +162,12 @@ export function GrokBuildProviderForm({
   );
   const configOptions = useMemo(
     () =>
-      grokBuildProviderPresets.find(
-        (preset) => preset.partnerPromotionKey === partnerPromotionKey,
-      )?.configOptions,
-    [partnerPromotionKey],
+      resolveGrokBuildConfigOptions({
+        partnerPromotionKey,
+        isPartner,
+        baseUrl,
+      }),
+    [baseUrl, isPartner, partnerPromotionKey],
   );
 
   const form = useForm<ProviderFormData>({
@@ -400,6 +404,11 @@ export function GrokBuildProviderForm({
     const parsedMaxOutputTokens = Number.parseInt(maxOutputTokens, 10);
     const initialMeta = { ...(initialData?.meta ?? {}) };
     delete initialMeta.custom_endpoints;
+    const resolvedPartnerPromotionKey =
+      partnerPromotionKey?.trim() ||
+      (isPartner && isKnownPackyCodeEndpoint(baseUrl)
+        ? "packycode"
+        : undefined);
     const meta: ProviderMeta = {
       ...initialMeta,
       apiFormat,
@@ -407,7 +416,7 @@ export function GrokBuildProviderForm({
       isFullUrl,
       endpointAutoSelect,
       isPartner,
-      partnerPromotionKey,
+      partnerPromotionKey: resolvedPartnerPromotionKey,
       impersonateClaudeCode,
       promptCacheRouting,
       codexChatReasoning,

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   grokBuildOfficialPreset,
   grokBuildProviderPresets,
+  isKnownPackyCodeEndpoint,
+  resolveGrokBuildConfigOptions,
 } from "./grokBuildProviderPresets";
 import {
   extractCodexBaseUrl,
@@ -85,5 +87,31 @@ describe("grokBuildProviderPresets", () => {
       webSearchModel: GROK_BUILD_DEFAULT_MODEL,
       supportsBackendSearch: false,
     });
+  });
+
+  it("falls back to Packy options for keyless partner records on a known endpoint", () => {
+    const packy = grokBuildProviderPresets.find(
+      (preset) => preset.name === "PackyCode",
+    );
+
+    expect(
+      resolveGrokBuildConfigOptions({
+        isPartner: true,
+        baseUrl: "https://www.packyapi.com/v1/",
+      }),
+    ).toEqual(packy?.configOptions);
+    expect(isKnownPackyCodeEndpoint("https://www.packyapi.com/v1/")).toBe(true);
+    expect(
+      resolveGrokBuildConfigOptions({
+        isPartner: true,
+        baseUrl: "https://api.zetaapi.ai/v1",
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveGrokBuildConfigOptions({
+        isPartner: false,
+        baseUrl: "https://www.packyapi.ai/v1",
+      }),
+    ).toBeUndefined();
   });
 });
