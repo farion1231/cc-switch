@@ -792,13 +792,50 @@ pub(crate) fn has_recent_grokbuild_proxy_activity(
     .map_err(|e| AppError::Database(format!("查询 Grok 接管活动失败: {e}")))
 }
 
-/// Central Cowork transcript-versus-gateway arbitration.  Cowork transcript
-/// records use the actual `claude-desktop` app entry; only a successful proxy
-/// row with the same model, all four token components, and event-time window
-/// shadows that transcript event.  In particular, cache-token differences are
-/// not treated as a match and no generic fingerprint is shared with Grok's
-/// face-value `turn_completed` events.
-pub(crate) fn has_matching_cowork_proxy_usage(
+fn matching_cowork_proxy_usage_sql(include_coverage: bool) -> String {
+    let coverage_filter = if include_coverage {
+        "AND NOT EXISTS (
+               SELECT 1
+               FROM agent_session_canonical_coverage coverage
+               WHERE coverage.app_type = l.app_type
+                 AND coverage.data_source = 'proxy'
+                 AND coverage.request_id = l.request_id
+           )"
+    } else {
+        ""
+    };
+    format!(
+        "SELECT l.request_id, l.app_type
+         FROM proxy_request_logs l
+         WHERE COALESCE(l.data_source, 'proxy') = 'proxy'
+           AND l.app_type = 'claude-desktop'
+           AND l.status_code >= 200
+           AND l.status_code < 300
+           AND l.input_tokens = ?1
+           AND l.output_tokens = ?2
+           AND l.cache_read_tokens = ?3
+           AND l.cache_creation_tokens = ?4
+           AND l.created_at BETWEEN ?5 - ?6 AND ?5 + ?6
+           AND LOWER(l.model) = LOWER(?7)
+           {coverage_filter}
+         ORDER BY ABS(l.created_at - ?5), l.request_id
+         LIMIT 1"
+    )
+}
+
+static MATCHING_COWORK_PROXY_USAGE_SQL: LazyLock<String> =
+    LazyLock::new(|| matching_cowork_proxy_usage_sql(true));
+static MATCHING_COWORK_PROXY_USAGE_SQL_LEGACY: LazyLock<String> =
+    LazyLock::new(|| matching_cowork_proxy_usage_sql(false));
+
+/// Central Cowork transcript-versus-gateway arbitration. Cowork transcript
+/// records use the actual `claude-desktop` app entry; only an unclaimed,
+/// successful proxy row with the same model, all four token components, and
+/// event-time window matches that transcript event. Returning the row identity
+/// lets the caller retain native task ownership while reserving the proxy row
+/// one-to-one. Cache-token differences remain distinct, and no generic
+/// fingerprint is shared with Grok's face-value `turn_completed` events.
+pub(crate) fn find_matching_cowork_proxy_usage(
     conn: &Connection,
     model: &str,
     created_at: i64,
@@ -806,25 +843,27 @@ pub(crate) fn has_matching_cowork_proxy_usage(
     output_tokens: i64,
     cache_read_tokens: i64,
     cache_creation_tokens: i64,
-) -> Result<bool, AppError> {
-    conn.prepare_cached(
-        "SELECT EXISTS(
-            SELECT 1
-            FROM proxy_request_logs
-            WHERE COALESCE(data_source, 'proxy') = 'proxy'
-              AND app_type = 'claude-desktop'
-              AND status_code >= 200
-              AND status_code < 300
-              AND input_tokens = ?1
-              AND output_tokens = ?2
-              AND cache_read_tokens = ?3
-              AND cache_creation_tokens = ?4
-              AND created_at BETWEEN ?5 - ?6 AND ?5 + ?6
-              AND LOWER(model) = LOWER(?7)
-        )",
-    )
-    .and_then(|mut statement| {
-        statement.query_row(
+) -> Result<Option<MatchingProxyUsageLog>, AppError> {
+    let coverage_table_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'agent_session_canonical_coverage'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| AppError::Database(format!("查询 Cowork 覆盖表失败: {error}")))?;
+    let sql = if coverage_table_exists {
+        &*MATCHING_COWORK_PROXY_USAGE_SQL
+    } else {
+        &*MATCHING_COWORK_PROXY_USAGE_SQL_LEGACY
+    };
+    let mut statement = conn
+        .prepare_cached(sql)
+        .map_err(|error| AppError::Database(format!("准备 Cowork 网关用量查询失败: {error}")))?;
+    statement
+        .query_row(
             params![
                 input_tokens,
                 output_tokens,
@@ -834,10 +873,15 @@ pub(crate) fn has_matching_cowork_proxy_usage(
                 SESSION_PROXY_DEDUP_WINDOW_SECONDS,
                 model,
             ],
-            |row| row.get::<_, bool>(0),
+            |row| {
+                Ok(MatchingProxyUsageLog {
+                    request_id: row.get(0)?,
+                    app_type: row.get(1)?,
+                })
+            },
         )
-    })
-    .map_err(|error| AppError::Database(format!("查询 Cowork 网关重复用量失败: {error}")))
+        .optional()
+        .map_err(|error| AppError::Database(format!("查询 Cowork 网关重复用量失败: {error}")))
 }
 
 static SUSPECTED_CODEX_DUPLICATE_SQL: LazyLock<String> = LazyLock::new(|| {
@@ -2937,16 +2981,14 @@ mod tests {
             [],
         )?;
 
-        assert!(has_matching_cowork_proxy_usage(
-            &conn,
-            "claude-sonnet-4-5",
-            1060,
-            100,
-            20,
-            10,
-            5,
-        )?);
-        assert!(!has_matching_cowork_proxy_usage(
+        assert_eq!(
+            find_matching_cowork_proxy_usage(&conn, "claude-sonnet-4-5", 1060, 100, 20, 10, 5,)?,
+            Some(MatchingProxyUsageLog {
+                request_id: "cowork-proxy".into(),
+                app_type: "claude-desktop".into(),
+            })
+        );
+        assert!(find_matching_cowork_proxy_usage(
             &conn,
             "claude-sonnet-4-5",
             1060,
@@ -2954,8 +2996,9 @@ mod tests {
             20,
             10,
             6,
-        )?);
-        assert!(!has_matching_cowork_proxy_usage(
+        )?
+        .is_none());
+        assert!(find_matching_cowork_proxy_usage(
             &conn,
             "claude-sonnet-4-5",
             1060,
@@ -2963,7 +3006,8 @@ mod tests {
             20,
             11,
             5,
-        )?);
+        )?
+        .is_none());
         Ok(())
     }
 

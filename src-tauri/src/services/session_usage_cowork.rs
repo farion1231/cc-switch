@@ -19,14 +19,16 @@
 use crate::database::Database;
 use crate::error::AppError;
 use crate::services::agent_session_usage::{
-    RelationClaim, RelationConfidence, RequestCountSemantics, SessionNodeMetadata,
-    SessionRelationClaim, TimeSemantics, UsagePrecision,
+    local_usage_date, RelationClaim, RelationConfidence, RequestCountSemantics,
+    SessionNodeMetadata, SessionRelationClaim, TimeSemantics, UsagePrecision,
 };
 use crate::services::session_usage::SessionSyncResult;
 #[cfg(test)]
 use crate::services::session_usage_pipeline::{publish_canonical_batch, UsagePublishTarget};
-use crate::services::session_usage_pipeline::{CanonicalUsageBatch, UsageSourceSpec};
-use chrono::{DateTime, FixedOffset, Utc};
+use crate::services::session_usage_pipeline::{
+    CanonicalReplaceScope, CanonicalUsageBatch, UsageSourceSpec,
+};
+use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -270,6 +272,10 @@ pub(crate) fn collect_cowork_usage_from_roots(
             .canonical_batch
             .replacement_observations
             .extend(batch.canonical_batch.replacement_observations);
+        aggregate
+            .canonical_batch
+            .replace_scopes
+            .extend(batch.canonical_batch.replace_scopes);
     }
     Ok(aggregate)
 }
@@ -457,6 +463,14 @@ fn collect_single_root(root: &Path) -> Result<CoworkUsageBatch, AppError> {
         ..CanonicalUsageBatch::default()
     };
     for session in &sessions {
+        // Each successfully parsed session is a complete current transcript.
+        // Replacing its whole Cowork source scope also removes facts written
+        // under the former UTC calendar date before local-date publication.
+        canonical_batch.replace_scopes.push(CanonicalReplaceScope {
+            app_type: COWORK_APP_TYPE.to_string(),
+            session_id: session.session_id.clone(),
+            data_source: COWORK_DATA_SOURCE.to_string(),
+        });
         let mut events: Vec<&UsageEvent> = session.events.values().collect();
         events.sort_by(|left, right| left.message_id.cmp(&right.message_id));
         for event in events {
@@ -672,8 +686,8 @@ fn token_components(usage: &Value) -> Option<(i64, i64, i64, i64)> {
 fn parse_event_timestamp(value: Option<&Value>) -> Option<(i64, String)> {
     let value = value?.as_str()?.trim();
     let parsed: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(value).ok()?;
-    let utc = parsed.with_timezone(&Utc);
-    Some((parsed.timestamp(), utc.date_naive().to_string()))
+    let event_at = parsed.timestamp();
+    Some((event_at, local_usage_date(event_at)?))
 }
 
 fn parent_hint_from_path(path: &Path) -> Option<String> {
@@ -881,6 +895,46 @@ mod tests {
             .expect("usage fixture has a fallback session id");
         assert!(parsed.events.is_empty());
         assert_eq!(parsed.skipped_rows, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn event_timestamp_uses_the_shared_local_usage_date() {
+        let value = Value::String("2026-08-18T00:30:00+08:00".into());
+        let (event_at, date) = parse_event_timestamp(Some(&value)).expect("valid timestamp");
+        assert_eq!(
+            date,
+            local_usage_date(event_at).expect("timestamp has a local calendar date")
+        );
+    }
+
+    #[test]
+    fn full_session_replace_removes_a_previous_calendar_bucket() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        write_fixture(temp.path(), false);
+        sync_cowork_usage_from_roots(&db, &[temp.path().to_path_buf()])?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE agent_session_usage_rollups
+                 SET date = '1900-01-01'
+                 WHERE app_type = 'claude-desktop' AND session_id = 'root-session'",
+                [],
+            )?;
+        }
+
+        sync_cowork_usage_from_roots(&db, &[temp.path().to_path_buf()])?;
+        let conn = lock_conn!(db.conn);
+        let (fact_count, stale_count): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*),
+                    SUM(CASE WHEN date = '1900-01-01' THEN 1 ELSE 0 END)
+             FROM agent_session_usage_rollups
+             WHERE app_type = 'claude-desktop' AND session_id = 'root-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!((fact_count, stale_count), (1, 0));
         Ok(())
     }
 }

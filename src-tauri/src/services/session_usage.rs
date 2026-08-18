@@ -25,9 +25,10 @@ use crate::services::session_usage_pipeline::{
     UsagePublishTarget, UsageSourceSpec,
 };
 use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_coverage_for_session,
-    session_insert_outcome, session_insert_outcome_excluding_claimed, DedupKey,
-    MatchingProxyUsageLog, SessionInsertOutcome,
+    effective_usage_log_filter, find_matching_cowork_proxy_usage, find_model_pricing,
+    has_matching_proxy_usage_coverage_for_session, session_insert_outcome,
+    session_insert_outcome_excluding_claimed, DedupKey, MatchingProxyUsageLog,
+    SessionInsertOutcome,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -279,40 +280,31 @@ fn sync_hermes_session_nodes(db: &Database) -> Result<SessionSyncResult, AppErro
 }
 
 /// Register Cowork's canonical `claude-desktop` source.  Its adapter emits
-/// canonical buckets only; proxy/raw arbitration remains a central concern
-/// and is exposed through the shared usage filters below. Cowork emits no
-/// `cowork_session` compatibility rows, so coverage markers are intentionally
-/// not fabricated for this source.
+/// canonical buckets only; proxy/raw arbitration remains a central concern.
+/// Cowork emits no `cowork_session` compatibility rows. When a real proxy row
+/// matches, its coverage marker transfers task/session attribution to the
+/// transcript while the proxy row remains the global request record.
 fn sync_cowork_session_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let mut cowork = crate::services::session_usage_cowork::collect_cowork_usage()?;
-    let shadowed = arbitrate_cowork_proxy_rows(db, &mut cowork.canonical_batch)?;
-    Ok(SessionSyncResult {
-        imported: cowork.result.imported.saturating_sub(shadowed),
-        skipped: cowork.result.skipped.saturating_add(shadowed),
-        files_scanned: cowork.result.files_scanned,
-        errors: cowork.result.errors,
-        ..SessionSyncResult::default()
-    })
+    arbitrate_cowork_proxy_rows(db, &mut cowork.canonical_batch)?;
+    Ok(cowork.result)
 }
 
 /// Apply the central Desktop gateway arbitration after the Cowork adapter has
 /// parsed its transcript. A matching successful `claude-desktop` proxy row
-/// wins for that exact event; cache-token differences keep the transcript
-/// event visible. The source parser provides complete observations, while the
-/// shared pipeline owns their aggregation and durable publication.
+/// remains the global record, while the transcript observation stays canonical
+/// for native task attribution. The coverage reservation and canonical fact
+/// commit together; cache-token differences remain distinct.
 fn arbitrate_cowork_proxy_rows(
     db: &Database,
     batch: &mut CanonicalUsageBatch,
-) -> Result<u32, AppError> {
+) -> Result<(), AppError> {
     let conn = lock_conn!(db.conn);
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| AppError::Database(format!("开启 Cowork 来源仲裁事务失败: {error}")))?;
-    let mut retained = Vec::with_capacity(batch.replacement_observations.len());
-    let mut touched = HashSet::new();
-    let mut shadowed = 0u32;
 
-    for observation in std::mem::take(&mut batch.replacement_observations) {
+    for observation in &batch.replacement_observations {
         let fact = &observation.fact;
         let (
             Some(event_at),
@@ -328,14 +320,9 @@ fn arbitrate_cowork_proxy_rows(
             fact.cache_creation_tokens,
         )
         else {
-            retained.push(observation);
             continue;
         };
-        let key = format!("{}\u{1f}{}\u{1f}{}", fact.date, fact.session_id, fact.model);
-        if touched.insert(key) {
-            clear_cowork_canonical_bucket(&tx, fact)?;
-        }
-        if crate::services::usage_stats::has_matching_cowork_proxy_usage(
+        if let Some(proxy) = find_matching_cowork_proxy_usage(
             &tx,
             &fact.model,
             event_at,
@@ -344,34 +331,20 @@ fn arbitrate_cowork_proxy_rows(
             cache_read_tokens,
             cache_creation_tokens,
         )? {
-            shadowed = shadowed.saturating_add(1);
-            continue;
+            reserve_canonical_coverage_on_conn(
+                &tx,
+                UsagePublishTarget::Published,
+                &proxy.app_type,
+                "proxy",
+                &proxy.request_id,
+                Some(&fact.session_id),
+                event_at,
+            )?;
         }
-        retained.push(observation);
     }
-    batch.replacement_observations = retained;
     publish_canonical_batch_on_conn(&tx, UsagePublishTarget::Published, std::mem::take(batch))?;
     tx.commit()
         .map_err(|error| AppError::Database(format!("提交 Cowork 来源仲裁事务失败: {error}")))?;
-    Ok(shadowed)
-}
-
-fn clear_cowork_canonical_bucket(
-    conn: &rusqlite::Connection,
-    fact: &NormalizedUsageRollupFact,
-) -> Result<(), AppError> {
-    conn.execute(
-        "DELETE FROM agent_session_usage_rollups
-         WHERE date = ?1 AND app_type = 'claude-desktop'
-           AND session_id = ?2 AND provider_id = 'cowork_session'
-           AND model = ?3 AND request_model = ?3 AND pricing_model = ?3
-           AND data_source = 'cowork_session'
-           AND precision = 'request_exact'
-           AND time_semantics = 'event_time'
-           AND request_count_semantics = 'assistant_message'",
-        rusqlite::params![&fact.date, &fact.session_id, &fact.model],
-    )
-    .map_err(|error| AppError::Database(format!("清理 Cowork 仲裁桶失败: {error}")))?;
     Ok(())
 }
 
@@ -1544,6 +1517,118 @@ mod tests {
         assert_eq!(repeat_raw_count, 1);
 
         drop(conn);
+        Ok(())
+    }
+
+    #[test]
+    fn cowork_proxy_takeover_preserves_native_task_ownership() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
+                ) VALUES ('cowork-proxy', 'gateway', 'claude-desktop', 'cowork-model',
+                          'cowork-model', 100, 20, 10, 5, '0.10', 0, 200, NULL, 1000, 'proxy')",
+                [],
+            )?;
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let project = temp
+            .path()
+            .join("workspace")
+            .join("group")
+            .join("local_fixture")
+            .join(".claude")
+            .join("projects")
+            .join("demo-project");
+        fs::create_dir_all(&project).expect("create Cowork fixture project");
+        fs::write(
+            project.join("cowork-session.jsonl"),
+            concat!(
+                r#"{"sessionId":"cowork-session","type":"assistant","message":{"id":"cowork-message","model":"cowork-model","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}},"timestamp":"1970-01-01T00:16:45Z"}"#,
+                "\n",
+            ),
+        )
+        .expect("write Cowork fixture");
+
+        let roots = [temp.path().to_path_buf()];
+        for _ in 0..2 {
+            let mut cowork =
+                crate::services::session_usage_cowork::collect_cowork_usage_from_roots(&roots)?;
+            assert_eq!(cowork.result.imported, 1);
+            arbitrate_cowork_proxy_rows(&db, &mut cowork.canonical_batch)?;
+        }
+
+        let conn = lock_conn!(db.conn);
+        let raw: (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), SUM(input_tokens)
+             FROM proxy_request_logs WHERE app_type = 'claude-desktop'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(raw, (1, 100));
+        let rollup: (i64, i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), request_count, input_tokens, output_tokens, cache_read_tokens
+             FROM agent_session_usage_rollups
+             WHERE app_type = 'claude-desktop' AND session_id = 'cowork-session'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(rollup, (1, 1, 100, 20, 10));
+
+        let markers = conn
+            .prepare(
+                "SELECT data_source, request_id, canonical_session_id
+                 FROM agent_session_canonical_coverage
+                 WHERE app_type = 'claude-desktop'
+                 ORDER BY data_source, request_id",
+            )?
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            markers,
+            vec![
+                (
+                    "cowork_session".into(),
+                    "cowork:cowork-session:cowork-message".into(),
+                    Some("cowork-session".into()),
+                ),
+                (
+                    "proxy".into(),
+                    "cowork-proxy".into(),
+                    Some("cowork-session".into()),
+                ),
+            ]
+        );
+
+        let task_filter = crate::services::usage_stats::effective_session_usage_log_filter("l");
+        let task_raw_count: i64 = conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM proxy_request_logs l
+                 WHERE l.app_type = 'claude-desktop' AND {task_filter}"
+            ),
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(task_raw_count, 0, "task path must use the canonical fact");
         Ok(())
     }
 

@@ -12,8 +12,8 @@ use crate::database::{AgentSessionUsageSnapshotKey, Database};
 use crate::error::AppError;
 use crate::hermes_config::get_hermes_dir;
 use crate::services::agent_session_usage::{
-    NormalizedUsageRollupFact, NormalizedUsageSnapshot, RequestCountSemantics, SessionNodeMetadata,
-    SessionRelationClaim, TimeSemantics, UsagePrecision,
+    local_usage_date, NormalizedUsageRollupFact, NormalizedUsageSnapshot, RequestCountSemantics,
+    SessionNodeMetadata, SessionRelationClaim, TimeSemantics, UsagePrecision,
 };
 use crate::services::session_usage::SessionSyncResult;
 use crate::services::session_usage_pipeline::{
@@ -691,9 +691,7 @@ fn sync_window_date(timestamp: i64) -> String {
     } else {
         timestamp
     };
-    DateTime::<Utc>::from_timestamp(seconds, 0)
-        .map(|value| value.date_naive().to_string())
-        .unwrap_or_else(|| "1970-01-01".to_string())
+    local_usage_date(seconds).unwrap_or_else(|| "1970-01-01".to_string())
 }
 
 /// Build the canonical Hermes usage/node ID shared by ingestion and Session
@@ -1333,6 +1331,17 @@ mod tests {
             source_file_identity(&root.path().join("profiles/work/state.db")).unwrap()
         );
         drop((default, work));
+    }
+
+    #[test]
+    fn sync_window_date_uses_the_shared_local_usage_calendar() {
+        let seconds = DateTime::parse_from_rfc3339("2026-08-18T00:30:00+08:00")
+            .expect("valid timestamp")
+            .timestamp();
+        let expected = local_usage_date(seconds).expect("timestamp has a local calendar date");
+        assert_eq!(sync_window_date(seconds), expected);
+        assert_eq!(sync_window_date(seconds * 1000 + 456), expected);
+        assert_eq!(sync_window_date(i64::MAX), "1970-01-01");
     }
 
     #[test]
