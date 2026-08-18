@@ -39,7 +39,8 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
         for file_entry in chat_files.flatten() {
             let path = file_entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            let ext = path.extension().and_then(|e| e.to_str());
+            if ext != Some("json") && ext != Some("jsonl") {
                 continue;
             }
             if let Some(meta) = parse_session(&path) {
@@ -55,17 +56,36 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let data = std::fs::read_to_string(path).map_err(|e| format!("Failed to read session: {e}"))?;
-    let value: Value =
-        serde_json::from_str(&data).map_err(|e| format!("Failed to parse session JSON: {e}"))?;
+    let is_jsonl = path.extension().and_then(|e| e.to_str()) == Some("jsonl");
+    let messages = if is_jsonl {
+        let file = std::fs::File::open(path).map_err(|e| format!("Failed to open session: {e}"))?;
+        let reader = std::io::BufReader::new(file);
+        let mut lines = Vec::new();
+        for line in std::io::BufRead::lines(reader) {
+            let line = line.map_err(|e| format!("Failed to read line: {e}"))?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                lines.push(value);
+            }
+        }
+        lines
+    } else {
+        let data =
+            std::fs::read_to_string(path).map_err(|e| format!("Failed to read session: {e}"))?;
+        let value: Value = serde_json::from_str(&data)
+            .map_err(|e| format!("Failed to parse session JSON: {e}"))?;
 
-    let messages = value
-        .get("messages")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "No messages array found".to_string())?;
+        value
+            .get("messages")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| "No messages array found in session JSON".to_string())?
+    };
 
     let mut result = Vec::new();
-    for msg in messages {
+    for msg in &messages {
         let role = match msg.get("type").and_then(Value::as_str) {
             Some("gemini") => "assistant",
             Some("user") => "user",
@@ -138,25 +158,73 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
-    let data = std::fs::read_to_string(path).ok()?;
-    let value: Value = serde_json::from_str(&data).ok()?;
+    let is_jsonl = path.extension().and_then(|e| e.to_str()) == Some("jsonl");
 
-    let session_id = value.get("sessionId").and_then(Value::as_str)?.to_string();
+    let (session_id, created_at, last_active_at, title) = if is_jsonl {
+        let file = std::fs::File::open(path).ok()?;
+        let reader = std::io::BufReader::new(file);
+        let mut lines = std::io::BufRead::lines(reader);
 
-    let created_at = value.get("startTime").and_then(parse_timestamp_to_ms);
-    let last_active_at = value.get("lastUpdated").and_then(parse_timestamp_to_ms);
+        // 第一行应该是元数据
+        let first_line = lines.next()?.ok()?;
+        let meta: Value = serde_json::from_str(&first_line).ok()?;
 
-    // Derive title from first user message
-    let title = value
-        .get("messages")
-        .and_then(Value::as_array)
-        .and_then(|msgs| {
-            msgs.iter()
-                .find(|m| m.get("type").and_then(Value::as_str) == Some("user"))
-                .and_then(|m| m.get("content").and_then(Value::as_str))
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| truncate_summary(s, 160))
-        });
+        let sid = meta.get("sessionId").and_then(Value::as_str)?.to_string();
+        let start = meta.get("startTime").and_then(parse_timestamp_to_ms);
+        let mut last = meta.get("lastUpdated").and_then(parse_timestamp_to_ms);
+        let mut first_user_msg = None;
+
+        // 遍历剩余行以寻找标题和最后更新时间
+        for line in lines {
+            if let Ok(line_data) =
+                line.and_then(|l| serde_json::from_str::<Value>(&l).map_err(std::io::Error::other))
+            {
+                if let Some(ts) = line_data.get("timestamp").and_then(parse_timestamp_to_ms) {
+                    last = Some(ts);
+                }
+                if first_user_msg.is_none()
+                    && line_data.get("type").and_then(Value::as_str) == Some("user")
+                {
+                    first_user_msg = line_data.get("content").and_then(|c| match c {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Array(arr) => arr
+                            .iter()
+                            .filter_map(|i| i.get("text").and_then(Value::as_str))
+                            .next()
+                            .map(|s| s.to_string()),
+                        _ => None,
+                    });
+                }
+            }
+        }
+
+        (
+            sid,
+            start,
+            last,
+            first_user_msg.map(|s| truncate_summary(&s, 160)),
+        )
+    } else {
+        let data = std::fs::read_to_string(path).ok()?;
+        let value: Value = serde_json::from_str(&data).ok()?;
+
+        let sid = value.get("sessionId").and_then(Value::as_str)?.to_string();
+        let start = value.get("startTime").and_then(parse_timestamp_to_ms);
+        let last = value.get("lastUpdated").and_then(parse_timestamp_to_ms);
+
+        let t = value
+            .get("messages")
+            .and_then(Value::as_array)
+            .and_then(|msgs| {
+                msgs.iter()
+                    .find(|m| m.get("type").and_then(Value::as_str) == Some("user"))
+                    .and_then(|m| m.get("content").and_then(Value::as_str))
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| truncate_summary(s, 160))
+            });
+
+        (sid, start, last, t)
+    };
 
     let source_path = path.to_string_lossy().to_string();
 
