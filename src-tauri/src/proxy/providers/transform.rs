@@ -1786,7 +1786,10 @@ mod tests {
         assert_eq!(known_max_output_tokens("gpt-4o"), Some(16_384));
         assert_eq!(known_max_output_tokens("gpt-4o-mini"), Some(16_384));
         assert_eq!(known_max_output_tokens("eastus-gpt-4o-01"), Some(16_384));
-        assert_eq!(known_max_output_tokens("swedencentral-gpt-4o"), Some(16_384));
+        assert_eq!(
+            known_max_output_tokens("swedencentral-gpt-4o"),
+            Some(16_384)
+        );
         // classic gpt-4
         assert_eq!(known_max_output_tokens("gpt-4-turbo"), Some(4_096));
         assert_eq!(known_max_output_tokens("gpt-4-0613"), Some(4_096));
@@ -1801,7 +1804,10 @@ mod tests {
     fn test_clamp_max_tokens() {
         // clamps when over the limit
         assert_eq!(clamp_max_tokens("gpt-4o", &json!(32000)), json!(16_384));
-        assert_eq!(clamp_max_tokens("eastus-gpt-4o-01", &json!(32000)), json!(16_384));
+        assert_eq!(
+            clamp_max_tokens("eastus-gpt-4o-01", &json!(32000)),
+            json!(16_384)
+        );
         // passes through when within limit
         assert_eq!(clamp_max_tokens("gpt-4o", &json!(1024)), json!(1024));
         // passes through for unknown models

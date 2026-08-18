@@ -332,7 +332,11 @@ pub fn anthropic_to_responses(
     if let Some(v) = body.get("max_tokens") {
         let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
         let clamped = super::transform::clamp_max_tokens(model, v);
-        let clamped = clamped.as_i64().map(|n| n.max(16)).map(|n| json!(n)).unwrap_or(clamped);
+        let clamped = clamped
+            .as_i64()
+            .map(|n| n.max(16))
+            .map(|n| json!(n))
+            .unwrap_or(clamped);
         result["max_output_tokens"] = clamped;
     }
 
