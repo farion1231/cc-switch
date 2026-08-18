@@ -78,6 +78,7 @@ struct OpenCodeSessionRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum OpenCodeInsertOutcome {
     Inserted,
+    RefreshedSource,
     ExistingSource,
     ProxyDuplicate { proxy_request_id: String },
     Rejected,
@@ -340,7 +341,7 @@ fn persist_opencode_session(
             &session.session_id,
             &claimed_proxy_request_ids,
         ) {
-            Ok(OpenCodeInsertOutcome::Inserted) => {
+            Ok(OpenCodeInsertOutcome::Inserted | OpenCodeInsertOutcome::RefreshedSource) => {
                 result.imported = result.imported.saturating_add(1);
                 canonical_messages.push((message_id.clone(), msg_data.clone()));
             }
@@ -889,9 +890,32 @@ fn insert_opencode_message_with_claims(
 
     let created_at = msg.timestamp_ms / 1000;
 
-    // A same-source row is eligible for canonical reconstruction even though
-    // the raw insert is idempotently skipped.  This distinguishes it from a
-    // proxy row that happens to match the same token fingerprint.
+    // OpenCode 使用 Anthropic 风格：input 是新鲜输入，cache 单独计
+    // output 包含 reasoning tokens（按输出计费）
+    let output_with_reasoning = output_tokens_with_reasoning(msg);
+    let mut raw = RawUsageLogRow::native_session(
+        request_id,
+        "_opencode_session",
+        "opencode",
+        msg.model_id.as_str(),
+        Some(session_id),
+        "opencode_session",
+        created_at,
+    );
+    raw.pricing_model = (!cost.pricing_model.is_empty()).then(|| cost.pricing_model.clone());
+    raw.input_tokens = i64::from(msg.input_tokens);
+    raw.output_tokens = i64::from(output_with_reasoning);
+    raw.cache_read_tokens = i64::from(msg.cache_read_tokens);
+    raw.cache_creation_tokens = i64::from(msg.cache_write_tokens);
+    raw.input_cost_usd = cost.input_cost;
+    raw.output_cost_usd = cost.output_cost;
+    raw.cache_read_cost_usd = cost.cache_read_cost;
+    raw.cache_creation_cost_usd = cost.cache_creation_cost;
+    raw.total_cost_usd = cost.total_cost;
+
+    // A same-source row is eligible for canonical reconstruction and may be a
+    // rewritten message. Refresh only the OpenCode-native row; a proxy-owned
+    // request with the same ID is deliberately outside this update scope.
     let same_source_exists: bool = conn.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM proxy_request_logs
@@ -903,12 +927,12 @@ fn insert_opencode_message_with_claims(
         |row| row.get(0),
     )?;
     if same_source_exists {
-        return Ok(OpenCodeInsertOutcome::ExistingSource);
+        return Ok(if refresh_opencode_raw_on_conn(&conn, &raw)? {
+            OpenCodeInsertOutcome::RefreshedSource
+        } else {
+            OpenCodeInsertOutcome::ExistingSource
+        });
     }
-
-    // OpenCode 使用 Anthropic 风格：input 是新鲜输入，cache 单独计
-    // output 包含 reasoning tokens（按输出计费）
-    let output_with_reasoning = output_tokens_with_reasoning(msg);
 
     let dedup_key = DedupKey {
         app_type: "opencode",
@@ -944,24 +968,6 @@ fn insert_opencode_message_with_claims(
         }
     }
 
-    let mut raw = RawUsageLogRow::native_session(
-        request_id,
-        "_opencode_session",
-        "opencode",
-        msg.model_id.as_str(),
-        Some(session_id),
-        "opencode_session",
-        created_at,
-    );
-    raw.input_tokens = i64::from(msg.input_tokens);
-    raw.output_tokens = i64::from(output_with_reasoning);
-    raw.cache_read_tokens = i64::from(msg.cache_read_tokens);
-    raw.cache_creation_tokens = i64::from(msg.cache_write_tokens);
-    raw.input_cost_usd = cost.input_cost;
-    raw.output_cost_usd = cost.output_cost;
-    raw.cache_read_cost_usd = cost.cache_read_cost;
-    raw.cache_creation_cost_usd = cost.cache_creation_cost;
-    raw.total_cost_usd = cost.total_cost;
     let inserted = raw
         .insert_or_ignore_on_conn(&conn, UsagePublishTarget::Published)
         .map_err(|error| AppError::Database(format!("插入 OpenCode 会话日志失败: {error}")))?;
@@ -971,6 +977,51 @@ fn insert_opencode_message_with_claims(
     } else {
         OpenCodeInsertOutcome::Rejected
     })
+}
+
+fn refresh_opencode_raw_on_conn(
+    conn: &rusqlite::Connection,
+    raw: &RawUsageLogRow,
+) -> Result<bool, AppError> {
+    conn.execute(
+        "UPDATE proxy_request_logs
+         SET model = ?1, request_model = ?2, pricing_model = ?3,
+             input_tokens = ?4, output_tokens = ?5,
+             cache_read_tokens = ?6, cache_creation_tokens = ?7,
+             input_cost_usd = ?8, output_cost_usd = ?9,
+             cache_read_cost_usd = ?10, cache_creation_cost_usd = ?11,
+             total_cost_usd = ?12, session_id = ?13, created_at = ?14
+         WHERE request_id = ?15
+           AND app_type = 'opencode' AND data_source = 'opencode_session'
+           AND (
+               model IS NOT ?1 OR request_model IS NOT ?2 OR pricing_model IS NOT ?3
+               OR input_tokens IS NOT ?4 OR output_tokens IS NOT ?5
+               OR cache_read_tokens IS NOT ?6 OR cache_creation_tokens IS NOT ?7
+               OR input_cost_usd IS NOT ?8 OR output_cost_usd IS NOT ?9
+               OR cache_read_cost_usd IS NOT ?10 OR cache_creation_cost_usd IS NOT ?11
+               OR total_cost_usd IS NOT ?12 OR session_id IS NOT ?13
+               OR created_at IS NOT ?14
+           )",
+        rusqlite::params![
+            &raw.model,
+            &raw.request_model,
+            &raw.pricing_model,
+            raw.input_tokens,
+            raw.output_tokens,
+            raw.cache_read_tokens,
+            raw.cache_creation_tokens,
+            &raw.input_cost_usd,
+            &raw.output_cost_usd,
+            &raw.cache_read_cost_usd,
+            &raw.cache_creation_cost_usd,
+            &raw.total_cost_usd,
+            &raw.session_id,
+            raw.created_at,
+            &raw.request_id,
+        ],
+    )
+    .map(|updated| updated > 0)
+    .map_err(|error| AppError::Database(format!("更新 OpenCode raw compatibility 行失败: {error}")))
 }
 
 fn find_covered_proxy_usage_log_for_session(
@@ -1317,7 +1368,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_session_rescan_replaces_obsolete_canonical_buckets() {
+    fn complete_session_rescan_replaces_obsolete_canonical_buckets_and_raw_row() {
         let db = Database::memory().expect("memory database");
         let session = session_fixture("ses_rewrite", OpenCodeStorage::Sqlite);
         let original = completed_message(
@@ -1376,16 +1427,18 @@ mod tests {
         rewritten.1.model_id = "rewritten-model".into();
         let expected_date =
             local_date_from_timestamp_ms(rewritten.1.timestamp_ms).expect("rewritten local date");
+        let mut rewritten_result = SessionSyncResult::default();
         persist_opencode_session(
             &db,
             &session,
             &OpenCodeMessageQueryResult {
-                messages: vec![rewritten],
+                messages: vec![rewritten.clone()],
                 has_incomplete_usage: false,
             },
-            &mut SessionSyncResult::default(),
+            &mut rewritten_result,
         )
         .expect("persist rewritten message");
+        assert_eq!(rewritten_result.imported, 1);
         let conn = db.conn.lock().expect("lock rewritten database");
         let rewritten_rows: Vec<(String, String, i64)> = conn
             .prepare(
@@ -1402,6 +1455,73 @@ mod tests {
             rewritten_rows,
             vec![(expected_date, "rewritten-model".into(), 20)]
         );
+        let raw: (i64, String, String, i64, i64, i64, i64, String, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), model, request_model, input_tokens, output_tokens,
+                        cache_read_tokens, cache_creation_tokens, total_cost_usd, created_at
+                 FROM proxy_request_logs
+                 WHERE request_id = 'opencode_session:ses_rewrite:rewritten-message'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                    ))
+                },
+            )
+            .expect("rewritten raw compatibility row");
+        assert_eq!(
+            raw,
+            (
+                1,
+                "rewritten-model".into(),
+                "rewritten-model".into(),
+                20,
+                7,
+                4,
+                5,
+                "0.2".into(),
+                1_800_086_400,
+            )
+        );
+        drop(conn);
+
+        let mut repeated_result = SessionSyncResult::default();
+        persist_opencode_session(
+            &db,
+            &session,
+            &OpenCodeMessageQueryResult {
+                messages: vec![rewritten],
+                has_incomplete_usage: false,
+            },
+            &mut repeated_result,
+        )
+        .expect("repeat rewritten message");
+        assert_eq!(repeated_result.imported, 0);
+        assert_eq!(repeated_result.skipped, 1);
+        let conn = db.conn.lock().expect("lock repeated rewrite database");
+        let stable_counts: (i64, i64, i64) = conn
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM proxy_request_logs
+                     WHERE request_id = 'opencode_session:ses_rewrite:rewritten-message'),
+                    (SELECT COUNT(*) FROM agent_session_usage_rollups
+                     WHERE app_type = 'opencode' AND session_id = 'ses_rewrite'),
+                    (SELECT COUNT(*) FROM agent_session_canonical_coverage
+                     WHERE app_type = 'opencode' AND data_source = 'opencode_session'
+                       AND request_id = 'opencode_session:ses_rewrite:rewritten-message')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("stable rewritten counts");
+        assert_eq!(stable_counts, (1, 1, 1));
         drop(conn);
 
         persist_opencode_session(
