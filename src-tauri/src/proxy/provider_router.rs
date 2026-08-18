@@ -16,8 +16,13 @@ use tokio::sync::RwLock;
 /// header. Reusing that request against another account card would cross the
 /// account boundary, so these cards must never participate in provider retry.
 pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) -> bool {
-    app_type != AppType::Codex.as_str()
-        || !crate::proxy::providers::is_codex_official_provider(provider)
+    app_type != AppType::CodexDesktop.as_str()
+        && (app_type != AppType::Codex.as_str()
+            || !crate::proxy::providers::is_codex_official_provider(provider))
+}
+
+fn app_uses_proxy_config(app_type: &str) -> bool {
+    AppType::from_str(app_type).is_ok_and(|app| app.supports_local_proxy())
 }
 
 /// 供应商路由器
@@ -61,12 +66,16 @@ impl ProviderRouter {
             .flatten();
 
         // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
-        let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
-            Ok(config) => config.auto_failover_enabled,
-            Err(e) => {
-                log::error!("[{app_type}] 读取 proxy_config 失败: {e}，默认禁用故障转移");
-                false
+        let auto_failover_enabled = if app_uses_proxy_config(app_type) {
+            match self.db.get_proxy_config_for_app(app_type).await {
+                Ok(config) => config.auto_failover_enabled,
+                Err(e) => {
+                    log::error!("[{app_type}] 读取 proxy_config 失败: {e}，默认禁用故障转移");
+                    false
+                }
             }
+        } else {
+            false
         };
 
         if auto_failover_enabled
@@ -154,9 +163,14 @@ impl ProviderRouter {
         error_msg: Option<String>,
     ) -> Result<(), AppError> {
         // 1. 按应用独立获取熔断器配置
-        let failure_threshold = match self.db.get_proxy_config_for_app(app_type).await {
-            Ok(app_config) => app_config.circuit_failure_threshold,
-            Err(_) => 5, // 默认值
+        let failure_threshold = if app_uses_proxy_config(app_type) {
+            self.db
+                .get_proxy_config_for_app(app_type)
+                .await
+                .map(|config| config.circuit_failure_threshold)
+                .unwrap_or(5)
+        } else {
+            5
         };
 
         // 2. 更新熔断器状态
@@ -273,15 +287,19 @@ impl ProviderRouter {
         let app_type = key.split(':').next().unwrap_or("claude");
 
         // 按应用独立读取熔断器配置
-        let config = match self.db.get_proxy_config_for_app(app_type).await {
-            Ok(app_config) => crate::proxy::circuit_breaker::CircuitBreakerConfig {
-                failure_threshold: app_config.circuit_failure_threshold,
-                success_threshold: app_config.circuit_success_threshold,
-                timeout_seconds: app_config.circuit_timeout_seconds as u64,
-                error_rate_threshold: app_config.circuit_error_rate_threshold,
-                min_requests: app_config.circuit_min_requests,
-            },
-            Err(_) => crate::proxy::circuit_breaker::CircuitBreakerConfig::default(),
+        let config = if app_uses_proxy_config(app_type) {
+            match self.db.get_proxy_config_for_app(app_type).await {
+                Ok(app_config) => crate::proxy::circuit_breaker::CircuitBreakerConfig {
+                    failure_threshold: app_config.circuit_failure_threshold,
+                    success_threshold: app_config.circuit_success_threshold,
+                    timeout_seconds: app_config.circuit_timeout_seconds as u64,
+                    error_rate_threshold: app_config.circuit_error_rate_threshold,
+                    min_requests: app_config.circuit_min_requests,
+                },
+                Err(_) => crate::proxy::circuit_breaker::CircuitBreakerConfig::default(),
+            }
+        } else {
+            crate::proxy::circuit_breaker::CircuitBreakerConfig::default()
         };
 
         let breaker = Arc::new(CircuitBreaker::new(config));
@@ -537,6 +555,55 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["fallback"]
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_desktop_router_never_reads_proxy_config() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = Provider::with_id(
+            "desktop-current".to_string(),
+            "Desktop Current".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider(AppType::CodexDesktop.as_str(), &provider)
+            .unwrap();
+        db.set_current_provider(AppType::CodexDesktop.as_str(), &provider.id)
+            .unwrap();
+
+        // Dropping the table turns any accidental proxy_config read into a
+        // deterministic failure without adding a Desktop row to schema v17.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DROP TABLE proxy_config", [])
+            .unwrap();
+
+        let router = ProviderRouter::new(db);
+        let selected = router
+            .select_providers(AppType::CodexDesktop.as_str())
+            .await
+            .expect("Desktop provider selection must not depend on proxy_config");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, provider.id);
+        assert!(
+            router
+                .allow_provider_request(&provider.id, AppType::CodexDesktop.as_str())
+                .await
+                .allowed
+        );
+        router
+            .record_result(
+                &provider.id,
+                AppType::CodexDesktop.as_str(),
+                false,
+                true,
+                None,
+            )
+            .await
+            .expect("Desktop health recording must use built-in circuit defaults");
     }
 
     #[tokio::test]

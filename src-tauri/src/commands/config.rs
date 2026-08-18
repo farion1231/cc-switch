@@ -51,7 +51,7 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
             serde_json::from_str::<serde_json::Value>(snippet)
                 .map_err(invalid_json_format_error)?;
         }
-        "codex" => {
+        "codex" | "codex-desktop" => {
             snippet
                 .parse::<toml_edit::DocumentMut>()
                 .map_err(invalid_toml_format_error)?;
@@ -88,6 +88,16 @@ pub async fn get_config_status(
                 .to_string_lossy()
                 .to_string();
 
+            Ok(ConfigStatus { exists, path })
+        }
+        AppType::CodexDesktop => {
+            let target = codex_config::CodexTarget::Desktop;
+            let auth_path = codex_config::get_codex_auth_path_for(target);
+            let config_text = codex_config::read_codex_config_text_for(target)?;
+            let exists = auth_path.exists() || !config_text.trim().is_empty();
+            let path = codex_config::get_codex_config_dir_for(target)
+                .to_string_lossy()
+                .to_string();
             Ok(ConfigStatus { exists, path })
         }
         AppType::Gemini => {
@@ -162,6 +172,9 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
         }
         AppType::Codex => codex_config::get_codex_config_dir(),
+        AppType::CodexDesktop => {
+            codex_config::get_codex_config_dir_for(codex_config::CodexTarget::Desktop)
+        }
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
@@ -181,6 +194,9 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
         }
         AppType::Codex => codex_config::get_codex_config_dir(),
+        AppType::CodexDesktop => {
+            codex_config::get_codex_config_dir_for(codex_config::CodexTarget::Desktop)
+        }
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),

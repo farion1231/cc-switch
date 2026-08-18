@@ -76,6 +76,7 @@ function renderCard(
     status?: ManagedAuthStatus;
     isCurrent?: boolean;
     onEdit?: (provider: Provider) => void;
+    appId?: "codex" | "codex-desktop";
   } = {},
 ) {
   const queryClient = createTestQueryClient();
@@ -90,7 +91,7 @@ function renderCard(
     <QueryClientProvider client={queryClient}>
       <ProviderCard
         provider={provider}
-        appId="codex"
+        appId={options.appId ?? "codex"}
         isCurrent={options.isCurrent ?? false}
         isProxyRunning={false}
         onSwitch={vi.fn()}
@@ -174,6 +175,25 @@ describe("ProviderCard Codex Official account identity", () => {
     expect(
       screen.getByText("账号会随 Codex CLI 当前登录变化"),
     ).toBeInTheDocument();
+  });
+
+  it("describes the independent Codex Desktop login on its native card", () => {
+    renderCard(
+      {
+        id: "codex-official",
+        name: "OpenAI Official",
+        category: "official",
+        settingsConfig: {},
+      },
+      { appId: "codex-desktop" },
+    );
+
+    expect(
+      screen.getByText("账号会随 Codex Desktop 当前登录变化"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("账号会随 Codex CLI 当前登录变化"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows a manual note instead of generated account guidance", () => {

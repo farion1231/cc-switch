@@ -48,6 +48,7 @@ export function useProviderActions(
 ) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const isCodexTarget = activeApp === "codex" || activeApp === "codex-desktop";
 
   const addProviderMutation = useAddProviderMutation(activeApp);
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
@@ -173,7 +174,7 @@ export function useProviderActions(
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
       const isCodexChatFormat =
-        (activeApp === "codex" || activeApp === "grokbuild") &&
+        (isCodexTarget || activeApp === "grokbuild") &&
         (provider.meta?.apiFormat === "openai_chat" ||
           (typeof (provider.settingsConfig as Record<string, any>)?.config ===
             "string" &&
@@ -183,7 +184,7 @@ export function useProviderActions(
               ),
             )));
       const isCodexAnthropicFormat =
-        (activeApp === "codex" || activeApp === "grokbuild") &&
+        (isCodexTarget || activeApp === "grokbuild") &&
         (provider.meta?.apiFormat === "anthropic" ||
           (typeof (provider.settingsConfig as Record<string, any>)?.config ===
             "string" &&
@@ -197,7 +198,7 @@ export function useProviderActions(
       // 应用的 takeover。不能只看全局进程，否则其它应用已接管时会漏判；也
       // 不能只看 takeover，否则 Desktop 在路由已运行时会持续误报。
       const routingReady =
-        activeApp === "claude-desktop"
+        activeApp === "claude-desktop" || activeApp === "codex-desktop"
           ? isProxyRunning === true
           : isProxyTakeover === true;
 
@@ -249,10 +250,15 @@ export function useProviderActions(
             defaultValue: "使用 Claude Desktop 本地路由模式",
           });
         } else if (
+          activeApp === "codex-desktop" &&
+          provider.meta?.codexDesktopMode === "proxy"
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonCodexDesktop", {
+            defaultValue: "使用 Codex Desktop 本地网关模式",
+          });
+        } else if (
           provider.meta?.isFullUrl &&
-          (activeApp === "claude" ||
-            activeApp === "codex" ||
-            activeApp === "grokbuild")
+          (activeApp === "claude" || isCodexTarget || activeApp === "grokbuild")
         ) {
           proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
             defaultValue: "开启了完整 URL 连接模式",
@@ -317,6 +323,15 @@ export function useProviderActions(
           if (activeApp === "codex") {
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "codex-desktop") {
+            messageKey =
+              provider.meta?.codexDesktopMode === "proxy"
+                ? "notifications.codexDesktopProxyRestartRequired"
+                : "notifications.codexDesktopRestartRequired";
+            defaultMessage =
+              provider.meta?.codexDesktopMode === "proxy"
+                ? "切换成功，请保持 CC Switch 运行，并重启 Codex Desktop 后生效"
+                : "切换成功，重启 Codex Desktop 后生效";
           } else if (activeApp === "grokbuild") {
             messageKey = "notifications.grokBuildRestartRequired";
             defaultMessage = "切换成功，请重启 Grok Build 以生效";
@@ -345,6 +360,7 @@ export function useProviderActions(
       switchProviderMutation,
       syncClaudePlugin,
       activeApp,
+      isCodexTarget,
       isProxyRunning,
       isProxyTakeover,
       t,

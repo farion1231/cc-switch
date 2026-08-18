@@ -35,14 +35,17 @@ pub enum ProfileScope {
     #[serde(rename = "claude-desktop")]
     ClaudeDesktop,
     Codex,
+    #[serde(rename = "codex-desktop")]
+    CodexDesktop,
 }
 
 impl ProfileScope {
     /// 全部分组（扩展新分组时同步扩展 apps/for_app 与前端 scope.ts 镜像）
-    pub const ALL: [ProfileScope; 3] = [
+    pub const ALL: [ProfileScope; 4] = [
         ProfileScope::Claude,
         ProfileScope::ClaudeDesktop,
         ProfileScope::Codex,
+        ProfileScope::CodexDesktop,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -50,6 +53,7 @@ impl ProfileScope {
             ProfileScope::Claude => "claude",
             ProfileScope::ClaudeDesktop => "claude-desktop",
             ProfileScope::Codex => "codex",
+            ProfileScope::CodexDesktop => "codex-desktop",
         }
     }
 
@@ -58,6 +62,7 @@ impl ProfileScope {
             "claude" => Ok(ProfileScope::Claude),
             "claude-desktop" => Ok(ProfileScope::ClaudeDesktop),
             "codex" => Ok(ProfileScope::Codex),
+            "codex-desktop" => Ok(ProfileScope::CodexDesktop),
             other => Err(AppError::InvalidInput(format!(
                 "Unknown profile scope: {other}"
             ))),
@@ -70,6 +75,7 @@ impl ProfileScope {
             ProfileScope::Claude => &[AppType::Claude],
             ProfileScope::ClaudeDesktop => &[AppType::ClaudeDesktop],
             ProfileScope::Codex => &[AppType::Codex],
+            ProfileScope::CodexDesktop => &[AppType::CodexDesktop],
         }
     }
 
@@ -79,6 +85,7 @@ impl ProfileScope {
             AppType::Claude => Some(ProfileScope::Claude),
             AppType::ClaudeDesktop => Some(ProfileScope::ClaudeDesktop),
             AppType::Codex => Some(ProfileScope::Codex),
+            AppType::CodexDesktop => Some(ProfileScope::CodexDesktop),
             _ => None,
         }
     }
@@ -92,6 +99,8 @@ pub struct PerApp<T> {
     #[serde(rename = "claude-desktop")]
     pub claude_desktop: T,
     pub codex: T,
+    #[serde(rename = "codex-desktop")]
+    pub codex_desktop: T,
 }
 
 impl<T> PerApp<T> {
@@ -100,6 +109,7 @@ impl<T> PerApp<T> {
             AppType::Claude => Some(&self.claude),
             AppType::ClaudeDesktop => Some(&self.claude_desktop),
             AppType::Codex => Some(&self.codex),
+            AppType::CodexDesktop => Some(&self.codex_desktop),
             _ => None,
         }
     }
@@ -109,6 +119,7 @@ impl<T> PerApp<T> {
             AppType::Claude => Some(&mut self.claude),
             AppType::ClaudeDesktop => Some(&mut self.claude_desktop),
             AppType::Codex => Some(&mut self.codex),
+            AppType::CodexDesktop => Some(&mut self.codex_desktop),
             _ => None,
         }
     }
@@ -142,6 +153,9 @@ impl ProfilePayload {
             {
                 *dst = src.clone();
             }
+            if matches!(scope, ProfileScope::CodexDesktop) {
+                continue;
+            }
             if let (Some(dst), Some(src)) = (self.mcp.get_mut(app), other.mcp.get(app)) {
                 *dst = src.clone();
             }
@@ -156,6 +170,12 @@ impl ProfilePayload {
 
     /// 某分组是否拍过快照（任一槽位非 None 即视为拍过）
     pub fn scope_captured(&self, scope: ProfileScope) -> bool {
+        if matches!(scope, ProfileScope::CodexDesktop) {
+            return self
+                .providers
+                .get(&AppType::CodexDesktop)
+                .is_some_and(|slot| slot.is_some());
+        }
         scope.apps().iter().any(|app| {
             self.providers.get(app).is_some_and(|s| s.is_some())
                 || self.mcp.get(app).is_some_and(|s| s.is_some())
@@ -193,22 +213,51 @@ fn plan_toggles(
 pub struct ProfileService;
 
 impl ProfileService {
+    fn codex_desktop_requires_gateway(state: &AppState) -> Result<bool, AppError> {
+        let Some(provider_id) =
+            crate::settings::get_effective_current_provider(&state.db, &AppType::CodexDesktop)?
+        else {
+            return Ok(false);
+        };
+        let Some(provider) = state
+            .db
+            .get_provider_by_id(&provider_id, AppType::CodexDesktop.as_str())?
+        else {
+            return Ok(false);
+        };
+
+        Ok(matches!(
+            crate::codex_desktop_config::provider_mode(&provider),
+            crate::provider::CodexDesktopMode::Proxy
+        ))
+    }
+
     /// 抓取分组内应用的当前配置状态生成快照（组外槽位保持默认值）
     pub fn snapshot_current(
         state: &AppState,
         scope: ProfileScope,
     ) -> Result<ProfilePayload, AppError> {
         let mut payload = ProfilePayload::default();
-        let mcp_servers = state.db.get_all_mcp_servers()?;
-        let skills = state.db.get_all_installed_skills()?;
+        let provider_only = matches!(scope, ProfileScope::CodexDesktop);
+        let mcp_servers = (!provider_only)
+            .then(|| state.db.get_all_mcp_servers())
+            .transpose()?;
+        let skills = (!provider_only)
+            .then(|| state.db.get_all_installed_skills())
+            .transpose()?;
 
         for app in scope.apps().iter() {
             if let Some(slot) = payload.providers.get_mut(app) {
                 *slot = crate::settings::get_effective_current_provider(&state.db, app)?;
             }
+            if provider_only {
+                continue;
+            }
             if let Some(slot) = payload.mcp.get_mut(app) {
                 *slot = Some(
                     mcp_servers
+                        .as_ref()
+                        .expect("non-provider-only scope loads MCP state")
                         .values()
                         .filter(|s| s.apps.is_enabled_for(app))
                         .map(|s| s.id.clone())
@@ -218,6 +267,8 @@ impl ProfileService {
             if let Some(slot) = payload.skills.get_mut(app) {
                 *slot = Some(
                     skills
+                        .as_ref()
+                        .expect("non-provider-only scope loads skill state")
                         .values()
                         .filter(|s| s.apps.is_enabled_for(app))
                         .map(|s| s.id.clone())
@@ -365,10 +416,12 @@ impl ProfileService {
             // 1. 切换项目前无条件关闭当前应用的代理接管。
             // 接管态下 live 文件属于代理；用户希望切换工作目录时总是退出当前
             // 代理环境，再按快照写入真实供应商配置。
-            if let Err(e) = state.proxy_service.disable_takeover_for_app_sync(app) {
-                warnings.push(format!(
-                    "[{app_str}] auto-disable proxy takeover before profile switch failed: {e}"
-                ));
+            if app.supports_local_proxy() {
+                if let Err(e) = state.proxy_service.disable_takeover_for_app_sync(app) {
+                    warnings.push(format!(
+                        "[{app_str}] auto-disable proxy takeover before profile switch failed: {e}"
+                    ));
+                }
             }
 
             // 2. 供应商
@@ -389,6 +442,10 @@ impl ProfileService {
                         }
                     }
                 }
+            }
+
+            if matches!(scope, ProfileScope::CodexDesktop) {
+                continue;
             }
 
             // 3. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
@@ -458,8 +515,10 @@ impl ProfileService {
             .db
             .set_current_profile_id(scope.as_str(), Some(profile_id))?;
 
-        // 当前分组内所有接管已关闭；若其它应用也无接管，可停止代理服务。
-        let should_stop_proxy = !state.db.is_live_takeover_active_sync();
+        // 当前分组内所有接管已关闭；若其它应用也无接管，且 Codex Desktop
+        // 当前供应商不依赖本地网关，才可停止共享代理服务。
+        let should_stop_proxy = !state.db.is_live_takeover_active_sync()
+            && !Self::codex_desktop_requires_gateway(state)?;
 
         Ok((warnings, should_stop_proxy))
     }
@@ -480,21 +539,25 @@ mod tests {
                 claude: Some("p1".into()),
                 claude_desktop: Some("d1".into()),
                 codex: None,
+                codex_desktop: Some("cd1".into()),
             },
             mcp: PerApp {
                 claude: Some(ids(&["m1", "m2"])),
                 claude_desktop: Some(vec![]),
                 codex: None,
+                codex_desktop: None,
             },
             skills: PerApp {
                 claude: Some(vec![]),
                 claude_desktop: Some(vec![]),
                 codex: Some(ids(&["s1"])),
+                codex_desktop: None,
             },
             prompts: PerApp {
                 claude: None,
                 claude_desktop: None,
                 codex: Some("pr1".into()),
+                codex_desktop: None,
             },
         };
         let json = serde_json::to_string(&payload).unwrap();
@@ -533,11 +596,13 @@ mod tests {
                 claude: Some("p1".into()),
                 claude_desktop: Some("d1".into()),
                 codex: Some("c1".into()),
+                codex_desktop: Some("cd1".into()),
             },
             mcp: PerApp {
                 claude: Some(ids(&["m1"])),
                 claude_desktop: Some(vec![]),
                 codex: Some(ids(&["m9"])),
+                codex_desktop: None,
             },
             ..Default::default()
         };
@@ -547,11 +612,13 @@ mod tests {
                 claude: Some("p2".into()),
                 claude_desktop: None,
                 codex: Some("SHOULD-NOT-LEAK".into()),
+                codex_desktop: Some("SHOULD-NOT-LEAK".into()),
             },
             mcp: PerApp {
                 claude: Some(ids(&["m2"])),
                 claude_desktop: Some(vec![]),
                 codex: None,
+                codex_desktop: None,
             },
             ..Default::default()
         };
@@ -575,6 +642,7 @@ mod tests {
         assert!(!payload.scope_captured(ProfileScope::Claude));
         assert!(!payload.scope_captured(ProfileScope::ClaudeDesktop));
         assert!(!payload.scope_captured(ProfileScope::Codex));
+        assert!(!payload.scope_captured(ProfileScope::CodexDesktop));
 
         // 只拍过 claude 组（哪怕拍到的是空集）
         payload.mcp.claude = Some(vec![]);
@@ -595,6 +663,7 @@ mod tests {
         assert!(per.get(&AppType::Claude).is_some());
         assert!(per.get(&AppType::ClaudeDesktop).is_some());
         assert!(per.get(&AppType::Codex).is_some());
+        assert!(per.get(&AppType::CodexDesktop).is_some());
         assert!(per.get(&AppType::Gemini).is_none());
     }
 
@@ -622,6 +691,7 @@ mod tests {
             &[AppType::ClaudeDesktop]
         );
         assert_eq!(ProfileScope::Codex.apps(), &[AppType::Codex]);
+        assert_eq!(ProfileScope::CodexDesktop.apps(), &[AppType::CodexDesktop]);
         for scope in ProfileScope::ALL {
             for app in scope.apps() {
                 assert_eq!(ProfileScope::for_app(app), Some(scope));

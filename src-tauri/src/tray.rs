@@ -832,7 +832,8 @@ pub fn create_tray_menu(
             let scope_label = match scope {
                 ProfileScope::Claude => "Claude Code",
                 ProfileScope::ClaudeDesktop => "Claude Desktop",
-                ProfileScope::Codex => "Codex",
+                ProfileScope::Codex => "Codex CLI",
+                ProfileScope::CodexDesktop => "Codex Desktop",
             };
             let mut scope_builder = SubmenuBuilder::with_id(
                 app,

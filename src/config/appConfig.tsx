@@ -20,6 +20,7 @@ export const APP_IDS: AppId[] = [
   "claude",
   "claude-desktop",
   "codex",
+  "codex-desktop",
   "gemini",
   "grokbuild",
   "opencode",
@@ -32,6 +33,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   claude: true,
   "claude-desktop": true,
   codex: true,
+  "codex-desktop": true,
   gemini: true,
   grokbuild: true,
   opencode: true,
@@ -84,8 +86,11 @@ export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
 }
 
-/** Pi has no native MCP registry; do not manufacture a disabled mirror. */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
+/** Desktop variants share their CLI app's MCP registry. */
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "codex-desktop" | "openclaw" | "pi"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -117,7 +122,15 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 border-0 gap-1.5",
   },
   codex: {
-    label: "Codex",
+    label: "Codex CLI",
+    icon: <CodexIcon size={14} />,
+    activeClass:
+      "bg-green-500/10 ring-1 ring-green-500/20 hover:bg-green-500/20 text-green-600 dark:text-green-400",
+    badgeClass:
+      "bg-green-500/10 text-green-700 dark:text-green-300 hover:bg-green-500/20 border-0 gap-1.5",
+  },
+  "codex-desktop": {
+    label: "Codex Desktop",
     icon: <CodexIcon size={14} />,
     activeClass:
       "bg-green-500/10 ring-1 ring-green-500/20 hover:bg-green-500/20 text-green-600 dark:text-green-400",

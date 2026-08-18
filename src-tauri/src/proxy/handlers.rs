@@ -81,8 +81,14 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
 /// Codex live-setting import.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
-    let config_dir = crate::codex_config::get_codex_config_dir();
-    let active_catalog_path = match crate::codex_config::read_codex_config_text() {
+    handle_models_for_target(crate::codex_config::CodexTarget::Cli)
+}
+
+fn handle_models_for_target(
+    target: crate::codex_config::CodexTarget,
+) -> Result<Json<Value>, ProxyError> {
+    let config_dir = crate::codex_config::get_codex_config_dir_for(target);
+    let active_catalog_path = match crate::codex_config::read_codex_config_text_for(target) {
         Ok(config_text) => {
             crate::codex_config::resolve_cc_switch_catalog_path(&config_text, &config_dir)
         }
@@ -108,6 +114,23 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         json!({"models": []})
     };
     Ok(Json(catalog))
+}
+
+pub async fn handle_codex_desktop_models(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, ProxyError> {
+    validate_codex_desktop_gateway_auth(&state, &headers)?;
+    state
+        .provider_router
+        .select_providers(AppType::CodexDesktop.as_str())
+        .await
+        .map_err(|error| match error {
+            crate::error::AppError::AllProvidersCircuitOpen => ProxyError::AllProvidersCircuitOpen,
+            crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
+            other => ProxyError::DatabaseError(other.to_string()),
+        })?;
+    handle_models_for_target(crate::codex_config::CodexTarget::Desktop)
 }
 
 // ============================================================================
@@ -287,6 +310,44 @@ fn validate_claude_desktop_gateway_auth(
             "Claude Desktop gateway token 无效".to_string(),
         ));
     }
+    Ok(())
+}
+
+fn validate_codex_desktop_gateway_auth(
+    state: &ProxyState,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), ProxyError> {
+    let expected = crate::codex_desktop_config::get_or_create_gateway_token(state.db.as_ref())
+        .map_err(|e| ProxyError::AuthError(e.to_string()))?;
+    let Some(value) = headers.get(axum::http::header::AUTHORIZATION) else {
+        return Err(ProxyError::AuthError(
+            "Codex Desktop gateway 缺少 Authorization 头".to_string(),
+        ));
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| ProxyError::AuthError("Authorization 头格式无效".to_string()))?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .unwrap_or("")
+        .trim();
+    if token != expected {
+        return Err(ProxyError::AuthError(
+            "Codex Desktop gateway token 无效".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn authorize_codex_desktop_request(
+    state: &ProxyState,
+    request: &mut axum::extract::Request,
+) -> Result<(), ProxyError> {
+    validate_codex_desktop_gateway_auth(state, request.headers())?;
+    request
+        .headers_mut()
+        .remove(axum::http::header::AUTHORIZATION);
     Ok(())
 }
 
@@ -709,6 +770,31 @@ pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_app(state, request, AppType::Codex, "Codex", "codex").await
+}
+
+pub async fn handle_codex_desktop_chat_completions(
+    State(state): State<ProxyState>,
+    mut request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    authorize_codex_desktop_request(&state, &mut request)?;
+    handle_chat_completions_for_app(
+        state,
+        request,
+        AppType::CodexDesktop,
+        "Codex Desktop",
+        "codex-desktop",
+    )
+    .await
+}
+
+async fn handle_chat_completions_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
@@ -724,7 +810,7 @@ pub async fn handle_chat_completions(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
@@ -735,7 +821,7 @@ pub async fn handle_chat_completions(
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Codex,
+            &app_type,
             method,
             &endpoint,
             body,
@@ -776,6 +862,21 @@ pub async fn handle_responses(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     handle_responses_for_app(state, request, AppType::Codex, "Codex", "codex").await
+}
+
+pub async fn handle_codex_desktop_responses(
+    State(state): State<ProxyState>,
+    mut request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    authorize_codex_desktop_request(&state, &mut request)?;
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::CodexDesktop,
+        "Codex Desktop",
+        "codex-desktop",
+    )
+    .await
 }
 
 pub async fn handle_grokbuild_responses(
@@ -913,6 +1014,21 @@ pub async fn handle_responses_compact(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     handle_responses_compact_for_app(state, request, AppType::Codex, "Codex", "codex").await
+}
+
+pub async fn handle_codex_desktop_responses_compact(
+    State(state): State<ProxyState>,
+    mut request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    authorize_codex_desktop_request(&state, &mut request)?;
+    handle_responses_compact_for_app(
+        state,
+        request,
+        AppType::CodexDesktop,
+        "Codex Desktop",
+        "codex-desktop",
+    )
+    .await
 }
 
 pub async fn handle_grokbuild_responses_compact(

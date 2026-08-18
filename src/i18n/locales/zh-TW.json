@@ -242,12 +242,34 @@
       "stopBlockedByTakeover": "其他應用正在使用代理接管。請先在設定中關閉對應應用接管，再停止本機路由。"
     }
   },
+  "codexDesktop": {
+    "followCodexLoginDescription": "帳號會隨 Codex Desktop 目前登入而變更",
+    "modeLabel": "連線方式",
+    "modeDirect": "直連",
+    "modeProxy": "本機閘道",
+    "modeHint": "直連會將供應商設定寫入 Codex Desktop；本機閘道用於協定轉換與動態驗證。",
+    "modeProxyRequiredHint": "此供應商需要協定轉換或動態驗證，將透過 CC Switch 本機閘道連線。",
+    "statusTitle": "Codex Desktop 設定需要檢查",
+    "statusDirectoryConflict": "Codex CLI（{{cliDir}}）與 Codex Desktop（{{desktopDir}}）正在使用同一個設定目錄。請在設定中為 Desktop 指定獨立目錄。",
+    "statusNotConfigured": "目前供應商尚未寫入 Codex Desktop 設定；請重新切換該供應商。",
+    "statusGatewayStopped": "目前供應商使用本機閘道，請開啟頁面頂端的本機路由開關並保持 CC Switch 執行。",
+    "statusGatewayTokenMissing": "本機閘道 token 尚未產生；重新切換目前供應商即可修復。",
+    "statusBaseUrlMismatch": "Codex Desktop 設定網址與目前供應商不一致；目前為 {{actual}}，應為 {{expected}}。重新切換目前供應商即可修復。",
+    "route": {
+      "tooltip": {
+        "active": "Codex Desktop 本機閘道已開啟 - {{address}}:{{port}}",
+        "inactive": "開啟 Codex Desktop 本機閘道，用於需要協定轉換或動態驗證的供應商。目前設定網址：{{address}}:{{port}}"
+      }
+    }
+  },
   "notifications": {
     "providerAdded": "供應商已新增",
     "providerSaved": "供應商設定已儲存",
     "providerDeleted": "供應商刪除成功",
     "switchSuccess": "切換成功！",
     "codexRestartRequired": "切換成功，請重新啟動客戶端以套用",
+    "codexDesktopRestartRequired": "切換成功，重新啟動 Codex Desktop 後生效",
+    "codexDesktopProxyRestartRequired": "切換成功，請保持 CC Switch 執行，並重新啟動 Codex Desktop 後生效",
     "grokBuildRestartRequired": "切換成功，請重新啟動 Grok Build 以套用",
     "claudeDesktopRestartRequired": "切換成功，重新啟動 Claude Desktop 後生效",
     "claudeDesktopProxyRestartRequired": "切換成功，請保持 CC Switch 執行，並重新啟動 Claude Desktop 後生效",
@@ -291,7 +313,8 @@
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
     "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
-    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本機路由模式"
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本機路由模式",
+    "proxyReasonCodexDesktop": "使用 Codex Desktop 本機閘道模式"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",
@@ -777,8 +800,11 @@
     "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
     "claudeConfigDir": "Claude Code 設定目錄",
     "claudeConfigDirDescription": "覆寫 Claude 設定目錄 (settings.json)。真正自訂目錄會在目錄內存放 Claude MCP 的 .claude.json；預設 ~/.claude 目錄仍使用 Claude 預設的 ~/.claude.json。",
-    "codexConfigDir": "Codex 設定目錄",
-    "codexConfigDirDescription": "覆寫 Codex 設定目錄。",
+    "codexConfigDir": "Codex CLI 設定目錄",
+    "codexConfigDirDescription": "覆寫 Codex CLI 設定目錄。",
+    "codexDesktopConfigDir": "Codex Desktop 設定目錄",
+    "codexDesktopConfigDirDescription": "為 Codex Desktop 使用獨立的設定目錄。",
+    "codexDesktopConfigDirConflict": "Codex Desktop 與 Codex CLI 不可使用同一個設定目錄。修正前將停用 Desktop 即時設定操作。",
     "geminiConfigDir": "Gemini 設定目錄",
     "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
     "grokConfigDir": "Grok Build 設定目錄",
@@ -793,6 +819,7 @@
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
+    "browsePlaceholderCodexDesktop": "例如：/home/<您的帳號>/.codex-desktop",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
     "browsePlaceholderGrok": "例如：/home/<您的帳號>/.grok",
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
@@ -905,7 +932,10 @@
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
-    "codex": "Codex",
+    "codex": "Codex CLI",
+    "codexCli": "Codex CLI",
+    "codexDesktop": "Codex Desktop",
+    "codex-desktop": "Codex Desktop",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
@@ -2189,7 +2219,8 @@
     "switcherTooltip": {
       "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案",
       "claude-desktop": "專案：一鍵切換 Claude Desktop 的供應商",
-      "codex": "專案：一鍵切換 Codex 的供應商 / MCP / Skills / 記憶檔案"
+      "codex": "專案：一鍵切換 Codex 的供應商 / MCP / Skills / 記憶檔案",
+      "codex-desktop": "專案：一鍵切換 Codex Desktop 的供應商"
     },
     "none": "不使用專案",
     "searchPlaceholder": "搜尋專案",
@@ -2198,7 +2229,8 @@
     "createDescription": {
       "claude": "把 Claude Code 目前的供應商、MCP、Skills、記憶檔案儲存為一個專案，之後可一鍵切換。",
       "claude-desktop": "把 Claude Desktop 目前的供應商儲存為一個專案，之後可一鍵切換。",
-      "codex": "把 Codex 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。"
+      "codex": "把 Codex 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。",
+      "codex-desktop": "把 Codex Desktop 目前的供應商儲存為一個專案，之後可一鍵切換。"
     },
     "manage": "管理專案…",
     "manageTitle": "管理專案",

@@ -85,7 +85,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let column = match app {
             AppType::Claude => Some("enabled_claude"),
-            AppType::Codex => Some("enabled_codex"),
+            AppType::Codex | AppType::CodexDesktop => Some("enabled_codex"),
             AppType::Gemini => Some("enabled_gemini"),
             AppType::GrokBuild => Some("enabled_grokbuild"),
             AppType::OpenCode => Some("enabled_opencode"),

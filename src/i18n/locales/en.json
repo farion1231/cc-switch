@@ -242,12 +242,34 @@
       "stopBlockedByTakeover": "Another app is using proxy takeover. Please disable that app's takeover in settings before stopping local routing."
     }
   },
+  "codexDesktop": {
+    "followCodexLoginDescription": "The account changes with the current Codex Desktop login",
+    "modeLabel": "Connection Mode",
+    "modeDirect": "Direct",
+    "modeProxy": "Local Gateway",
+    "modeHint": "Direct writes the provider configuration to Codex Desktop. Local Gateway handles format conversion and dynamic authentication.",
+    "modeProxyRequiredHint": "This provider requires format conversion or dynamic authentication and will connect through the CC Switch local gateway.",
+    "statusTitle": "Codex Desktop configuration needs attention",
+    "statusDirectoryConflict": "Codex CLI ({{cliDir}}) and Codex Desktop ({{desktopDir}}) use the same configuration directory. Set a dedicated Desktop directory in Settings.",
+    "statusNotConfigured": "The current provider has not been written to Codex Desktop. Switch to it again to apply the configuration.",
+    "statusGatewayStopped": "The current provider uses Local Gateway. Turn on local routing at the top of this page and keep CC Switch running.",
+    "statusGatewayTokenMissing": "The local gateway token has not been generated yet. Switch to the current provider again to repair it.",
+    "statusBaseUrlMismatch": "The Codex Desktop URL does not match the current provider. Current: {{actual}}; expected: {{expected}}. Switch to the current provider again to repair it.",
+    "route": {
+      "tooltip": {
+        "active": "Codex Desktop local gateway is running - {{address}}:{{port}}",
+        "inactive": "Turn on Codex Desktop local gateway for providers that need format conversion or dynamic authentication. Configured address: {{address}}:{{port}}"
+      }
+    }
+  },
   "notifications": {
     "providerAdded": "Provider added",
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
     "codexRestartRequired": "Switched successfully. Restart the client to apply changes.",
+    "codexDesktopRestartRequired": "Switched successfully. Restart Codex Desktop to apply changes.",
+    "codexDesktopProxyRestartRequired": "Switched successfully. Keep CC Switch running and restart Codex Desktop to apply changes.",
     "grokBuildRestartRequired": "Switched successfully. Restart Grok Build to apply changes.",
     "claudeDesktopRestartRequired": "Switched successfully. Restart Claude Desktop to apply changes.",
     "claudeDesktopProxyRestartRequired": "Switched successfully. Keep CC Switch running and restart Claude Desktop to apply changes.",
@@ -291,7 +313,8 @@
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
-    "proxyReasonClaudeDesktop": "Using Claude Desktop local routing mode"
+    "proxyReasonClaudeDesktop": "Using Claude Desktop local routing mode",
+    "proxyReasonCodexDesktop": "uses Codex Desktop Local Gateway mode"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -777,8 +800,11 @@
     "browsePlaceholderApp": "e.g., C:\\Users\\Administrator\\.cc-switch",
     "claudeConfigDir": "Claude Code Configuration Directory",
     "claudeConfigDirDescription": "Override Claude configuration directory (settings.json). Custom directories store .claude.json (MCP) inside the directory; the default ~/.claude directory keeps Claude Code's split ~/.claude.json path.",
-    "codexConfigDir": "Codex Configuration Directory",
-    "codexConfigDirDescription": "Override Codex configuration directory.",
+    "codexConfigDir": "Codex CLI Configuration Directory",
+    "codexConfigDirDescription": "Override the Codex CLI configuration directory.",
+    "codexDesktopConfigDir": "Codex Desktop Configuration Directory",
+    "codexDesktopConfigDirDescription": "Use a dedicated directory for Codex Desktop configuration.",
+    "codexDesktopConfigDirConflict": "Codex Desktop and Codex CLI must use different configuration directories. Desktop live operations are disabled until this is fixed.",
     "geminiConfigDir": "Gemini Configuration Directory",
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
     "grokConfigDir": "Grok Build Configuration Directory",
@@ -793,6 +819,7 @@
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
+    "browsePlaceholderCodexDesktop": "e.g., /home/<your-username>/.codex-desktop",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderGrok": "e.g., /home/<your-username>/.grok",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
@@ -904,7 +931,10 @@
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
-    "codex": "Codex",
+    "codex": "Codex CLI",
+    "codexCli": "Codex CLI",
+    "codexDesktop": "Codex Desktop",
+    "codex-desktop": "Codex Desktop",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
@@ -2188,7 +2218,8 @@
     "switcherTooltip": {
       "claude": "Projects: switch the Claude Code provider / MCP / Skills / memory files in one click",
       "claude-desktop": "Projects: switch the Claude Desktop provider in one click",
-      "codex": "Projects: switch the Codex provider / MCP / Skills / memory files in one click"
+      "codex": "Projects: switch the Codex provider / MCP / Skills / memory files in one click",
+      "codex-desktop": "Projects: switch the Codex Desktop provider in one click"
     },
     "none": "No project",
     "searchPlaceholder": "Search projects",
@@ -2197,7 +2228,8 @@
     "createDescription": {
       "claude": "Save the current Claude Code provider, MCP, Skills and memory file as a project you can switch to later.",
       "claude-desktop": "Save the current Claude Desktop provider as a project you can switch to later.",
-      "codex": "Save the current Codex provider, MCP, Skills and memory file configuration as a project you can switch to later."
+      "codex": "Save the current Codex provider, MCP, Skills and memory file configuration as a project you can switch to later.",
+      "codex-desktop": "Save the current Codex Desktop provider as a project you can switch to later."
     },
     "manage": "Manage projects…",
     "manageTitle": "Manage Projects",

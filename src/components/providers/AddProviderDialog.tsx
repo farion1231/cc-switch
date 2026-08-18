@@ -6,8 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { Provider, CustomEndpoint, UniversalProvider } from "@/types";
-import type { AppId } from "@/lib/api";
-import { universalProvidersApi } from "@/lib/api";
+import { isCodexAppId, universalProvidersApi, type AppId } from "@/lib/api";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -55,7 +54,8 @@ export function AddProviderDialog({
     appId !== "hermes" &&
     appId !== "pi" &&
     appId !== "grokbuild" &&
-    appId !== "claude-desktop";
+    appId !== "claude-desktop" &&
+    appId !== "codex-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
   );
@@ -187,7 +187,7 @@ export function AddProviderDialog({
           preset?.category === "official";
       }
 
-      if (appId === "codex" && values.presetId) {
+      if (isCodexAppId(appId) && values.presetId) {
         const presetIndex = parseInt(values.presetId.replace("codex-", ""));
         const preset = codexProviderPresets[presetIndex];
         providerData.ensureCodexOfficialSeed =
@@ -242,7 +242,7 @@ export function AddProviderDialog({
                 preset.endpointCandidates.forEach(addUrl);
               }
             }
-          } else if (appId === "codex") {
+          } else if (isCodexAppId(appId)) {
             const presets = codexProviderPresets;
             const presetIndex = parseInt(values.presetId.replace("codex-", ""));
             if (
@@ -299,7 +299,7 @@ export function AddProviderDialog({
           if (env?.ANTHROPIC_BASE_URL) {
             addUrl(env.ANTHROPIC_BASE_URL);
           }
-        } else if (appId === "codex") {
+        } else if (isCodexAppId(appId)) {
           const config = parsedConfig.config as string | undefined;
           if (config) {
             const extractedBaseUrl = extractCodexBaseUrl(config);

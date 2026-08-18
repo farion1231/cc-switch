@@ -12,7 +12,7 @@ import type {
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { OpenClawProviderConfig, Provider } from "@/types";
-import type { AppId } from "@/lib/api";
+import { isCodexAppId, type AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
@@ -94,7 +94,7 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
     return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
   }
-  if (appId === "codex") {
+  if (isCodexAppId(appId)) {
     // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
     const apiKey = config?.auth?.OPENAI_API_KEY;
     const bearerToken =
@@ -301,7 +301,7 @@ export function ProviderCard({
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   const canDuplicate = !(
-    appId === "codex" &&
+    isCodexAppId(appId) &&
     (provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
       (provider.category === "official" &&
         !resolveManagedAccountId(provider.meta, "codex_oauth")?.trim()))
@@ -311,7 +311,7 @@ export function ProviderCard({
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
   // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
   const codexNeedsRouting =
-    appId === "codex" && providerNeedsRouting(appId, provider);
+    isCodexAppId(appId) && providerNeedsRouting(appId, provider);
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
@@ -521,9 +521,17 @@ export function ProviderCard({
                 {codexOfficialIdentity === "native_login" ? (
                   <span className="min-w-0 truncate" title={manualNote}>
                     {manualNote ??
-                      t("codex.followCodexLoginDescription", {
-                        defaultValue: "账号会随 Codex CLI 当前登录变化",
-                      })}
+                      t(
+                        appId === "codex-desktop"
+                          ? "codexDesktop.followCodexLoginDescription"
+                          : "codex.followCodexLoginDescription",
+                        {
+                          defaultValue:
+                            appId === "codex-desktop"
+                              ? "账号会随 Codex Desktop 当前登录变化"
+                              : "账号会随 Codex CLI 当前登录变化",
+                        },
+                      )}
                   </span>
                 ) : codexOfficialIdentity === "unbound" ? (
                   <>

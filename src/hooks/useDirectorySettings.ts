@@ -9,6 +9,7 @@ export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 type AppDirectoryKey =
   | "claude"
   | "codex"
+  | "codexDesktop"
   | "gemini"
   | "grokbuild"
   | "opencode"
@@ -21,6 +22,7 @@ export interface ResolvedDirectories {
   appConfig: string;
   claude: string;
   codex: string;
+  codexDesktop: string;
   gemini: string;
   grokbuild: string;
   opencode: string;
@@ -36,6 +38,7 @@ const APP_DIRECTORY_META: Record<
 > = {
   claude: { key: "claude", defaultFolder: ".claude" },
   codex: { key: "codex", defaultFolder: ".codex" },
+  "codex-desktop": { key: "codexDesktop", defaultFolder: ".codex" },
   gemini: { key: "gemini", defaultFolder: ".gemini" },
   grokbuild: { key: "grokbuild", defaultFolder: ".grok" },
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
@@ -50,6 +53,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
 > = {
   claude: "claudeConfigDir",
   codex: "codexConfigDir",
+  codexDesktop: "codexDesktopConfigDir",
   gemini: "geminiConfigDir",
   grokbuild: "grokConfigDir",
   opencode: "opencodeConfigDir",
@@ -137,6 +141,7 @@ export function useDirectorySettings({
     appConfig: "",
     claude: "",
     codex: "",
+    codexDesktop: "",
     gemini: "",
     grokbuild: "",
     opencode: "",
@@ -150,6 +155,7 @@ export function useDirectorySettings({
     appConfig: "",
     claude: "",
     codex: "",
+    codexDesktop: "",
     gemini: "",
     grokbuild: "",
     opencode: "",
@@ -170,6 +176,7 @@ export function useDirectorySettings({
           overrideRaw,
           claudeDir,
           codexDir,
+          codexDesktopDir,
           geminiDir,
           grokDir,
           opencodeDir,
@@ -179,6 +186,7 @@ export function useDirectorySettings({
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
+          defaultCodexDesktopDir,
           defaultGeminiDir,
           defaultGrokDir,
           defaultOpencodeDir,
@@ -189,6 +197,7 @@ export function useDirectorySettings({
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
           settingsApi.getConfigDir("codex"),
+          settingsApi.getConfigDir("codex-desktop"),
           settingsApi.getConfigDir("gemini"),
           settingsApi.getConfigDir("grokbuild"),
           settingsApi.getConfigDir("opencode"),
@@ -198,6 +207,7 @@ export function useDirectorySettings({
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
+          computeDefaultConfigDir("codex-desktop"),
           computeDefaultConfigDir("gemini"),
           computeDefaultConfigDir("grokbuild"),
           computeDefaultConfigDir("opencode"),
@@ -214,6 +224,7 @@ export function useDirectorySettings({
           appConfig: defaultAppConfig ?? "",
           claude: defaultClaudeDir ?? "",
           codex: defaultCodexDir ?? "",
+          codexDesktop: defaultCodexDesktopDir ?? "",
           gemini: defaultGeminiDir ?? "",
           grokbuild: defaultGrokDir ?? "",
           opencode: defaultOpencodeDir ?? "",
@@ -229,6 +240,7 @@ export function useDirectorySettings({
           appConfig: normalizedOverride ?? defaultsRef.current.appConfig,
           claude: claudeDir || defaultsRef.current.claude,
           codex: codexDir || defaultsRef.current.codex,
+          codexDesktop: codexDesktopDir || defaultsRef.current.codexDesktop,
           gemini: geminiDir || defaultsRef.current.gemini,
           grokbuild: grokDir || defaultsRef.current.grokbuild,
           opencode: opencodeDir || defaultsRef.current.opencode,
@@ -372,6 +384,8 @@ export function useDirectorySettings({
           initialAppConfigDirRef.current ?? defaultsRef.current.appConfig,
         claude: overrides?.claude ?? defaultsRef.current.claude,
         codex: overrides?.codex ?? defaultsRef.current.codex,
+        codexDesktop:
+          overrides?.codexDesktop ?? defaultsRef.current.codexDesktop,
         gemini: overrides?.gemini ?? defaultsRef.current.gemini,
         grokbuild: overrides?.grokbuild ?? defaultsRef.current.grokbuild,
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,

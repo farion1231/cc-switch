@@ -54,7 +54,10 @@ export const useAddProviderMutation = (appId: AppId) => {
         return officialProvider;
       }
 
-      if (appId === "codex" && ensureCodexOfficialSeed) {
+      if (
+        (appId === "codex" || appId === "codex-desktop") &&
+        ensureCodexOfficialSeed
+      ) {
         // The fixed seed is the one native "Codex current login" card.
         // A managed account gets its own provider row so several accounts can
         // coexist without replacing that native-login entry.
@@ -63,7 +66,11 @@ export const useAddProviderMutation = (appId: AppId) => {
           "codex_oauth",
         )?.trim();
         if (!managedAccountId) {
-          await providersApi.ensureCodexOfficialProvider();
+          if (appId === "codex-desktop") {
+            await providersApi.ensureCodexDesktopOfficialProvider();
+          } else {
+            await providersApi.ensureCodexOfficialProvider();
+          }
           const providers = await providersApi.getAll(appId);
           const nativeLoginProvider = providers[CODEX_OFFICIAL_PROVIDER_ID];
           if (!nativeLoginProvider) {
@@ -128,6 +135,11 @@ export const useAddProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "codex-desktop") {
+        await queryClient.invalidateQueries({
+          queryKey: ["codexDesktopStatus"],
+        });
+      }
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -211,6 +223,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onSuccess: async (provider, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "codex-desktop") {
+        await queryClient.invalidateQueries({
+          queryKey: ["codexDesktopStatus"],
+        });
+      }
       await queryClient.invalidateQueries({
         queryKey: usageKeys.script(provider.id, appId),
       });
@@ -269,6 +286,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "codex-desktop") {
+        await queryClient.invalidateQueries({
+          queryKey: ["codexDesktopStatus"],
+        });
+      }
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -349,6 +371,12 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
         await queryClient.invalidateQueries({
           queryKey: ["claudeDesktopStatus"],
+        });
+      }
+      if (appId === "codex-desktop") {
+        await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+        await queryClient.invalidateQueries({
+          queryKey: ["codexDesktopStatus"],
         });
       }
 

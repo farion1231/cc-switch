@@ -764,16 +764,29 @@ impl CodexOAuthManager {
             &stored_refresh_token,
             &last_refresh,
         );
-        if let Err(err) = crate::codex_config::sync_codex_managed_oauth_live_auth_after_refresh(
-            account_id,
-            &refresh_token,
-            &refreshed_auth,
-        ) {
-            // The manager token remains valid; a later provider write will
-            // retry the live synchronization without rolling it back.
-            log::warn!(
-                "[CodexOAuth] 同步刷新后的 Codex live auth 失败（account={account_id}）: {err}"
-            );
+        for target in [
+            crate::codex_config::CodexTarget::Cli,
+            crate::codex_config::CodexTarget::Desktop,
+        ] {
+            if target == crate::codex_config::CodexTarget::Desktop
+                && crate::codex_config::codex_config_dirs_conflict()
+            {
+                continue;
+            }
+            if let Err(err) =
+                crate::codex_config::sync_codex_managed_oauth_live_auth_after_refresh_for(
+                    target,
+                    account_id,
+                    &refresh_token,
+                    &refreshed_auth,
+                )
+            {
+                // The manager token remains valid; a later provider write will
+                // retry the live synchronization without rolling it back.
+                log::warn!(
+                    "[CodexOAuth] 同步刷新后的 {target:?} live auth 失败（account={account_id}）: {err}"
+                );
+            }
         }
 
         // 在 accounts 读锁下确认账号仍存在，再写缓存：与 remove/clear（持 accounts
@@ -928,8 +941,20 @@ impl CodexOAuthManager {
         &self,
         account_id: &str,
     ) -> Result<Option<String>, CodexOAuthError> {
+        self.prepare_live_auth_for_account_switch_away_for(
+            crate::codex_config::CodexTarget::Cli,
+            account_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn prepare_live_auth_for_account_switch_away_for(
+        &self,
+        target: crate::codex_config::CodexTarget,
+        account_id: &str,
+    ) -> Result<Option<String>, CodexOAuthError> {
         let Some((live_refresh, live_id_token, live_last_refresh_ms)) =
-            crate::codex_config::read_codex_live_auth_refresh_for_account(account_id)
+            crate::codex_config::read_codex_live_auth_refresh_for_account_for(target, account_id)
         else {
             return Ok(None);
         };
@@ -1117,6 +1142,26 @@ impl CodexOAuthManager {
         Self::sorted_accounts(&accounts, default_id.as_deref())
     }
 
+    fn clear_live_auth_for_managed_account(account_id: &str) -> Result<(), CodexOAuthError> {
+        let mut first_error = None;
+        for target in [
+            crate::codex_config::CodexTarget::Cli,
+            crate::codex_config::CodexTarget::Desktop,
+        ] {
+            if target == crate::codex_config::CodexTarget::Desktop
+                && crate::codex_config::codex_config_dirs_conflict()
+            {
+                continue;
+            }
+            if let Err(error) = crate::codex_config::clear_codex_live_auth_for_managed_account_for(
+                target, account_id,
+            ) {
+                first_error.get_or_insert_with(|| CodexOAuthError::IoError(error.to_string()));
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
     pub async fn remove_account(&self, account_id: &str) -> Result<(), CodexOAuthError> {
         log::info!("[CodexOAuth] 移除账号: {account_id}");
         // Wait for all in-flight refresh/adopt operations before deleting. New
@@ -1135,8 +1180,7 @@ impl CodexOAuthManager {
         // account must leave the machine. Content matching intentionally also
         // claims a native `codex login` of the same account; that is the same
         // account-scoped credential the user just chose to remove.
-        crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
-            .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
+        Self::clear_live_auth_for_managed_account(account_id)?;
 
         {
             // 在 accounts 写锁内原子清除该账号的 token 缓存（accounts -> access_tokens
@@ -1197,8 +1241,7 @@ impl CodexOAuthManager {
             .cloned()
             .collect::<Vec<_>>();
         for account_id in &account_ids {
-            crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
-                .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
+            Self::clear_live_auth_for_managed_account(account_id)?;
         }
 
         // 与 save_to_disk 共用持久化锁：确保「清内存 + 删文件」相对于并发保存原子，
@@ -1630,6 +1673,75 @@ fn extract_identity_from_tokens(tokens: &OAuthTokenResponse) -> (Option<String>,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    struct CodexOAuthLiveTestHome {
+        dir: tempfile::TempDir,
+        original_test_home: Option<OsString>,
+    }
+
+    impl CodexOAuthLiveTestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create isolated Codex OAuth test home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings for OAuth test home");
+            Self {
+                dir,
+                original_test_home,
+            }
+        }
+
+        fn configure_codex_dirs(&self, cli: &Path, desktop: &Path) {
+            fs::create_dir_all(cli).expect("create CLI config dir");
+            fs::create_dir_all(desktop).expect("create Desktop config dir");
+            crate::settings::update_settings(crate::settings::AppSettings {
+                codex_config_dir: Some(cli.to_string_lossy().into_owned()),
+                codex_desktop_config_dir: Some(desktop.to_string_lossy().into_owned()),
+                ..Default::default()
+            })
+            .expect("configure Codex test dirs");
+        }
+
+        fn manager(&self) -> CodexOAuthManager {
+            CodexOAuthManager::new(self.dir.path().join("manager"))
+        }
+    }
+
+    impl Drop for CodexOAuthLiveTestHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    fn seed_managed_live_auth(target: crate::codex_config::CodexTarget, account_id: &str) {
+        let auth = crate::codex_config::codex_managed_oauth_auth_value(
+            account_id,
+            "access-token",
+            Some("id-token"),
+            "refresh-token",
+            "2026-08-18T00:00:00Z",
+        );
+        crate::config::write_json_file(
+            &crate::codex_config::get_codex_auth_path_for(target),
+            &auth,
+        )
+        .expect("seed managed live auth");
+        crate::codex_config::record_codex_managed_oauth_live_auth_for(target, &auth)
+            .expect("seed managed live auth marker");
+    }
+
+    fn assert_managed_live_auth_removed(target: crate::codex_config::CodexTarget) {
+        assert!(!crate::codex_config::get_codex_auth_path_for(target).exists());
+        assert!(!crate::codex_config::CodexPaths::for_target(target)
+            .managed_oauth_marker
+            .exists());
+    }
 
     #[test]
     fn test_parse_interval_number() {
@@ -1795,6 +1907,142 @@ mod tests {
         let accounts = manager.list_accounts().await;
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].id, "acc-456");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn remove_and_clear_auth_clean_distinct_cli_and_desktop_live_auth() {
+        let home = CodexOAuthLiveTestHome::new();
+        let cli_dir = home.dir.path().join("codex-cli");
+        let desktop_dir = home.dir.path().join("codex-desktop");
+        home.configure_codex_dirs(&cli_dir, &desktop_dir);
+        assert!(!crate::codex_config::codex_config_dirs_conflict());
+
+        let manager = home.manager();
+        manager
+            .add_account_internal(
+                "remove-account".to_string(),
+                "remove-refresh".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("seed account for removal");
+        for target in [
+            crate::codex_config::CodexTarget::Cli,
+            crate::codex_config::CodexTarget::Desktop,
+        ] {
+            seed_managed_live_auth(target, "remove-account");
+        }
+
+        manager
+            .remove_account("remove-account")
+            .await
+            .expect("remove account from both live targets");
+        for target in [
+            crate::codex_config::CodexTarget::Cli,
+            crate::codex_config::CodexTarget::Desktop,
+        ] {
+            assert_managed_live_auth_removed(target);
+        }
+
+        manager
+            .add_account_internal(
+                "logout-account".to_string(),
+                "logout-refresh".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("seed account for logout");
+        for target in [
+            crate::codex_config::CodexTarget::Cli,
+            crate::codex_config::CodexTarget::Desktop,
+        ] {
+            seed_managed_live_auth(target, "logout-account");
+        }
+
+        manager
+            .clear_auth()
+            .await
+            .expect("logout from both live targets");
+        for target in [
+            crate::codex_config::CodexTarget::Cli,
+            crate::codex_config::CodexTarget::Desktop,
+        ] {
+            assert_managed_live_auth_removed(target);
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn remove_account_attempts_desktop_cleanup_after_cli_error() {
+        let home = CodexOAuthLiveTestHome::new();
+        let cli_dir = home.dir.path().join("codex-cli-error");
+        let desktop_dir = home.dir.path().join("codex-desktop-clean");
+        home.configure_codex_dirs(&cli_dir, &desktop_dir);
+
+        let manager = home.manager();
+        manager
+            .add_account_internal(
+                "partial-error-account".to_string(),
+                "partial-error-refresh".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("seed account for partial cleanup");
+        let cli_auth_path =
+            crate::codex_config::get_codex_auth_path_for(crate::codex_config::CodexTarget::Cli);
+        fs::write(&cli_auth_path, "{invalid-json").expect("seed invalid CLI auth");
+        seed_managed_live_auth(
+            crate::codex_config::CodexTarget::Desktop,
+            "partial-error-account",
+        );
+
+        let error = manager
+            .remove_account("partial-error-account")
+            .await
+            .expect_err("CLI parse failure must be returned");
+        assert!(matches!(error, CodexOAuthError::IoError(_)));
+        assert!(cli_auth_path.exists(), "invalid CLI auth must be preserved");
+        assert_managed_live_auth_removed(crate::codex_config::CodexTarget::Desktop);
+        assert_eq!(manager.list_accounts().await.len(), 1);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn remove_account_cleans_shared_cli_desktop_dir_once() {
+        let home = CodexOAuthLiveTestHome::new();
+        let shared_dir = home.dir.path().join("shared-codex");
+        home.configure_codex_dirs(&shared_dir, &shared_dir);
+        assert!(crate::codex_config::codex_config_dirs_conflict());
+
+        let manager = home.manager();
+        manager
+            .add_account_internal(
+                "shared-account".to_string(),
+                "shared-refresh".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("seed shared account");
+        seed_managed_live_auth(crate::codex_config::CodexTarget::Cli, "shared-account");
+
+        manager
+            .remove_account("shared-account")
+            .await
+            .expect("remove account from shared live target");
+        assert_managed_live_auth_removed(crate::codex_config::CodexTarget::Cli);
     }
 
     #[tokio::test]

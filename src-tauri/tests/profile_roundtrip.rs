@@ -8,7 +8,7 @@ use serde_json::json;
 
 use cc_switch_lib::{
     AppType, InstalledSkill, McpServer, McpService, ProfilePayload, ProfileScope, ProfileService,
-    Prompt, PromptService, Provider, ProviderService, SkillApps, SkillService,
+    Prompt, PromptService, Provider, ProviderMeta, ProviderService, SkillApps, SkillService,
 };
 
 #[path = "support.rs"]
@@ -42,6 +42,20 @@ fn desktop_provider(id: &str, token: &str) -> Provider {
         }),
         None,
     )
+}
+
+fn codex_desktop_proxy_provider(id: &str) -> Provider {
+    let mut provider = Provider::with_id(
+        id.to_string(),
+        id.to_uppercase(),
+        json!({ "auth": {}, "config": "" }),
+        None,
+    );
+    provider.meta = Some(
+        serde_json::from_value::<ProviderMeta>(json!({ "codexDesktopMode": "proxy" }))
+            .expect("construct Codex Desktop proxy metadata"),
+    );
+    provider
 }
 
 fn mcp_server(id: &str, claude_enabled: bool) -> McpServer {
@@ -745,6 +759,36 @@ fn profile_switch_auto_disables_takeover_before_apply() {
         base_url,
         Some("https://api.test"),
         "live config should point to real endpoint after auto-disable"
+    );
+}
+
+#[test]
+fn profile_apply_keeps_proxy_for_codex_desktop_gateway_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+
+    let provider = codex_desktop_proxy_provider("desktop-proxy");
+    state
+        .db
+        .save_provider(AppType::CodexDesktop.as_str(), &provider)
+        .expect("save Codex Desktop proxy provider");
+    state
+        .db
+        .set_current_provider(AppType::CodexDesktop.as_str(), &provider.id)
+        .expect("set current Codex Desktop provider");
+    let profile = ProfileService::create(&state, "Desktop Gateway", ProfileScope::CodexDesktop)
+        .expect("create Codex Desktop profile");
+
+    let (warnings, should_stop_proxy) =
+        ProfileService::apply(&state, &profile.id, ProfileScope::CodexDesktop)
+            .expect("apply Codex Desktop profile");
+
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    assert!(
+        !should_stop_proxy,
+        "profile apply must keep the shared proxy for a Desktop gateway provider"
     );
 }
 

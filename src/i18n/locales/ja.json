@@ -242,12 +242,34 @@
       "stopBlockedByTakeover": "別のアプリがプロキシテイクオーバーを使用しています。設定で該当アプリのテイクオーバーを無効にしてから、ローカルルーティングを停止してください。"
     }
   },
+  "codexDesktop": {
+    "followCodexLoginDescription": "Codex Desktop で現在ログイン中のアカウントに追従します",
+    "modeLabel": "接続方式",
+    "modeDirect": "直接接続",
+    "modeProxy": "ローカルゲートウェイ",
+    "modeHint": "直接接続ではプロバイダー設定を Codex Desktop に書き込みます。ローカルゲートウェイは形式変換と動的認証に使用します。",
+    "modeProxyRequiredHint": "このプロバイダーには形式変換または動的認証が必要なため、CC Switch のローカルゲートウェイ経由で接続します。",
+    "statusTitle": "Codex Desktop の設定を確認してください",
+    "statusDirectoryConflict": "Codex CLI（{{cliDir}}）と Codex Desktop（{{desktopDir}}）が同じ設定ディレクトリを使用しています。設定で Desktop 専用のディレクトリを指定してください。",
+    "statusNotConfigured": "現在のプロバイダーが Codex Desktop に書き込まれていません。もう一度このプロバイダーへ切り替えてください。",
+    "statusGatewayStopped": "現在のプロバイダーはローカルゲートウェイを使用します。ページ上部のローカルルーティングを有効にし、CC Switch を起動したままにしてください。",
+    "statusGatewayTokenMissing": "ローカルゲートウェイの token がまだ生成されていません。現在のプロバイダーへ切り替え直すと修復できます。",
+    "statusBaseUrlMismatch": "Codex Desktop の URL が現在のプロバイダーと一致しません。現在: {{actual}}、期待値: {{expected}}。現在のプロバイダーへ切り替え直すと修復できます。",
+    "route": {
+      "tooltip": {
+        "active": "Codex Desktop ローカルゲートウェイが稼働中 - {{address}}:{{port}}",
+        "inactive": "形式変換または動的認証が必要なプロバイダー向けに Codex Desktop ローカルゲートウェイを有効にします。設定アドレス: {{address}}:{{port}}"
+      }
+    }
+  },
   "notifications": {
     "providerAdded": "プロバイダーを追加しました",
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
     "codexRestartRequired": "切り替えました。反映するにはクライアントを再起動してください",
+    "codexDesktopRestartRequired": "切り替えました。Codex Desktop を再起動してください",
+    "codexDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Codex Desktop を再起動してください",
     "grokBuildRestartRequired": "切り替えました。反映するには Grok Build を再起動してください",
     "claudeDesktopRestartRequired": "切り替えました。反映するには Claude Desktop を再起動してください",
     "claudeDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Claude Desktop を再起動してください",
@@ -291,7 +313,8 @@
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
     "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
-    "proxyReasonClaudeDesktop": "Claude Desktop ローカルルーティングモードを使用中"
+    "proxyReasonClaudeDesktop": "Claude Desktop ローカルルーティングモードを使用中",
+    "proxyReasonCodexDesktop": "Codex Desktop ローカルゲートウェイモードを使用中"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -777,8 +800,11 @@
     "browsePlaceholderApp": "例: C:\\\\Users\\\\Administrator\\\\.cc-switch",
     "claudeConfigDir": "Claude Code 設定ディレクトリ",
     "claudeConfigDirDescription": "Claude の設定ディレクトリ（settings.json）を上書きします。カスタムディレクトリでは .claude.json（MCP）をその中に保存し、既定の ~/.claude では Claude Code の既定どおり ~/.claude.json を使います。",
-    "codexConfigDir": "Codex 設定ディレクトリ",
-    "codexConfigDirDescription": "Codex の設定ディレクトリを上書きします。",
+    "codexConfigDir": "Codex CLI 設定ディレクトリ",
+    "codexConfigDirDescription": "Codex CLI の設定ディレクトリを上書きします。",
+    "codexDesktopConfigDir": "Codex Desktop 設定ディレクトリ",
+    "codexDesktopConfigDirDescription": "Codex Desktop 専用の設定ディレクトリを使用します。",
+    "codexDesktopConfigDirConflict": "Codex Desktop と Codex CLI には別々の設定ディレクトリが必要です。修正するまで Desktop のライブ設定操作は無効になります。",
     "geminiConfigDir": "Gemini 設定ディレクトリ",
     "geminiConfigDirDescription": "Gemini の設定ディレクトリ（.env）を上書きします。",
     "grokConfigDir": "Grok Build 設定ディレクトリ",
@@ -793,6 +819,7 @@
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
+    "browsePlaceholderCodexDesktop": "例: /home/<your-username>/.codex-desktop",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderGrok": "例: /home/<your-username>/.grok",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
@@ -904,7 +931,10 @@
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
-    "codex": "Codex",
+    "codex": "Codex CLI",
+    "codexCli": "Codex CLI",
+    "codexDesktop": "Codex Desktop",
+    "codex-desktop": "Codex Desktop",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
@@ -2188,7 +2218,8 @@
     "switcherTooltip": {
       "claude": "プロジェクト：Claude Code のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え",
       "claude-desktop": "プロジェクト：Claude Desktop のプロバイダーをワンクリックで切り替え",
-      "codex": "プロジェクト：Codex のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え"
+      "codex": "プロジェクト：Codex のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え",
+      "codex-desktop": "プロジェクト：Codex Desktop のプロバイダーをワンクリックで切り替え"
     },
     "none": "プロジェクトを使用しない",
     "searchPlaceholder": "プロジェクトを検索",
@@ -2197,7 +2228,8 @@
     "createDescription": {
       "claude": "Claude Code の現在のプロバイダー、MCP、Skills、メモリファイルをプロジェクトとして保存し、後からワンクリックで切り替えられます。",
       "claude-desktop": "Claude Desktop の現在のプロバイダーをプロジェクトとして保存し、後からワンクリックで切り替えられます。",
-      "codex": "Codex の現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。"
+      "codex": "Codex の現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。",
+      "codex-desktop": "Codex Desktop の現在のプロバイダーをプロジェクトとして保存し、後からワンクリックで切り替えられます。"
     },
     "manage": "プロジェクトを管理…",
     "manageTitle": "プロジェクト管理",

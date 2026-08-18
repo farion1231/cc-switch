@@ -16,6 +16,7 @@ interface DirectorySettingsProps {
   onResetAppConfig: () => Promise<void>;
   claudeDir?: string;
   codexDir?: string;
+  codexDesktopDir?: string;
   geminiDir?: string;
   grokDir?: string;
   opencodeDir?: string;
@@ -35,6 +36,7 @@ export function DirectorySettings({
   onResetAppConfig,
   claudeDir,
   codexDir,
+  codexDesktopDir,
   geminiDir,
   grokDir,
   opencodeDir,
@@ -120,6 +122,26 @@ export function DirectorySettings({
         />
 
         <DirectoryInput
+          label={t("settings.codexDesktopConfigDir")}
+          description={
+            resolvedDirs.codexDesktop === resolvedDirs.codex
+              ? t("settings.codexDesktopConfigDirConflict")
+              : t("settings.codexDesktopConfigDirDescription")
+          }
+          descriptionClassName={
+            resolvedDirs.codexDesktop === resolvedDirs.codex
+              ? "text-xs text-destructive"
+              : undefined
+          }
+          value={codexDesktopDir}
+          resolvedValue={resolvedDirs.codexDesktop}
+          placeholder={t("settings.browsePlaceholderCodexDesktop")}
+          onChange={(val) => onDirectoryChange("codex-desktop", val)}
+          onBrowse={() => onBrowseDirectory("codex-desktop")}
+          onReset={() => onResetDirectory("codex-desktop")}
+        />
+
+        <DirectoryInput
           label={t("settings.geminiConfigDir")}
           description={undefined}
           value={geminiDir}
@@ -192,6 +214,7 @@ export function DirectorySettings({
 interface DirectoryInputProps {
   label: string;
   description?: string;
+  descriptionClassName?: string;
   value?: string;
   resolvedValue: string;
   placeholder?: string;
@@ -203,6 +226,7 @@ interface DirectoryInputProps {
 function DirectoryInput({
   label,
   description,
+  descriptionClassName,
   value,
   resolvedValue,
   placeholder,
@@ -221,7 +245,11 @@ function DirectoryInput({
       <div className="space-y-1">
         <p className="text-xs font-medium text-foreground">{label}</p>
         {description ? (
-          <p className="text-xs text-muted-foreground">{description}</p>
+          <p
+            className={descriptionClassName ?? "text-xs text-muted-foreground"}
+          >
+            {description}
+          </p>
         ) : null}
       </div>
       <div className="flex items-center gap-2">

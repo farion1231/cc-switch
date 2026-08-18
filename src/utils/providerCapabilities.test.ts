@@ -238,4 +238,36 @@ describe("providerNeedsRouting", () => {
       },
     );
   });
+
+  describe("Codex Desktop 路由判定", () => {
+    it("direct 模式不需要路由，proxy 模式需要路由", () => {
+      expect(
+        providerNeedsRouting(
+          "codex-desktop",
+          mkProvider({ meta: { codexDesktopMode: "direct" } }),
+        ),
+      ).toBe(false);
+      expect(
+        providerNeedsRouting(
+          "codex-desktop",
+          mkProvider({ meta: { codexDesktopMode: "proxy" } }),
+        ),
+      ).toBe(true);
+    });
+
+    it("direct 模式的托管 OAuth 仍需要本地网关", () => {
+      expect(
+        providerNeedsRouting(
+          "codex-desktop",
+          mkProvider({
+            category: "official",
+            meta: {
+              providerType: "codex_oauth",
+              codexDesktopMode: "direct",
+            },
+          }),
+        ),
+      ).toBe(true);
+    });
+  });
 });

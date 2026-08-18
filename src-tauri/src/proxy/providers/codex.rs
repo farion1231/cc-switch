@@ -765,6 +765,16 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        // Codex OAuth (ChatGPT Plus/Pro): the provider row intentionally has no
+        // stored API key. Return a placeholder so the forwarder resolves the
+        // managed account access token immediately before the upstream call.
+        if provider.is_codex_oauth() {
+            return Some(AuthInfo::new(
+                "codex_oauth_placeholder".to_string(),
+                AuthStrategy::CodexOAuth,
+            ));
+        }
+
         // xAI OAuth (Grok subscription): placeholder credentials only; the real
         // access_token is resolved per-request by the forwarder via XaiOAuthManager.
         if provider.is_xai_oauth() {
@@ -940,6 +950,31 @@ context_window = 500000
                 "/responses/compact"
             ),
             "https://chatgpt.com/backend-api/codex/responses/compact"
+        );
+    }
+
+    #[test]
+    fn managed_codex_oauth_uses_dynamic_auth_placeholder() {
+        let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
+        provider.category = Some("official".to_string());
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        let adapter = CodexAdapter::new();
+        let auth = adapter.extract_auth(&provider).expect("oauth placeholder");
+
+        assert_eq!(auth.api_key, "codex_oauth_placeholder");
+        assert_eq!(auth.strategy, AuthStrategy::CodexOAuth);
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            crate::proxy::providers::CHATGPT_CODEX_BASE_URL
         );
     }
 
