@@ -53,10 +53,7 @@ pub async fn get_active_session_routes(
     let name_map = load_claude_session_names();
 
     for route in &mut routes {
-        route.session_name = name_map
-            .get(&route.session_id)
-            .cloned()
-            .unwrap_or_default();
+        route.session_name = name_map.get(&route.session_id).cloned().unwrap_or_default();
     }
 
     Ok(routes)
@@ -68,7 +65,9 @@ pub async fn get_active_session_routes(
 /// 终端名（如 "multiple-claude-54"）。
 fn load_claude_session_names() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
-    let sessions_dir = crate::config::get_home_dir().join(".claude").join("sessions");
+    let sessions_dir = crate::config::get_home_dir()
+        .join(".claude")
+        .join("sessions");
     let Ok(entries) = std::fs::read_dir(&sessions_dir) else {
         return map;
     };

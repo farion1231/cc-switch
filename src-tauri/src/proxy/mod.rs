@@ -48,7 +48,7 @@ pub use provider_router::ProviderRouter;
 #[allow(unused_imports)]
 pub use session::{extract_session_id, SessionIdResult, SessionIdSource};
 #[allow(unused_imports)]
-pub use session_router::{SessionRouteInfo, SessionRouter, SessionRoutingConfig, RoutingStrategy};
+pub use session_router::{RoutingStrategy, SessionRouteInfo, SessionRouter, SessionRoutingConfig};
 #[allow(unused_imports)]
 pub use types::{ProxyConfig, ProxyServerInfo, ProxyStatus};
 

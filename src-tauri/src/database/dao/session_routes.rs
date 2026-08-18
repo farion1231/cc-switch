@@ -5,7 +5,7 @@
 use crate::database::lock_conn;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::proxy::session_router::{SessionRouteInfo, SessionRoutingConfig, RoutingStrategy};
+use crate::proxy::session_router::{RoutingStrategy, SessionRouteInfo, SessionRoutingConfig};
 use std::collections::HashMap;
 
 impl Database {
@@ -28,20 +28,19 @@ impl Database {
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let result = stmt
-            .query_row([session_id, app_type], |row| {
-                Ok(SessionRouteInfo {
-                    session_id: row.get(0)?,
-                    session_name: String::new(),
-                    app_type: row.get(1)?,
-                    provider_id: row.get(2)?,
-                    provider_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                    assigned_at: row.get(4)?,
-                    last_used_at: row.get(5)?,
-                    request_count: row.get::<_, i64>(6)? as u64,
-                    failover_count: row.get::<_, i64>(7)? as u64,
-                })
-            });
+        let result = stmt.query_row([session_id, app_type], |row| {
+            Ok(SessionRouteInfo {
+                session_id: row.get(0)?,
+                session_name: String::new(),
+                app_type: row.get(1)?,
+                provider_id: row.get(2)?,
+                provider_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                assigned_at: row.get(4)?,
+                last_used_at: row.get(5)?,
+                request_count: row.get::<_, i64>(6)? as u64,
+                failover_count: row.get::<_, i64>(7)? as u64,
+            })
+        });
 
         match result {
             Ok(route) => Ok(Some(route)),
@@ -116,11 +115,7 @@ impl Database {
     }
 
     /// 删除 session 路由
-    pub fn delete_session_route(
-        &self,
-        session_id: &str,
-        app_type: &str,
-    ) -> Result<(), AppError> {
+    pub fn delete_session_route(&self, session_id: &str, app_type: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "DELETE FROM session_routes WHERE session_id = ?1 AND app_type = ?2",
@@ -131,7 +126,10 @@ impl Database {
     }
 
     /// 获取所有活跃 session 路由（用于 UI 展示）
-    pub fn get_all_session_routes(&self, app_type: &str) -> Result<Vec<SessionRouteInfo>, AppError> {
+    pub fn get_all_session_routes(
+        &self,
+        app_type: &str,
+    ) -> Result<Vec<SessionRouteInfo>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(

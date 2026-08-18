@@ -151,7 +151,8 @@ impl SessionRouter {
 
         // 4. 保存映射
         let now = chrono::Utc::now().timestamp_millis();
-        self.db.insert_session_route(session_id, app_type, &provider.id, now)?;
+        self.db
+            .insert_session_route(session_id, app_type, &provider.id, now)?;
 
         log::info!(
             "[SessionRouter] 新 session 分配: session={} app={} provider={} ({})",
@@ -230,7 +231,11 @@ impl SessionRouter {
             if !provider_supports_failover(app_type, candidate) {
                 continue;
             }
-            if self.provider_router.is_available(&candidate.id, app_type).await {
+            if self
+                .provider_router
+                .is_available(&candidate.id, app_type)
+                .await
+            {
                 let now = chrono::Utc::now().timestamp_millis();
                 self.db
                     .update_session_route_provider(session_id, app_type, &candidate.id, now)?;
