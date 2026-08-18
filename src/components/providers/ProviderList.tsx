@@ -50,6 +50,34 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isProxyAppId } from "@/config/appConfig";
 
+// Keep the UI's current-provider check aligned with Hermes' custom provider
+// reference normalization in the switch path.
+const hermesSlug = (value: string): string =>
+  value.trim().toLowerCase().replace(/ /g, "-");
+
+const HERMES_CUSTOM_PREFIX = "custom:";
+
+const normalizeHermesProviderReference = (reference: string): string => {
+  return hermesSlug(reference);
+};
+
+const hermesCustomProviderReference = (providerId: string): string => {
+  const normalized = hermesSlug(providerId);
+  return normalized.startsWith(HERMES_CUSTOM_PREFIX)
+    ? normalized
+    : `${HERMES_CUSTOM_PREFIX}${normalized}`;
+};
+
+const getHermesProviderReference = (provider: Provider): string => {
+  const providerKey = (provider.settingsConfig as Record<string, unknown>)
+    ?.provider_key;
+  const canonicalId =
+    typeof providerKey === "string" && providerKey.trim()
+      ? providerKey
+      : provider.id;
+  return hermesCustomProviderReference(canonicalId);
+};
+
 interface ProviderListProps {
   providers: Record<string, Provider>;
   currentProviderId: string;
@@ -117,6 +145,21 @@ export function ProviderList({
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
+  const hermesCurrentProviderReference = hermesCurrentProviderId
+    ? normalizeHermesProviderReference(hermesCurrentProviderId)
+    : undefined;
+  const hermesCanonicalReferenceCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!hermesLiveIds) return counts;
+
+    const liveProviderIds = new Set(hermesLiveIds);
+    for (const provider of Object.values(providers)) {
+      if (!liveProviderIds.has(provider.id)) continue;
+      const reference = getHermesProviderReference(provider);
+      counts.set(reference, (counts.get(reference) ?? 0) + 1);
+    }
+    return counts;
+  }, [hermesLiveIds, providers]);
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
   const isProviderInConfig = useCallback(
@@ -441,8 +484,18 @@ export function ProviderList({
             const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
             const isOmoSlimCurrent =
               isOmoSlim && provider.id === (currentOmoSlimId || "");
+            const isHermesLive = hermesLiveIds?.includes(provider.id) ?? false;
+            const hermesProviderReference =
+              getHermesProviderReference(provider);
             const isHermesCurrent =
-              appId === "hermes" && hermesCurrentProviderId === provider.id;
+              appId === "hermes" &&
+              isHermesLive &&
+              hermesCurrentProviderId !== undefined &&
+              (hermesCurrentProviderId === provider.id ||
+                (hermesCurrentProviderReference === hermesProviderReference &&
+                  hermesCanonicalReferenceCounts.get(
+                    hermesProviderReference,
+                  ) === 1));
             const isCurrent =
               appId === "pi"
                 ? false
