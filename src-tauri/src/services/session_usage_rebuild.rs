@@ -342,7 +342,14 @@ fn reset_provider_stage(
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| AppError::Database(format!("开启 provider 暂存清理事务失败: {error}")))?;
-    delete_app_scoped_canonical_rows(&tx, app.app_type())?;
+    // Hermes reports cumulative source counters. Its cloned snapshots are the
+    // only baseline from which the staged importer can derive a new delta, so
+    // keep its existing canonical generation until the complete stage is
+    // atomically published. Every request/event-based provider is rebuilt
+    // from an empty owned partition as before.
+    if app != AgentUsageRebuildApp::Hermes {
+        delete_app_scoped_canonical_rows(&tx, app.app_type())?;
+    }
     if let Some(source) = app.direct_source() {
         tx.execute(
             "DELETE FROM proxy_request_logs
@@ -658,6 +665,7 @@ fn rebuild_agent_session_usage_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::agent_session_usage::NormalizedUsageSnapshot;
 
     #[test]
     fn pi_staged_rebuild_is_provider_scoped_and_keeps_live_data_on_failure() -> Result<(), AppError>
@@ -847,6 +855,105 @@ mod tests {
             },
         )?;
         assert_eq!(final_counts, (0, 1, 1, 1, 1, 1, 1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn hermes_staged_rebuild_keeps_prior_cumulative_generation() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO agent_session_nodes (
+                    app_type, session_id, root_session_id, node_kind,
+                    relation_confidence, last_synced_at
+                 ) VALUES ('hermes', 'hermes:default:session-1',
+                           'hermes:default:session-1', 'standalone', 'high', 200)",
+                [],
+            )?;
+            // This is the previously emitted non-baseline window: the source
+            // snapshot below includes the initial baseline plus this delta.
+            conn.execute(
+                "INSERT INTO agent_session_usage_rollups (
+                    date, app_type, session_id, provider_id, model, data_source,
+                    request_count, input_tokens, output_tokens, total_cost_usd,
+                    sync_window_start, sync_window_end
+                 ) VALUES ('2026-08-18', 'hermes', 'hermes:default:session-1',
+                           'provider-a', 'model-a', 'hermes_session_model_usage',
+                           3, 300, 30, '1', 100, 200)",
+                [],
+            )?;
+            Database::upsert_agent_session_usage_snapshot_on_conn(
+                &conn,
+                &NormalizedUsageSnapshot {
+                    app_type: "hermes".to_string(),
+                    source_identity: "hermes-source".to_string(),
+                    profile_id: "default".to_string(),
+                    database_identity: "database-a".to_string(),
+                    session_id: "hermes:default:session-1".to_string(),
+                    model: "model-a".to_string(),
+                    provider_id: "provider-a".to_string(),
+                    base_url_digest: "base-url-a".to_string(),
+                    billing_mode: "chat".to_string(),
+                    task: "task-a".to_string(),
+                    data_source: "hermes_session_model_usage".to_string(),
+                    source_version: "session_model_usage:v1".to_string(),
+                    api_call_count: 4,
+                    input_tokens: 400,
+                    output_tokens: 40,
+                    cache_read_tokens: 10,
+                    cache_write_tokens: 10,
+                    reasoning_tokens: 4,
+                    first_seen: Some(100),
+                    last_seen: Some(200),
+                    last_synced_at: 200,
+                    estimated_cost_usd: Some("2".to_string()),
+                    actual_cost_usd: None,
+                    cost_status: Some("estimated".to_string()),
+                    cost_source: Some("hermes".to_string()),
+                    correction_state: None,
+                },
+            )?;
+        }
+
+        let stage_path = copy_live_to_staging(&db)?;
+        let stage_db = Database {
+            conn: Mutex::new(Connection::open(&stage_path)?),
+        };
+        reset_provider_stage(&stage_db, AgentUsageRebuildApp::Hermes, &CursorScope::None)?;
+        {
+            let conn = lock_conn!(stage_db.conn);
+            let staged: (i64, i64, i64) = conn.query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM agent_session_nodes WHERE app_type = 'hermes'),
+                    (SELECT COUNT(*) FROM agent_session_usage_rollups WHERE app_type = 'hermes'),
+                    (SELECT COUNT(*) FROM agent_session_usage_snapshots WHERE app_type = 'hermes')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(staged, (1, 1, 1));
+        }
+        drop(stage_db);
+
+        publish_provider_from_stage(
+            &db,
+            &stage_path,
+            AgentUsageRebuildApp::Hermes,
+            &CursorScope::None,
+        )?;
+
+        let conn = lock_conn!(db.conn);
+        let published: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM agent_session_nodes WHERE app_type = 'hermes'),
+                (SELECT COUNT(*) FROM agent_session_usage_rollups WHERE app_type = 'hermes'),
+                (SELECT COUNT(*) FROM agent_session_usage_snapshots WHERE app_type = 'hermes'),
+                (SELECT COALESCE(SUM(input_tokens), 0) FROM agent_session_usage_rollups
+                 WHERE app_type = 'hermes')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(published, (1, 1, 1, 300));
         Ok(())
     }
 

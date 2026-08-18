@@ -441,10 +441,6 @@ fn insert_gemini_session_entry(
         rusqlite::params![request_id, GEMINI_APP_TYPE, GEMINI_SESSION_DATA_SOURCE],
         |row| row.get(0),
     )?;
-    if same_source_exists {
-        return Ok(GeminiInsertOutcome::Existing);
-    }
-
     // 合并 thoughts 到 output（思考 token 按输出计费）
     let output_tokens = tokens.output.saturating_add(tokens.thoughts);
 
@@ -457,7 +453,12 @@ fn insert_gemini_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if tokens.has_complete_components()
+    // Existing Gemini-native rows own their request ID and must be allowed to
+    // refresh provisional values from a rewritten session file. Proxy
+    // arbitration is only for the first native import; otherwise the shared
+    // request ID would make this rewrite look like a proxy duplicate.
+    if !same_source_exists
+        && tokens.has_complete_components()
         && should_skip_session_insert(&conn, request_id, &dedup_key)?
     {
         return Ok(GeminiInsertOutcome::ProxyDuplicate);
@@ -510,18 +511,27 @@ fn insert_gemini_session_entry(
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
         ON CONFLICT(request_id) DO UPDATE SET
             model = excluded.model,
+            request_model = excluded.request_model,
             input_tokens = excluded.input_tokens,
             output_tokens = excluded.output_tokens,
             cache_read_tokens = excluded.cache_read_tokens,
+            cache_creation_tokens = excluded.cache_creation_tokens,
             input_cost_usd = excluded.input_cost_usd,
             output_cost_usd = excluded.output_cost_usd,
             cache_read_cost_usd = excluded.cache_read_cost_usd,
             cache_creation_cost_usd = excluded.cache_creation_cost_usd,
             total_cost_usd = excluded.total_cost_usd
-        WHERE input_tokens != excluded.input_tokens
-           OR output_tokens != excluded.output_tokens
-           OR cache_read_tokens != excluded.cache_read_tokens
-           OR model != excluded.model",
+        WHERE model IS NOT excluded.model
+           OR request_model IS NOT excluded.request_model
+           OR input_tokens IS NOT excluded.input_tokens
+           OR output_tokens IS NOT excluded.output_tokens
+           OR cache_read_tokens IS NOT excluded.cache_read_tokens
+           OR cache_creation_tokens IS NOT excluded.cache_creation_tokens
+           OR input_cost_usd IS NOT excluded.input_cost_usd
+           OR output_cost_usd IS NOT excluded.output_cost_usd
+           OR cache_read_cost_usd IS NOT excluded.cache_read_cost_usd
+           OR cache_creation_cost_usd IS NOT excluded.cache_creation_cost_usd
+           OR total_cost_usd IS NOT excluded.total_cost_usd",
         rusqlite::params![
             request_id,
             GEMINI_SESSION_PROVIDER_ID,
@@ -569,6 +579,49 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    fn write_gemini_session(
+        path: &Path,
+        session_id: &str,
+        message_id: &str,
+        model: &str,
+        input: u64,
+        output: u64,
+        cached: u64,
+        thoughts: u64,
+    ) {
+        let value = serde_json::json!({
+            "sessionId": session_id,
+            "startTime": "2026-08-18T00:00:00Z",
+            "lastUpdated": "2026-08-18T00:01:00Z",
+            "messages": [{
+                "id": message_id,
+                "type": "gemini",
+                "model": model,
+                "timestamp": "2026-08-18T00:00:30Z",
+                "tokens": {
+                    "input": input,
+                    "output": output,
+                    "cached": cached,
+                    "thoughts": thoughts
+                }
+            }]
+        });
+        fs::write(
+            path,
+            serde_json::to_vec(&value).expect("serialize Gemini fixture"),
+        )
+        .expect("write Gemini fixture");
+    }
+
+    fn clear_gemini_sync_state(db: &Database, path: &Path) -> Result<(), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "DELETE FROM session_log_sync WHERE file_path = ?1",
+            [path.to_string_lossy().as_ref()],
+        )?;
+        Ok(())
+    }
 
     #[test]
     fn test_parse_gemini_tokens() {
@@ -642,6 +695,176 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 0, 0, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn rewritten_gemini_message_updates_compatibility_row_and_canonical_bucket(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (model, input_price, output_price, cache_price) in [
+                ("gemini-rewrite-v1", "1", "2", "0.5"),
+                ("gemini-rewrite-v2", "3", "4", "1"),
+            ] {
+                conn.execute(
+                    "INSERT OR REPLACE INTO model_pricing (
+                        model_id, display_name, input_cost_per_million,
+                        output_cost_per_million, cache_read_cost_per_million,
+                        cache_creation_cost_per_million
+                     ) VALUES (?1, ?1, ?2, ?3, ?4, '0')",
+                    rusqlite::params![model, input_price, output_price, cache_price],
+                )?;
+            }
+        }
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session-rewrite.json");
+        let session_id = "gemini-rewrite-session";
+        let message_id = "gemini-rewrite-message";
+        let request_id = format!("gemini_session:{session_id}:{message_id}");
+
+        write_gemini_session(
+            &path,
+            session_id,
+            message_id,
+            "gemini-rewrite-v1",
+            100,
+            10,
+            5,
+            2,
+        );
+        assert_eq!(sync_single_gemini_file(&db, &path)?, (1, 0));
+        let initial_cost: String = {
+            let conn = lock_conn!(db.conn);
+            conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = ?1",
+                [&request_id],
+                |row| row.get(0),
+            )?
+        };
+
+        write_gemini_session(
+            &path,
+            session_id,
+            message_id,
+            "gemini-rewrite-v2",
+            200,
+            20,
+            10,
+            5,
+        );
+        // Force a deterministic full reread without a timestamp-resolution sleep.
+        clear_gemini_sync_state(&db, &path)?;
+        assert_eq!(sync_single_gemini_file(&db, &path)?, (1, 0));
+
+        {
+            let conn = lock_conn!(db.conn);
+            let raw: (i64, String, String, i64, i64, i64, String) = conn.query_row(
+                "SELECT COUNT(*), MAX(model), MAX(request_model), MAX(input_tokens),
+                        MAX(output_tokens), MAX(cache_read_tokens), MAX(total_cost_usd)
+                 FROM proxy_request_logs
+                 WHERE request_id = ?1 AND data_source = 'gemini_session'",
+                [&request_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )?;
+            assert_eq!(raw.0, 1);
+            assert_eq!(raw.1, "gemini-rewrite-v2");
+            assert_eq!(raw.2, "gemini-rewrite-v2");
+            assert_eq!((raw.3, raw.4, raw.5), (200, 25, 10));
+            assert_ne!(raw.6, initial_cost);
+
+            let canonical: (i64, String, i64, i64, i64) = conn.query_row(
+                "SELECT COUNT(*), COALESCE(MAX(model), ''),
+                        COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                        COALESCE(SUM(cache_read_tokens), 0)
+                 FROM agent_session_usage_rollups
+                 WHERE app_type = 'gemini' AND session_id = ?1
+                   AND data_source = 'gemini_session'",
+                [session_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )?;
+            assert_eq!(canonical, (1, "gemini-rewrite-v2".to_string(), 200, 25, 10));
+        }
+
+        clear_gemini_sync_state(&db, &path)?;
+        assert_eq!(sync_single_gemini_file(&db, &path)?, (0, 1));
+        let conn = lock_conn!(db.conn);
+        let counts: (i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1),
+                (SELECT COUNT(*) FROM agent_session_usage_rollups
+                 WHERE app_type = 'gemini' AND session_id = ?2 AND data_source = 'gemini_session')",
+            rusqlite::params![request_id, session_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(counts, (1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn first_gemini_native_event_keeps_matching_proxy_row_as_owner() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session-proxy-owner.json");
+        let session_id = "gemini-proxy-owner-session";
+        let message_id = "gemini-proxy-owner-message";
+        let native_request_id = format!("gemini_session:{session_id}:{message_id}");
+        let event_at =
+            parse_gemini_event_timestamp(Some("2026-08-18T00:00:30Z")).expect("fixture timestamp");
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                 ) VALUES ('proxy-gemini-owner', 'proxy-provider', 'gemini',
+                           'gemini-proxy-owner', 100, 20, 5, 0, '0.1', 0, 200, ?1, 'proxy')",
+                [event_at],
+            )?;
+        }
+        write_gemini_session(
+            &path,
+            session_id,
+            message_id,
+            "gemini-proxy-owner",
+            100,
+            20,
+            5,
+            0,
+        );
+
+        assert_eq!(sync_single_gemini_file(&db, &path)?, (0, 1));
+        let conn = lock_conn!(db.conn);
+        let ownership: (i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'proxy-gemini-owner'),
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1),
+                (SELECT COUNT(*) FROM agent_session_usage_rollups
+                 WHERE app_type = 'gemini' AND session_id = ?2)",
+            rusqlite::params![native_request_id, session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(ownership, (1, 0, 0));
         Ok(())
     }
 }
