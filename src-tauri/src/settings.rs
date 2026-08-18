@@ -718,7 +718,8 @@ impl AppSettings {
         }
 
         if let Some(shared_memory) = &mut self.shared_memory {
-            let blank = shared_memory.url.trim().is_empty() && shared_memory.token.trim().is_empty();
+            let blank =
+                shared_memory.url.trim().is_empty() && shared_memory.token.trim().is_empty();
             shared_memory.normalize();
             if blank {
                 self.shared_memory = None;

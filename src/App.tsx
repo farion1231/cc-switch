@@ -1324,8 +1324,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
-                  {currentView === "sharedMemory" &&
-                    t("sharedMemory.title")}
+                  {currentView === "sharedMemory" && t("sharedMemory.title")}
                 </h1>
               </div>
             ) : (

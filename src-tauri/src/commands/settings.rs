@@ -330,8 +330,8 @@ mod tests {
     use super::merge_settings_for_save;
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
-        CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings, SharedMemorySettings,
-        WebDavSyncSettings,
+        CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
+        SharedMemorySettings, WebDavSyncSettings,
     };
 
     #[test]

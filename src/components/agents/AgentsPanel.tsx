@@ -25,7 +25,11 @@ const AGENT_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
 
 export function AgentsPanel({}: AgentsPanelProps) {
   const { t } = useTranslation();
-  const { data: unmanaged, refetch, isFetching } = useScanUnmanagedSkills({
+  const {
+    data: unmanaged,
+    refetch,
+    isFetching,
+  } = useScanUnmanagedSkills({
     enabled: true,
   });
   const importMutation = useImportSkillsFromApps();

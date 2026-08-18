@@ -22,7 +22,9 @@ export const sharedMemoryApi = {
   },
 
   /** 保存共享记忆设置；令牌留空时后端保留已有令牌。 */
-  async saveSettings(settings: SharedMemorySettings): Promise<{ success: boolean }> {
+  async saveSettings(
+    settings: SharedMemorySettings,
+  ): Promise<{ success: boolean }> {
     return await invoke("shared_memory_save_settings", { incoming: settings });
   },
 
