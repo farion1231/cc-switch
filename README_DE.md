@@ -117,6 +117,11 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
+<td width="180"><a href="https://ppio.com/activity/ccswitch"><img src="assets/partners/logos/ppio-banner.png" alt="PPIO" width="150"></a></td>
+<td>Danke an PPIO für die Unterstützung dieses Projekts! PPIO ist ein führender unabhängiger Agentic-Cloud-Anbieter in China, 2018 gegründet von PPTV-Gründer Yao Xin und dem früheren PPTV-Chefarchitekten Wang Wenyu. Mit einem einzigen API-Schlüssel erhalten Sie Zugriff auf sämtliche führenden Open-Source-Modelle, darunter DeepSeek-V4-Flash, Kimi-K3, GLM-5.2 und MiniMax-M3; der Token Plan für Unternehmen ist mit bis zu 40 % Rabatt und bis zu 200 Sitzplätzen verfügbar, und das Fusion-Modell erreicht das Niveau von Fable5 zu einem Zehntel des Preises. Registrieren Sie sich über <a href="https://ppio.com/activity/ccswitch">diesen Link</a> und schließen Sie die Identitätsprüfung ab, um einen Gutschein über ¥10 zu erhalten. Wer Freunde einlädt, erhält bis zu 15 % Cashback auf deren Aufladungen.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.newapi.ai/"><img src="assets/partners/logos/newapi-banner.png" alt="new-api" width="150"></a></td>
 <td>Vielen Dank an das Open-Source-KI-Infrastrukturprojekt <a href="https://www.newapi.ai/">new-api</a> für die tatkräftige Unterstützung dieses Projekts! new-api ist ein Open-Source-KI-Infrastrukturprojekt von QuantumNous und eines der nach Aktivität und Verbreitung führenden Projekte für den einheitlichen Zugang zu und die Verteilung von LLMs, das sich darauf konzentriert, Entwicklern, Teams und Unternehmen beim Aufbau verwaltbarer und skalierbarer KI-Serviceplattformen zu geringeren Kosten zu helfen. Als ein ebenfalls im Open-Source-Ökosystem verwurzeltes Projekt möchte new-api durch Sponsoring die kontinuierliche Weiterentwicklung weiterer herausragender Open-Source-Projekte unterstützen. 🌟 Unterstützen Sie new-api mit einem Star: <a href="https://github.com/QuantumNous/new-api">https://github.com/QuantumNous/new-api</a>. Website: <a href="https://www.newapi.ai/">https://www.newapi.ai/</a>.</td>
 </tr>
