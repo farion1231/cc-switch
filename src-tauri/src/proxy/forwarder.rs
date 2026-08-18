@@ -1458,6 +1458,9 @@ impl RequestForwarder {
         let mut codex_anthropic_one_m = false;
 
         // 转换请求体（如果需要）
+        // Kimi/Moonshot Chat 上游：把 Codex 的托管 web_search 工具桥接为服务端
+        // 内置 `$web_search`（详见 proxy::providers::kimi_web_search 模块文档）。
+        let mut kimi_web_search_bridged = false;
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
             let explicit_prompt_cache_key = mapped_body
@@ -1476,10 +1479,22 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+            let wants_web_search =
+                super::providers::kimi_web_search::request_has_web_search_tool(&mapped_body);
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
             )?;
+            if wants_web_search
+                && super::providers::kimi_web_search::provider_supports_builtin_web_search(provider)
+            {
+                super::providers::kimi_web_search::inject_builtin_web_search(&mut chat_body);
+                kimi_web_search_bridged = true;
+                log::debug!(
+                    "[Codex] Bridging hosted web_search to Kimi builtin $web_search (provider={})",
+                    provider.id
+                );
+            }
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
@@ -2255,6 +2270,9 @@ impl RequestForwarder {
         );
 
         // 发送请求
+        // The hyper raw-write branch below moves `ordered_headers`; keep a copy
+        // for the Kimi builtin web_search echo rounds that run after the send.
+        let kimi_web_search_echo_headers = kimi_web_search_bridged.then(|| ordered_headers.clone());
         let response = if is_socks_proxy || !preserve_exact_header_case {
             // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
             // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
@@ -2343,6 +2361,14 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
+            if kimi_web_search_bridged {
+                let echo_headers = kimi_web_search_echo_headers
+                    .as_ref()
+                    .expect("echo headers are captured when the bridge is armed");
+                response = self
+                    .bridge_kimi_builtin_web_search(response, &url, echo_headers, &filtered_body)
+                    .await?;
+            }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
@@ -2409,6 +2435,105 @@ impl RequestForwarder {
     /// Some Anthropic-compatible gateways return an Anthropic error envelope with
     /// HTTP 2xx. Validate it inside the retry loop so the request can fail over to
     /// the next provider; the response transformer runs too late for that.
+    /// Kimi/Moonshot builtin `$web_search` bridge: the upstream executes the
+    /// search server-side and answers with a `builtin_function` tool_call whose
+    /// arguments carry the search results; per Kimi's contract the client echoes
+    /// that tool_call back as `role: "tool"` messages to get the final answer.
+    /// Run those echo rounds here so the loop stays transparent to the Codex
+    /// client, then mark the buffered final Chat completion with
+    /// BRIDGED_HEADER so the response handler converts (and optionally streams)
+    /// it like any other Chat → Responses result.
+    async fn bridge_kimi_builtin_web_search(
+        &self,
+        response: ProxyResponse,
+        url: &str,
+        request_headers: &http::HeaderMap,
+        request_body: &Value,
+    ) -> Result<ProxyResponse, ProxyError> {
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
+
+        let Ok(mut chat_json) = serde_json::from_slice::<Value>(&body) else {
+            // Defensive: we forced stream=false upstream, but pass whatever came
+            // back through untouched rather than failing the request.
+            return Ok(ProxyResponse::buffered(status, headers, body));
+        };
+
+        let mut request_body = request_body.clone();
+        // api.kimi.com's k3 chat template cannot tokenize the builtin echo
+        // conversation; run the echo rounds under the kimi-for-coding alias.
+        super::providers::kimi_web_search::apply_echo_model_override(url, &mut request_body);
+        let mut rounds = 0usize;
+        while super::providers::kimi_web_search::has_builtin_tool_calls(&chat_json) {
+            if rounds >= super::providers::kimi_web_search::MAX_ECHO_ROUNDS
+                || !super::providers::kimi_web_search::append_echo_messages(
+                    &mut request_body,
+                    &chat_json,
+                )
+            {
+                break;
+            }
+            rounds += 1;
+            log::debug!("[Codex] Kimi builtin web_search echo round {rounds}");
+
+            let echo_body = serde_json::to_vec(&request_body).map_err(|e| {
+                ProxyError::Internal(format!("Failed to serialize web_search echo body: {e}"))
+            })?;
+            let timeout = if self.non_streaming_timeout.is_zero() {
+                std::time::Duration::from_secs(600)
+            } else {
+                self.non_streaming_timeout
+            };
+            let client = super::http_client::get();
+            let mut request = client.post(url).timeout(timeout).body(echo_body);
+            for (key, value) in request_headers {
+                request = request.header(key, value);
+            }
+            let echo_response = request.send().await.map_err(map_reqwest_send_error)?;
+            let echo_status = echo_response.status();
+            let echo_headers = echo_response.headers().clone();
+            let echo_bytes = echo_response
+                .bytes()
+                .await
+                .map_err(map_reqwest_send_error)?;
+            if !echo_status.is_success() {
+                // Surface the upstream failure as-is so the handler's error
+                // conversion can shape it for the Codex client.
+                return Ok(ProxyResponse::buffered(
+                    echo_status,
+                    echo_headers,
+                    echo_bytes,
+                ));
+            }
+            chat_json = serde_json::from_slice(&echo_bytes).map_err(|e| {
+                ProxyError::TransformError(format!(
+                    "Failed to parse Kimi web_search echo response: {e}"
+                ))
+            })?;
+        }
+
+        let mut out_headers = headers;
+        out_headers.remove(http::header::CONTENT_ENCODING);
+        out_headers.remove(http::header::CONTENT_LENGTH);
+        out_headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        out_headers.insert(
+            super::providers::kimi_web_search::BRIDGED_HEADER,
+            http::HeaderValue::from_static("1"),
+        );
+        let out_body = serde_json::to_vec(&chat_json).map_err(|e| {
+            ProxyError::Internal(format!("Failed to serialize bridged chat response: {e}"))
+        })?;
+        Ok(ProxyResponse::buffered(
+            status,
+            out_headers,
+            Bytes::from(out_body),
+        ))
+    }
+
     async fn validate_codex_anthropic_success_response(
         &self,
         response: ProxyResponse,

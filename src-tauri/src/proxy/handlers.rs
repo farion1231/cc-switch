@@ -1312,6 +1312,13 @@ async fn handle_codex_chat_to_responses_transform(
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
+    // The forwarder ran the Kimi builtin `$web_search` echo rounds and buffered
+    // a final Chat completion; serve it via the non-stream conversion path even
+    // when the client asked for a stream (SSE is synthesized after conversion).
+    let web_search_bridged = response
+        .headers()
+        .contains_key(super::providers::kimi_web_search::BRIDGED_HEADER);
+
     if !status.is_success() {
         // 上游 Chat 错误体形状与 Responses 不一致（如 MiniMax 的 base_resp、自定义 detail 字段）；
         // 直接透传会让 Codex 客户端无法识别错误码。这里统一转换为 Responses 风格
@@ -1319,7 +1326,7 @@ async fn handle_codex_chat_to_responses_transform(
         return handle_codex_chat_error_response(response, ctx, status).await;
     }
 
-    if is_stream || response.is_sse() {
+    if (is_stream || response.is_sse()) && !web_search_bridged {
         let stream = response.bytes_stream();
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
         let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
@@ -1508,8 +1515,38 @@ async fn handle_codex_chat_to_responses_transform(
 
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
+    response_headers.remove(super::providers::kimi_web_search::BRIDGED_HEADER);
     // Builder::header 是 append 语义；不先 remove 会和上游 Content-Type 双发。
     response_headers.remove(axum::http::header::CONTENT_TYPE);
+
+    // Kimi builtin web_search bridge: the upstream call was forced non-streaming
+    // for the echo rounds, but a streaming Codex client still expects SSE — replay
+    // the converted response as a Responses event stream.
+    if web_search_bridged && is_stream {
+        let events =
+            super::providers::kimi_web_search::responses_value_to_sse_bytes(&responses_response);
+        let mut sse_body = Vec::new();
+        for event in events {
+            sse_body.extend_from_slice(&event);
+        }
+        let mut builder = axum::response::Response::builder().status(status);
+        for (key, value) in response_headers.iter() {
+            builder = builder.header(key, value);
+        }
+        builder = builder
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("text/event-stream"),
+            )
+            .header(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("no-cache"),
+            );
+        return builder.body(axum::body::Body::from(sse_body)).map_err(|e| {
+            log::error!("[Codex] 构建 web_search 桥接 SSE 响应失败: {e}");
+            ProxyError::Internal(format!("Failed to build bridged SSE response: {e}"))
+        });
+    }
 
     let mut builder = axum::response::Response::builder().status(status);
     for (key, value) in response_headers.iter() {
