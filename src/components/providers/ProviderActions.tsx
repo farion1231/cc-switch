@@ -10,6 +10,8 @@ import {
   Play,
   Plus,
   Terminal,
+  ClipboardCopy,
+  Layers,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -41,6 +43,10 @@ interface ProviderActionsProps {
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate?: () => void;
+  /** 复制配置到剪贴板（导出） */
+  onExport?: () => void;
+  /** 转换为统一供应商 */
+  onConvertToUniversal?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
   onDelete: () => void;
@@ -83,6 +89,8 @@ export function ProviderActions({
   onSwitch,
   onEdit,
   onDuplicate,
+  onExport,
+  onConvertToUniversal,
   onTest,
   onConfigureUsage,
   onDelete,
@@ -400,16 +408,43 @@ export function ProviderActions({
           <Edit className="h-4 w-4" />
         </Button>
 
-        {onDuplicate && (
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={onDuplicate}
-            title={t("provider.duplicate")}
-            className={iconButtonClass}
-          >
-            <Copy className="h-4 w-4" />
-          </Button>
+        {(onDuplicate || onExport || onConvertToUniversal) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                title={t("provider.copyMenu", { defaultValue: "复制 / 导出" })}
+                className={iconButtonClass}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {onDuplicate && (
+                <DropdownMenuItem onSelect={() => onDuplicate()}>
+                  <Copy className="h-4 w-4" />
+                  {t("provider.duplicate")}
+                </DropdownMenuItem>
+              )}
+              {onExport && (
+                <DropdownMenuItem onSelect={() => onExport()}>
+                  <ClipboardCopy className="h-4 w-4" />
+                  {t("provider.copyConfigToClipboard", {
+                    defaultValue: "复制配置到剪贴板",
+                  })}
+                </DropdownMenuItem>
+              )}
+              {onConvertToUniversal && (
+                <DropdownMenuItem onSelect={() => onConvertToUniversal()}>
+                  <Layers className="h-4 w-4" />
+                  {t("provider.convertToUniversal", {
+                    defaultValue: "转换为统一供应商",
+                  })}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
 
         <Button
