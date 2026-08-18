@@ -1487,6 +1487,7 @@ impl RequestForwarder {
                 self.session_client_provided
                     .then_some(self.session_id.as_str()),
             );
+            super::providers::normalize_codex_chat_images_for_provider(provider, &mut chat_body);
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;

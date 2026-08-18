@@ -130,6 +130,56 @@ pub fn should_send_codex_chat_prompt_cache_key(provider: &Provider) -> bool {
     }
 }
 
+/// Normalize image-detail values that a provider's OpenAI-compatible Chat API
+/// does not accept. Volcengine Ark rejects Codex's `original` extension.
+pub fn normalize_codex_chat_images_for_provider(provider: &Provider, body: &mut JsonValue) {
+    if !codex_provider_is_volcengine_ark(provider) {
+        return;
+    }
+    let Some(messages) = body.get_mut("messages").and_then(JsonValue::as_array_mut) else {
+        return;
+    };
+    for message in messages {
+        let Some(parts) = message.get_mut("content").and_then(JsonValue::as_array_mut) else {
+            continue;
+        };
+        for part in parts {
+            if part.get("type").and_then(JsonValue::as_str) != Some("image_url") {
+                continue;
+            }
+            if part
+                .pointer("/image_url/detail")
+                .and_then(JsonValue::as_str)
+                == Some("original")
+            {
+                part["image_url"]["detail"] = JsonValue::String("auto".to_string());
+            }
+        }
+    }
+}
+
+fn codex_provider_is_volcengine_ark(provider: &Provider) -> bool {
+    let base_url = provider
+        .settings_config
+        .get("base_url")
+        .or_else(|| provider.settings_config.get("baseURL"))
+        .and_then(JsonValue::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(JsonValue::as_str)
+                .and_then(extract_codex_base_url_from_toml)
+        });
+
+    base_url
+        .as_deref()
+        .and_then(|url| url::Url::parse(url).ok())
+        .and_then(|url| url.host_str().map(ToString::to_string))
+        .is_some_and(|host| host.starts_with("ark.") && host.ends_with(".volces.com"))
+}
+
 /// Add a stable cache-routing key after Responses -> Chat conversion. An
 /// explicit client key wins; otherwise only a real client-provided session ID
 /// is eligible. Generated per-request UUIDs must never be used here.
@@ -1526,6 +1576,58 @@ wire_api = "anthropic"
         // base_url 已包含 /v1，endpoint 也包含 /v1
         let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
+    }
+
+    #[test]
+    fn normalizes_original_image_detail_for_volcengine_ark() {
+        let provider = create_provider(json!({
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3"
+        }));
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "https://example.com/input.png",
+                        "detail": "original"
+                    }
+                }]
+            }]
+        });
+
+        normalize_codex_chat_images_for_provider(&provider, &mut body);
+
+        assert_eq!(
+            body["messages"][0]["content"][0]["image_url"]["detail"],
+            "auto"
+        );
+    }
+
+    #[test]
+    fn preserves_original_image_detail_for_other_providers() {
+        let provider = create_provider(json!({
+            "base_url": "https://relay.example.com/v1"
+        }));
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "https://example.com/input.png",
+                        "detail": "original"
+                    }
+                }]
+            }]
+        });
+
+        normalize_codex_chat_images_for_provider(&provider, &mut body);
+
+        assert_eq!(
+            body["messages"][0]["content"][0]["image_url"]["detail"],
+            "original"
+        );
     }
 
     // 官方客户端检测测试
