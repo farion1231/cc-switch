@@ -323,6 +323,8 @@ impl Database {
                          THEN 'http_request'
                           WHEN COALESCE(l.data_source, 'proxy') IN ('grok_session', 'codex_session')
                           THEN 'agent_call'
+                          WHEN COALESCE(l.data_source, 'proxy') = 'pi_session'
+                          THEN 'usage_event'
                           ELSE 'assistant_message' END AS request_count_semantics,
                      l.input_token_semantics AS input_token_semantics,
                      COUNT(*) AS new_req,
@@ -997,6 +999,41 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(snapshot_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_preserves_pi_usage_event_semantics() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, latency_ms, status_code,
+                    created_at, session_id, data_source
+                 ) VALUES (
+                    'pi:legacy-session:usage:1', 'pi', 'pi', 'pi-model',
+                    10, 5, 2, 1, 0, 200, ?1, 'legacy-session', 'pi_session'
+                 )",
+                [old_ts],
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (request_count, semantics): (i64, String) = conn.query_row(
+            "SELECT request_count, request_count_semantics
+             FROM agent_session_usage_rollups
+             WHERE app_type = 'pi' AND session_id = 'legacy-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(request_count, 1);
+        assert_eq!(semantics, "usage_event");
         Ok(())
     }
 
