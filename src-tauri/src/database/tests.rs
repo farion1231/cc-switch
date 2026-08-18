@@ -187,7 +187,7 @@ fn existing_skill_repo_selection_is_not_supplemented() {
 fn schema_migration_sets_user_version_when_missing() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
-    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::create_tables_on_conn(&conn, true).expect("create tables");
     assert_eq!(
         Database::get_user_version(&conn).expect("read version before"),
         0
@@ -225,7 +225,7 @@ fn schema_migration_sets_user_version_when_missing() {
 #[test]
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
-    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::create_tables_on_conn(&conn, true).expect("create tables");
     Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
 
     let err =
@@ -324,7 +324,7 @@ fn schema_migration_aligns_column_defaults_and_types() {
 #[test]
 fn schema_create_tables_include_pricing_model_columns() {
     let conn = Connection::open_in_memory().expect("open memory db");
-    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::create_tables_on_conn(&conn, true).expect("create tables");
 
     let multiplier = get_column_info(&conn, "proxy_config", "default_cost_multiplier");
     assert_eq!(multiplier.r#type, "TEXT");
@@ -503,7 +503,7 @@ fn schema_create_tables_repairs_dev_global_profile_marker() {
     .expect("seed dev v12 shape");
     Database::set_user_version(&conn, 12).expect("set user_version=12");
 
-    Database::create_tables_on_conn(&conn).expect("create tables should repair marker");
+    Database::create_tables_on_conn(&conn, false).expect("create tables should repair marker");
 
     // 全局 current 标记改名为 claude 组标记，旧 key 删除
     let claude_marker: String = conn
@@ -524,7 +524,7 @@ fn schema_create_tables_repairs_dev_global_profile_marker() {
     assert_eq!(old_marker, 0);
 
     // 修复必须幂等：再跑一遍不应破坏已迁移的标记
-    Database::create_tables_on_conn(&conn).expect("repair is idempotent");
+    Database::create_tables_on_conn(&conn, false).expect("repair is idempotent");
     let claude_marker: String = conn
         .query_row(
             "SELECT value FROM settings WHERE key = 'current_profile_id_claude'",
@@ -560,7 +560,8 @@ fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     )
     .expect("seed legacy proxy_config");
 
-    Database::create_tables_on_conn(&conn).expect("create tables should repair proxy_config");
+    Database::create_tables_on_conn(&conn, false)
+        .expect("create tables should repair proxy_config");
 
     assert!(
         Database::has_column(&conn, "proxy_config", "app_type").expect("check app_type"),
@@ -624,7 +625,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
     .expect("seed legacy skill");
 
     // 按应用启动流程：先 create_tables（补齐新增表），再 apply_schema_migrations（按 user_version 迁移）
-    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::create_tables_on_conn(&conn, false).expect("create tables");
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
 
     assert_eq!(
@@ -920,7 +921,7 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
     let conn = Connection::open(&path).expect("open temp db");
     conn.execute("PRAGMA auto_vacuum = NONE;", [])
         .expect("set none auto_vacuum");
-    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::create_tables_on_conn(&conn, true).expect("create tables");
 
     assert_eq!(
         Database::get_auto_vacuum_mode(&conn).expect("auto_vacuum before rebuild"),

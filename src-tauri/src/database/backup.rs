@@ -264,7 +264,7 @@ impl Database {
         Self::validate_imported_schema(&temp_conn)?;
 
         // 补齐缺失表/索引并执行迁移
-        Self::create_tables_on_conn(&temp_conn)?;
+        Self::create_tables_on_conn(&temp_conn, false)?;
         Self::apply_schema_migrations_on_conn(&temp_conn)?;
         on_staging_ready()?;
 
@@ -1203,7 +1203,7 @@ impl Database {
         Self::validate_sqlite_integrity(&staging_conn)?;
         Self::validate_imported_schema(&staging_conn)?;
         Self::ensure_incremental_auto_vacuum_on_conn(&staging_conn)?;
-        Self::create_tables_on_conn(&staging_conn)?;
+        Self::create_tables_on_conn(&staging_conn, false)?;
         Self::apply_schema_migrations_on_conn(&staging_conn)?;
         Self::ensure_model_pricing_seeded_on_conn(&staging_conn)?;
         Self::validate_sqlite_integrity(&staging_conn)?;
@@ -3817,7 +3817,7 @@ mod tests {
         println!("phase execute_batch: {:?}", t.elapsed());
 
         let t = Instant::now();
-        Database::create_tables_on_conn(&temp_conn)?;
+        Database::create_tables_on_conn(&temp_conn, false)?;
         Database::apply_schema_migrations_on_conn(&temp_conn)?;
         println!("phase schema+migrations: {:?}", t.elapsed());
 

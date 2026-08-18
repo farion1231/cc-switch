@@ -44,13 +44,16 @@ const CODEX_REPLAY_CANONICAL_GENERATION_TABLES: CanonicalGenerationTables =
 
 impl Database {
     /// 创建所有数据库表
-    pub(crate) fn create_tables(&self) -> Result<(), AppError> {
+    pub(crate) fn create_tables(&self, is_new_database: bool) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        Self::create_tables_on_conn(&conn)
+        Self::create_tables_on_conn(&conn, is_new_database)
     }
 
     /// 在指定连接上创建表（供迁移和测试使用）
-    pub(crate) fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+    pub(crate) fn create_tables_on_conn(
+        conn: &Connection,
+        is_new_database: bool,
+    ) -> Result<(), AppError> {
         // 1. Providers 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS providers (
@@ -377,7 +380,7 @@ impl Database {
         // must not receive these objects before the migration savepoint; doing
         // so would make a failed migration leave a partial v18 schema behind.
         let version = Self::get_user_version(conn)?;
-        if version == 0 || version == SCHEMA_VERSION {
+        if is_new_database || version == SCHEMA_VERSION {
             Self::create_agent_session_usage_tables_on_conn(conn)?;
 
             // Codex replay staging tables. A replay writes here first and
@@ -3532,7 +3535,7 @@ mod tests {
 
     fn migrate_v17_replay_state(evidence: CodexReplayEvidence) -> Result<String, AppError> {
         let conn = Connection::open_in_memory()?;
-        Database::create_tables_on_conn(&conn)?;
+        Database::create_tables_on_conn(&conn, true)?;
         match evidence {
             CodexReplayEvidence::Fresh => {}
             CodexReplayEvidence::ProxyOnly => {
@@ -3621,7 +3624,7 @@ mod tests {
     #[test]
     fn migrate_v13_to_v14_adds_grokbuild_proxy_row_and_preserves_values() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
-        Database::create_tables_on_conn(&conn)?;
+        Database::create_tables_on_conn(&conn, true)?;
         conn.execute("DELETE FROM proxy_config WHERE app_type = 'grokbuild'", [])?;
         conn.execute(
             "UPDATE proxy_config SET enabled = 1, max_retries = 9 WHERE app_type = 'codex'",
@@ -3699,7 +3702,7 @@ mod tests {
     #[test]
     fn migrate_v15_to_v16_resets_only_codex_session_usage() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
-        Database::create_tables_on_conn(&conn)?;
+        Database::create_tables_on_conn(&conn, true)?;
         conn.execute_batch(
             "INSERT INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, input_tokens,
@@ -3739,10 +3742,56 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn init_legacy_v0_keeps_v18_objects_inside_migration_savepoint() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db_dir = crate::config::get_app_config_dir();
+        std::fs::create_dir_all(&db_dir).map_err(|e| AppError::io(&db_dir, e))?;
+        let db_path = db_dir.join("cc-switch.db");
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute("CREATE TABLE legacy_marker (value TEXT NOT NULL)", [])?;
+            conn.execute("INSERT INTO legacy_marker VALUES ('preserved')", [])?;
+            // Fail late in v17 -> v18 after the earlier migration steps have
+            // run. The conflicting object itself belongs to the legacy DB and
+            // must survive the failed migration.
+            conn.execute(
+                "CREATE TABLE idx_agent_session_nodes_root (marker INTEGER NOT NULL)",
+                [],
+            )?;
+        }
+
+        // An existing database may still have SQLite's default user_version.
+        // Startup must not treat it as a fresh database and create v18 objects
+        // before the migration savepoint.
+        let error = match Database::init() {
+            Ok(_) => panic!("conflicting index name should fail v18 migration"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("idx_agent_session_nodes_root")
+                || error.to_string().contains("already exists"),
+            "unexpected migration error: {error}"
+        );
+        let conn = Connection::open(&db_path)?;
+        assert_eq!(Database::get_user_version(&conn)?, 0);
+        assert!(!Database::table_exists(&conn, "agent_session_nodes")?);
+        assert!(!Database::table_exists(
+            &conn,
+            "agent_session_usage_rollups"
+        )?);
+        assert!(!Database::table_exists(&conn, "codex_replay_sync")?);
+        let marker: String =
+            conn.query_row("SELECT value FROM legacy_marker", [], |row| row.get(0))?;
+        assert_eq!(marker, "preserved");
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v17_to_v18_creates_session_tables_without_touching_existing_rows(
     ) -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
-        Database::create_tables_on_conn(&conn)?;
+        Database::create_tables_on_conn(&conn, true)?;
         // Simulate an actual v17 database: create_tables_on_conn is also used
         // on current databases, so remove the v18 objects before setting the
         // legacy user_version and exercising the migration itself.
@@ -3769,7 +3818,7 @@ mod tests {
 
         // Startup calls create_tables before applying migrations. On a real
         // v17 database that call must not materialize any v18 object early.
-        Database::create_tables_on_conn(&conn)?;
+        Database::create_tables_on_conn(&conn, false)?;
         assert!(!Database::table_exists(&conn, "agent_session_nodes")?);
         assert!(!Database::table_exists(&conn, "codex_replay_sync")?);
 
@@ -3792,7 +3841,7 @@ mod tests {
     #[test]
     fn migrate_v17_to_v18_rolls_back_all_new_objects_on_failure() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
-        Database::create_tables_on_conn(&conn)?;
+        Database::create_tables_on_conn(&conn, true)?;
         drop_v18_session_usage_objects(&conn)?;
         conn.execute(
             "CREATE TABLE idx_agent_session_nodes_root (marker INTEGER NOT NULL)",
@@ -3805,7 +3854,7 @@ mod tests {
         )?;
         Database::set_user_version(&conn, 17)?;
 
-        Database::create_tables_on_conn(&conn)?;
+        Database::create_tables_on_conn(&conn, false)?;
         assert!(!Database::table_exists(&conn, "agent_session_nodes")?);
         assert!(!Database::table_exists(&conn, "codex_replay_sync")?);
 
@@ -3848,7 +3897,7 @@ mod tests {
         let db_path = db_dir.join("cc-switch.db");
         {
             let conn = Connection::open(&db_path)?;
-            Database::create_tables_on_conn(&conn)?;
+            Database::create_tables_on_conn(&conn, true)?;
             drop_v18_session_usage_objects(&conn)?;
             Database::set_user_version(&conn, 17)?;
         }

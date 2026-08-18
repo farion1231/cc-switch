@@ -140,7 +140,7 @@ impl Database {
             }
         }
 
-        db.create_tables()?;
+        db.create_tables(!db_exists)?;
 
         db.apply_schema_migrations()?;
         if let Err(e) = db.ensure_incremental_auto_vacuum() {
@@ -199,7 +199,7 @@ impl Database {
         let db = Self {
             conn: Mutex::new(conn),
         };
-        db.create_tables()?;
+        db.create_tables(true)?;
         db.ensure_model_pricing_seeded()?;
 
         Ok(db)
