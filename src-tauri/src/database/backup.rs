@@ -2975,7 +2975,7 @@ mod tests {
             let source_conn = Connection::open(&source_path)?;
             source_conn.execute_batch(&format!(
                 "PRAGMA user_version = {};",
-                crate::database::SCHEMA_VERSION + 1
+                crate::database::SCHEMA_VERSION + 2
             ))?;
         }
 
@@ -3024,6 +3024,75 @@ mod tests {
             backup_count_after, backup_count_before,
             "staging failure should occur before creating a redundant safety backup"
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_accepts_known_legacy_v17_schema() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('legacy-source', 'claude', 'Legacy Source', '{}', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO session_usage_dedup
+                 (data_source, request_id, semantic_id, has_entry_id)
+                 VALUES ('pi_session', 'legacy-request', 'legacy-semantic', 1)",
+                [],
+            )?;
+        }
+
+        let source_path = db
+            .backup_database_file()?
+            .expect("file-backed database should create a backup");
+        let source_filename = source_path
+            .file_name()
+            .expect("backup should have a filename")
+            .to_string_lossy()
+            .into_owned();
+        {
+            let source_conn = Connection::open(&source_path)?;
+            source_conn.execute_batch(&format!(
+                "PRAGMA user_version = {};",
+                crate::database::LEGACY_V17_SCHEMA_VERSION
+            ))?;
+        }
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('live-provider', 'claude', 'Live Provider', '{}', '{}')",
+                [],
+            )?;
+            conn.execute("DELETE FROM session_usage_dedup", [])?;
+        }
+
+        db.restore_from_backup(&source_filename)?;
+
+        let (provider_id, version, ledger_count): (String, i32, i64) = {
+            let conn = crate::database::lock_conn!(db.conn);
+            let provider_id = conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?;
+            let version = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+            let ledger_count = conn.query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup
+                 WHERE request_id = 'legacy-request'",
+                [],
+                |row| row.get(0),
+            )?;
+            (provider_id, version, ledger_count)
+        };
+        assert_eq!(provider_id, "legacy-source");
+        assert_eq!(version, crate::database::SCHEMA_VERSION);
+        assert_eq!(ledger_count, 1);
         Ok(())
     }
 

@@ -2,7 +2,7 @@
 //!
 //! 负责数据库表结构的创建和版本迁移。
 
-use super::{lock_conn, Database, SCHEMA_VERSION};
+use super::{lock_conn, Database, LEGACY_V17_SCHEMA_VERSION, SCHEMA_VERSION};
 use crate::error::AppError;
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -310,23 +310,32 @@ impl Database {
 
         // Session detail rows are pruned after rollup, so request IDs needed
         // for fork/rewrite deduplication live in a compact durable ledger.
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS session_usage_dedup (
-                data_source TEXT NOT NULL,
-                request_id TEXT NOT NULL,
-                semantic_id TEXT NOT NULL,
-                has_entry_id INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (data_source, request_id)
-            )",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_session_usage_dedup_semantic
-             ON session_usage_dedup(data_source, semantic_id, has_entry_id)",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        // Do not create this marker table for an unrecognized v17 database:
+        // the migration check must be able to reject that database instead of
+        // making it look like the known upstream Pi layout.
+        let stored_version = Self::get_user_version(conn)?;
+        let preserve_unknown_legacy_v17_marker = SCHEMA_VERSION < LEGACY_V17_SCHEMA_VERSION
+            && stored_version == LEGACY_V17_SCHEMA_VERSION
+            && !Self::table_exists(conn, "session_usage_dedup")?;
+        if !preserve_unknown_legacy_v17_marker {
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS session_usage_dedup (
+                    data_source TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    semantic_id TEXT NOT NULL,
+                    has_entry_id INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (data_source, request_id)
+                )",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_session_usage_dedup_semantic
+                 ON session_usage_dedup(data_source, semantic_id, has_entry_id)",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
         // 19. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
         //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
@@ -436,17 +445,23 @@ impl Database {
         conn.execute("SAVEPOINT schema_migration;", [])
             .map_err(|e| AppError::Database(format!("开启迁移 savepoint 失败: {e}")))?;
 
-        let mut version = Self::get_user_version(conn)?;
-
-        if version > SCHEMA_VERSION {
-            conn.execute("ROLLBACK TO schema_migration;", []).ok();
-            conn.execute("RELEASE schema_migration;", []).ok();
-            return Err(AppError::Database(format!(
-                "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
-            )));
-        }
-
         let result = (|| {
+            let mut version = Self::get_user_version(conn)?;
+
+            if version > SCHEMA_VERSION {
+                if Self::is_known_legacy_v17_database(conn, version)? {
+                    log::warn!(
+                        "检测到上游 v{LEGACY_V17_SCHEMA_VERSION} 数据库，恢复版本头为 v{SCHEMA_VERSION}"
+                    );
+                    Self::set_user_version(conn, SCHEMA_VERSION)?;
+                    version = SCHEMA_VERSION;
+                } else {
+                    return Err(AppError::Database(format!(
+                        "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
+                    )));
+                }
+            }
+
             while version < SCHEMA_VERSION {
                 match version {
                     0 => {
@@ -530,11 +545,6 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
-                    }
-                    16 => {
-                        log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
-                        Self::migrate_v16_to_v17(conn)?;
-                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1546,23 +1556,6 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
-    }
-
-    /// v16 -> v17: preserve session request identities after detail rollup.
-    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS session_usage_dedup (
-                data_source TEXT NOT NULL,
-                request_id TEXT NOT NULL,
-                semantic_id TEXT NOT NULL,
-                has_entry_id INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (data_source, request_id)
-             );
-             CREATE INDEX IF NOT EXISTS idx_session_usage_dedup_semantic
-             ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
-        )
-        .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
-        Ok(())
     }
 
     /// 插入默认模型定价数据
@@ -3008,6 +3001,60 @@ impl Database {
         Ok(())
     }
 
+    /// Recognize only the transient upstream Pi v17 layout while this branch
+    /// remains on schema v16. A later official v17 migration must not be
+    /// normalized back to v16.
+    pub(crate) fn is_known_legacy_v17_database(
+        conn: &Connection,
+        version: i32,
+    ) -> Result<bool, AppError> {
+        if SCHEMA_VERSION >= LEGACY_V17_SCHEMA_VERSION
+            || version != LEGACY_V17_SCHEMA_VERSION
+            || !Self::table_exists(conn, "session_usage_dedup")?
+        {
+            return Ok(false);
+        }
+
+        let mut table_info = conn
+            .prepare("PRAGMA table_info(\"session_usage_dedup\");")
+            .map_err(|e| AppError::Database(format!("读取会话用量去重账本结构失败: {e}")))?;
+        let columns = table_info
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(format!("读取会话用量去重账本结构失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(format!("解析会话用量去重账本结构失败: {e}")))?;
+        let expected_columns = [
+            ("data_source", "TEXT", 1, None, 1),
+            ("request_id", "TEXT", 1, None, 2),
+            ("semantic_id", "TEXT", 1, None, 0),
+            ("has_entry_id", "INTEGER", 1, Some("0"), 0),
+        ];
+        if columns.len() != expected_columns.len()
+            || columns
+                .iter()
+                .zip(expected_columns)
+                .any(|(actual, expected)| {
+                    actual.0 != expected.0
+                        || actual.1 != expected.1
+                        || actual.2 != expected.2
+                        || actual.3.as_deref() != expected.3
+                        || actual.4 != expected.4
+                })
+        {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
     fn create_request_logs_usage_indexes_if_supported(conn: &Connection) -> Result<(), AppError> {
         if !Self::table_exists(conn, "proxy_request_logs")? {
             return Ok(());
@@ -3301,20 +3348,28 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v16_to_v17_creates_session_usage_dedup_ledger() -> Result<(), AppError> {
+    fn known_v17_database_is_normalized_without_losing_dedup_ledger() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
-        Database::set_user_version(&conn, 16)?;
-
-        Database::apply_schema_migrations_on_conn(&conn)?;
-
-        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
+        Database::create_tables_on_conn(&conn)?;
         conn.execute(
             "INSERT INTO session_usage_dedup
              (data_source, request_id, semantic_id, has_entry_id)
              VALUES ('pi_session', 'request', 'semantic', 1)",
             [],
         )?;
+        Database::set_user_version(&conn, LEGACY_V17_SCHEMA_VERSION)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_usage_dedup
+             WHERE data_source = 'pi_session' AND request_id = 'request'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 1);
         Ok(())
     }
 }
