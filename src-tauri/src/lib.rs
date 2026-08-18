@@ -408,6 +408,14 @@ pub fn run() {
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "floating_usage" {
+                    api.prevent_close();
+                    // 置为禁用、持久化设置、销毁窗口（释放 WebView 与查询轮询）
+                    // 并通知前端刷新设置缓存；下次启用时由 ensure_floating_usage_window 重建
+                    crate::commands::disable_floating_usage(window.app_handle());
+                    return;
+                }
+
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
                     .map(|p| p.kind.as_deref() == Some("db_version_too_new"))
@@ -444,6 +452,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
+                .with_denylist(&["floating_usage"])
                 .build(),
         )
         .setup(|app| {
@@ -1131,6 +1140,15 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // 用量悬浮窗：仅启用时按需创建（保持隐藏，由前端加载完成后自行恢复位置并显示）。
+            // 必须放在 AppState 注入之后：悬浮窗前端的用量查询（get_usage_summary_by_app /
+            // get_floating_model_stats）依赖已管理的 AppState，过早创建会在启动期与
+            // 数据库初始化/迁移竞态，导致首次查询失败、窗口短暂显示空数据；同时数据库
+            // 版本过新的恢复路径在注入前已提前 return，这里不会在恢复界面上空挂悬浮窗。
+            if crate::settings::get_settings().enable_floating_usage {
+                commands::ensure_floating_usage_window(app.handle());
+            }
+
             // 初始化 SkillService
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
@@ -1356,7 +1374,6 @@ pub fn run() {
                 }
             }
 
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1395,6 +1412,10 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::show_main_window,
+            commands::resize_floating_usage_window,
+            commands::get_floating_work_area,
+            commands::close_floating_usage_window,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,
             commands::get_rectifier_config,
@@ -1584,6 +1605,7 @@ pub fn run() {
             commands::get_usage_trends,
             commands::get_provider_stats,
             commands::get_model_stats,
+            commands::get_floating_model_stats,
             commands::get_request_logs,
             commands::get_request_detail,
             commands::get_model_pricing,
