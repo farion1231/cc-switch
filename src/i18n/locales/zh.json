@@ -2486,6 +2486,7 @@
     "uninstall": "卸载",
     "uninstalling": "卸载中...",
     "view": "查看",
+    "requirements": "环境要求",
     "noDescription": "暂无描述",
     "loadFailed": "加载失败",
     "installSuccess": "技能 {{name}} 已安装",
