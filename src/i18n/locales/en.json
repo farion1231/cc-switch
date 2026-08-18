@@ -910,7 +910,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "workbuddy": "WorkBuddy"
   },
   "pi": {
     "empty": {
@@ -3244,5 +3245,34 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "workbuddy": {
+    "form": {
+      "baseUrl": "Gateway URL",
+      "baseUrlHint": "Gateway API endpoint. Models sharing the same URL and key are grouped into one provider.",
+      "baseUrlRequired": "Gateway URL is required",
+      "baseUrlScheme": "URL must start with http:// or https://",
+      "baseUrlInvalid": "Gateway URL is not a valid URL",
+      "apiKeyRequired": "API Key is required",
+      "models": "Models",
+      "modelsRequired": "Please configure at least one model",
+      "addModel": "Add Model",
+      "noModels": "No models configured. No model will be available when switching to this provider.",
+      "modelId": "Model ID",
+      "modelName": "Display Name",
+      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelAlias": "Model Alias (optional)",
+      "contextWindow": "Context Window",
+      "maxTokens": "Max Output Tokens",
+      "supportsToolCall": "Tool calling",
+      "supportsImages": "Image input",
+      "supportsReasoning": "Reasoning",
+      "bypassProxy": "Bypass local proxy",
+      "useCustomProtocol": "Custom protocol",
+      "advancedOptions": "Advanced Options",
+      "modelsHint": "These models are written to WorkBuddy's models.json when switching to this provider.",
+      "primaryModel": "Default Model",
+      "fallbackModel": "Fallback Model"
+    }
   }
 }

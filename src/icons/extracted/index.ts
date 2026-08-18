@@ -28,6 +28,7 @@ import _sudocode from "./sudocode.png";
 import _sudocodeUs from "./sudocode-us.png";
 import _teamorouter from "./TeamoRouter-icon-dark.png";
 import _unity2 from "./unity2.png";
+import _workbuddy from "./workbuddy.png";
 import _xycai from "./xycai-icon.png";
 import _zetaapi from "./zetaapi-icon.png";
 
@@ -136,6 +137,7 @@ export const iconUrls: Record<string, string> = {
   "sudocode-us": _sudocodeUs,
   teamorouter: _teamorouter,
   unity2: _unity2,
+  workbuddy: _workbuddy,
   xycai: _xycai,
   zetaapi: _zetaapi,
 };

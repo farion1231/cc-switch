@@ -189,6 +189,8 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::WorkBuddy => crate::workbuddy_config::get_typed_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -531,6 +533,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::WorkBuddy
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -606,6 +609,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::WorkBuddy
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -666,6 +670,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::WorkBuddy
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1401,6 +1406,35 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Pi providers use the Pi provider service".to_string(),
             ));
         }
+        AppType::WorkBuddy => {
+            // WorkBuddy additive 模式：把该 provider(=一个网关)的模型展平写回 models.json，
+            // 保留其他 provider 名下的模型。
+            use crate::workbuddy_config::{self, WorkBuddyProviderConfig};
+            match serde_json::from_value::<WorkBuddyProviderConfig>(
+                provider.settings_config.clone(),
+            ) {
+                Ok(cfg) => {
+                    workbuddy_config::set_typed_provider(&provider.id, &cfg)?;
+                    log::info!(
+                        "WorkBuddy provider '{}' written to live models.json",
+                        provider.id
+                    );
+                }
+                Err(e) => {
+                    return Err(AppError::localized(
+                        "workbuddy.provider.settings_invalid",
+                        format!(
+                            "WorkBuddy provider '{}' 配置结构非法（需含 baseUrl / apiKey / models）: {}",
+                            provider.id, e
+                        ),
+                        format!(
+                            "WorkBuddy provider '{}' has an invalid configuration (expected baseUrl / apiKey / models): {}",
+                            provider.id, e
+                        ),
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1677,6 +1711,18 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
+        AppType::WorkBuddy => {
+            let config_path = crate::workbuddy_config::get_workbuddy_models_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "workbuddy.config.missing",
+                    "WorkBuddy models.json 不存在",
+                    "WorkBuddy models.json not found",
+                ));
+            }
+            let models = crate::workbuddy_config::read_models()?;
+            Ok(serde_json::json!({ "models": models }))
+        }
     }
 }
 
@@ -1785,8 +1831,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+        // OpenCode, OpenClaw, Hermes, Pi and WorkBuddy use additive mode and are
+        // handled by the early return above
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::WorkBuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -2127,6 +2178,110 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
     Ok(imported + updated)
 }
 
+/// 从 WorkBuddy live models.json 回填 provider 到数据库。
+///
+/// WorkBuddy additive 模式：用户可能已在 ~/.workbuddy/models.json 里配置了模型。
+/// 本函数按 (url, apiKey) 聚合成 provider 存入 DB。
+///
+/// **按 baseUrl 认亲**：live 文件里没有地方存 CC-Switch 的 provider id，聚合出的
+/// id 只能从网关地址反推。若只按 id 匹配，用户改过 baseUrl 的 provider 会被当成
+/// 新网关再插一行（DB 里于是有两行指向同一个网关）。所以先按 baseUrl 找已有行，
+/// 找到就更新那一行、保留它原有的 id；只有确实没见过的网关才用推导 id 新建。
+pub fn import_workbuddy_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::workbuddy_config;
+
+    let providers = workbuddy_config::get_typed_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("workbuddy")?;
+
+    // baseUrl → 已有 DB provider id（同一网关只认第一行，避免重复行互相抢）
+    let mut by_base_url: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for existing_id in &existing_ids {
+        if let Ok(Some(existing)) = state.db.get_provider_by_id(existing_id, "workbuddy") {
+            if let Some(base_url) = existing
+                .settings_config
+                .get("baseUrl")
+                .and_then(|v| v.as_str())
+            {
+                by_base_url
+                    .entry(base_url.to_string())
+                    .or_insert_with(|| existing_id.clone());
+            }
+        }
+    }
+
+    for (derived_id, config) in providers {
+        if derived_id.trim().is_empty() {
+            log::warn!("跳过空 id 的 WorkBuddy provider");
+            continue;
+        }
+        if config.models.is_empty() {
+            log::warn!("跳过无模型的 WorkBuddy provider '{derived_id}'");
+            continue;
+        }
+
+        let settings_config = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("序列化 WorkBuddy provider '{derived_id}' 失败: {e}");
+                continue;
+            }
+        };
+
+        // 优先按网关地址认亲，退回到推导 id
+        let matched_id = by_base_url.get(&config.base_url).cloned().or_else(|| {
+            existing_ids
+                .contains(&derived_id)
+                .then(|| derived_id.clone())
+        });
+
+        if let Some(id) = matched_id {
+            match state.db.get_provider_by_id(&id, "workbuddy") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != settings_config {
+                        let mut provider = existing;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("workbuddy", &provider) {
+                            log::warn!("更新 WorkBuddy provider '{id}' 失败: {e}");
+                        } else {
+                            updated += 1;
+                            log::info!("从 live 更新 WorkBuddy provider '{id}'");
+                        }
+                    }
+                }
+                Ok(None) => log::warn!("WorkBuddy provider '{id}' 导入时消失"),
+                Err(e) => log::warn!("查询 WorkBuddy provider '{id}' 失败: {e}"),
+            }
+            continue;
+        }
+
+        let id = derived_id;
+        // 显示名：网关 host + 模型数
+        let display_name = format!("{} ({} models)", id, config.models.len());
+        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("workbuddy", &provider) {
+            log::warn!("导入 WorkBuddy provider '{id}' 失败: {e}");
+            continue;
+        }
+        by_base_url.insert(config.base_url.clone(), id.clone());
+        imported += 1;
+        log::info!("从 live 导入 WorkBuddy provider '{id}'");
+    }
+
+    Ok(imported + updated)
+}
+
 /// Import all providers from Hermes live config to database
 ///
 /// This imports existing providers from ~/.hermes/config.yaml
@@ -2229,6 +2384,29 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 
     openclaw_config::remove_provider(provider_id)?;
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Remove a WorkBuddy provider (gateway) from live config.
+///
+/// This removes every model belonging to the given gateway from
+/// ~/.workbuddy/models.json without touching models of other gateways.
+/// `provider_id` is the WorkBuddy-derived gateway id (see
+/// `workbuddy_config::get_typed_providers`).
+pub fn remove_workbuddy_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::workbuddy_config;
+
+    // Config directory absent → nothing to remove.
+    if !workbuddy_config::get_workbuddy_dir().exists() {
+        log::debug!(
+            "WorkBuddy config directory doesn't exist, skipping removal of '{provider_id}'"
+        );
+        return Ok(());
+    }
+
+    workbuddy_config::remove_provider_by_id(provider_id)?;
+    log::info!("WorkBuddy provider '{provider_id}' removed from live config");
 
     Ok(())
 }

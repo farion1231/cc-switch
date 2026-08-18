@@ -5,7 +5,8 @@ import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
-export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
+// WorkBuddy 固定读 ~/.workbuddy/models.json，不参与目录自定义，故排除
+export type DirectoryAppId = Exclude<AppId, "claude-desktop" | "workbuddy">;
 type AppDirectoryKey =
   | "claude"
   | "codex"

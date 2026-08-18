@@ -910,7 +910,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "workbuddy": "WorkBuddy"
   },
   "pi": {
     "empty": {
@@ -3244,5 +3245,34 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "workbuddy": {
+    "form": {
+      "baseUrl": "ゲートウェイ URL",
+      "baseUrlHint": "モデルゲートウェイの API エンドポイント。同じ URL と Key のモデルは同一プロバイダーにまとめられます。",
+      "baseUrlRequired": "ゲートウェイ URL を入力してください",
+      "baseUrlScheme": "http:// または https:// で始まる URL を入力してください",
+      "baseUrlInvalid": "ゲートウェイ URL が有効な URL ではありません",
+      "apiKeyRequired": "API Key を入力してください",
+      "models": "モデル一覧",
+      "modelsRequired": "少なくとも 1 つのモデルを設定してください",
+      "addModel": "モデルを追加",
+      "noModels": "モデル設定がありません。このプロバイダーに切り替えても利用可能なモデルはありません。",
+      "modelId": "モデル ID",
+      "modelName": "表示名",
+      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelAlias": "モデルエイリアス（任意）",
+      "contextWindow": "コンテキストウィンドウ",
+      "maxTokens": "最大出力トークン",
+      "supportsToolCall": "ツール呼び出し対応",
+      "supportsImages": "画像入力対応",
+      "supportsReasoning": "推論対応",
+      "bypassProxy": "ローカルプロキシをバイパス",
+      "useCustomProtocol": "カスタムプロトコルを使用",
+      "advancedOptions": "詳細オプション",
+      "modelsHint": "このプロバイダーに切り替えると、ここのモデルが WorkBuddy の models.json に書き込まれます。",
+      "primaryModel": "デフォルトモデル",
+      "fallbackModel": "フォールバックモデル"
+    }
   }
 }

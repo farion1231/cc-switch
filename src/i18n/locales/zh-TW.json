@@ -911,7 +911,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "workbuddy": "WorkBuddy"
   },
   "pi": {
     "empty": {
@@ -3245,5 +3246,34 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "workbuddy": {
+    "form": {
+      "baseUrl": "閘道位址",
+      "baseUrlHint": "模型閘道的 API 位址，相同位址與 Key 的模型會歸到同一供應商。",
+      "baseUrlRequired": "閘道位址不能為空",
+      "baseUrlScheme": "請使用 http:// 或 https:// 開頭的位址",
+      "baseUrlInvalid": "閘道位址不是有效的 URL",
+      "apiKeyRequired": "API Key 不能為空",
+      "models": "模型清單",
+      "modelsRequired": "請至少設定一個模型",
+      "addModel": "新增模型",
+      "noModels": "尚無模型設定。切換到此供應商時無可用模型。",
+      "modelId": "模型 ID",
+      "modelName": "顯示名稱",
+      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelAlias": "模型別名（選填）",
+      "contextWindow": "上下文視窗",
+      "maxTokens": "最大輸出 tokens",
+      "supportsToolCall": "支援工具呼叫",
+      "supportsImages": "支援圖片輸入",
+      "supportsReasoning": "支援推理",
+      "bypassProxy": "繞過本機代理",
+      "useCustomProtocol": "使用自訂協定",
+      "advancedOptions": "進階選項",
+      "modelsHint": "切換到此供應商時，這裡的模型會寫入 WorkBuddy 的 models.json。",
+      "primaryModel": "預設模型",
+      "fallbackModel": "備用模型"
+    }
   }
 }

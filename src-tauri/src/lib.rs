@@ -38,6 +38,7 @@ mod store;
 mod tray;
 mod usage_events;
 mod usage_script;
+mod workbuddy_config;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
@@ -870,6 +871,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
+            match crate::services::provider::import_workbuddy_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} WorkBuddy provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No WorkBuddy provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import WorkBuddy providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1628,6 +1636,10 @@ pub fn run() {
             commands::get_openclaw_live_provider_ids,
             commands::get_openclaw_live_provider,
             commands::scan_openclaw_config_health,
+            commands::import_workbuddy_providers_from_live,
+            commands::get_workbuddy_live_provider_ids,
+            commands::get_workbuddy_live_provider,
+            commands::scan_workbuddy_config_health,
             commands::get_openclaw_default_model,
             commands::set_openclaw_default_model,
             commands::get_openclaw_model_catalog,
