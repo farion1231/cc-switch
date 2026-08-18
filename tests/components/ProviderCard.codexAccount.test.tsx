@@ -7,8 +7,14 @@ import type { ManagedAuthStatus } from "@/lib/api";
 import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
+const codexQuotaFooterProps = vi.hoisted(() => vi.fn());
+
 vi.mock("@/components/providers/ProviderActions", () => ({
-  ProviderActions: () => null,
+  ProviderActions: (props: { onConfigureUsage?: () => void }) => {
+    return props.onConfigureUsage ? (
+      <button onClick={props.onConfigureUsage}>configure-usage</button>
+    ) : null;
+  },
 }));
 
 vi.mock("@/components/ProviderIcon", () => ({
@@ -21,7 +27,10 @@ vi.mock("@/components/SubscriptionQuotaFooter", () => ({
 }));
 vi.mock("@/components/CopilotQuotaFooter", () => ({ default: () => null }));
 vi.mock("@/components/CodexOauthQuotaFooter", () => ({
-  default: () => null,
+  default: (props: unknown) => {
+    codexQuotaFooterProps(props);
+    return null;
+  },
 }));
 vi.mock("@/components/XaiOauthQuotaFooter", () => ({ default: () => null }));
 
@@ -76,6 +85,7 @@ function renderCard(
     status?: ManagedAuthStatus;
     isCurrent?: boolean;
     onEdit?: (provider: Provider) => void;
+    onConfigureUsage?: (provider: Provider) => void;
   } = {},
 ) {
   const queryClient = createTestQueryClient();
@@ -96,7 +106,7 @@ function renderCard(
         onSwitch={vi.fn()}
         onEdit={options.onEdit ?? vi.fn()}
         onDelete={vi.fn()}
-        onConfigureUsage={vi.fn()}
+        onConfigureUsage={options.onConfigureUsage ?? vi.fn()}
         onOpenWebsite={vi.fn()}
         onDuplicate={vi.fn()}
       />
@@ -105,6 +115,56 @@ function renderCard(
 }
 
 describe("ProviderCard Codex Official account identity", () => {
+  it("keeps existing managed OAuth quota enabled and exposes its configuration", async () => {
+    const user = userEvent.setup();
+    const onConfigureUsage = vi.fn();
+    const provider = managedProvider("Work account");
+    delete provider.meta!.providerType;
+
+    renderCard(provider, { isCurrent: true, onConfigureUsage });
+
+    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
+      expect.objectContaining({ autoQueryInterval: 5 }),
+    );
+    await user.click(screen.getByRole("button", { name: "configure-usage" }));
+    expect(onConfigureUsage).toHaveBeenCalledWith(provider);
+  });
+
+  it("honors a saved disabled state for managed OAuth quota", () => {
+    const provider = managedProvider("Work account");
+    provider.meta!.usage_script = {
+      enabled: false,
+      language: "javascript",
+      code: "",
+      templateType: "official_subscription",
+      autoQueryInterval: 12,
+    };
+
+    renderCard(provider, { isCurrent: true });
+
+    expect(codexQuotaFooterProps).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "configure-usage" }),
+    ).toBeInTheDocument();
+  });
+
+  it("passes the saved polling interval to managed OAuth quota", () => {
+    const provider = managedProvider("Work account");
+    provider.meta!.usage_script = {
+      enabled: true,
+      language: "javascript",
+      code: "",
+      templateType: "official_subscription",
+      autoQueryInterval: 12,
+    };
+
+    renderCard(provider, { isCurrent: true });
+
+    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
+      expect.objectContaining({ autoQueryInterval: 12 }),
+    );
+  });
+
   it("keeps a custom nickname and safely truncates a long account login", () => {
     const login =
       "a-very-long-personal-account-name-that-must-not-expand-the-card@example.com";
@@ -199,9 +259,21 @@ describe("ProviderCard Codex Official account identity", () => {
       name: "Legacy Official",
       category: "official",
       settingsConfig: {},
+      meta: {
+        providerType: "codex_oauth",
+        usage_script: {
+          enabled: true,
+          language: "javascript",
+          code: "",
+          autoQueryInterval: 0,
+        },
+      },
     };
     renderCard(provider, { isCurrent: true, onEdit });
 
+    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
+      expect.objectContaining({ autoQueryInterval: undefined }),
+    );
     expect(screen.getByText("尚未选择账号").parentElement).toHaveClass(
       "text-sm",
     );
