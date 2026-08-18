@@ -916,14 +916,7 @@ function App() {
 
   const handleOpenTerminal = async (provider: Provider) => {
     try {
-      const selectedDir = await settingsApi.pickDirectory();
-      if (!selectedDir) {
-        return;
-      }
-
-      await providersApi.openTerminal(provider.id, activeApp, {
-        cwd: selectedDir,
-      });
+      await providersApi.openTerminal(provider.id, activeApp);
       toast.success(
         t("provider.terminalOpened", {
           defaultValue: "终端已打开",
