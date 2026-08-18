@@ -6,6 +6,7 @@
 //! imports only session-node metadata. It never writes OpenClaw data, reads
 //! message bodies, or manufactures zero-valued usage buckets.
 
+use crate::openclaw_config::canonical_openclaw_session_id;
 use crate::services::agent_session_usage::{SessionNodeMetadata, SessionRelationClaim};
 use chrono::DateTime;
 use serde_json::Value;
@@ -33,31 +34,6 @@ pub(crate) struct OpenClawSyncResult {
 struct OpenClawNativeSessionMetadata {
     display_name: Option<String>,
     cwd: Option<String>,
-}
-
-/// Build a stable, multi-agent session key.  OpenClaw session IDs are only
-/// agent-local in the supported directory layout; including the agent ID is
-/// therefore mandatory to avoid collisions between agents with the same bare
-/// session ID.
-fn namespaced_session_id(agent_id: &str, session_id: &str) -> Option<String> {
-    let agent_id = agent_id.trim();
-    let session_id = session_id.trim();
-    if agent_id.is_empty() || session_id.is_empty() {
-        return None;
-    }
-
-    // The ordinary OpenClaw IDs do not contain `:`, preserving the documented
-    // `<agentId>:<sessionId>` shape.  Escaping the delimiter keeps the key
-    // unambiguous even if a future version permits it in an ID component.
-    Some(format!(
-        "{}:{}",
-        escape_namespace_component(agent_id),
-        escape_namespace_component(session_id)
-    ))
-}
-
-fn escape_namespace_component(value: &str) -> String {
-    value.replace('%', "%25").replace(':', "%3A")
 }
 
 /// Scan an anonymous or configured OpenClaw root.  Missing roots and missing
@@ -179,9 +155,10 @@ fn parse_session_file(
         }
     };
 
-    let session_id = namespaced_session_id(agent_id, &bare_session_id).ok_or_else(|| {
-        FileImportError::Malformed("agent ID or session ID is empty after normalization".into())
-    })?;
+    let session_id =
+        canonical_openclaw_session_id(agent_id, &bare_session_id).ok_or_else(|| {
+            FileImportError::Malformed("agent ID or session ID is empty after normalization".into())
+        })?;
 
     let native = native_metadata.get(&bare_session_id);
     let metadata = SessionNodeMetadata {

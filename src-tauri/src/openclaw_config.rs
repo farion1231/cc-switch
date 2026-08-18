@@ -40,6 +40,28 @@ pub fn get_openclaw_dir() -> PathBuf {
     crate::config::get_home_dir().join(".openclaw")
 }
 
+/// Build the canonical usage identity for an OpenClaw session.
+///
+/// Session IDs are scoped to an agent directory, so the bare session ID is
+/// insufficient whenever two agents use the same ID.
+pub(crate) fn canonical_openclaw_session_id(agent_id: &str, session_id: &str) -> Option<String> {
+    let agent_id = agent_id.trim();
+    let session_id = session_id.trim();
+    if agent_id.is_empty() || session_id.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "{}:{}",
+        escape_session_id_component(agent_id),
+        escape_session_id_component(session_id)
+    ))
+}
+
+fn escape_session_id_component(value: &str) -> String {
+    value.replace('%', "%25").replace(':', "%3A")
+}
+
 /// 获取 OpenClaw 配置文件路径
 ///
 /// 返回 `~/.openclaw/openclaw.json`
