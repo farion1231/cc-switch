@@ -1309,7 +1309,10 @@ fn build_windows_codex_terminal_command(
     let home = escape_windows_batch_value(&home.to_string_lossy());
     let cleanup_after_codex = if needs_auth_sync {
         format!(
-            "type nul > \"{home}\\{finished}\"\r\nfor /L %%i in (1,1,5) do (\r\n  if exist \"{home}\\{synced}\" goto cc_switch_auth_synced\r\n  timeout /t 1 /nobreak >nul\r\n)\r\n:cc_switch_auth_synced\r\nif exist \"{home}\\{synced}\" (\r\n  rmdir /s /q \"{home}\" >nul 2>&1\r\n) else (\r\n  type nul > \"{home}\\{deferred}\"\r\n  if exist \"{home}\\{synced}\" (\r\n    rmdir /s /q \"{home}\" >nul 2>&1\r\n  ) else (\r\n    echo [cc-switch] Credential sync did not finish; isolated data remains at: {home}\r\n  )\r\n)"
+            "type nul > \"{home}\\{finished}\"\r\nfor /L %%i in (1,1,5) do (\r\n  if exist \"{home}\\{synced}\" goto cc_switch_auth_synced\r\n  timeout /t 1 /nobreak >nul\r\n)\r\n:cc_switch_auth_synced\r\nif exist \"{home}\\{synced}\" (\r\n  rmdir /s /q \"{home}\" >nul 2>&1\r\n) else (\r\n  type nul > \"{home}\\{deferred}\"\r\n  if exist \"{home}\\{synced}\" (\r\n    rmdir /s /q \"{home}\" >nul 2>&1\r\n  ) else (\r\n    echo [cc-switch] Credential sync did not finish; isolated data remains at: {home}\r\n  )\r\n)",
+            finished = CODEX_TERMINAL_FINISHED_MARKER,
+            synced = CODEX_TERMINAL_SYNCED_MARKER,
+            deferred = CODEX_TERMINAL_DEFERRED_CLEANUP_MARKER,
         )
     } else {
         format!("rmdir /s /q \"{home}\" >nul 2>&1")
