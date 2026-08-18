@@ -540,6 +540,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["hunyuan"],
     defaultColor: "#00A4FF",
   },
+  unipaxtools: {
+    name: "unipaxtools",
+    displayName: "unipaxtools",
+    category: "ai-provider",
+    keywords: [
+      "unipaxtools",
+      "unipax",
+      "aggregator",
+      "relay",
+      "gateway",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "#0FA37F",
+  },
   unity2: {
     name: "unity2",
     displayName: "Unity2.ai",
