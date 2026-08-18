@@ -88,6 +88,12 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
+fn pi_provider_deeplink_is_not_a_second_add_provider_entry() {
+    let url = "ccswitch://v1/import?resource=provider&app=pi&name=Pi";
+    assert!(parse_deeplink_url(url).is_err());
+}
+
+#[test]
 fn test_parse_grokbuild_provider() {
     use super::provider::build_provider_from_request;
 

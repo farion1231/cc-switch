@@ -282,11 +282,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     settingsConfig: {
       name: "runapi",
-      base_url: "https://runapi.co",
+      base_url: "https://runapi.host",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -528,14 +528,14 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
     websiteUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     settingsConfig: {
       name: "ark_agentplan",
-      base_url: "https://ark.cn-beijing.volces.com/api/coding",
+      base_url: "https://ark.cn-beijing.volces.com/api/plan",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -554,6 +554,36 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: {
         default: "ark-code-latest",
         provider: "ark_agentplan",
+      },
+    },
+  },
+  {
+    name: "火山 Coding Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      name: "ark_codingplan",
+      base_url: "https://ark.cn-beijing.volces.com/api/coding",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_codingplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    suggestedDefaults: {
+      model: {
+        default: "ark-code-latest",
+        provider: "ark_codingplan",
       },
     },
   },
@@ -628,8 +658,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
-          id: "Pro/MiniMaxAI/MiniMax-M2.7",
-          name: "Pro / MiniMax M2.7",
+          id: "Pro/MiniMaxAI/MiniMax-M2.5",
+          name: "Pro / MiniMax M2.5",
         },
       ],
     },
@@ -640,7 +670,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#6E29F6",
     suggestedDefaults: {
       model: {
-        default: "Pro/MiniMaxAI/MiniMax-M2.7",
+        default: "Pro/MiniMaxAI/MiniMax-M2.5",
         provider: "siliconflow",
       },
     },
@@ -654,7 +684,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.siliconflow.com/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMaxAI/MiniMax-M2.7", name: "MiniMax M2.7" }],
+      models: [{ id: "MiniMaxAI/MiniMax-M3", name: "MiniMax M3" }],
     },
     category: "aggregator",
     isPartner: true,
@@ -663,7 +693,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: {
-        default: "MiniMaxAI/MiniMax-M2.7",
+        default: "MiniMaxAI/MiniMax-M3",
         provider: "siliconflow_en",
       },
     },
@@ -990,6 +1020,25 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "gpt-5.6-sol", provider: "sudocode_us" },
     },
   },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      name: "xycai",
+      base_url: "https://apicdn.xycai.us/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "xycai" },
+    },
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Amux",
@@ -1193,6 +1242,35 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）：官方
+    // Hermes 接入页确认 /v2/tokenplan/personal、默认 deepseek-v4-pro（其
+    // api_mode 写 "openai_messages"，本仓 OpenAI Chat 端点惯例统一映射为
+    // chat_completions）；阵容=Token Plan 主文档 2026-08-14 版六模型
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    settingsConfig: {
+      name: "qianfan_tokenplan",
+      base_url: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "glm-5.1", name: "GLM-5.1" },
+        { id: "kimi-k2.6", name: "Kimi K2.6" },
+      ],
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+    suggestedDefaults: {
+      model: { default: "deepseek-v4-pro", provider: "qianfan_tokenplan" },
+    },
+  },
+  {
     name: "Bailian",
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
@@ -1258,13 +1336,13 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api-inference.modelscope.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "ZhipuAI/GLM-5.1", name: "ZhipuAI / GLM-5.1" }],
+      models: [{ id: "ZhipuAI/GLM-5.2", name: "ZhipuAI / GLM-5.2" }],
     },
     category: "aggregator",
     icon: "modelscope",
     iconColor: "#624AFF",
     suggestedDefaults: {
-      model: { default: "ZhipuAI/GLM-5.1", provider: "modelscope" },
+      model: { default: "ZhipuAI/GLM-5.2", provider: "modelscope" },
     },
   },
   {
@@ -1549,6 +1627,57 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "mimo-v2.5-pro", provider: "xiaomi_mimo_token_plan" },
+    },
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/settings/key-management",
+    settingsConfig: {
+      name: "ppio",
+      base_url: "https://api.ppio.com/openai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "deepseek/deepseek-v4-flash-0731",
+          name: "Deepseek V4 Flash 0731",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    suggestedDefaults: {
+      model: {
+        default: "deepseek/deepseek-v4-flash-0731",
+        provider: "ppio",
+      },
+    },
+  },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      name: "jiekou",
+      base_url: "https://api.jiekou.ai/openai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+    suggestedDefaults: {
+      model: { default: "claude-fable-5", provider: "jiekou" },
     },
   },
 ];
