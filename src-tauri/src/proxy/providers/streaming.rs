@@ -267,7 +267,12 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         }
 
                                         // 处理 reasoning（thinking）
-                                        if let Some(reasoning) = &choice.delta.reasoning {
+                                        let reasoning = choice
+                                            .delta
+                                            .reasoning
+                                            .as_deref()
+                                            .filter(|r| !r.is_empty());
+                                        if let Some(reasoning) = reasoning {
                                             if current_non_tool_block_type != Some("thinking") {
                                                 if let Some(index) = current_non_tool_block_index.take() {
                                                     let event = json!({
