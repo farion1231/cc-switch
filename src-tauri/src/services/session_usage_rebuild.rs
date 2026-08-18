@@ -74,6 +74,17 @@ impl AgentUsageRebuildApp {
         }
     }
 
+    fn direct_provider(self) -> Option<&'static str> {
+        match self {
+            Self::Claude => Some("_session"),
+            Self::Codex => Some("_codex_session"),
+            Self::GrokBuild => Some("_grok_session"),
+            Self::OpenCode => Some("_opencode_session"),
+            Self::Hermes => None,
+            Self::Pi => Some("_pi_session"),
+        }
+    }
+
     fn durable_dedup_source(self) -> Option<&'static str> {
         match self {
             Self::Pi => Some("pi_session"),
@@ -357,11 +368,11 @@ fn reset_provider_stage(
             rusqlite::params![app.app_type(), source],
         )?;
     }
-    if app == AgentUsageRebuildApp::Codex {
+    if let Some(provider_id) = app.direct_provider() {
         tx.execute(
             "DELETE FROM usage_daily_rollups
-             WHERE provider_id = '_codex_session'",
-            [],
+             WHERE app_type = ?1 AND provider_id = ?2",
+            rusqlite::params![app.app_type(), provider_id],
         )?;
     }
     if let Some(source) = app.durable_dedup_source() {
@@ -412,18 +423,20 @@ fn copy_provider_rows_from_stage(
 ) -> Result<(), AppError> {
     let app_type = app.app_type();
     replace_app_scoped_canonical_rows_from_stage(tx, app_type)?;
-    if app == AgentUsageRebuildApp::Codex {
+    if let Some(provider_id) = app.direct_provider() {
         tx.execute(
             "DELETE FROM usage_daily_rollups
-             WHERE provider_id = '_codex_session'",
-            [],
+             WHERE app_type = ?1 AND provider_id = ?2",
+            rusqlite::params![app_type, provider_id],
         )?;
         tx.execute(
             "INSERT INTO usage_daily_rollups
              SELECT * FROM rebuild_stage.usage_daily_rollups
-             WHERE provider_id = '_codex_session'",
-            [],
+             WHERE app_type = ?1 AND provider_id = ?2",
+            rusqlite::params![app_type, provider_id],
         )?;
+    }
+    if app == AgentUsageRebuildApp::Codex {
         tx.execute(
             "INSERT OR REPLACE INTO settings (key, value)
              VALUES ('codex_usage_canonical_replay_v1', 'complete')",
@@ -666,6 +679,71 @@ fn rebuild_agent_session_usage_inner(
 mod tests {
     use super::*;
     use crate::services::agent_session_usage::NormalizedUsageSnapshot;
+
+    #[test]
+    fn non_codex_publish_replaces_owned_daily_rollups() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, input_tokens
+                 ) VALUES ('2026-08-01', 'pi', '_pi_session', 'pi-model', 9, 90)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, input_tokens
+                 ) VALUES ('2026-08-01', 'claude', 'proxy-provider', 'claude-model', 4, 40)",
+                [],
+            )?;
+        }
+
+        let stage_path = copy_live_to_staging(&db)?;
+        let stage_conn = Connection::open(&stage_path)?;
+        let stage_db = Database {
+            conn: Mutex::new(stage_conn),
+        };
+        reset_provider_stage(&stage_db, AgentUsageRebuildApp::Pi, &CursorScope::None)?;
+        {
+            let conn = lock_conn!(stage_db.conn);
+            let old_owned: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM usage_daily_rollups WHERE provider_id = '_pi_session'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(old_owned, 0);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, input_tokens
+                 ) VALUES ('2026-08-02', 'pi', '_pi_session', 'pi-model', 1, 10)",
+                [],
+            )?;
+        }
+        drop(stage_db);
+
+        publish_provider_from_stage(
+            &db,
+            &stage_path,
+            AgentUsageRebuildApp::Pi,
+            &CursorScope::None,
+        )?;
+
+        let conn = lock_conn!(db.conn);
+        let counts: (i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM usage_daily_rollups
+                 WHERE provider_id = '_pi_session' AND date = '2026-08-01'),
+                (SELECT request_count FROM usage_daily_rollups
+                 WHERE provider_id = '_pi_session' AND date = '2026-08-02'),
+                (SELECT COUNT(*) FROM usage_daily_rollups
+                 WHERE provider_id = 'proxy-provider')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(counts, (0, 1, 1));
+        Ok(())
+    }
 
     #[test]
     fn pi_staged_rebuild_is_provider_scoped_and_keeps_live_data_on_failure() -> Result<(), AppError>

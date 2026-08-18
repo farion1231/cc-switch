@@ -12,6 +12,7 @@ import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useAgentSessionUsage } from "@/lib/query/usage";
+import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import type {
   AgentSessionUsageSummary,
   AgentUsageAppType,
@@ -250,6 +251,7 @@ export function SessionUsageSummary({
   usageSessionId,
   detailContainerRef,
 }: SessionUsageSummaryProps) {
+  useUsageEventBridge();
   const { t, i18n } = useTranslation();
   const querySessionId = usageSessionId ?? sessionId;
   const { data, isLoading, isError } = useAgentSessionUsage(
