@@ -15,7 +15,6 @@ const apiMocks = vi.hoisted(() => ({
   getOpenClawLiveProvider: vi.fn(),
 }));
 let mockFormReady = true;
-let mockCodexNativeLoginSelected = false;
 let mockCodexManagedAccountSelected = false;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
@@ -74,7 +73,6 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       meta?: Record<string, unknown>;
       icon?: string;
       iconColor?: string;
-      codexNativeLoginSelected?: boolean;
     }) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
     onManageAuthAccounts?: (target: "codex_oauth") => void;
@@ -110,7 +108,6 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
               : initialData.meta,
             icon: initialData.icon,
             iconColor: initialData.iconColor,
-            codexNativeLoginSelected: mockCodexNativeLoginSelected,
           });
         }}
       >
@@ -141,7 +138,6 @@ import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 describe("EditProviderDialog", () => {
   beforeEach(() => {
     mockFormReady = true;
-    mockCodexNativeLoginSelected = false;
     mockCodexManagedAccountSelected = false;
     submitReadyCallbacks = [];
     apiMocks.getCurrent.mockReset();
@@ -283,8 +279,7 @@ describe("EditProviderDialog", () => {
     });
   });
 
-  it("promotes a legacy Codex Official row after native login is selected", async () => {
-    mockCodexNativeLoginSelected = true;
+  it("keeps an unbound Codex Official provider ID unchanged", async () => {
     apiMocks.getCurrent.mockResolvedValue(null);
     const onSubmit = vi.fn();
     const provider: Provider = {
@@ -310,12 +305,12 @@ describe("EditProviderDialog", () => {
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
         originalId: "legacy-unbound-official",
-        provider: expect.objectContaining({ id: "codex-official" }),
+        provider: expect.objectContaining({ id: "legacy-unbound-official" }),
       }),
     );
   });
 
-  it("moves the fixed Codex card to a managed-account ID when its login changes", async () => {
+  it("keeps the fixed Codex provider ID when an account is bound", async () => {
     mockCodexManagedAccountSelected = true;
     apiMocks.getCurrent.mockResolvedValue(null);
     const onSubmit = vi.fn();
@@ -341,10 +336,7 @@ describe("EditProviderDialog", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const submitted = onSubmit.mock.calls[0][0];
     expect(submitted.originalId).toBe("codex-official");
-    expect(submitted.provider.id).not.toBe("codex-official");
-    expect(submitted.provider.id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-    );
+    expect(submitted.provider.id).toBe("codex-official");
     expect(submitted.provider.meta?.authBinding).toEqual({
       source: "managed_account",
       authProvider: "codex_oauth",
