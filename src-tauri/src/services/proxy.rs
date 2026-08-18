@@ -2821,6 +2821,7 @@ impl ProxyService {
         };
 
         if matches!(app_type_enum, AppType::Codex) {
+            let is_codex_official = crate::proxy::providers::is_codex_official_provider(provider);
             let existing_backup_value = self
                 .db
                 .get_live_backup(app_type)
@@ -2859,7 +2860,7 @@ impl ProxyService {
                     Self::preserve_codex_auth_in_backup(
                         &mut effective_settings,
                         existing_value,
-                        crate::proxy::providers::is_codex_official_provider(provider),
+                        is_codex_official,
                     )?;
                 }
             }
@@ -2867,12 +2868,16 @@ impl ProxyService {
             // 统一会话开关：备份是接管释放时恢复 live 的来源，官方配置的
             // 共享 custom 路由注入必须落在备份里，否则恢复后开关失效。
             crate::codex_config::apply_codex_unified_session_bucket_to_settings(
-                provider.category.as_deref(),
+                if is_codex_official {
+                    Some("official")
+                } else {
+                    provider.category.as_deref()
+                },
                 &mut effective_settings,
             )
             .map_err(|e| format!("注入统一会话路由失败: {e}"))?;
 
-            if crate::proxy::providers::is_codex_official_provider(provider) {
+            if is_codex_official {
                 // auth.json keeps rotating independently while takeover is
                 // active. Persisting it in the DB backup would later roll a
                 // valid R1 generation back to the frozen R0 generation.
@@ -3068,21 +3073,22 @@ impl ProxyService {
             }
 
             if has_backup && !live_taken_over && matches!(app_type_enum, AppType::Codex) {
-                let effective_settings =
+                let effective_provider =
                     build_effective_provider_for_live_with_codex_oauth_manager(
                         self.db.as_ref(),
                         &AppType::Codex,
                         &provider,
                         &self.codex_oauth_manager,
                     )
-                    .map_err(|e| format!("构建 Codex 有效配置失败: {e}"))?
-                    .settings_config;
+                    .map_err(|e| format!("构建 Codex 有效配置失败: {e}"))?;
+                let effective_settings = &effective_provider.settings_config;
                 let auth = effective_settings
                     .get("auth")
                     .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
                 let config_str = effective_settings.get("config").and_then(|v| v.as_str());
-                let profile =
-                    crate::proxy::providers::resolve_codex_catalog_tool_profile(&provider);
+                let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(
+                    &effective_provider,
+                );
 
                 if let (Some(account_id), Some(expected_refresh_token)) = (
                     outgoing_managed_codex_account_id.as_deref(),
@@ -3096,8 +3102,8 @@ impl ProxyService {
                 }
 
                 crate::codex_config::write_codex_provider_live_with_catalog(
-                    &effective_settings,
-                    provider.category.as_deref(),
+                    effective_settings,
+                    effective_provider.category.as_deref(),
                     auth,
                     config_str,
                     profile,
@@ -5178,7 +5184,6 @@ wire_api = "responses"
             json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
             None,
         );
-        managed.category = Some("official".to_string());
         managed.meta = Some(ProviderMeta {
             auth_binding: Some(AuthBinding {
                 source: AuthBindingSource::ManagedAccount,

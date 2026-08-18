@@ -16,9 +16,6 @@ import {
   type AppId,
   type ManagedAuthProvider,
 } from "@/lib/api";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
-import { generateUUID } from "@/utils/uuid";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -240,21 +237,11 @@ export function EditProviderDialog({
         string,
         unknown
       >;
-      const convertsNativeCodexLoginToManagedAccount =
-        appId === "codex" &&
-        provider.id === CODEX_OFFICIAL_PROVIDER_ID &&
-        Boolean(resolveManagedAccountId(values.meta, "codex_oauth")?.trim());
       const nextProviderId =
-        appId === "codex" && values.codexNativeLoginSelected
-          ? CODEX_OFFICIAL_PROVIDER_ID
-          : convertsNativeCodexLoginToManagedAccount
-            ? generateUUID()
-            : (appId === "opencode" ||
-                  appId === "openclaw" ||
-                  appId === "pi") &&
-                values.providerKey?.trim()
-              ? values.providerKey.trim()
-              : provider.id;
+        (appId === "opencode" || appId === "openclaw" || appId === "pi") &&
+        values.providerKey?.trim()
+          ? values.providerKey.trim()
+          : provider.id;
 
       const updatedProvider: Provider = {
         ...provider,

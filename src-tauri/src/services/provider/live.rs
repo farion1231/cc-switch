@@ -749,18 +749,25 @@ pub(crate) fn build_effective_provider_for_live_with_codex_oauth_manager(
     let mut effective_provider = provider.clone();
     effective_provider.settings_config =
         build_effective_settings_with_common_config(db, app_type, provider)?;
-    apply_codex_managed_oauth_auth(app_type, &mut effective_provider, Some(codex_oauth_manager))?;
+    apply_codex_official_auth(app_type, &mut effective_provider, Some(codex_oauth_manager))?;
     Ok(effective_provider)
 }
 
-fn apply_codex_managed_oauth_auth(
+fn apply_codex_official_auth(
     app_type: &AppType,
     provider: &mut Provider,
     codex_oauth_manager: Option<&Arc<CodexOAuthManager>>,
 ) -> Result<(), AppError> {
-    if !matches!(app_type, AppType::Codex) || provider.category.as_deref() != Some("official") {
+    if !matches!(app_type, AppType::Codex)
+        || !crate::proxy::providers::is_codex_official_provider(provider)
+    {
         return Ok(());
     }
+
+    // Early OAuth builds could bind the fixed card before its category was
+    // persisted. Normalize only the in-memory live snapshot; the DB row and ID
+    // remain untouched.
+    provider.category = Some("official".to_string());
 
     let Some(account_id) = provider
         .meta
@@ -769,6 +776,9 @@ fn apply_codex_managed_oauth_auth(
         .map(|id| id.trim().to_string())
         .filter(|id| !id.is_empty())
     else {
+        // Preserve the historical unbound Official behavior: an empty stored
+        // auth follows Codex's current login, while a backfilled login snapshot
+        // is restored when switching back to this card.
         return Ok(());
     };
 
@@ -1055,7 +1065,9 @@ fn restore_live_settings_for_provider_backfill(
 
     // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
     // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
-    if provider.category.as_deref() == Some("official") {
+    if provider.category.as_deref() == Some("official")
+        || crate::proxy::providers::is_codex_official_provider(provider)
+    {
         if let Err(err) =
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(&mut settings)
         {
@@ -2698,7 +2710,7 @@ base_url = "https://a.example/v1"
     }
 
     #[test]
-    fn codex_official_managed_oauth_binding_replaces_auth_with_selected_account_token() {
+    fn category_less_managed_codex_binding_with_null_config_uses_selected_account_token() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manager = Arc::new(CodexOAuthManager::new(temp.path().to_path_buf()));
         tauri::async_runtime::block_on(async {
@@ -2713,17 +2725,16 @@ base_url = "https://a.example/v1"
         });
 
         let mut provider = Provider::with_id(
-            "openai-official".to_string(),
+            "managed-official".to_string(),
             "OpenAI Official".to_string(),
             json!({
                 "auth": {
                     "OPENAI_API_KEY": "stale-key"
                 },
-                "config": ""
+                "config": null
             }),
             None,
         );
-        provider.category = Some("official".to_string());
         provider.meta = Some(ProviderMeta {
             auth_binding: Some(AuthBinding {
                 source: AuthBindingSource::ManagedAccount,
@@ -2733,8 +2744,10 @@ base_url = "https://a.example/v1"
             ..Default::default()
         });
 
-        apply_codex_managed_oauth_auth(&AppType::Codex, &mut provider, Some(&manager))
+        apply_codex_official_auth(&AppType::Codex, &mut provider, Some(&manager))
             .expect("apply managed OAuth auth");
+
+        assert_eq!(provider.category.as_deref(), Some("official"));
 
         // last_refresh 是写入时刻的时间戳（非确定），因此逐字段断言而非整体等值。
         let auth = provider.settings_config.get("auth").expect("auth written");
@@ -2773,7 +2786,7 @@ base_url = "https://a.example/v1"
     }
 
     #[test]
-    fn codex_official_without_binding_does_not_fall_back_to_managed_default_account() {
+    fn codex_follow_login_without_binding_keeps_stored_auth() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manager = Arc::new(CodexOAuthManager::new(temp.path().to_path_buf()));
         tauri::async_runtime::block_on(async {
@@ -2802,14 +2815,70 @@ base_url = "https://a.example/v1"
         );
         provider.category = Some("official".to_string());
 
-        apply_codex_managed_oauth_auth(&AppType::Codex, &mut provider, Some(&manager))
-            .expect("no binding should be a no-op");
+        apply_codex_official_auth(&AppType::Codex, &mut provider, Some(&manager))
+            .expect("apply follow-login auth policy");
 
         assert_eq!(
             provider.settings_config.get("auth"),
             Some(&original_auth),
-            "unbound official providers must keep native Codex auth instead of using the managed default account"
+            "follow-login providers must preserve their historical auth snapshot instead of using the managed default"
         );
+    }
+
+    #[test]
+    fn follow_login_backfill_preserves_latest_live_tokens() {
+        let mut provider = Provider::with_id(
+            "follow-login".to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        let mut live_settings = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "live-access-secret",
+                    "refresh_token": "live-refresh-secret"
+                }
+            },
+            "config": ""
+        });
+
+        strip_codex_managed_oauth_auth_for_backfill(&provider, &mut live_settings);
+
+        assert_eq!(
+            live_settings["auth"]["tokens"]["refresh_token"],
+            json!("live-refresh-secret")
+        );
+    }
+
+    #[test]
+    fn category_less_fixed_follow_login_backfill_preserves_auth_and_strips_live_only_config() {
+        let provider = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        let injected_config = crate::codex_config::inject_codex_unified_session_bucket("")
+            .expect("inject unified session bucket");
+        let live_settings = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": { "refresh_token": "live-refresh-secret" }
+            },
+            "config": injected_config
+        });
+
+        let backfilled =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        assert_eq!(
+            backfilled["auth"]["tokens"]["refresh_token"],
+            json!("live-refresh-secret")
+        );
+        assert_eq!(backfilled["config"], json!(""));
     }
 
     #[test]

@@ -764,16 +764,6 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
-            match crate::services::provider::ProviderService::migrate_legacy_codex_official_managed_binding(
-                &app_state,
-            ) {
-                Ok(Some(provider_id)) => log::info!(
-                    "✓ Migrated legacy Codex Official account binding to {provider_id}"
-                ),
-                Ok(None) => {}
-                Err(e) => log::warn!("✗ Failed to migrate legacy Codex Official binding: {e}"),
-            }
-
             {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
