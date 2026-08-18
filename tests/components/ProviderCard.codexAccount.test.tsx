@@ -1,16 +1,28 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import type { ManagedAuthStatus } from "@/lib/api";
 import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
+const codexQuotaFooterProps = vi.hoisted(() => vi.fn());
+
 vi.mock("@/components/providers/ProviderActions", () => ({
-  ProviderActions: ({ onDuplicate }: { onDuplicate?: () => void }) =>
-    onDuplicate ? (
-      <button onClick={onDuplicate}>duplicate-provider</button>
-    ) : null,
+  ProviderActions: (props: {
+    onDuplicate?: () => void;
+    onConfigureUsage?: () => void;
+  }) => (
+    <>
+      {props.onDuplicate ? (
+        <button onClick={props.onDuplicate}>duplicate-provider</button>
+      ) : null}
+      {props.onConfigureUsage ? (
+        <button onClick={props.onConfigureUsage}>configure-usage</button>
+      ) : null}
+    </>
+  ),
 }));
 
 vi.mock("@/components/ProviderIcon", () => ({
@@ -23,7 +35,10 @@ vi.mock("@/components/SubscriptionQuotaFooter", () => ({
 }));
 vi.mock("@/components/CopilotQuotaFooter", () => ({ default: () => null }));
 vi.mock("@/components/CodexOauthQuotaFooter", () => ({
-  default: () => <div>codex-oauth-quota</div>,
+  default: (props: unknown) => {
+    codexQuotaFooterProps(props);
+    return <div>codex-oauth-quota</div>;
+  },
 }));
 vi.mock("@/components/XaiOauthQuotaFooter", () => ({ default: () => null }));
 
@@ -78,6 +93,7 @@ function renderCard(
     status?: ManagedAuthStatus;
     isCurrent?: boolean;
     onEdit?: (provider: Provider) => void;
+    onConfigureUsage?: (provider: Provider) => void;
   } = {},
 ) {
   const queryClient = createTestQueryClient();
@@ -98,7 +114,7 @@ function renderCard(
         onSwitch={vi.fn()}
         onEdit={options.onEdit ?? vi.fn()}
         onDelete={vi.fn()}
-        onConfigureUsage={vi.fn()}
+        onConfigureUsage={options.onConfigureUsage ?? vi.fn()}
         onOpenWebsite={vi.fn()}
         onDuplicate={vi.fn()}
       />
@@ -107,6 +123,56 @@ function renderCard(
 }
 
 describe("ProviderCard Codex Official account identity", () => {
+  it("keeps existing managed OAuth quota enabled and exposes its configuration", async () => {
+    const user = userEvent.setup();
+    const onConfigureUsage = vi.fn();
+    const provider = managedProvider("Work account");
+    delete provider.meta!.providerType;
+
+    renderCard(provider, { isCurrent: true, onConfigureUsage });
+
+    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
+      expect.objectContaining({ autoQueryInterval: 5 }),
+    );
+    await user.click(screen.getByRole("button", { name: "configure-usage" }));
+    expect(onConfigureUsage).toHaveBeenCalledWith(provider);
+  });
+
+  it("honors a saved disabled state for managed OAuth quota", () => {
+    const provider = managedProvider("Work account");
+    provider.meta!.usage_script = {
+      enabled: false,
+      language: "javascript",
+      code: "",
+      templateType: "official_subscription",
+      autoQueryInterval: 12,
+    };
+
+    renderCard(provider, { isCurrent: true });
+
+    expect(codexQuotaFooterProps).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "configure-usage" }),
+    ).toBeInTheDocument();
+  });
+
+  it("passes the saved polling interval to managed OAuth quota", () => {
+    const provider = managedProvider("Work account");
+    provider.meta!.usage_script = {
+      enabled: true,
+      language: "javascript",
+      code: "",
+      templateType: "official_subscription",
+      autoQueryInterval: 12,
+    };
+
+    renderCard(provider, { isCurrent: true });
+
+    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
+      expect.objectContaining({ autoQueryInterval: 12 }),
+    );
+  });
+
   it("keeps a custom nickname and safely truncates a long account login", () => {
     const login =
       "a-very-long-personal-account-name-that-must-not-expand-the-card@example.com";
@@ -221,7 +287,7 @@ describe("ProviderCard Codex Official account identity", () => {
     };
     renderCard(provider, { isCurrent: true });
 
-    expect(
+expect(
       screen.getByText("账号会随 Codex CLI 当前登录变化"),
     ).toBeInTheDocument();
     expect(
@@ -231,6 +297,7 @@ describe("ProviderCard Codex Official account identity", () => {
       screen.getByRole("button", { name: "duplicate-provider" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("codex-oauth-quota")).not.toBeInTheDocument();
+    expect(codexQuotaFooterProps).not.toHaveBeenCalled();
   });
 
   it("does not label a stored API-key card as follow-login", () => {
