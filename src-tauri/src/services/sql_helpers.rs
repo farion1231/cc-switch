@@ -34,9 +34,10 @@ pub(crate) const INPUT_TOKEN_SEMANTICS_FRESH: i64 = 2;
 /// Build an SQL expression that returns the cache-normalized `input_tokens`
 /// for a single row in `proxy_request_logs` or `usage_daily_rollups`.
 ///
-/// Legacy rows subtract cache reads only. New total-inclusive rows subtract
-/// both cache reads and writes. Rollups normalized to fresh input are returned
-/// unchanged.
+/// Legacy rows subtract cache reads only. Total-inclusive rows subtract both
+/// cache reads and cache creation before their separate components are added
+/// back to a task/session total. Rollups normalized to fresh input are
+/// returned unchanged.
 ///
 /// Pass an empty string to reference the columns directly (no alias),
 /// or a table alias such as `"l"` to emit `l.input_tokens` style references.
@@ -56,12 +57,10 @@ pub fn fresh_input_sql(alias: &str) -> String {
               WHEN {prefix}input_token_semantics = {INPUT_TOKEN_SEMANTICS_FRESH} THEN {prefix}input_tokens \
               WHEN {prefix}app_type IN ({app_type_list}) \
                    AND {prefix}input_token_semantics = {INPUT_TOKEN_SEMANTICS_TOTAL} \
-                   AND {prefix}input_tokens >= ({prefix}cache_read_tokens + {prefix}cache_creation_tokens) \
-              THEN ({prefix}input_tokens - {prefix}cache_read_tokens - {prefix}cache_creation_tokens) \
+              THEN MAX({prefix}input_tokens - {prefix}cache_read_tokens - {prefix}cache_creation_tokens, 0) \
               WHEN {prefix}app_type IN ({app_type_list}) \
                    AND {prefix}input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY} \
-                   AND {prefix}input_tokens >= {prefix}cache_read_tokens \
-              THEN ({prefix}input_tokens - {prefix}cache_read_tokens) \
+              THEN MAX({prefix}input_tokens - {prefix}cache_read_tokens, 0) \
               ELSE {prefix}input_tokens END"
     )
 }
@@ -147,7 +146,8 @@ mod tests {
     #[test]
     fn fresh_input_handles_codex_with_cache_exceeding_input() {
         // Defensive: if a malformed Codex row somehow has cache > input,
-        // we keep the original value rather than producing a negative number.
+        // saturate normalized fresh input at zero rather than producing a
+        // negative number or counting the cached portion twice.
         let conn = setup_conn();
         conn.execute(
             "INSERT INTO proxy_request_logs (request_id, app_type, input_tokens, cache_read_tokens)
@@ -158,11 +158,11 @@ mod tests {
         let expr = fresh_input_sql("l");
         let sql = format!("SELECT {expr} FROM proxy_request_logs l");
         let value: i64 = conn.query_row(&sql, [], |r| r.get(0)).unwrap();
-        assert_eq!(value, 100);
+        assert_eq!(value, 0);
     }
 
     #[test]
-    fn fresh_input_subtracts_cache_write_for_total_semantics() {
+    fn fresh_input_subtracts_cache_creation_for_total_semantics() {
         let conn = setup_conn();
         conn.execute(
             "INSERT INTO proxy_request_logs (

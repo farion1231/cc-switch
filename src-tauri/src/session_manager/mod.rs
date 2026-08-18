@@ -11,6 +11,11 @@ use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode, pi
 pub struct SessionMeta {
     pub provider_id: String,
     pub session_id: String,
+    /// Canonical usage-node identity when the provider can map its native
+    /// session identity to the usage importer. Message reads, resume and
+    /// deletion continue using `session_id` and `source_path`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -361,5 +366,27 @@ mod tests {
             outcomes[2].error.as_deref(),
             Some("Session was not deleted")
         );
+    }
+
+    #[test]
+    fn session_meta_serializes_optional_usage_identity_in_camel_case() {
+        let meta = SessionMeta {
+            provider_id: "hermes".into(),
+            session_id: "raw-session".into(),
+            usage_session_id: Some("hermes:default:database:digest".into()),
+            title: None,
+            summary: None,
+            project_dir: None,
+            created_at: None,
+            last_active_at: None,
+            source_path: None,
+            resume_command: None,
+        };
+        let value = serde_json::to_value(meta).expect("serialize session metadata");
+        assert_eq!(
+            value.get("usageSessionId").and_then(|value| value.as_str()),
+            Some("hermes:default:database:digest")
+        );
+        assert!(value.get("usage_session_id").is_none());
     }
 }

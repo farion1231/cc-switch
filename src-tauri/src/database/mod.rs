@@ -32,6 +32,9 @@ mod schema;
 mod tests;
 
 // DAO 类型导出供外部使用
+pub(crate) use dao::agent_session_usage::{
+    AgentSessionCanonicalCoverageMarker, AgentSessionUsageSnapshotKey,
+};
 pub(crate) use dao::providers_seed::{
     is_official_seed_id, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, CODEX_OFFICIAL_PROVIDER_ID,
     GROKBUILD_OFFICIAL_PROVIDER_ID,
@@ -53,7 +56,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 17;
+pub(crate) const SCHEMA_VERSION: i32 = 18;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -119,25 +122,25 @@ impl Database {
         }
         register_db_change_hook(&conn);
 
+        // Read the version before any application DDL runs.  The backup must
+        // represent the user's actual pre-migration database, not a partially
+        // materialized current schema.
+        let initial_version = Self::get_user_version(&conn)?;
         let db = Self {
             conn: Mutex::new(conn),
         };
-        db.create_tables()?;
 
-        // Pre-migration backup: only when upgrading from an existing database
-        {
-            let conn = lock_conn!(db.conn);
-            let version = Self::get_user_version(&conn)?;
-            drop(conn);
-            if version > 0 && version < SCHEMA_VERSION {
-                log::info!(
-                    "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
-                );
-                if let Err(e) = db.backup_database_file() {
-                    log::warn!("Pre-migration backup failed, continuing migration: {e}");
-                }
+        // Pre-migration backup: only when upgrading from an existing database.
+        if initial_version > 0 && initial_version < SCHEMA_VERSION {
+            log::info!(
+                "Creating pre-migration database backup (v{initial_version} → v{SCHEMA_VERSION})"
+            );
+            if let Err(e) = db.backup_database_file() {
+                log::warn!("Pre-migration backup failed, continuing migration: {e}");
             }
         }
+
+        db.create_tables(!db_exists)?;
 
         db.apply_schema_migrations()?;
         if let Err(e) = db.ensure_incremental_auto_vacuum() {
@@ -196,7 +199,7 @@ impl Database {
         let db = Self {
             conn: Mutex::new(conn),
         };
-        db.create_tables()?;
+        db.create_tables(true)?;
         db.ensure_model_pricing_seeded()?;
 
         Ok(db)

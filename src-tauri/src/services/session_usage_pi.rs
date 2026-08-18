@@ -7,8 +7,17 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
+use crate::services::agent_session_usage::{
+    local_usage_date, normalize_session_relations, RelationClaim, RelationConfidence,
+    RequestCountSemantics, SessionNodeMetadata, SessionRelationClaim, TimeSemantics,
+    UsagePrecision,
+};
 use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
+};
+use crate::services::session_usage_pipeline::{
+    publish_canonical_batch, publish_canonical_batch_on_conn, CanonicalUsageBatch, RawUsageLogRow,
+    UsageObservation, UsagePublishTarget, UsageSourceSpec,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::find_model_pricing;
@@ -16,6 +25,7 @@ use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -118,6 +128,42 @@ struct PiRequestIdentity {
     has_entry_id: bool,
 }
 
+/// A discoverable Pi file plus the metadata parsed from its own header.  The
+/// raw parent path is never opened: it is resolved only against this batch's
+/// successfully parsed source paths.
+#[derive(Debug)]
+struct PiSessionCandidate {
+    input_path: PathBuf,
+    source_path_key: String,
+    descriptor: crate::session_manager::providers::pi::PiSessionDescriptor,
+    last_synced_at: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PiCostStatus {
+    Reported,
+    Estimated,
+    Unavailable,
+}
+
+impl PiCostStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Reported => "reported",
+            Self::Estimated => "estimated",
+            Self::Unavailable => "unavailable",
+        }
+    }
+
+    fn cost_source(self) -> Option<&'static str> {
+        match self {
+            Self::Reported => Some("pi_session_reported"),
+            Self::Estimated => Some("local_pricing"),
+            Self::Unavailable => None,
+        }
+    }
+}
+
 /// Import usage from every Pi session file discoverable by the session
 /// browser's current root and layout rules.
 pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
@@ -132,11 +178,32 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
         ..Default::default()
     };
 
-    for file_path in files {
-        match sync_single_pi_file(db, file_path) {
+    let candidates = match pi_session_candidates(files, &mut result) {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            result.errors.push(error.to_string());
+            return result;
+        }
+    };
+    let normalized_nodes = match pi_normalized_nodes(&candidates) {
+        Ok(nodes) => nodes,
+        Err(error) => {
+            result.errors.push(error.to_string());
+            return result;
+        }
+    };
+
+    if let Err(error) = persist_pi_nodes(db, &normalized_nodes) {
+        result.errors.push(error.to_string());
+        return result;
+    }
+
+    for candidate_index in pi_import_order(&candidates, &normalized_nodes) {
+        let candidate = &candidates[candidate_index];
+        match sync_single_pi_file(db, &candidate.input_path) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
-                let message = format!("{}: {error}", file_path.display());
+                let message = format!("{}: {error}", candidate.input_path.display());
                 log::warn!("[PI-SYNC] 会话文件解析失败: {message}");
                 result.errors.push(message);
             }
@@ -152,6 +219,268 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
         );
     }
     result
+}
+
+fn pi_session_candidates(
+    files: &[PathBuf],
+    result: &mut SessionSyncResult,
+) -> Result<Vec<PiSessionCandidate>, AppError> {
+    let mut candidates = Vec::with_capacity(files.len());
+    for input_path in files {
+        // Preserve the upstream user-facing safety error when a sparse or
+        // oversized file cannot be described as a session tree.
+        if let Ok(metadata) = fs::symlink_metadata(input_path) {
+            if metadata.len() > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
+                result.errors.push(format!(
+                    "{}: Pi 会话文件超过 {} 字节安全上限",
+                    input_path.display(),
+                    crate::session_manager::providers::pi::MAX_SESSION_BYTES
+                ));
+                continue;
+            }
+        }
+
+        match crate::session_manager::providers::pi::describe_session_file(input_path) {
+            Ok(descriptor) => {
+                let metadata = fs::symlink_metadata(&descriptor.source_path).map_err(|error| {
+                    AppError::Config(format!(
+                        "无法读取 Pi 会话文件元数据 {}: {error}",
+                        descriptor.source_path.display()
+                    ))
+                })?;
+                candidates.push(PiSessionCandidate {
+                    input_path: input_path.clone(),
+                    source_path_key: normalized_pi_path(&descriptor.source_path),
+                    descriptor,
+                    last_synced_at: metadata_modified_nanos(&metadata),
+                });
+            }
+            Err(error) => {
+                let message = format!("{}: {error}", input_path.display());
+                log::warn!("[PI-SYNC] 会话元数据解析失败: {message}");
+                result.errors.push(message);
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn pi_normalized_nodes(
+    candidates: &[PiSessionCandidate],
+) -> Result<Vec<crate::services::agent_session_usage::NormalizedSessionNode>, AppError> {
+    let mut source_matches: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut session_counts: HashMap<&str, usize> = HashMap::new();
+    let mut first_index_by_session = HashMap::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        source_matches
+            .entry(&candidate.source_path_key)
+            .or_default()
+            .push(&candidate.descriptor.session_id);
+        *session_counts
+            .entry(&candidate.descriptor.session_id)
+            .or_default() += 1;
+        first_index_by_session
+            .entry(candidate.descriptor.session_id.as_str())
+            .or_insert(index);
+    }
+
+    let mut claims = Vec::with_capacity(candidates.len());
+    for (index, candidate) in candidates.iter().enumerate() {
+        let relation = if session_counts
+            .get(candidate.descriptor.session_id.as_str())
+            .copied()
+            .unwrap_or_default()
+            > 1
+        {
+            // Give duplicate logical IDs disagreeing claims so the existing
+            // graph normalizer fails them closed as conflict nodes.
+            if first_index_by_session
+                .get(candidate.descriptor.session_id.as_str())
+                .copied()
+                == Some(index)
+            {
+                RelationClaim::Root
+            } else {
+                RelationClaim::Unknown
+            }
+        } else if let Some(raw_parent) = candidate.descriptor.parent_session.as_deref() {
+            let parent_path = resolve_pi_parent_path(&candidate.descriptor.source_path, raw_parent);
+            let parent_key = normalized_pi_path(&parent_path);
+            match source_matches.get(parent_key.as_str()) {
+                Some(matches) if matches.len() == 1 => RelationClaim::Parent {
+                    parent_session_id: matches[0].to_string(),
+                    confidence: RelationConfidence::Explicit,
+                },
+                // A path absent from this successful scan (including an
+                // external path) is intentionally unknown; we never open it
+                // or infer a parent from a name, timestamp, or cwd.
+                _ => RelationClaim::Unknown,
+            }
+        } else {
+            RelationClaim::Root
+        };
+        claims.push(SessionRelationClaim {
+            app_type: APP_TYPE.to_string(),
+            session_id: candidate.descriptor.session_id.clone(),
+            relation,
+            metadata: SessionNodeMetadata {
+                title: candidate.descriptor.title.clone(),
+                project_dir: candidate.descriptor.project_dir.clone(),
+                source_path: Some(
+                    candidate
+                        .descriptor
+                        .source_path
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+                created_at: candidate
+                    .descriptor
+                    .created_at
+                    .map(|timestamp| timestamp / 1000),
+                last_active_at: candidate
+                    .descriptor
+                    .last_active_at
+                    .map(|timestamp| timestamp / 1000),
+                last_synced_at: candidate.last_synced_at,
+            },
+        });
+    }
+    normalize_session_relations(&claims)
+}
+
+fn persist_pi_nodes(
+    db: &Database,
+    nodes: &[crate::services::agent_session_usage::NormalizedSessionNode],
+) -> Result<(), AppError> {
+    if nodes.is_empty() {
+        return Ok(());
+    }
+    publish_canonical_batch(
+        db,
+        UsagePublishTarget::Published,
+        CanonicalUsageBatch {
+            nodes: nodes.to_vec(),
+            ..CanonicalUsageBatch::default()
+        },
+        "Pi 会话节点",
+    )
+}
+
+fn pi_import_order(
+    candidates: &[PiSessionCandidate],
+    normalized_nodes: &[crate::services::agent_session_usage::NormalizedSessionNode],
+) -> Vec<usize> {
+    let node_by_session: HashMap<
+        &str,
+        &crate::services::agent_session_usage::NormalizedSessionNode,
+    > = normalized_nodes
+        .iter()
+        .map(|node| (node.session_id.as_str(), node))
+        .collect();
+    let mut candidate_by_session = HashMap::new();
+    let mut duplicate_sessions = HashSet::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        if candidate_by_session
+            .insert(candidate.descriptor.session_id.as_str(), index)
+            .is_some()
+        {
+            duplicate_sessions.insert(candidate.descriptor.session_id.as_str());
+        }
+    }
+
+    let mut children = vec![Vec::new(); candidates.len()];
+    let mut indegree = vec![0usize; candidates.len()];
+    for (child_index, candidate) in candidates.iter().enumerate() {
+        let Some(node) = node_by_session.get(candidate.descriptor.session_id.as_str()) else {
+            continue;
+        };
+        let Some(parent_session_id) = node.parent_session_id.as_deref() else {
+            continue;
+        };
+        let Some(&parent_index) = candidate_by_session.get(parent_session_id) else {
+            continue;
+        };
+        if duplicate_sessions.contains(parent_session_id)
+            || duplicate_sessions.contains(candidate.descriptor.session_id.as_str())
+        {
+            continue;
+        }
+        children[parent_index].push(child_index);
+        indegree[child_index] = indegree[child_index].saturating_add(1);
+    }
+
+    let mut ready = BTreeSet::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        if indegree[index] == 0 {
+            ready.insert((candidate.source_path_key.clone(), index));
+        }
+    }
+    let mut order = Vec::with_capacity(candidates.len());
+    while let Some((_, index)) = ready.pop_first() {
+        order.push(index);
+        for &child in &children[index] {
+            indegree[child] = indegree[child].saturating_sub(1);
+            if indegree[child] == 0 {
+                ready.insert((candidates[child].source_path_key.clone(), child));
+            }
+        }
+    }
+    if order.len() != candidates.len() {
+        // The graph normalizer already removed cycle/self edges.  Retain a
+        // deterministic fallback only for an impossible internal mismatch.
+        let seen: HashSet<_> = order.iter().copied().collect();
+        let mut remaining: Vec<_> = (0..candidates.len())
+            .filter(|index| !seen.contains(index))
+            .collect();
+        remaining.sort_by(|left, right| {
+            candidates[*left]
+                .source_path_key
+                .cmp(&candidates[*right].source_path_key)
+        });
+        order.extend(remaining);
+    }
+    order
+}
+
+fn resolve_pi_parent_path(child_source_path: &Path, raw_parent: &str) -> PathBuf {
+    let parent = PathBuf::from(raw_parent);
+    if parent.is_absolute() {
+        parent
+    } else {
+        child_source_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(parent)
+    }
+}
+
+fn normalized_pi_path(path: &Path) -> String {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    let rendered = normalized
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    // Windows `canonicalize` may add the verbatim `//?/` prefix while the
+    // Pi header keeps the path that was written by SessionManager.  Both are
+    // representations of the same already-scanned candidate, so normalize
+    // the prefix lexically without probing the header's path on disk.
+    if let Some(unc_path) = rendered.strip_prefix("//?/unc/") {
+        format!("//{unc_path}")
+    } else {
+        rendered
+            .strip_prefix("//?/")
+            .unwrap_or(rendered.as_str())
+            .to_string()
+    }
 }
 
 fn sync_single_pi_file(db: &Database, file_path: &Path) -> Result<SessionSyncResult, AppError> {
@@ -205,13 +534,19 @@ fn sync_single_pi_file(db: &Database, file_path: &Path) -> Result<SessionSyncRes
         .unchecked_transaction()
         .map_err(|error| AppError::Database(format!("启动 Pi 用量导入事务失败: {error}")))?;
     let mut result = SessionSyncResult::default();
+    let mut canonical_batch = CanonicalUsageBatch::default();
     for record in &parsed.records {
-        if insert_pi_record(&tx, record)? {
-            result.imported = result.imported.saturating_add(1);
-        } else {
-            result.skipped = result.skipped.saturating_add(1);
+        match insert_pi_record(&tx, record)? {
+            Some(observation) => {
+                result.imported = result.imported.saturating_add(1);
+                canonical_batch.observations.push(observation);
+            }
+            None => {
+                result.skipped = result.skipped.saturating_add(1);
+            }
         }
     }
+    publish_canonical_batch_on_conn(&tx, UsagePublishTarget::Published, canonical_batch)?;
 
     update_pi_sync_state_on_conn(&tx, &file_path_string, revision, parsed.last_complete_line)?;
     tx.commit()
@@ -748,7 +1083,10 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
+fn insert_pi_record(
+    conn: &rusqlite::Connection,
+    record: &PiUsageRecord,
+) -> Result<Option<UsageObservation>, AppError> {
     let already_seen: bool = conn
         .query_row(
             "SELECT EXISTS(
@@ -768,7 +1106,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
         )
         .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
     if already_seen {
-        return Ok(false);
+        return Ok(None);
     }
     conn.execute(
         "INSERT OR IGNORE INTO session_usage_dedup
@@ -791,19 +1129,24 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
         model: Some(record.model.clone()),
         message_id: None,
     };
-    let costs = record.costs.reported().or_else(|| {
-        find_model_pricing(conn, &record.model).map(|pricing| {
-            let calculated =
-                CostCalculator::calculate_for_app(APP_TYPE, &usage, &pricing, Decimal::ONE);
-            (
+    let (costs, cost_status) = if let Some(costs) = record.costs.reported() {
+        (Some(costs), PiCostStatus::Reported)
+    } else if let Some(pricing) = find_model_pricing(conn, &record.model) {
+        let calculated =
+            CostCalculator::calculate_for_app(APP_TYPE, &usage, &pricing, Decimal::ONE);
+        (
+            Some((
                 calculated.input_cost,
                 calculated.output_cost,
                 calculated.cache_read_cost,
                 calculated.cache_creation_cost,
                 calculated.total_cost,
-            )
-        })
-    });
+            )),
+            PiCostStatus::Estimated,
+        )
+    } else {
+        (None, PiCostStatus::Unavailable)
+    };
     let (input_cost, output_cost, cache_read_cost, cache_write_cost, total_cost) =
         costs.unwrap_or((
             Decimal::ZERO,
@@ -813,55 +1156,75 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             Decimal::ZERO,
         ));
 
-    conn.execute(
-        "INSERT OR IGNORE INTO proxy_request_logs (
-            request_id, provider_id, app_type, model, request_model, pricing_model,
-            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            input_token_semantics,
-            input_cost_usd, output_cost_usd, cache_read_cost_usd,
-            cache_creation_cost_usd, total_cost_usd,
-            latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
-        )",
-        rusqlite::params![
-            record.request_id,
-            record.provider_id,
-            APP_TYPE,
-            record.model,
-            record.request_model,
-            record.model,
-            record.input_tokens,
-            record.output_tokens,
-            record.cache_read_tokens,
-            record.cache_write_tokens,
-            INPUT_TOKEN_SEMANTICS_FRESH,
-            input_cost.to_string(),
-            output_cost.to_string(),
-            cache_read_cost.to_string(),
-            cache_write_cost.to_string(),
-            total_cost.to_string(),
-            0i64,
-            Option::<i64>::None,
-            record.status_code,
-            record.error_message,
-            record.session_id,
-            Some(DATA_SOURCE),
-            1i64,
-            "1.0",
-            record.created_at,
-            DATA_SOURCE,
-        ],
-    )
-    .map(|changed| changed > 0)
-    .map_err(|error| AppError::Database(format!("插入 Pi 会话用量失败: {error}")))
+    let mut raw = RawUsageLogRow::native_session(
+        record.request_id.as_str(),
+        record.provider_id.as_str(),
+        APP_TYPE,
+        record.model.as_str(),
+        Some(record.session_id.as_str()),
+        DATA_SOURCE,
+        record.created_at,
+    );
+    raw.request_model = record.request_model.clone();
+    raw.pricing_model = Some(record.model.clone());
+    raw.input_tokens = i64::from(record.input_tokens);
+    raw.output_tokens = i64::from(record.output_tokens);
+    raw.cache_read_tokens = i64::from(record.cache_read_tokens);
+    raw.cache_creation_tokens = i64::from(record.cache_write_tokens);
+    raw.input_token_semantics = INPUT_TOKEN_SEMANTICS_FRESH;
+    raw.input_cost_usd = input_cost.to_string();
+    raw.output_cost_usd = output_cost.to_string();
+    raw.cache_read_cost_usd = cache_read_cost.to_string();
+    raw.cache_creation_cost_usd = cache_write_cost.to_string();
+    raw.total_cost_usd = total_cost.to_string();
+    raw.status_code = record.status_code;
+    raw.error_message = record.error_message.clone();
+    let inserted = raw
+        .insert_or_ignore_on_conn(conn, UsagePublishTarget::Published)
+        .map_err(|error| AppError::Database(format!("插入 Pi 会话用量失败: {error}")))?;
+    if !inserted {
+        return Ok(None);
+    }
+
+    let date = local_usage_date(record.created_at)
+        .ok_or_else(|| AppError::Config("Pi 会话事件时间无法归入本地日期".to_string()))?;
+    let mut source = UsageSourceSpec::new(
+        APP_TYPE,
+        record.provider_id.clone(),
+        DATA_SOURCE,
+        UsagePrecision::RequestExact,
+        TimeSemantics::EventTime,
+        RequestCountSemantics::UsageEvent,
+    );
+    source.input_token_semantics = INPUT_TOKEN_SEMANTICS_FRESH;
+    let mut fact = source.fact(
+        date,
+        record.session_id.clone(),
+        record.model.clone(),
+        record.request_model.clone(),
+        record.model.clone(),
+    );
+    fact.request_count = Some(1);
+    fact.input_tokens = Some(i64::from(record.input_tokens));
+    fact.output_tokens = Some(i64::from(record.output_tokens));
+    fact.cache_read_tokens = Some(i64::from(record.cache_read_tokens));
+    fact.cache_creation_tokens = Some(i64::from(record.cache_write_tokens));
+    fact.total_cost_usd =
+        (cost_status != PiCostStatus::Unavailable).then_some(total_cost.to_string());
+    fact.cost_status = Some(cost_status.as_str().to_string());
+    fact.cost_source = cost_status.cost_source().map(str::to_string);
+    fact.first_event_at = Some(record.created_at);
+    fact.last_event_at = Some(record.created_at);
+    Ok(Some(UsageObservation {
+        request_id: record.request_id.clone(),
+        fact,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::fs::FileTimes;
     use std::io::Write;
 
@@ -874,6 +1237,20 @@ mod tests {
         for line in lines {
             writeln!(file, "{line}").expect("write session line");
         }
+    }
+
+    fn session_header(id: &str, parent_session: Option<&str>) -> String {
+        let mut header = json!({
+            "type": "session",
+            "version": 3,
+            "id": id,
+            "timestamp": "2023-11-14T22:13:20Z",
+            "cwd": "/work"
+        });
+        if let Some(parent_session) = parent_session {
+            header["parentSession"] = Value::String(parent_session.to_string());
+        }
+        header.to_string()
     }
 
     fn assistant_line(id: &str, timestamp: &str, input: u32) -> String {
@@ -889,6 +1266,16 @@ mod tests {
             .expect("open session for timestamp restore")
             .set_times(FileTimes::new().set_modified(modified))
             .expect("restore session timestamp");
+    }
+
+    fn pi_raw_count(db: &Database) -> Result<i64, AppError> {
+        lock_conn!(db.conn)
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(AppError::from)
     }
 
     #[test]
@@ -932,92 +1319,41 @@ mod tests {
             )?;
             assert_eq!(totals, (5, 37, 37, 12, 11));
 
-            let assistant: (String, String, String, String, i64, i64, String) = conn.query_row(
-                "SELECT provider_id, model, request_model, pricing_model, created_at,
-                        input_token_semantics, total_cost_usd
-                 FROM proxy_request_logs
+            let canonical_totals: (i64, i64) = conn.query_row(
+                "SELECT COALESCE(SUM(request_count), 0), COALESCE(SUM(input_tokens), 0)
+                 FROM agent_session_usage_rollups
+                 WHERE app_type = 'pi' AND data_source = 'pi_session'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let non_usage_event_facts: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM agent_session_usage_rollups
+                 WHERE app_type = 'pi' AND data_source = 'pi_session'
+                   AND request_count_semantics <> 'usage_event'",
+                [],
+                |row| row.get(0),
+            )?;
+            let coverage_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM agent_session_canonical_coverage
+                 WHERE app_type = 'pi' AND data_source = 'pi_session'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(canonical_totals, (5, 37));
+            assert_eq!(non_usage_event_facts, 0);
+            assert_eq!(coverage_count, 5);
+
+            let reported_cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs
                  WHERE provider_id = 'custom-pi' AND status_code = 200",
                 [],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                    ))
-                },
+                |row| row.get(0),
             )?;
-            assert_eq!(assistant.0, "custom-pi");
-            assert_eq!(assistant.1, "actual-model");
-            assert_eq!(assistant.2, "requested-model");
-            assert_eq!(assistant.3, "actual-model");
-            assert_eq!(assistant.4, 1_700_000_001);
-            assert_eq!(assistant.5, INPUT_TOKEN_SEMANTICS_FRESH);
             assert_eq!(
-                Decimal::from_str(&assistant.6).expect("reported total"),
+                Decimal::from_str(&reported_cost).expect("reported total"),
                 Decimal::from_str("0.0000255").expect("expected total")
             );
-
-            let empty_failure: (i64, i64, String) = conn.query_row(
-                "SELECT status_code, input_tokens, error_message
-                 FROM proxy_request_logs
-                 WHERE provider_id = 'custom-pi' AND status_code = 500",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-            assert_eq!(empty_failure, (500, 0, "Pi request failed".to_string()));
         }
-
-        let providers = db.get_provider_stats(None, None, Some("pi"), None, None)?;
-        assert!(providers.iter().any(|provider| {
-            provider.provider_id == PROVIDER_PLACEHOLDER && provider.provider_name == "Pi (Session)"
-        }));
-        Ok(())
-    }
-
-    #[test]
-    fn zero_reported_cost_uses_fresh_input_pricing() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = session_path(temp.path(), "pricing");
-        let assistant = assistant_line("priced", "2023-11-14T22:13:21Z", 10);
-        write_lines(
-            &path,
-            &[
-                r#"{"type":"session","version":3,"id":"session-priced","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
-                &assistant,
-            ],
-        );
-
-        let db = Database::memory()?;
-        {
-            let conn = lock_conn!(db.conn);
-            conn.execute(
-                "INSERT OR REPLACE INTO model_pricing (
-                    model_id, display_name, input_cost_per_million,
-                    output_cost_per_million, cache_read_cost_per_million,
-                    cache_creation_cost_per_million
-                 ) VALUES ('fixture-model', 'Fixture', '1', '2', '0.1', '0.5')",
-                [],
-            )?;
-        }
-        let result = sync_pi_files(&db, std::slice::from_ref(&path));
-        assert_eq!(result.imported, 1);
-
-        let conn = lock_conn!(db.conn);
-        let total: String = conn.query_row(
-            "SELECT total_cost_usd FROM proxy_request_logs WHERE data_source = 'pi_session'",
-            [],
-            |row| row.get(0),
-        )?;
-        // Pi input is already fresh; cache buckets are priced in addition to
-        // all 10 input tokens rather than subtracted from them.
-        assert_eq!(
-            Decimal::from_str(&total).expect("calculated total"),
-            Decimal::from_str("0.0000155").expect("expected total")
-        );
         Ok(())
     }
 
@@ -1039,40 +1375,6 @@ mod tests {
         let db = Database::memory()?;
         assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 2);
         Ok(())
-    }
-
-    #[test]
-    fn bounds_untrusted_provider_and_model_labels_at_utf8_boundaries() {
-        let mut entry: Value =
-            serde_json::from_str(&assistant_line("bounded", "2023-11-14T22:13:21Z", 1))
-                .expect("assistant entry");
-        let oversized = "界".repeat(MAX_USAGE_LABEL_BYTES);
-        let message = entry
-            .get_mut("message")
-            .and_then(Value::as_object_mut)
-            .expect("message object");
-        message.insert("provider".to_string(), Value::String(oversized.clone()));
-        message.insert("model".to_string(), Value::String(oversized.clone()));
-        message.insert("responseModel".to_string(), Value::String(oversized));
-
-        let record = parse_usage_record(&entry, "session", None, 0).expect("usage record");
-        for label in [record.provider_id, record.model, record.request_model] {
-            assert!(label.len() <= MAX_USAGE_LABEL_BYTES);
-            assert!(std::str::from_utf8(label.as_bytes()).is_ok());
-        }
-    }
-
-    #[test]
-    fn rejects_timestamps_outside_sqlite_date_range() {
-        let mut entry: Value =
-            serde_json::from_str(&assistant_line("time", "2023-11-14T22:13:21Z", 1))
-                .expect("assistant entry");
-        entry["timestamp"] = Value::from(i64::MIN);
-        entry["message"]["timestamp"] = Value::from(i64::MAX);
-
-        let record =
-            parse_usage_record(&entry, "session", Some(1_700_000_000), 0).expect("usage record");
-        assert_eq!(record.created_at, 1_700_000_000);
     }
 
     #[test]
@@ -1099,252 +1401,144 @@ mod tests {
         );
 
         let db = Database::memory()?;
-        let result = sync_pi_files(&db, &[parent.clone(), fork.clone()]);
+        // The child is deliberately supplied first. The importer must resolve
+        // the full graph, then import the parent before its fork so copied
+        // history belongs to the parent and only the child's new event is
+        // attributed to the descendant task.
+        let result = sync_pi_files(&db, &[fork.clone(), parent.clone()]);
         assert_eq!(result.imported, 2);
         assert_eq!(result.skipped, 1);
 
-        // A fork is also a complete recovery source when its parent file is
-        // absent from a fresh database.
-        let orphan_db = Database::memory()?;
+        let parent_usage = crate::services::agent_session_usage::get_agent_session_usage(
+            &db,
+            &crate::services::agent_session_usage::AgentSessionUsageRequest {
+                app_type: APP_TYPE.to_string(),
+                session_id: "session-parent".to_string(),
+                range: None,
+            },
+        )?;
+        assert_eq!(parent_usage.descendant_session_count, 1);
         assert_eq!(
-            sync_pi_files(&orphan_db, std::slice::from_ref(&fork)).imported,
-            2
+            parent_usage
+                .self_usage
+                .as_ref()
+                .and_then(|usage| usage.input_tokens),
+            Some(1)
+        );
+        assert_eq!(
+            parent_usage
+                .descendant_usage
+                .as_ref()
+                .and_then(|usage| usage.input_tokens),
+            Some(3)
+        );
+        let total_usage = parent_usage
+            .total_usage
+            .as_ref()
+            .expect("derived parent total");
+        assert_eq!(total_usage.input_tokens, Some(4));
+        assert_eq!(total_usage.request_count, Some(2));
+        assert_eq!(
+            total_usage.request_count_semantics,
+            RequestCountSemantics::UsageEvent
         );
 
-        let second_pass = sync_pi_files(&db, &[parent, fork]);
-        assert_eq!(second_pass.imported, 0);
-        let count: i64 = lock_conn!(db.conn).query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(count, 2);
         Ok(())
     }
 
     #[test]
-    fn rollup_then_legacy_migration_and_fork_do_not_reimport_history() -> Result<(), AppError> {
+    fn parent_paths_stay_inside_the_successful_scan_and_graph_conflicts_fail_closed(
+    ) -> Result<(), AppError> {
         let temp = tempfile::tempdir().expect("tempdir");
-        let parent = session_path(temp.path(), "legacy-parent");
-        let fork = session_path(temp.path(), "migrated-fork");
-        let migrated = assistant_line("generated", "2023-11-14T22:13:21Z", 1);
-        let legacy = migrated.replace("\"id\":\"generated\",\"parentId\":null,", "");
-        write_lines(
-            &parent,
-            &[
-                r#"{"type":"session","version":1,"id":"session-legacy","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
-                &legacy,
-            ],
+        let parent = session_path(temp.path(), "parent");
+        let relative_child = session_path(temp.path(), "relative-child");
+        let absolute_child = session_path(temp.path(), "absolute-child");
+        let external = session_path(temp.path(), "external");
+        let outside_child = session_path(temp.path(), "outside-child");
+        let self_child = session_path(temp.path(), "self-child");
+        let cycle_a = session_path(temp.path(), "cycle-a");
+        let cycle_b = session_path(temp.path(), "cycle-b");
+
+        let parent_header = session_header("parent", None);
+        write_lines(&parent, &[&parent_header]);
+        let canonical_parent = parent.canonicalize().expect("canonical parent path");
+        let relative_header = session_header("relative-child", Some("parent.jsonl"));
+        let absolute_header = session_header(
+            "absolute-child",
+            Some(canonical_parent.to_string_lossy().as_ref()),
         );
+        let external_header = session_header("external", None);
+        let outside_header =
+            session_header("outside-child", Some(external.to_string_lossy().as_ref()));
+        let self_header = session_header("self-child", Some("self-child.jsonl"));
+        let cycle_a_header = session_header("cycle-a", Some("cycle-b.jsonl"));
+        let cycle_b_header = session_header("cycle-b", Some("cycle-a.jsonl"));
+        write_lines(&relative_child, &[&relative_header]);
+        write_lines(&absolute_child, &[&absolute_header]);
+        write_lines(&external, &[&external_header]);
+        write_lines(&outside_child, &[&outside_header]);
+        write_lines(&self_child, &[&self_header]);
+        write_lines(&cycle_a, &[&cycle_a_header]);
+        write_lines(&cycle_b, &[&cycle_b_header]);
 
         let db = Database::memory()?;
-        assert_eq!(
-            sync_pi_files(&db, std::slice::from_ref(&parent)).imported,
-            1
-        );
-        assert_eq!(db.rollup_and_prune(30)?, 1);
-
-        // Pi migrates v1 in place by adding generated entry IDs while keeping
-        // the same logical rows. The line cursor prevents those rows from
-        // being treated as new after the rewrite.
-        write_lines(
-            &parent,
+        let result = sync_pi_files(
+            &db,
             &[
-                r#"{"type":"session","version":3,"id":"session-legacy","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
-                &migrated,
+                cycle_b,
+                outside_child,
+                relative_child,
+                self_child,
+                parent,
+                cycle_a,
+                absolute_child,
             ],
         );
-        assert_eq!(
-            sync_pi_files(&db, std::slice::from_ref(&parent)).imported,
-            0
-        );
-
-        let new_entry = assistant_line("new-entry", "2023-11-14T22:13:23Z", 2);
-        write_lines(
-            &fork,
-            &[
-                r#"{"type":"session","version":3,"id":"session-fork","timestamp":"2023-11-14T22:13:22Z","cwd":"/work","parentSession":"legacy-parent.jsonl"}"#,
-                &migrated,
-                &new_entry,
-            ],
-        );
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&fork)).imported, 1);
+        assert!(result.errors.is_empty());
 
         let conn = lock_conn!(db.conn);
-        let rolled_up: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(request_count), 0) FROM usage_daily_rollups
-             WHERE app_type = 'pi'",
-            [],
-            |row| row.get(0),
+        let mut statement = conn.prepare(
+            "SELECT session_id, parent_session_id, root_session_id, node_kind
+             FROM agent_session_nodes WHERE app_type = 'pi' ORDER BY session_id",
         )?;
-        let details: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!((rolled_up, details), (1, 1));
-        drop(conn);
-
-        // Once the new fork request is rolled up too, a shorter repair forces
-        // a full rescan. The durable ledger still rejects both old identities.
-        assert_eq!(db.rollup_and_prune(30)?, 1);
-        write_lines(
-            &fork,
-            &[
-                r#"{"type":"session","version":3,"id":"session-fork","timestamp":"2023-11-14T22:13:22Z","cwd":"/work","parentSession":"legacy-parent.jsonl"}"#,
-                &migrated,
-            ],
-        );
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&fork)).imported, 0);
-        let conn = lock_conn!(db.conn);
-        let totals: (i64, i64) = conn.query_row(
-            "SELECT
-                (SELECT COALESCE(SUM(request_count), 0) FROM usage_daily_rollups
-                 WHERE app_type = 'pi'),
-                (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session')",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(totals, (2, 0));
-        Ok(())
-    }
-
-    #[test]
-    fn assistant_failures_keep_status_and_error_message() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = session_path(temp.path(), "failures");
-        let failed = assistant_line("failed", "2023-11-14T22:13:21Z", 1).replace(
-            r#""stopReason":"stop""#,
-            r#""stopReason":"error","errorMessage":"provider failed""#,
-        );
-        let aborted = assistant_line("aborted", "2023-11-14T22:13:22Z", 1)
-            .replace(r#""stopReason":"stop""#, r#""stopReason":"aborted""#);
-        write_lines(
-            &path,
-            &[
-                r#"{"type":"session","version":3,"id":"session-failures","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
-                &failed,
-                &aborted,
-            ],
-        );
-
-        let db = Database::memory()?;
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 2);
-        let conn = lock_conn!(db.conn);
-        let statuses: Vec<(i64, String)> = conn
-            .prepare(
-                "SELECT status_code, error_message FROM proxy_request_logs
-                 WHERE data_source = 'pi_session' ORDER BY status_code",
-            )?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        let nodes: HashMap<String, (Option<String>, String, String)> = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (row.get(1)?, row.get(2)?, row.get(3)?),
+                ))
+            })?
             .collect::<Result<_, _>>()?;
         assert_eq!(
-            statuses,
-            vec![
-                (499, "Pi request aborted".to_string()),
-                (500, "provider failed".to_string()),
-            ]
+            nodes.get("relative-child"),
+            Some(&(
+                Some("parent".to_string()),
+                "parent".to_string(),
+                "child".to_string(),
+            ))
         );
-        Ok(())
-    }
-
-    #[test]
-    fn parser_stops_at_the_captured_file_size() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = session_path(temp.path(), "snapshot");
-        let header = r#"{"type":"session","version":3,"id":"session-snapshot","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#;
-        let first = assistant_line("first", "2023-11-14T22:13:21Z", 1);
-        let second = assistant_line("second", "2023-11-14T22:13:22Z", 2);
-        write_lines(&path, &[header, &first]);
-        let metadata = fs::metadata(&path).expect("snapshot metadata");
-        let snapshot_size = metadata.len();
-        let modified = metadata_modified_nanos(&metadata);
-        {
-            let mut file = File::options()
-                .append(true)
-                .open(&path)
-                .expect("append after snapshot");
-            writeln!(file, "{second}").expect("append second record");
-        }
-
-        let parsed = parse_pi_file(&path, 0, None, snapshot_size, modified)?;
-        assert_eq!(parsed.records.len(), 1);
-        assert_eq!(parsed.last_complete_line, 2);
-        Ok(())
-    }
-
-    #[test]
-    fn valid_unterminated_final_record_is_imported() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = session_path(temp.path(), "unterminated");
-        let header = r#"{"type":"session","version":3,"id":"session-unterminated","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#;
-        let assistant = assistant_line("final", "2023-11-14T22:13:21Z", 1);
-        let mut file = File::create(&path).expect("create session");
-        writeln!(file, "{header}").expect("write header");
-        file.write_all(assistant.as_bytes())
-            .expect("write unterminated record");
-        drop(file);
-
-        let db = Database::memory()?;
-        let first = sync_pi_files(&db, std::slice::from_ref(&path));
-        assert_eq!((first.imported, first.deferred_files), (1, 0));
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn failed_append_prefix_proof_rescans_a_longer_rewrite() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = session_path(temp.path(), "longer-rewrite");
-        let header = r#"{"type":"session","version":3,"id":"session-rewrite","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#;
-        let first = assistant_line("first", "2023-11-14T22:13:22Z", 1);
-        write_lines(&path, &[header, &first]);
-
-        let db = Database::memory()?;
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
-
-        let before = assistant_line("before", "2023-11-14T22:13:21Z", 2);
-        let after = assistant_line("after", "2023-11-14T22:13:23Z", 3);
-        write_lines(&path, &[header, &before, &first, &after]);
-        let rewritten = sync_pi_files(&db, std::slice::from_ref(&path));
-        assert_eq!((rewritten.imported, rewritten.skipped), (2, 1));
-        Ok(())
-    }
-
-    #[test]
-    fn same_size_middle_rewrite_is_detected_by_mtime() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = session_path(temp.path(), "middle-rewrite");
-        let header = r#"{"type":"session","version":3,"id":"session-middle","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#;
-        let zero = assistant_line("middle", "2023-11-14T22:13:21Z", 0)
-            .replace(r#""output":2"#, r#""output":0"#)
-            .replace(r#""cacheRead":5"#, r#""cacheRead":0"#)
-            .replace(r#""cacheWrite":2"#, r#""cacheWrite":0"#);
-        let one = zero.replacen(r#""input":0,"output":0"#, r#""input":1,"output":0"#, 1);
-        let filler = serde_json::json!({
-            "type": "message",
-            "id": "filler",
-            "timestamp": "2023-11-14T22:13:22Z",
-            "message": {"role": "user", "content": "x".repeat(5000)}
-        })
-        .to_string();
-        write_lines(&path, &[header, &zero, &filler]);
-        let initial_size = fs::metadata(&path).expect("initial metadata").len();
-
-        let db = Database::memory()?;
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 0);
-        let previous_mtime = fs::metadata(&path)
-            .expect("previous metadata")
-            .modified()
-            .expect("previous mtime");
-
-        write_lines(&path, &[header, &one, &filler]);
         assert_eq!(
-            fs::metadata(&path).expect("rewrite metadata").len(),
-            initial_size
+            nodes.get("absolute-child"),
+            Some(&(
+                Some("parent".to_string()),
+                "parent".to_string(),
+                "child".to_string(),
+            ))
         );
-        set_modified(&path, previous_mtime + std::time::Duration::from_secs(2));
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        assert_eq!(
+            nodes.get("outside-child"),
+            Some(&(None, "outside-child".to_string(), "unknown".to_string()))
+        );
+        for session_id in ["self-child", "cycle-a", "cycle-b"] {
+            assert_eq!(
+                nodes.get(session_id),
+                Some(&(None, session_id.to_string(), "conflict".to_string()))
+            );
+        }
+        assert!(
+            !nodes.contains_key("external"),
+            "a parent path outside this scan must not be opened or imported"
+        );
         Ok(())
     }
 
@@ -1366,12 +1560,7 @@ mod tests {
         write_lines(&current, &[header, &eleven]);
         let correction = sync_pi_files(&db, std::slice::from_ref(&current));
         assert_eq!((correction.imported, correction.skipped), (0, 1));
-        let current_count: i64 = lock_conn!(db.conn).query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(current_count, 1);
+        assert_eq!(pi_raw_count(&db)?, 1);
 
         let without_id = ten.replace(r#""id":"stable","parentId":null,"#, "");
         let reordered = without_id.replace(
@@ -1391,12 +1580,7 @@ mod tests {
             (0, 1)
         );
 
-        let legacy_count: i64 = lock_conn!(legacy_db.conn).query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(legacy_count, 1);
+        assert_eq!(pi_raw_count(&legacy_db)?, 1);
         Ok(())
     }
 
@@ -1468,29 +1652,7 @@ mod tests {
         );
         set_modified(&path, preserved_mtime);
         assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
-        let count: i64 = lock_conn!(db.conn).query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(count, 4);
-        Ok(())
-    }
-
-    #[test]
-    fn oversized_file_is_reported_instead_of_silently_skipped() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = session_path(temp.path(), "oversized");
-        File::create(&path)
-            .expect("create sparse session")
-            .set_len(crate::session_manager::providers::pi::MAX_SESSION_BYTES + 1)
-            .expect("size sparse session");
-
-        let db = Database::memory()?;
-        let result = sync_pi_files(&db, std::slice::from_ref(&path));
-        assert_eq!(result.files_scanned, 1);
-        assert_eq!(result.errors.len(), 1);
-        assert!(result.errors[0].contains("安全上限"));
+        assert_eq!(pi_raw_count(&db)?, 4);
         Ok(())
     }
 }

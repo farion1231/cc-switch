@@ -50,10 +50,26 @@ pub enum PiSessionDiscovery {
     },
 }
 
+/// Native Pi metadata used by session usage accounting.  The parent path is
+/// intentionally retained as raw header evidence; callers must resolve it
+/// only against the set of files successfully parsed in the current scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PiSessionDescriptor {
+    pub session_id: String,
+    pub source_path: PathBuf,
+    pub parent_session: Option<String>,
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    pub project_dir: Option<String>,
+    pub created_at: Option<i64>,
+    pub last_active_at: Option<i64>,
+}
+
 #[derive(Debug)]
 struct SessionHeader {
     id: String,
     cwd: String,
+    parent_session: Option<String>,
     timestamp: Option<i64>,
     version: u64,
 }
@@ -318,13 +334,36 @@ fn layout_for_current_root(root: &Path) -> Result<SessionLayout, String> {
 }
 
 fn parse_session(path: &Path) -> Result<SessionMeta, String> {
-    let source = path
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve Pi session {}: {error}", path.display()))?;
-    let source_path = source
+    let descriptor = describe_session_file(path)?;
+    let source_path = descriptor
+        .source_path
         .to_str()
         .ok_or_else(|| "Pi session path is not valid UTF-8".to_string())?
         .to_string();
+    Ok(SessionMeta {
+        provider_id: PROVIDER_ID.to_string(),
+        usage_session_id: Some(descriptor.session_id.clone()),
+        session_id: descriptor.session_id,
+        title: descriptor.title,
+        summary: descriptor.summary,
+        project_dir: descriptor.project_dir,
+        created_at: descriptor.created_at,
+        last_active_at: descriptor.last_active_at,
+        source_path: Some(source_path.clone()),
+        resume_command: Some(format!(
+            "pi --session {}",
+            crate::session_manager::terminal::shell_escape(&source_path)
+        )),
+    })
+}
+
+/// Parse one candidate Pi session into durable accounting metadata.  The
+/// caller owns discovery; this helper never follows `parentSession` or reads
+/// a path named by the header.
+pub(crate) fn describe_session_file(path: &Path) -> Result<PiSessionDescriptor, String> {
+    let source = path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve Pi session {}: {error}", path.display()))?;
     let SessionTree {
         header, summary, ..
     } = read_tree(&source)?;
@@ -341,19 +380,15 @@ fn parse_session(path: &Path) -> Result<SessionMeta, String> {
         .as_deref()
         .map(|message| truncate_summary(message, 160))
         .filter(|message| !message.is_empty());
-    Ok(SessionMeta {
-        provider_id: PROVIDER_ID.to_string(),
+    Ok(PiSessionDescriptor {
         session_id: header.id,
+        source_path: source,
+        parent_session: header.parent_session,
         title,
         summary: summary_text,
         project_dir: (!header.cwd.trim().is_empty()).then(|| header.cwd.clone()),
         created_at: header.timestamp,
         last_active_at: summary.last_active_at.or(header.timestamp),
-        source_path: Some(source_path.clone()),
-        resume_command: Some(format!(
-            "pi --session {}",
-            crate::session_manager::terminal::shell_escape(&source_path)
-        )),
     })
 }
 
@@ -582,6 +617,12 @@ fn parse_header(value: &Value) -> Result<SessionHeader, String> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        parent_session: value
+            .get("parentSession")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string),
         timestamp: value.get("timestamp").and_then(parse_timestamp_to_ms),
         version,
     })
