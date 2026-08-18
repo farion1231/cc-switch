@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::config::{get_home_dir, write_text_file};
+use crate::config::{delete_file, get_home_dir, write_text_file};
 use crate::error::AppError;
 use crate::provider::Provider;
 
@@ -387,6 +387,17 @@ pub fn write_grok_provider_live(provider: &Provider) -> Result<(), AppError> {
     // 切换流程重新补写。非官方供应商必须携带完整的自定义模型配置。
     if provider.category.as_deref() != Some("official") {
         validate_config_toml(config)?;
+
+        // 非官方（自定义）供应商应通过 config.toml 的 `api_key` / `env_key`
+        // 认证，而不是 grok.com 官方登录。若 ~/.grok/auth.json 残留了官方
+        // OIDC 会话（例如用户之前 `grok login` 过官方账号，或 grok CLI 在
+        // 一次 401 后自动触发 auth recovery 登录了官方），grok CLI 会把官方
+        // token 一起发给第三方 base_url，导致 401 Invalid token。
+        // 这里在切到非官方供应商时清掉官方会话，杜绝该冲突。
+        // 删除失败只降级为 warn，不阻断切换（config.toml 写入仍是主交付物）。
+        if let Err(error) = delete_file(&get_grok_config_dir().join("auth.json")) {
+            log::warn!("failed to clear official grok login (~/.grok/auth.json) while switching to a custom provider: {error}");
+        }
     }
 
     write_grok_live_settings(&json!({ "config": config }))
@@ -679,6 +690,80 @@ context_window = 500000
                 .get("config")
                 .and_then(Value::as_str),
             Some(valid_config())
+        );
+
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    /// Seed a fake official grok login into the test grok dir, mirroring the
+    /// real `~/.grok/auth.json` shape (a scope -> entry map).
+    fn seed_official_auth(dir: &std::path::Path) {
+        let auth_path = dir.join(".grok").join("auth.json");
+        std::fs::create_dir_all(auth_path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(
+            &auth_path,
+            r#"{"https://auth.x.ai::client-123":{"auth_mode":"oidc","email":"test@example.com"}}"#,
+        )
+        .expect("write auth.json");
+    }
+
+    #[test]
+    #[serial]
+    fn switching_to_custom_provider_clears_official_auth() {
+        let temp = TempDir::new().expect("temp dir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        seed_official_auth(temp.path());
+
+        let custom = Provider::with_id(
+            "custom".to_string(),
+            "Custom".to_string(),
+            json!({ "config": valid_config() }),
+            None,
+        );
+        write_grok_provider_live(&custom).expect("write custom live config");
+
+        let auth_path = temp.path().join(".grok").join("auth.json");
+        assert!(
+            !auth_path.exists(),
+            "switching to a custom provider must clear the official grok login"
+        );
+        // config.toml itself is still written (primary deliverable)
+        assert_eq!(
+            fs::read_to_string(get_grok_config_path()).expect("read config"),
+            valid_config()
+        );
+
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn switching_to_official_provider_keeps_auth() {
+        let temp = TempDir::new().expect("temp dir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        seed_official_auth(temp.path());
+
+        let mut official = Provider::with_id(
+            "grokbuild-official".to_string(),
+            "Grok Official".to_string(),
+            json!({ "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        write_grok_provider_live(&official).expect("write official live config");
+
+        let auth_path = temp.path().join(".grok").join("auth.json");
+        assert!(
+            auth_path.exists(),
+            "switching to the official provider must NOT clear the official grok login"
         );
 
         match original_test_home {
