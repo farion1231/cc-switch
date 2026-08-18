@@ -220,7 +220,10 @@ jobs:
                   $artifact.executable
                 }
               }
-            } | Select-Object -First 1
+            } | Select-Object -First 1 -Wait
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
           if (-not $testBinary) {
             throw "cc_switch_lib test binary not found in cargo compiler artifacts"
           }
