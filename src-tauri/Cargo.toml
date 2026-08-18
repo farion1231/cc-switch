@@ -99,6 +99,9 @@ rquickjs = { version = "0.8", features = ["bindgen"] }
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-cli = "2"
+
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]
 codegen-units = 1
