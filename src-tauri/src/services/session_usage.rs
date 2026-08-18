@@ -491,14 +491,21 @@ fn sync_claude_files(db: &Database, projects_dir: &Path) -> Result<SessionSyncRe
     }
 
     let normalized_nodes = normalize_session_relations(&claims)?;
-    if normalized_nodes.len() != files.len() {
-        return Err(AppError::InvalidInput(
-            "Claude relation normalizer returned a mismatched batch".into(),
-        ));
-    }
+    let normalized_by_identity: HashMap<(String, String), NormalizedSessionNode> = normalized_nodes
+        .into_iter()
+        .map(|node| ((node.app_type.clone(), node.session_id.clone()), node))
+        .collect();
 
-    for ((file_path, identity), node) in files.iter().zip(normalized_nodes.iter()) {
+    for (file_path, identity) in &files {
         result.files_scanned += 1;
+        let node = normalized_by_identity
+            .get(&(identity.claim.app_type.clone(), identity.session_id.clone()))
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "Claude relation normalizer omitted {}:{}",
+                    identity.claim.app_type, identity.session_id
+                ))
+            })?;
 
         match sync_single_file_with_context(db, file_path, Some(identity), Some(node)) {
             Ok((imported, skipped)) => {
@@ -1614,6 +1621,40 @@ mod tests {
         assert_eq!(repeat_raw_count, 1);
 
         drop(conn);
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_claude_session_files_reuse_normalized_node() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = tempdir().expect("tempdir");
+        let projects = tmp.path().join("projects");
+        let project = projects.join("fixture-project");
+        fs::create_dir_all(&project).unwrap();
+        for (file_name, message_id) in
+            [("copy-a.jsonl", "message-a"), ("copy-b.jsonl", "message-b")]
+        {
+            let line = format!(
+                "{{\"type\":\"assistant\",\"sessionId\":\"copied-session\",\"timestamp\":\"1970-01-01T00:16:45Z\",\"message\":{{\"id\":\"{message_id}\",\"model\":\"fixture-unknown\",\"usage\":{{\"input_tokens\":10,\"output_tokens\":2,\"cache_read_input_tokens\":1,\"cache_creation_input_tokens\":0}},\"stop_reason\":\"end_turn\"}}}}\n"
+            );
+            fs::write(project.join(file_name), line).unwrap();
+        }
+
+        let result = sync_claude_files(&db, &projects)?;
+        assert_eq!(result.files_scanned, 2);
+        assert!(
+            result.errors.is_empty(),
+            "unexpected errors: {:?}",
+            result.errors
+        );
+        let conn = lock_conn!(db.conn);
+        let node_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_session_nodes
+             WHERE app_type = 'claude' AND session_id = 'copied-session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(node_count, 1);
         Ok(())
     }
 
