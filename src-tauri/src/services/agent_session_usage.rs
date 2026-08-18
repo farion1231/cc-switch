@@ -2429,6 +2429,12 @@ fn query_task_roots(
                     root_node.node_kind, root_node.relation_confidence,
                     root_node.title, root_node.project_dir,
                     root_node.created_at, root_node.last_active_at,
+                    CASE
+                        WHEN COALESCE(root_node.last_active_at, root_node.created_at, 0)
+                             > 100000000000
+                        THEN COALESCE(root_node.last_active_at, root_node.created_at, 0) / 1000
+                        ELSE COALESCE(root_node.last_active_at, root_node.created_at, 0)
+                    END AS sort_timestamp,
                     COUNT(DISTINCT CASE
                         WHEN child.node_kind = 'child'
                          AND child.root_session_id = c.root_session_id
@@ -2448,9 +2454,10 @@ fn query_task_roots(
                       root_node.last_active_at
          )
          SELECT app_type, root_session_id, descendant_count,
+                sort_timestamp,
                 COUNT(*) OVER () AS total_count
          FROM filtered
-         ORDER BY COALESCE(last_active_at, created_at, 0) DESC,
+         ORDER BY sort_timestamp DESC,
                   app_type ASC, root_session_id ASC
          LIMIT ? OFFSET ?",
         node_filter = if has_text_filter {
@@ -3014,8 +3021,18 @@ mod tests {
         input: i64,
         output: i64,
     ) -> NormalizedUsageRollupFact {
+        query_rollup_for_app("claude", session_id, date, input, output)
+    }
+
+    fn query_rollup_for_app(
+        app_type: &str,
+        session_id: &str,
+        date: &str,
+        input: i64,
+        output: i64,
+    ) -> NormalizedUsageRollupFact {
         let mut fact = UsageSourceSpec::new(
-            "claude",
+            app_type,
             "provider",
             "query_fixture",
             UsagePrecision::RequestExact,
@@ -3032,6 +3049,51 @@ mod tests {
         fact.first_event_at = Some(1_000);
         fact.last_event_at = Some(2_000);
         fact
+    }
+
+    #[test]
+    fn task_roots_sort_mixed_second_and_millisecond_timestamps() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut seconds = query_node("claude", "seconds-root", None);
+        seconds.created_at = Some(1_700_000_000);
+        seconds.last_active_at = Some(1_800_000_000);
+        let mut millis = query_node("hermes", "millis-root", None);
+        millis.created_at = Some(1_700_000_000_000);
+        millis.last_active_at = Some(1_700_000_000_000);
+        db.upsert_agent_session_node(&seconds)?;
+        db.upsert_agent_session_node(&millis)?;
+        db.upsert_agent_session_usage_rollup_fact(&query_rollup_for_app(
+            "claude",
+            "seconds-root",
+            "2026-08-13",
+            10,
+            1,
+        ))?;
+        db.upsert_agent_session_usage_rollup_fact(&query_rollup_for_app(
+            "hermes",
+            "millis-root",
+            "2026-08-13",
+            20,
+            2,
+        ))?;
+
+        let first = list_agent_task_usage(&db, &AgentTaskUsageFilter::default())?;
+        assert_eq!(first.items[0].app_type, "claude");
+        assert_eq!(first.items[0].session_id, "seconds-root");
+
+        let repeated = list_agent_task_usage(&db, &AgentTaskUsageFilter::default())?;
+        let first_ids: Vec<_> = first
+            .items
+            .iter()
+            .map(|item| (&item.app_type, &item.session_id))
+            .collect();
+        let repeated_ids: Vec<_> = repeated
+            .items
+            .iter()
+            .map(|item| (&item.app_type, &item.session_id))
+            .collect();
+        assert_eq!(first_ids, repeated_ids);
+        Ok(())
     }
 
     #[test]

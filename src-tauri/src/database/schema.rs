@@ -373,15 +373,18 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         // Keep fresh database creation and the only supported v17 -> v18
-        // migration on one final DDL definition. This prevents a new install
-        // from silently receiving a schema variant that migration users do
-        // not receive.
-        Self::create_agent_session_usage_tables_on_conn(conn)?;
+        // migration on one final DDL definition. Existing pre-v18 databases
+        // must not receive these objects before the migration savepoint; doing
+        // so would make a failed migration leave a partial v18 schema behind.
+        let version = Self::get_user_version(conn)?;
+        if version == 0 || version == SCHEMA_VERSION {
+            Self::create_agent_session_usage_tables_on_conn(conn)?;
 
-        // Codex replay staging tables.  A replay writes here first and publishes
-        // the complete generation atomically, so readers never observe a
-        // partially rebuilt set of nodes, rollups, or coverage markers.
-        Self::create_codex_replay_tables_on_conn(conn)?;
+            // Codex replay staging tables. A replay writes here first and
+            // publishes the complete generation atomically, so readers never
+            // observe a partially rebuilt set of nodes, rollups, or coverage.
+            Self::create_codex_replay_tables_on_conn(conn)?;
+        }
 
         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
@@ -3447,6 +3450,33 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+
+    struct TestHomeGuard {
+        previous_test_home: Option<std::ffi::OsString>,
+        _temp_dir: tempfile::TempDir,
+    }
+
+    impl TestHomeGuard {
+        fn new() -> Self {
+            let temp_dir = tempfile::tempdir().expect("create isolated test home");
+            let previous_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp_dir.path());
+            Self {
+                previous_test_home,
+                _temp_dir: temp_dir,
+            }
+        }
+    }
+
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match self.previous_test_home.as_ref() {
+                Some(previous) => std::env::set_var("CC_SWITCH_TEST_HOME", previous),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     const V18_SESSION_USAGE_OBJECTS: &str = "DROP INDEX IF EXISTS idx_agent_session_nodes_root;
          DROP INDEX IF EXISTS idx_agent_session_nodes_parent;
@@ -3737,6 +3767,12 @@ mod tests {
         )?;
         Database::set_user_version(&conn, 17)?;
 
+        // Startup calls create_tables before applying migrations. On a real
+        // v17 database that call must not materialize any v18 object early.
+        Database::create_tables_on_conn(&conn)?;
+        assert!(!Database::table_exists(&conn, "agent_session_nodes")?);
+        assert!(!Database::table_exists(&conn, "codex_replay_sync")?);
+
         Database::apply_schema_migrations_on_conn(&conn)?;
 
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
@@ -3769,6 +3805,10 @@ mod tests {
         )?;
         Database::set_user_version(&conn, 17)?;
 
+        Database::create_tables_on_conn(&conn)?;
+        assert!(!Database::table_exists(&conn, "agent_session_nodes")?);
+        assert!(!Database::table_exists(&conn, "codex_replay_sync")?);
+
         let error = Database::apply_schema_migrations_on_conn(&conn)
             .expect_err("conflicting index name should fail v18 migration");
         assert!(
@@ -3796,6 +3836,51 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(provider_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn init_backups_v17_before_creating_v18_objects() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db_dir = crate::config::get_app_config_dir();
+        std::fs::create_dir_all(&db_dir).map_err(|e| AppError::io(&db_dir, e))?;
+        let db_path = db_dir.join("cc-switch.db");
+        {
+            let conn = Connection::open(&db_path)?;
+            Database::create_tables_on_conn(&conn)?;
+            drop_v18_session_usage_objects(&conn)?;
+            Database::set_user_version(&conn, 17)?;
+        }
+
+        let db = Database::init()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            assert_eq!(Database::get_user_version(&conn)?, 18);
+            assert!(Database::table_exists(&conn, "agent_session_nodes")?);
+        }
+        drop(db);
+
+        let backup_dir = db_dir.join("backups");
+        let mut found_v17_backup = false;
+        for entry in std::fs::read_dir(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))? {
+            let path = entry.map_err(|e| AppError::io(&backup_dir, e))?.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("db") {
+                continue;
+            }
+            let conn = Connection::open(&path)?;
+            if Database::get_user_version(&conn)? == 17
+                && !Database::table_exists(&conn, "agent_session_nodes")?
+                && !Database::table_exists(&conn, "codex_replay_sync")?
+            {
+                found_v17_backup = true;
+                break;
+            }
+        }
+        assert!(
+            found_v17_backup,
+            "startup should retain a pre-migration v17 backup without v18 objects"
+        );
         Ok(())
     }
 

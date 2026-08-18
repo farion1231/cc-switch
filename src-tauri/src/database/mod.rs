@@ -122,25 +122,25 @@ impl Database {
         }
         register_db_change_hook(&conn);
 
+        // Read the version before any application DDL runs.  The backup must
+        // represent the user's actual pre-migration database, not a partially
+        // materialized current schema.
+        let initial_version = Self::get_user_version(&conn)?;
         let db = Self {
             conn: Mutex::new(conn),
         };
-        db.create_tables()?;
 
-        // Pre-migration backup: only when upgrading from an existing database
-        {
-            let conn = lock_conn!(db.conn);
-            let version = Self::get_user_version(&conn)?;
-            drop(conn);
-            if version > 0 && version < SCHEMA_VERSION {
-                log::info!(
-                    "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
-                );
-                if let Err(e) = db.backup_database_file() {
-                    log::warn!("Pre-migration backup failed, continuing migration: {e}");
-                }
+        // Pre-migration backup: only when upgrading from an existing database.
+        if initial_version > 0 && initial_version < SCHEMA_VERSION {
+            log::info!(
+                "Creating pre-migration database backup (v{initial_version} → v{SCHEMA_VERSION})"
+            );
+            if let Err(e) = db.backup_database_file() {
+                log::warn!("Pre-migration backup failed, continuing migration: {e}");
             }
         }
+
+        db.create_tables()?;
 
         db.apply_schema_migrations()?;
         if let Err(e) = db.ensure_incremental_auto_vacuum() {
