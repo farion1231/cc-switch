@@ -49,6 +49,32 @@ impl GeminiToolCallMeta {
     }
 }
 
+/// When Gemini returns parallel `functionCall` parts in a single response, only
+/// the first part (position 0) carries the `thoughtSignature`.  All N calls in
+/// the batch must replay the signature on the next turn, otherwise Gemini 3.5
+/// returns:
+///
+///   `400 Function call is missing a thought_signature in functionCall parts.
+///    Additional data, function call …, position N.`
+///
+/// This function finds the shared signature from whichever call in the batch
+/// holds it and copies it to every call that lacks one.  It is safe to call
+/// even when only a single call is present (no-op) or when no call has a
+/// signature (no-op).
+pub fn propagate_parallel_thought_signatures(calls: &mut Vec<GeminiToolCallMeta>) {
+    let shared_sig = calls
+        .iter()
+        .find_map(|c| c.thought_signature.clone());
+    if let Some(sig) = shared_sig {
+        for call in calls.iter_mut() {
+            if call.thought_signature.is_none() {
+                call.thought_signature = Some(sig.clone());
+            }
+        }
+    }
+}
+
+
 /// Stored assistant turn snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeminiAssistantTurn {
@@ -395,5 +421,44 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(store.get_session("provider-a", "session-2").is_none());
         assert!(store.get_session("provider-b", "session-3").is_some());
+    }
+
+    /// Regression test for L-0262: parallel functionCalls missing thoughtSignature on position 2+.
+    ///
+    /// Gemini 3.5 Flash returns N parallel functionCall parts but only position 0 carries
+    /// thoughtSignature.  All N parts must replay the signature on the next turn.
+    #[test]
+    fn propagate_parallel_thought_signatures_fills_missing_sig() {
+        let mut calls = vec![
+            GeminiToolCallMeta::new(Some("id-1"), "Read", json!({}), Some("sig-abc")),
+            GeminiToolCallMeta::new(Some("id-2"), "Write", json!({}), None::<String>),
+            GeminiToolCallMeta::new(Some("id-3"), "List", json!({}), None::<String>),
+        ];
+        propagate_parallel_thought_signatures(&mut calls);
+        assert_eq!(calls[0].thought_signature.as_deref(), Some("sig-abc"));
+        assert_eq!(calls[1].thought_signature.as_deref(), Some("sig-abc"),
+            "position-2 call must receive the shared thought_signature");
+        assert_eq!(calls[2].thought_signature.as_deref(), Some("sig-abc"),
+            "position-3 call must receive the shared thought_signature");
+    }
+
+    #[test]
+    fn propagate_parallel_thought_signatures_noop_when_no_sig() {
+        let mut calls = vec![
+            GeminiToolCallMeta::new(Some("id-1"), "Read", json!({}), None::<String>),
+            GeminiToolCallMeta::new(Some("id-2"), "Write", json!({}), None::<String>),
+        ];
+        propagate_parallel_thought_signatures(&mut calls);
+        assert!(calls[0].thought_signature.is_none());
+        assert!(calls[1].thought_signature.is_none());
+    }
+
+    #[test]
+    fn propagate_parallel_thought_signatures_noop_single_call() {
+        let mut calls = vec![
+            GeminiToolCallMeta::new(Some("id-1"), "Read", json!({}), Some("sig-xyz")),
+        ];
+        propagate_parallel_thought_signatures(&mut calls);
+        assert_eq!(calls[0].thought_signature.as_deref(), Some("sig-xyz"));
     }
 }
