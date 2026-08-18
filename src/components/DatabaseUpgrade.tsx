@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { exit } from "@tauri-apps/plugin-process";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Database,
   Download,
@@ -289,7 +289,7 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
           <Button
             variant="ghost"
             className="ml-auto text-muted-foreground"
-            onClick={() => void exit(0)}
+            onClick={() => void getCurrentWindow().close()}
             disabled={phase === "updating"}
           >
             {t("dbUpgrade.quit", "退出")}
