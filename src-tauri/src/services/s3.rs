@@ -39,6 +39,7 @@ fn is_aws_endpoint(endpoint: &str) -> bool {
 /// Returns `true` for Alibaba Cloud OSS endpoints, which require virtual-hosted style.
 fn is_aliyun_oss_endpoint(endpoint: &str) -> bool {
     let (_, host) = split_scheme_host(endpoint);
+    let host = host.to_ascii_lowercase();
     host.ends_with(".aliyuncs.com")
         && (host.starts_with("oss-") || host.starts_with("s3.oss-"))
 }
@@ -603,6 +604,19 @@ mod tests {
         assert_eq!(
             build_object_url(&creds, "cc-switch-sync/config.json"),
             "https://cc-switch-phil.oss-cn-beijing.aliyuncs.com/cc-switch-sync/config.json"
+        );
+    }
+
+    #[test]
+    fn build_object_url_virtual_hosted_style_aliyun_oss_case_insensitive() {
+        let creds = test_creds(
+            "https://OSS-CN-BEIJING.ALIYUNCS.COM",
+            "cn-beijing",
+            "cc-switch-phil",
+        );
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/config.json"),
+            "https://cc-switch-phil.OSS-CN-BEIJING.ALIYUNCS.COM/cc-switch-sync/config.json"
         );
     }
 
