@@ -13,8 +13,18 @@ import type {
   ProviderLimitStatus,
   PaginatedLogs,
   SessionSyncResult,
+  RebuildAgentSessionUsageRequest,
+  RebuildAgentSessionUsageResult,
   DataSourceSummary,
+  AgentSessionUsageRequest,
+  AgentSessionUsageSummary,
+  AgentTaskUsageFilter,
+  AgentTaskUsageFilterOptions,
+  AgentTaskUsageFilterOptionsRequest,
+  AgentTaskUsagePage,
+  AgentUsageCapability,
 } from "@/types/usage";
+import { AGENT_TASK_USAGE_DEFAULT_LIMIT } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
@@ -207,7 +217,51 @@ export const usageApi = {
     return invoke("rebuild_codex_usage");
   },
 
+  rebuildAgentSessionUsage: async (
+    request: RebuildAgentSessionUsageRequest,
+  ): Promise<RebuildAgentSessionUsageResult> => {
+    return invoke("rebuild_agent_session_usage", { request });
+  },
+
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
     return invoke("get_usage_data_sources");
+  },
+
+  /**
+   * Get one canonical root/session summary.  The request is intentionally
+   * nested under `request` to match the Tauri command DTO exactly.
+   */
+  getAgentSessionUsage: async (
+    request: AgentSessionUsageRequest,
+  ): Promise<AgentSessionUsageSummary> => {
+    return invoke("get_agent_session_usage", { request });
+  },
+
+  /**
+   * List root/standalone tasks.  Pagination defaults mirror the Rust DTO so
+   * callers cannot accidentally issue an unbounded page while still keeping
+   * all filters in one `filter` envelope.
+   */
+  listAgentTaskUsage: async (
+    filter: AgentTaskUsageFilter = {},
+  ): Promise<AgentTaskUsagePage> => {
+    const normalizedFilter: AgentTaskUsageFilter = {
+      ...filter,
+      limit: filter.limit ?? AGENT_TASK_USAGE_DEFAULT_LIMIT,
+      offset: filter.offset ?? 0,
+    };
+    return invoke("list_agent_task_usage", { filter: normalizedFilter });
+  },
+
+  /** Get complete native title/project candidates for the selected scope. */
+  getAgentTaskUsageFilterOptions: async (
+    request: AgentTaskUsageFilterOptionsRequest = {},
+  ): Promise<AgentTaskUsageFilterOptions> => {
+    return invoke("get_agent_task_usage_filter_options", { request });
+  },
+
+  /** Get the backend-authoritative capability registry for all managed apps. */
+  getAgentUsageCapabilities: async (): Promise<AgentUsageCapability[]> => {
+    return invoke("get_agent_usage_capabilities", {});
   },
 };

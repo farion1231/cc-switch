@@ -264,6 +264,43 @@ describe("SessionManagerPage", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
   });
 
+  it("uses Hermes usageSessionId while retaining the raw session identity", async () => {
+    setSessionFixtures(
+      [
+        {
+          providerId: "hermes",
+          sessionId: "raw-hermes-session",
+          usageSessionId: "hermes-usage-window",
+          title: "Hermes Session",
+          summary: "Hermes summary",
+          projectDir: "/mock/hermes",
+          createdAt: 2,
+          lastActiveAt: 20,
+          sourcePath: "/mock/hermes/session.jsonl",
+        },
+      ],
+      {
+        "hermes:/mock/hermes/session.jsonl": [
+          { role: "user", content: "raw Hermes message", ts: 20 },
+        ],
+      },
+    );
+
+    renderPage("hermes");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Hermes Session" }),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("session-usage-summary")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("session-usage-total-tokens"),
+      ).toHaveTextContent("20");
+    });
+  });
+
   it("removes a deleted session from filtered search results", async () => {
     renderPage();
 
