@@ -17,6 +17,100 @@ const requiredPaths = [
   "prompts.searchPlaceholder",
   "prompts.searchAriaLabel",
   "prompts.noSearchResults",
+  "sessionManager.usagePrecisionRequest",
+  "sessionManager.usagePrecisionSession",
+  "sessionManager.usagePrecisionSyncWindow",
+  "sessionManager.usagePrecisionEstimated",
+  "sessionManager.usagePrecisionUnavailable",
+  "sessionManager.usageHttpRequests",
+  "sessionManager.usageAssistantMessages",
+  "sessionManager.usageAgentCalls",
+  "sessionManager.usageUsageEvents",
+  "sessionManager.usageEventsUnavailable",
+  "sessionManager.usageTokens",
+  "sessionManager.usageCost",
+  "sessionManager.usageEvents",
+  "sessionManager.usagePrecision",
+  "sessionManager.usageSyncWindowHint",
+  "sessionManager.usageLoadFailed",
+  "sessionManager.usageUnavailable",
+  "sessionManager.usageUnavailableShort",
+  "sessionManager.usagePartial",
+  "sessionManager.usageLoading",
+  "sessionManager.usageTaskTotal",
+  "sessionManager.usageSelf",
+  "sessionManager.usageDescendants",
+  "sessionManager.usageSyncWindow",
+  "sessionManager.usagePartialHint",
+  "sessionManager.usageDataDetails",
+  "sessionManager.usageDataDetailsClose",
+  "sessionManager.usageSessionTimeHint",
+  "sessionManager.usageTimeUnavailableHint",
+  "usage.taskView",
+  "usage.appFilter.claude",
+  "usage.appFilter.claudeDesktop",
+  "usage.appFilter.codex",
+  "usage.appFilter.gemini",
+  "usage.appFilter.grokbuild",
+  "usage.appFilter.opencode",
+  "usage.appFilter.openclaw",
+  "usage.appFilter.hermes",
+  "usage.appFilter.pi",
+  "usage.task.agent",
+  "usage.task.allAgents",
+  "usage.task.capabilitiesUnavailable",
+  "usage.task.clearFilter",
+  "usage.task.loadingOptions",
+  "usage.task.count",
+  "usage.task.count.httpRequest",
+  "usage.task.count.assistantMessage",
+  "usage.task.count.agentCall",
+  "usage.task.count.usageEvent",
+  "usage.task.count.unavailable",
+  "usage.task.dataStatus",
+  "usage.task.descendants",
+  "usage.task.empty",
+  "usage.task.loadError",
+  "usage.task.filterOptionsUnavailable",
+  "usage.task.noMeasure",
+  "usage.task.noPages",
+  "usage.task.pageSize",
+  "usage.task.pageSummary",
+  "usage.task.partial",
+  "usage.task.project",
+  "usage.task.projectDir",
+  "usage.task.refreshing",
+  "usage.task.searchProject",
+  "usage.task.searchProjectDir",
+  "usage.task.searchTitle",
+  "usage.task.selectProject",
+  "usage.task.selectTitle",
+  "usage.task.self",
+  "usage.task.status.available",
+  "usage.task.status.partial",
+  "usage.task.status.unavailable",
+  "usage.task.task",
+  "usage.task.title",
+  "usage.task.titleUnavailable",
+  "usage.task.total",
+  "usage.task.totalRecords",
+  "usage.task.unavailable",
+  "usage.task.viewBreakdown",
+  "usage.task.dataDetails",
+  "usage.task.dataDetailsClose",
+  "usage.task.partialHint",
+  "usage.task.syncWindowHint",
+  "usage.task.sessionTimeHint",
+  "usage.task.timeUnavailableHint",
+  "usage.task.precision.requestExact",
+  "usage.task.precision.sessionExact",
+  "usage.task.precision.syncWindowDelta",
+  "usage.task.precision.estimated",
+  "usage.task.precision.unavailable",
+  "usage.task.time.event",
+  "usage.task.time.session",
+  "usage.task.time.syncWindow",
+  "usage.task.time.unavailable",
 ] as const;
 
 type Locale = Record<string, unknown>;
@@ -29,10 +123,22 @@ const locales = [
 ] as const;
 
 function getTranslation(locale: Locale, path: string): unknown {
-  return path.split(".").reduce<unknown>((value, key) => {
+  const parts = path.split(".");
+  let value: unknown = locale;
+
+  for (let index = 0; index < parts.length; index += 1) {
     if (!value || typeof value !== "object") return undefined;
-    return (value as Record<string, unknown>)[key];
-  }, locale);
+
+    const record = value as Record<string, unknown>;
+    const remainingPath = parts.slice(index).join(".");
+    if (Object.prototype.hasOwnProperty.call(record, remainingPath)) {
+      return record[remainingPath];
+    }
+
+    value = record[parts[index]];
+  }
+
+  return value;
 }
 
 function interpolationVariables(value: string): string[] {

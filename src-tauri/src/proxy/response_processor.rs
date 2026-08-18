@@ -493,7 +493,7 @@ pub(crate) fn create_usage_collector(
     let start_time = ctx.start_time;
     let stream_parser = parser_config.stream_parser;
     let model_extractor = parser_config.model_extractor;
-    let session_id = ctx.session_id.clone();
+    let session_id = ctx.usage_session_id.clone();
 
     Some(SseUsageCollector::new(
         start_time,
@@ -522,7 +522,7 @@ pub(crate) fn create_usage_collector(
                         first_token_ms,
                         true, // is_streaming
                         status_code,
-                        Some(session_id),
+                        session_id,
                     )
                     .await;
                 });
@@ -548,7 +548,7 @@ pub(crate) fn create_usage_collector(
                         first_token_ms,
                         true, // is_streaming
                         status_code,
-                        Some(session_id),
+                        session_id,
                     )
                     .await;
                 });
@@ -586,7 +586,7 @@ fn spawn_log_usage(
         .clone()
         .unwrap_or_else(|| ctx.request_model.clone());
     let latency_ms = ctx.latency_ms();
-    let session_id = ctx.session_id.clone();
+    let session_id = ctx.usage_session_id.clone();
 
     tokio::spawn(async move {
         log_usage_internal(
@@ -601,7 +601,7 @@ fn spawn_log_usage(
             None,
             is_streaming,
             status_code,
-            Some(session_id),
+            session_id,
         )
         .await;
     });

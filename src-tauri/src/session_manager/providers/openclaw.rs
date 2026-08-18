@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::openclaw_config::get_openclaw_dir;
+use crate::openclaw_config::{canonical_openclaw_session_id, get_openclaw_dir};
 use crate::{
     config::write_json_file,
     session_manager::{SessionMessage, SessionMeta},
@@ -29,6 +29,10 @@ fn strip_message_id_suffix(text: &str) -> &str {
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let agents_dir = get_openclaw_dir().join("agents");
+    scan_sessions_from_agents_dir(&agents_dir)
+}
+
+fn scan_sessions_from_agents_dir(agents_dir: &Path) -> Vec<SessionMeta> {
     if !agents_dir.exists() {
         return Vec::new();
     }
@@ -36,7 +40,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     let mut sessions = Vec::new();
 
     // Traverse each agent directory
-    let agent_entries = match std::fs::read_dir(&agents_dir) {
+    let agent_entries = match std::fs::read_dir(agents_dir) {
         Ok(entries) => entries,
         Err(_) => return sessions,
     };
@@ -46,6 +50,14 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         if !agent_path.is_dir() {
             continue;
         }
+        let Some(agent_id) = agent_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
 
         let sessions_dir = agent_path.join("sessions");
         if !sessions_dir.is_dir() {
@@ -65,7 +77,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
                 continue;
             }
 
-            if let Some(meta) = parse_session(&path, Some(&display_names)) {
+            if let Some(meta) = parse_session(&path, Some(&display_names), Some(agent_id)) {
                 sessions.push(meta);
             }
         }
@@ -123,7 +135,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
-    let meta = parse_session(path, None).ok_or_else(|| {
+    let meta = parse_session(path, None, None).ok_or_else(|| {
         format!(
             "Failed to parse OpenClaw session metadata: {}",
             path.display()
@@ -183,6 +195,7 @@ fn load_display_names(sessions_dir: &Path) -> HashMap<String, String> {
 fn parse_session(
     path: &Path,
     display_names: Option<&HashMap<String, String>>,
+    agent_id: Option<&str>,
 ) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
 
@@ -252,17 +265,7 @@ fn parse_session(
     }
 
     // Extract last_active_at from tail lines (reverse order)
-    let mut last_active_at: Option<i64> = None;
-    for line in tail.iter().rev() {
-        let value: Value = match serde_json::from_str(line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-        if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
-            last_active_at = Some(ts);
-            break;
-        }
-    }
+    let last_active_at = last_activity_from_tail(&tail);
 
     // Fall back to filename as session ID
     let session_id = session_id.or_else(|| {
@@ -289,6 +292,8 @@ fn parse_session(
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
+        usage_session_id: agent_id
+            .and_then(|agent_id| canonical_openclaw_session_id(agent_id, &session_id)),
         title,
         summary,
         project_dir: cwd,
@@ -296,6 +301,19 @@ fn parse_session(
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: None, // OpenClaw sessions are gateway-managed, no CLI resume
+    })
+}
+
+pub(crate) fn last_activity_at(path: &Path) -> Option<i64> {
+    let (_, tail) = read_head_tail_lines(path, 0, 30).ok()?;
+    last_activity_from_tail(&tail)
+}
+
+fn last_activity_from_tail(tail: &[String]) -> Option<i64> {
+    tail.iter().rev().find_map(|line| {
+        serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|value| value.get("timestamp").and_then(parse_timestamp_to_ms))
     })
 }
 
@@ -343,6 +361,34 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn scan_sessions_exposes_agent_scoped_usage_identity() {
+        let temp = tempdir().expect("tempdir");
+        let agents_dir = temp.path().join("agents");
+        for agent_id in ["alpha", "beta"] {
+            let sessions_dir = agents_dir.join(agent_id).join("sessions");
+            std::fs::create_dir_all(&sessions_dir).expect("create sessions directory");
+            std::fs::write(
+                sessions_dir.join("shared.jsonl"),
+                "{\"type\":\"session\",\"id\":\"shared\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+            )
+            .expect("write session");
+        }
+
+        let mut identities = scan_sessions_from_agents_dir(&agents_dir)
+            .into_iter()
+            .map(|session| (session.session_id, session.usage_session_id))
+            .collect::<Vec<_>>();
+        identities.sort();
+        assert_eq!(
+            identities,
+            vec![
+                ("shared".into(), Some("alpha:shared".into())),
+                ("shared".into(), Some("beta:shared".into())),
+            ]
+        );
+    }
+
+    #[test]
     fn parse_session_uses_first_user_message_as_title() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session-abc.jsonl");
@@ -356,7 +402,7 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path, None).unwrap();
+        let meta = parse_session(&path, None, None).unwrap();
         assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
     }
 
@@ -387,7 +433,7 @@ mod tests {
         .expect("write index");
 
         let display_names = load_display_names(sessions_dir);
-        let meta = parse_session(&path, Some(&display_names)).unwrap();
+        let meta = parse_session(&path, Some(&display_names), None).unwrap();
         assert_eq!(meta.title.as_deref(), Some("重构登录模块"));
     }
 
@@ -404,7 +450,7 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path, None).unwrap();
+        let meta = parse_session(&path, None, None).unwrap();
         // No user message and no displayName → falls back to dir basename
         assert_eq!(meta.title.as_deref(), Some("my-project"));
     }
@@ -423,7 +469,7 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path, None).unwrap();
+        let meta = parse_session(&path, None, None).unwrap();
         let title = meta.title.unwrap();
         assert!(title.len() <= TITLE_MAX_CHARS + 3); // +3 for "..."
         assert!(title.ends_with("..."));

@@ -303,7 +303,7 @@ struct ClaudeUsageLog {
     outbound_model: String,
     app_type: &'static str,
     provider_id: String,
-    session_id: String,
+    session_id: Option<String>,
     usage: TokenUsage,
     latency_ms: u64,
     status_code: u16,
@@ -336,7 +336,7 @@ fn prepare_claude_usage_log(
             .unwrap_or_else(|| ctx.request_model.clone()),
         app_type: ctx.app_type_str,
         provider_id: ctx.provider.id.clone(),
-        session_id: ctx.session_id.clone(),
+        session_id: ctx.usage_session_id.clone(),
         usage,
         latency_ms: ctx.latency_ms(),
         status_code,
@@ -357,7 +357,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
         None,
         log.is_streaming,
         log.status_code,
-        Some(log.session_id),
+        log.session_id,
     )
     .await;
 }
@@ -463,7 +463,7 @@ async fn handle_claude_transform(
                 .unwrap_or_else(|| ctx.request_model.clone());
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
-            let session_id = ctx.session_id.clone();
+            let session_id = ctx.usage_session_id.clone();
             // 用 ctx 的 app_type：Claude Desktop 网关也走此转换路径，硬编码
             // "claude" 会把 claude-desktop 的行错记到 claude 名下
             let app_type_str = ctx.app_type_str;
@@ -498,7 +498,7 @@ async fn handle_claude_transform(
                                 first_token_ms,
                                 true,
                                 status_code,
-                                Some(session_id),
+                                session_id,
                             )
                             .await;
                         });
@@ -1251,7 +1251,7 @@ async fn handle_codex_responses_namespace_restore(
                 tokio::spawn({
                     let state = state.clone();
                     let provider_id = ctx.provider.id.clone();
-                    let session_id = ctx.session_id.clone();
+                    let session_id = ctx.usage_session_id.clone();
                     let latency_ms = ctx.latency_ms();
                     async move {
                         log_usage(
@@ -1266,7 +1266,7 @@ async fn handle_codex_responses_namespace_restore(
                             None,
                             false,
                             status.as_u16(),
-                            Some(session_id),
+                            session_id,
                         )
                         .await;
                     }
@@ -1335,7 +1335,7 @@ async fn handle_codex_chat_to_responses_transform(
                 .unwrap_or_else(|| ctx.request_model.clone());
             let app_type_str = ctx.app_type_str;
             let start_time = ctx.start_time;
-            let session_id = ctx.session_id.clone();
+            let session_id = ctx.usage_session_id.clone();
 
             Some(SseUsageCollector::new(
                 start_time,
@@ -1378,7 +1378,7 @@ async fn handle_codex_chat_to_responses_transform(
                             first_token_ms,
                             true,
                             status.as_u16(),
-                            Some(session_id),
+                            session_id,
                         )
                         .await;
                     });
@@ -1484,7 +1484,7 @@ async fn handle_codex_chat_to_responses_transform(
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
-            let session_id = ctx.session_id.clone();
+            let session_id = ctx.usage_session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
                 log_usage(
@@ -1499,7 +1499,7 @@ async fn handle_codex_chat_to_responses_transform(
                     None,
                     false,
                     status.as_u16(),
-                    Some(session_id),
+                    session_id,
                 )
                 .await;
             }
@@ -1649,7 +1649,7 @@ async fn handle_codex_anthropic_to_responses_transform(
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
-            let session_id = ctx.session_id.clone();
+            let session_id = ctx.usage_session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
                 log_usage(
@@ -1664,7 +1664,7 @@ async fn handle_codex_anthropic_to_responses_transform(
                     None,
                     false,
                     status.as_u16(),
-                    Some(session_id),
+                    session_id,
                 )
                 .await;
             }
@@ -1714,7 +1714,7 @@ fn build_codex_anthropic_sse_response(
             .unwrap_or_else(|| ctx.request_model.clone());
         let app_type_str = ctx.app_type_str;
         let start_time = ctx.start_time;
-        let session_id = ctx.session_id.clone();
+        let session_id = ctx.usage_session_id.clone();
 
         Some(SseUsageCollector::new(
             start_time,
@@ -1751,7 +1751,7 @@ fn build_codex_anthropic_sse_response(
                         first_token_ms,
                         true,
                         status.as_u16(),
-                        Some(session_id),
+                        session_id,
                     )
                     .await;
                 });
@@ -2763,7 +2763,7 @@ fn log_forward_error(
         error_message,
         ctx.latency_ms(),
         is_streaming,
-        Some(ctx.session_id.clone()),
+        ctx.usage_session_id.clone(),
         None,
     ) {
         log::warn!("记录失败请求日志失败: {e}");

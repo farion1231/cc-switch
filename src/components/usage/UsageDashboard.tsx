@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
+import { TaskUsageTable } from "./TaskUsageTable";
 import {
+  AGENT_USAGE_REBUILD_APPS,
   KNOWN_APP_TYPES,
+  type AgentUsageRebuildApp,
   type AppType,
   type AppTypeFilter,
   type UsageRangeSelection,
@@ -21,6 +25,7 @@ import {
   LayoutGrid,
   DatabaseBackup,
   Loader2,
+  ListTodo,
 } from "lucide-react";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import {
@@ -46,11 +51,31 @@ import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { usageApi } from "@/lib/api/usage";
 import { toast } from "sonner";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
+const REBUILD_PROVIDER_OPTIONS = AGENT_USAGE_REBUILD_APPS;
+
+const isRebuildProvider = (value: string): value is AgentUsageRebuildApp =>
+  (REBUILD_PROVIDER_OPTIONS as readonly string[]).includes(value);
+
+const getDefaultRebuildProviders = (
+  value: AppTypeFilter,
+): AgentUsageRebuildApp[] =>
+  value !== "all" && isRebuildProvider(value)
+    ? [value]
+    : [...REBUILD_PROVIDER_OPTIONS];
+
+const getRebuildProviderLabel = (
+  provider: AgentUsageRebuildApp,
+  t: TFunction,
+) =>
+  t(`usage.rebuildAgentSessionUsage.providers.${provider}`, {
+    defaultValue: provider,
+  });
 
 const DEFAULT_REFRESH_INTERVAL_MS = 30000;
 const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
@@ -101,8 +126,13 @@ export function UsageDashboard({
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
     normalizeRefreshInterval(savedRefreshIntervalMs),
   );
-  const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
-  const [rebuildingCodex, setRebuildingCodex] = useState(false);
+  const [showProviderRebuildConfirm, setShowProviderRebuildConfirm] =
+    useState(false);
+  const [selectedRebuildProviders, setSelectedRebuildProviders] = useState<
+    AgentUsageRebuildApp[]
+  >(() => getDefaultRebuildProviders("all"));
+  const [rebuildingAgentSessionUsage, setRebuildingAgentSessionUsage] =
+    useState(false);
 
   useEffect(() => {
     setRefreshIntervalMs(normalizeRefreshInterval(savedRefreshIntervalMs));
@@ -112,6 +142,7 @@ export function UsageDashboard({
   // 切 Provider 同理清掉模型（模型选项随 Provider 级联）。
   const changeAppType = (next: AppTypeFilter) => {
     setAppType(next);
+    setSelectedRebuildProviders(getDefaultRebuildProviders(next));
     if (next !== appType) {
       setProviderName(undefined);
       setModel(undefined);
@@ -147,31 +178,86 @@ export function UsageDashboard({
     }
   };
 
-  const rebuildCodexUsage = async () => {
-    setShowRebuildConfirm(false);
-    setRebuildingCodex(true);
+  const openProviderRebuildConfirm = () => {
+    setShowProviderRebuildConfirm(true);
+  };
+
+  const toggleRebuildProvider = (
+    provider: AgentUsageRebuildApp,
+    checked: boolean,
+  ) => {
+    setSelectedRebuildProviders((current) => {
+      if (checked) {
+        return current.includes(provider) ? current : [...current, provider];
+      }
+      return current.filter((item) => item !== provider);
+    });
+  };
+
+  const rebuildAgentSessionUsage = async () => {
+    if (selectedRebuildProviders.length === 0 || rebuildingAgentSessionUsage) {
+      return;
+    }
+
+    const requestedProviders = [...selectedRebuildProviders];
+    setShowProviderRebuildConfirm(false);
+    setRebuildingAgentSessionUsage(true);
     try {
-      const result = await usageApi.rebuildCodexUsage();
-      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
-      const message = t("usage.rebuildCodex.completed", {
-        imported: result.imported,
-        errors: result.errors.length,
-        suspected: result.suspectedDuplicates,
-        deferred: result.deferredFiles,
+      const result = await usageApi.rebuildAgentSessionUsage({
+        appTypes: requestedProviders,
       });
-      if (result.errors.length > 0 || result.deferredFiles > 0) {
+      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+
+      const published = result.providers.filter(
+        (provider) => provider.status === "published",
+      );
+      const keptPrevious = result.providers.filter(
+        (provider) => provider.status === "keptPrevious",
+      );
+      const providerLabels = (providers: typeof result.providers) =>
+        providers.length > 0
+          ? providers
+              .map((provider) => getRebuildProviderLabel(provider.appType, t))
+              .join(", ")
+          : t("usage.rebuildAgentSessionUsage.none", {
+              defaultValue: "None",
+            });
+      const errorCount = result.providers.reduce(
+        (count, provider) => count + provider.syncResult.errors.length,
+        0,
+      );
+      const deferredCount = result.providers.reduce(
+        (count, provider) => count + provider.syncResult.deferredFiles,
+        0,
+      );
+      const details = [
+        t("usage.rebuildAgentSessionUsage.completed", {
+          published: providerLabels(published),
+          keptPrevious: providerLabels(keptPrevious),
+        }),
+      ];
+      if (errorCount > 0 || deferredCount > 0) {
+        details.push(
+          t("usage.rebuildAgentSessionUsage.syncDetails", {
+            errors: errorCount,
+            deferred: deferredCount,
+          }),
+        );
+      }
+      const message = details.join(" ");
+      if (keptPrevious.length > 0) {
         toast.warning(message);
       } else {
         toast.success(message);
       }
     } catch (error) {
       toast.error(
-        t("usage.rebuildCodex.failed", {
+        t("usage.rebuildAgentSessionUsage.failed", {
           error: String(error),
         }),
       );
     } finally {
-      setRebuildingCodex(false);
+      setRebuildingAgentSessionUsage(false);
     }
   };
 
@@ -401,6 +487,10 @@ export function UsageDashboard({
                 <BarChart3 className="h-4 w-4" />
                 {t("usage.modelStats")}
               </TabsTrigger>
+              <TabsTrigger value="tasks" className="gap-2">
+                <ListTodo className="h-4 w-4" />
+                {t("usage.taskView", { defaultValue: "Task Statistics" })}
+              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -440,6 +530,14 @@ export function UsageDashboard({
                 refreshIntervalMs={refreshIntervalMs}
               />
             </TabsContent>
+
+            <TabsContent value="tasks" className="mt-0">
+              <TaskUsageTable
+                range={range}
+                refreshIntervalMs={refreshIntervalMs}
+                initialAppType={appType === "all" ? undefined : appType}
+              />
+            </TabsContent>
           </motion.div>
         </Tabs>
       </div>
@@ -475,31 +573,69 @@ export function UsageDashboard({
               <DatabaseBackup className="h-5 w-5 text-orange-500" />
               <div className="text-left">
                 <h3 className="text-base font-semibold">
-                  {t("usage.rebuildCodex.title")}
+                  {t("usage.rebuildAgentSessionUsage.title")}
                 </h3>
                 <p className="text-sm text-muted-foreground font-normal">
-                  {t("usage.rebuildCodex.description")}
+                  {t("usage.rebuildAgentSessionUsage.description")}
                 </p>
               </div>
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 p-4">
-              <p className="text-sm text-muted-foreground">
-                {t("usage.rebuildCodex.warning")}
-              </p>
+            <div className="flex flex-col gap-4 rounded-lg border border-destructive/20 bg-destructive/5 p-4">
+              <div className="space-y-3">
+                <p className="text-sm font-medium">
+                  {t("usage.rebuildAgentSessionUsage.selectionLabel")}
+                </p>
+                <div
+                  className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
+                  role="group"
+                  aria-label={t(
+                    "usage.rebuildAgentSessionUsage.selectionLabel",
+                  )}
+                >
+                  {REBUILD_PROVIDER_OPTIONS.map((provider) => {
+                    const label = getRebuildProviderLabel(provider, t);
+                    const inputId = `usage-rebuild-${provider}`;
+                    return (
+                      <label
+                        key={provider}
+                        htmlFor={inputId}
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-background/60"
+                      >
+                        <Checkbox
+                          id={inputId}
+                          aria-label={label}
+                          checked={selectedRebuildProviders.includes(provider)}
+                          disabled={rebuildingAgentSessionUsage}
+                          onCheckedChange={(checked) =>
+                            toggleRebuildProvider(provider, checked)
+                          }
+                        />
+                        <span>{label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {t("usage.rebuildAgentSessionUsage.warning")}
+                </p>
+              </div>
               <Button
                 variant="destructive"
-                disabled={rebuildingCodex}
-                onClick={() => setShowRebuildConfirm(true)}
-                className="shrink-0"
+                disabled={
+                  rebuildingAgentSessionUsage ||
+                  selectedRebuildProviders.length === 0
+                }
+                onClick={openProviderRebuildConfirm}
+                className="self-start"
               >
-                {rebuildingCodex ? (
+                {rebuildingAgentSessionUsage ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <DatabaseBackup className="mr-2 h-4 w-4" />
                 )}
-                {t("usage.rebuildCodex.action")}
+                {t("usage.rebuildAgentSessionUsage.action")}
               </Button>
             </div>
           </AccordionContent>
@@ -507,13 +643,18 @@ export function UsageDashboard({
       </Accordion>
 
       <ConfirmDialog
-        isOpen={showRebuildConfirm}
-        title={t("usage.rebuildCodex.confirmTitle")}
-        message={t("usage.rebuildCodex.confirmMessage")}
-        confirmText={t("usage.rebuildCodex.confirmAction")}
+        isOpen={showProviderRebuildConfirm}
+        title={t("usage.rebuildAgentSessionUsage.confirmTitle")}
+        message={t("usage.rebuildAgentSessionUsage.confirmMessage", {
+          providers: selectedRebuildProviders
+            .map((provider) => getRebuildProviderLabel(provider, t))
+            .join(", "),
+        })}
+        confirmText={t("usage.rebuildAgentSessionUsage.confirmAction")}
         variant="destructive"
-        onConfirm={() => void rebuildCodexUsage()}
-        onCancel={() => setShowRebuildConfirm(false)}
+        pending={rebuildingAgentSessionUsage}
+        onConfirm={() => void rebuildAgentSessionUsage()}
+        onCancel={() => setShowProviderRebuildConfirm(false)}
       />
     </motion.div>
   );

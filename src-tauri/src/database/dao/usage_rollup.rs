@@ -89,7 +89,7 @@ impl Database {
         conn.execute("SAVEPOINT rollup_prune;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let result = Self::do_rollup_and_prune(&conn, cutoff);
+        let result = Self::do_rollup_and_prune_scoped(&conn, cutoff, None, true);
 
         match result {
             Ok(deleted) => {
@@ -113,7 +113,50 @@ impl Database {
         }
     }
 
-    fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
+    /// Rebuild-only compaction for Codex's native compatibility partition.
+    ///
+    /// This deliberately skips session canonical rollups: the Codex source
+    /// parser has already produced the authoritative canonical generation in
+    /// the staging database.  Only the legacy raw/daily ownership boundary is
+    /// compacted before the staged generation is published.
+    pub(crate) fn rollup_and_prune_codex_staging(&self, retain_days: i64) -> Result<u64, AppError> {
+        let cutoff = compute_local_midnight_cutoff(Local::now(), retain_days)?;
+        let conn = lock_conn!(self.conn);
+        conn.execute("SAVEPOINT codex_rollup_prune;", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let result = Self::do_rollup_and_prune_scoped(
+            &conn,
+            cutoff,
+            Some(("codex", "_codex_session", "codex_session")),
+            false,
+        );
+        match result {
+            Ok(deleted) => {
+                conn.execute("RELEASE codex_rollup_prune;", [])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                Ok(deleted)
+            }
+            Err(error) => {
+                conn.execute("ROLLBACK TO codex_rollup_prune;", []).ok();
+                conn.execute("RELEASE codex_rollup_prune;", []).ok();
+                Err(error)
+            }
+        }
+    }
+
+    fn do_rollup_and_prune_scoped(
+        conn: &rusqlite::Connection,
+        cutoff: i64,
+        scope: Option<(&str, &str, &str)>,
+        include_session_rollups: bool,
+    ) -> Result<u64, AppError> {
+        // Session buckets are persisted before deleting detail rows.  This is
+        // intentionally part of the same savepoint as the existing global
+        // rollup and prune so a failure cannot leave a partial retention state.
+        if include_session_rollups {
+            Self::rollup_session_usage(conn, cutoff)?;
+        }
+
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
         let fresh_detail_input = fresh_input_sql("l");
@@ -157,9 +200,12 @@ impl Database {
                     COALESCE(SUM(l.cache_creation_tokens), 0) as new_cc,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost,
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
-                FROM proxy_request_logs l
-                WHERE l.created_at < ?1 AND {effective_filter}
-                GROUP BY d, a, p, m, rm, pm
+                 FROM proxy_request_logs l
+                 WHERE l.created_at < ?1 AND {effective_filter}
+                   AND (?2 IS NULL OR l.app_type = ?2)
+                   AND (?3 IS NULL OR l.provider_id = ?3)
+                   AND (?4 IS NULL OR l.data_source = ?4)
+                 GROUP BY d, a, p, m, rm, pm
             ) agg
             LEFT JOIN usage_daily_rollups old
                 ON old.date = agg.d AND old.app_type = agg.a
@@ -167,19 +213,215 @@ impl Database {
                 AND old.request_model = agg.rm AND old.pricing_model = agg.pm"
         );
 
-        conn.execute(&aggregation_sql, [cutoff])
-            .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
+        let (scope_app, scope_provider, scope_source) = scope
+            .map(|(app, provider, source)| (Some(app), Some(provider), Some(source)))
+            .unwrap_or((None, None, None));
+        conn.execute(
+            &aggregation_sql,
+            rusqlite::params![cutoff, scope_app, scope_provider, scope_source],
+        )
+        .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
         // INSERT uses the effective-log filter to exclude duplicate session rows.
         // DELETE intentionally prunes all old details so those duplicates are discarded.
         let deleted = conn
             .execute(
-                "DELETE FROM proxy_request_logs WHERE created_at < ?1",
-                [cutoff],
+                "DELETE FROM proxy_request_logs
+                 WHERE created_at < ?1
+                   AND (?2 IS NULL OR app_type = ?2)
+                   AND (?3 IS NULL OR provider_id = ?3)
+                   AND (?4 IS NULL OR data_source = ?4)",
+                rusqlite::params![cutoff, scope_app, scope_provider, scope_source],
             )
             .map_err(|e| AppError::Database(format!("Pruning old logs failed: {e}")))?;
 
         Ok(deleted as u64)
+    }
+
+    /// Aggregate effective, session-tagged raw rows into durable per-session
+    /// daily buckets.  Rows without a session id remain available only to the
+    /// existing global daily rollup and are never assigned to a task.
+    fn rollup_session_usage(conn: &rusqlite::Connection, cutoff: i64) -> Result<(), AppError> {
+        // Keep the existing proxy/session deduplication boundary for raw
+        // compatibility rows.  The additional durable coverage marker is
+        // narrower: it excludes a raw request only when its exact request ID
+        // was atomically represented by a direct canonical bucket.  Thus an
+        // unmarked raw-only request still survives, including partial facts.
+        let effective_filter = effective_usage_log_filter("l");
+        let fresh_detail_input = fresh_input_sql("l");
+        // Direct session sources do not carry per-component presence flags in
+        // `proxy_request_logs`.  For Claude/Codex/Gemini, a parser fallback
+        // zero is therefore not evidence that the source reported zero.  A
+        // component is only retained when every row in the bucket is
+        // non-zero (otherwise the whole component remains partial/NULL).
+        // Grok and OpenCode have source-proven component semantics, so their
+        // explicit zeros remain valid values.  Proxy rows retain the existing
+        // fresh-input/global behavior.
+        let data_source_expr = "COALESCE(l.data_source, 'proxy')";
+        let unsafe_direct_sources = "'session_log', 'codex_session', 'gemini_session'";
+        let direct_session_sources =
+            "'session_log', 'codex_session', 'gemini_session', 'grok_session', 'opencode_session', 'pi_session'";
+        let session_rollup_sql = format!(
+            "INSERT OR REPLACE INTO agent_session_usage_rollups (
+                date, app_type, session_id, provider_id, model,
+                request_model, pricing_model, data_source, precision,
+                time_semantics, request_count_semantics, input_token_semantics,
+                source_identity, profile_id, database_identity, base_url_digest,
+                billing_mode, task, source_version, sync_window_start,
+                sync_window_end, request_count, api_call_count, input_tokens,
+                output_tokens, cache_read_tokens, cache_creation_tokens,
+                cache_write_tokens, reasoning_tokens, total_cost_usd, cost_status, cost_source,
+                cost_delta_kind,
+                correction_state, first_event_at, last_event_at
+             )
+             SELECT
+                agg.d, agg.a, agg.s, agg.p, agg.m, agg.rm, agg.pm, agg.ds,
+                agg.precision, agg.time_semantics, agg.request_count_semantics,
+                agg.input_token_semantics, '', '', '', '', '', '', '', 0, 0,
+                CASE WHEN old.date IS NULL THEN agg.new_req
+                     WHEN old.request_count IS NULL THEN NULL
+                     ELSE old.request_count + agg.new_req END,
+                old.api_call_count,
+                CASE WHEN old.date IS NULL THEN agg.new_in
+                     WHEN old.input_tokens IS NULL OR agg.new_in IS NULL THEN NULL
+                     ELSE old.input_tokens + agg.new_in END,
+                CASE WHEN old.date IS NULL THEN agg.new_out
+                     WHEN old.output_tokens IS NULL OR agg.new_out IS NULL THEN NULL
+                     ELSE old.output_tokens + agg.new_out END,
+                CASE WHEN old.date IS NULL THEN agg.new_cr
+                     WHEN old.cache_read_tokens IS NULL OR agg.new_cr IS NULL THEN NULL
+                     ELSE old.cache_read_tokens + agg.new_cr END,
+                CASE WHEN old.date IS NULL THEN agg.new_cc
+                     WHEN old.cache_creation_tokens IS NULL OR agg.new_cc IS NULL THEN NULL
+                     ELSE old.cache_creation_tokens + agg.new_cc END,
+                NULL, NULL,
+                CASE
+                    WHEN old.date IS NULL THEN agg.new_cost_usd
+                    WHEN old.total_cost_usd IS NULL OR agg.new_cost_usd IS NULL THEN NULL
+                    ELSE CAST(CAST(old.total_cost_usd AS REAL) + agg.new_cost_usd AS TEXT)
+                END,
+                NULL, NULL, NULL, NULL,
+                CASE WHEN old.first_event_at IS NULL THEN agg.first_event_at
+                     WHEN agg.first_event_at IS NULL THEN old.first_event_at
+                     ELSE MIN(old.first_event_at, agg.first_event_at) END,
+                CASE WHEN old.last_event_at IS NULL THEN agg.last_event_at
+                     WHEN agg.last_event_at IS NULL THEN old.last_event_at
+                     ELSE MAX(old.last_event_at, agg.last_event_at) END
+             FROM (
+                SELECT
+                    date(l.created_at, 'unixepoch', 'localtime') AS d,
+                    l.app_type AS a,
+                    l.session_id AS s,
+                    l.provider_id AS p,
+                    l.model AS m,
+                    COALESCE(l.request_model, '') AS rm,
+                    COALESCE(l.pricing_model, '') AS pm,
+                    COALESCE(l.data_source, 'proxy') AS ds,
+                    'request_exact' AS precision,
+                    'event_time' AS time_semantics,
+                    CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy'
+                         THEN 'http_request'
+                          WHEN COALESCE(l.data_source, 'proxy') IN ('grok_session', 'codex_session')
+                          THEN 'agent_call'
+                          WHEN COALESCE(l.data_source, 'proxy') = 'pi_session'
+                          THEN 'usage_event'
+                          ELSE 'assistant_message' END AS request_count_semantics,
+                     l.input_token_semantics AS input_token_semantics,
+                     COUNT(*) AS new_req,
+                     CASE
+                         WHEN {data_source_expr} IN ({unsafe_direct_sources})
+                         THEN CASE
+                             WHEN COUNT(CASE WHEN l.input_tokens = 0 THEN NULL ELSE 1 END)
+                                      = COUNT(*)
+                             THEN SUM(l.input_tokens)
+                         END
+                         WHEN {data_source_expr} IN ('grok_session', 'opencode_session')
+                         THEN SUM(l.input_tokens)
+                         ELSE SUM({fresh_detail_input})
+                     END AS new_in,
+                     CASE
+                         WHEN {data_source_expr} IN ({unsafe_direct_sources})
+                         THEN CASE
+                             WHEN COUNT(CASE WHEN l.output_tokens = 0 THEN NULL ELSE 1 END)
+                                      = COUNT(*)
+                             THEN SUM(l.output_tokens)
+                         END
+                         ELSE SUM(l.output_tokens)
+                     END AS new_out,
+                     CASE
+                         WHEN {data_source_expr} IN ({unsafe_direct_sources})
+                         THEN CASE
+                             WHEN COUNT(CASE WHEN l.cache_read_tokens = 0 THEN NULL ELSE 1 END)
+                                      = COUNT(*)
+                             THEN SUM(l.cache_read_tokens)
+                         END
+                         ELSE SUM(l.cache_read_tokens)
+                     END AS new_cr,
+                     CASE
+                         WHEN {data_source_expr} IN ('codex_session', 'gemini_session', 'grok_session')
+                         THEN NULL
+                         WHEN {data_source_expr} = 'session_log'
+                         THEN CASE
+                             WHEN COUNT(CASE WHEN l.cache_creation_tokens = 0 THEN NULL ELSE 1 END)
+                                      = COUNT(*)
+                             THEN SUM(l.cache_creation_tokens)
+                         END
+                         ELSE SUM(l.cache_creation_tokens)
+                     END AS new_cc,
+                     CASE
+                         WHEN {data_source_expr} IN ({direct_session_sources})
+                         THEN NULL
+                         WHEN SUM(CASE WHEN l.total_cost_usd IS NULL
+                                            OR TRIM(l.total_cost_usd) = ''
+                                       THEN 1 ELSE 0 END) > 0
+                         THEN NULL
+                         ELSE COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0)
+                     END AS new_cost_usd,
+                    MIN(l.created_at) AS first_event_at,
+                    MAX(l.created_at) AS last_event_at
+                FROM proxy_request_logs l
+                WHERE l.created_at < ?1
+                  AND l.session_id IS NOT NULL
+                  AND TRIM(l.session_id) <> ''
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM agent_session_canonical_coverage coverage
+                      WHERE coverage.app_type = l.app_type
+                        AND coverage.data_source = COALESCE(l.data_source, 'proxy')
+                        AND coverage.request_id = l.request_id
+                  )
+                  AND {effective_filter}
+                GROUP BY d, a, s, p, m, rm, pm, ds,
+                         precision, time_semantics, request_count_semantics,
+                         input_token_semantics
+             ) agg
+               LEFT JOIN agent_session_usage_rollups old
+               ON old.date = agg.d
+              AND old.app_type = agg.a
+              AND old.session_id = agg.s
+              AND old.provider_id = agg.p
+              AND old.model = agg.m
+              AND old.request_model = agg.rm
+              AND old.pricing_model = agg.pm
+              AND old.data_source = agg.ds
+              AND old.precision = agg.precision
+              AND old.time_semantics = agg.time_semantics
+              AND old.request_count_semantics = agg.request_count_semantics
+              AND old.input_token_semantics = agg.input_token_semantics
+              AND old.source_identity = ''
+              AND old.profile_id = ''
+              AND old.database_identity = ''
+              AND old.base_url_digest = ''
+              AND old.billing_mode = ''
+              AND old.task = ''
+              AND old.source_version = ''
+              AND old.sync_window_start = 0
+              AND old.sync_window_end = 0",
+        );
+
+        conn.execute(&session_rollup_sql, [cutoff])
+            .map_err(|e| AppError::Database(format!("Session rollup aggregation failed: {e}")))?;
+        Ok(())
     }
 }
 
@@ -282,6 +524,74 @@ mod tests {
     }
 
     #[test]
+    fn codex_staging_rollup_only_moves_codex_legacy_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = chrono::Utc::now().timestamp();
+        let old_ts = now - 40 * 86400;
+        let recent_ts = now - 5 * 86400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, total_cost_usd, latency_ms, status_code,
+                    created_at, data_source
+                 ) VALUES ('codex-old', '_codex_session', 'codex', 'gpt-5.6-sol',
+                           10, 2, '0.1', 1, 200, ?1, 'codex_session')",
+                [old_ts],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, total_cost_usd, latency_ms, status_code,
+                    created_at, data_source
+                 ) VALUES ('codex-recent', '_codex_session', 'codex', 'gpt-5.6-sol',
+                           3, 1, '0.02', 1, 200, ?1, 'codex_session')",
+                [recent_ts],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, total_cost_usd, latency_ms, status_code,
+                    created_at, data_source
+                 ) VALUES ('claude-old', 'claude-provider', 'claude', 'claude-3',
+                           10, 2, '0.1', 1, 200, ?1, 'session_log')",
+                [old_ts],
+            )?;
+            conn.execute(
+                "INSERT INTO agent_session_usage_rollups (
+                    date, app_type, session_id, provider_id, model, data_source,
+                    request_count, input_tokens
+                 ) VALUES ('2026-08-01', 'codex', 'codex-root', '_codex_session',
+                           'gpt-5.6-sol', 'codex_session', 99, 999)",
+                [],
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune_codex_staging(30)?, 1);
+        let conn = crate::database::lock_conn!(db.conn);
+        let counts: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT
+                 (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'codex-old'),
+                 (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'codex-recent'),
+                 (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'claude-old'),
+                 (SELECT request_count FROM usage_daily_rollups
+                  WHERE provider_id = '_codex_session' AND model = 'gpt-5.6-sol')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(counts, (0, 1, 1, 1));
+        let canonical_count: i64 = conn.query_row(
+            "SELECT request_count FROM agent_session_usage_rollups
+             WHERE app_type = 'codex' AND session_id = 'codex-root'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(canonical_count, 99);
+        Ok(())
+    }
+
+    #[test]
     fn test_rollup_uses_effective_usage_logs() -> Result<(), AppError> {
         let db = Database::memory()?;
         let now = chrono::Utc::now().timestamp();
@@ -361,6 +671,20 @@ mod tests {
                           100, 5, 10, 20, 1, '0.10', 100, 200, ?1)",
                 [old_ts],
             )?;
+            conn.execute(
+                "INSERT INTO agent_session_usage_snapshots (
+                    app_type, source_identity, profile_id, database_identity,
+                    session_id, model, provider_id, base_url_digest, billing_mode,
+                    task, data_source, source_version, api_call_count,
+                    input_tokens, output_tokens, last_synced_at
+                 ) VALUES (
+                    'hermes', 'hermes:fixture:v1', 'profile-a', 'db-a',
+                    'snapshot-retained', 'fixture-model', 'fixture-provider',
+                    'sha256:fixture-base', 'actual', 'task-a', 'fixture', '1',
+                    4, 10, 5, ?1
+                 )",
+                [old_ts],
+            )?;
         }
 
         assert_eq!(db.rollup_and_prune(30)?, 1);
@@ -373,6 +697,9 @@ mod tests {
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
+        // Total-inclusive input includes both cache buckets. Fresh input is
+        // therefore 100 - 10 - 20, while both cache components remain
+        // separately available for total-token and cost aggregation.
         assert_eq!(row, (70, 10, 20, 2));
 
         Ok(())
@@ -568,6 +895,593 @@ mod tests {
         )?;
         assert_eq!(count, 13, "10 existing + 3 new");
         assert_eq!(input, 1300, "1000 existing + 300 new");
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_persists_session_buckets_before_prune_and_is_idempotent() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    pricing_model, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, total_cost_usd, latency_ms, status_code,
+                    created_at, session_id, data_source
+                 ) VALUES
+                    ('session-root-1', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     100, 25, 5, 0, '0.10', 100, 200, ?1, 'root-session', 'proxy'),
+                    ('session-root-2', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     50, 10, 0, 0, '0.05', 100, 200, ?1, 'root-session', 'proxy'),
+                    ('session-child-1', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     20, 5, 0, 0, '0.02', 100, 200, ?1, 'child-session', 'proxy'),
+                    ('session-none', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     999, 999, 0, 0, '9.99', 100, 200, ?1, NULL, 'proxy')",
+                [old_ts],
+            )?;
+            conn.execute(
+                "INSERT INTO agent_session_usage_snapshots (
+                    app_type, source_identity, profile_id, database_identity,
+                    session_id, model, provider_id, base_url_digest, billing_mode,
+                    task, data_source, source_version, api_call_count,
+                    input_tokens, output_tokens, last_synced_at
+                 ) VALUES (
+                    'hermes', 'hermes:fixture:v1', 'profile-a', 'db-a',
+                    'snapshot-retained', 'fixture-model', 'fixture-provider',
+                    'sha256:fixture-base', 'actual', 'task-a', 'fixture', '1',
+                    4, 10, 5, ?1
+                 )",
+                [old_ts],
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 4);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT session_id, request_count, input_tokens, output_tokens, total_cost_usd
+             FROM agent_session_usage_rollups ORDER BY session_id",
+        )?;
+        let rows: Vec<(String, i64, i64, i64, String)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                ("child-session".to_string(), 1, 20, 5, "0.02".to_string()),
+                ("root-session".to_string(), 2, 150, 35, "0.15".to_string()),
+            ]
+        );
+        drop(stmt);
+        let remaining_raw: i64 =
+            conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(remaining_raw, 0);
+        let snapshot_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_session_usage_snapshots
+             WHERE session_id = 'snapshot-retained'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            snapshot_count, 1,
+            "pruning raw logs must preserve source baselines"
+        );
+        drop(conn);
+
+        // The second pass sees no old detail rows and therefore cannot add the
+        // same buckets again.
+        assert_eq!(db.rollup_and_prune(30)?, 0);
+        let conn = crate::database::lock_conn!(db.conn);
+        let root: (i64, i64, String) = conn.query_row(
+            "SELECT request_count, input_tokens, total_cost_usd
+             FROM agent_session_usage_rollups WHERE session_id = 'root-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(root, (2, 150, "0.15".to_string()));
+        let snapshot_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_session_usage_snapshots
+             WHERE session_id = 'snapshot-retained'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(snapshot_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_preserves_pi_usage_event_semantics() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model,
+                input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, total_cost_usd, latency_ms, status_code,
+                created_at, session_id, data_source
+             ) VALUES (
+                    'pi:legacy-session:usage:1', 'pi', 'pi', 'pi-model',
+                    10, 5, 2, 1, '0', 0, 200, ?1, 'legacy-session', 'pi_session'
+                 )",
+                [old_ts],
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (request_count, semantics, cost): (i64, String, Option<String>) = conn.query_row(
+            "SELECT request_count, request_count_semantics, total_cost_usd
+             FROM agent_session_usage_rollups
+             WHERE app_type = 'pi' AND session_id = 'legacy-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(request_count, 1);
+        assert_eq!(semantics, "usage_event");
+        assert_eq!(cost, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_uses_per_request_coverage_and_keeps_unmarked_mismatch() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO agent_session_usage_rollups (
+                    date, app_type, session_id, provider_id, model,
+                    request_model, pricing_model, data_source, precision,
+                    time_semantics, request_count_semantics, request_count,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, total_cost_usd
+                 ) VALUES (date(?1, 'unixepoch', 'localtime'), 'claude',
+                    'coverage-session', 'p1', 'claude-3', 'claude-3', 'claude-3',
+                    'session_log', 'request_exact', 'event_time', 'assistant_message',
+                    1, 100, 10, 0, 0, '0.10')",
+                [old_ts],
+            )?;
+            conn.execute(
+                "INSERT INTO agent_session_canonical_coverage (
+                    app_type, data_source, request_id, canonical_session_id, marked_at
+                 ) VALUES ('claude', 'session_log', 'covered-request',
+                           'coverage-session', ?1)",
+                [old_ts],
+            )?;
+            conn.execute_batch(&format!(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    pricing_model, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, total_cost_usd, latency_ms, status_code,
+                    created_at, session_id, data_source
+                 ) VALUES
+                    ('covered-request', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     100, 10, 0, 0, '0.10', 100, 200, {old_ts}, 'coverage-session', 'session_log'),
+                    ('unmarked-request', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     30, 3, 0, 0, '0.03', 100, 200, {old_ts}, 'coverage-session', 'session_log'),
+                    ('mismatched-request', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     999, 1, 9, 0, '0.01', 100, 200, {old_ts}, 'coverage-session', 'session_log'),
+                    ('deduped-request', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     40, 4, 0, 0, '0.04', 100, 200, {old_ts}, 'coverage-session', 'session_log'),
+                    ('proxy-dedup', 'p1', 'claude', 'claude-3', 'claude-3', 'claude-3',
+                     40, 4, 0, 0, '0.04', 100, 200, {old_ts}, NULL, 'proxy');"
+            ))?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 5);
+        let conn = crate::database::lock_conn!(db.conn);
+        let bucket: (i64, i64, i64, Option<String>) = conn.query_row(
+            "SELECT request_count, input_tokens, output_tokens, total_cost_usd
+             FROM agent_session_usage_rollups
+             WHERE app_type = 'claude' AND session_id = 'coverage-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(bucket, (3, 1129, 14, None));
+        // The matching proxy/session pair is excluded by the existing
+        // effective filter; only marker coverage and the two genuinely
+        // unmarked session rows contribute here.
+        drop(conn);
+        assert_eq!(db.rollup_and_prune(30)?, 0);
+        let conn = crate::database::lock_conn!(db.conn);
+        let repeated: (i64, i64, i64) = conn.query_row(
+            "SELECT request_count, input_tokens, output_tokens
+             FROM agent_session_usage_rollups
+             WHERE app_type = 'claude' AND session_id = 'coverage-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(repeated, (3, 1129, 14));
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_persists_partial_cache_creation_for_unsupported_sources() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                &format!(
+                    "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    pricing_model, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, total_cost_usd, latency_ms, status_code,
+                    created_at, session_id, data_source
+                 ) VALUES ('codex-unproven', '_codex_session', 'codex', 'gpt-5', 'gpt-5',
+                    'gpt-5', 100, 20, 5, 0, '0.10', 0, 200, ?1,
+                    'codex-session', 'codex_session'),
+                 ('gemini-unproven', '_gemini_session', 'gemini', 'gemini-2', 'gemini-2',
+                    'gemini-2', 70, 12, 3, 0, '0.07', 0, 200, {old_ts},
+                    'gemini-session', 'gemini_session'),
+                 ('grok-unproven', '_grok_session', 'grokbuild', 'grok-2', 'grok-2',
+                    'grok-2', 50, 8, 2, 0, '0.05', 0, 200, {old_ts},
+                    'grok-session', 'grok_session');"
+                )
+                .replace("?1", &old_ts.to_string()),
+            )?;
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 3);
+        let conn = crate::database::lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT data_source, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens
+             FROM agent_session_usage_rollups
+             WHERE data_source IN ('codex_session', 'gemini_session', 'grok_session')
+             ORDER BY data_source",
+        )?;
+        let rows: Vec<(String, i64, i64, i64, Option<i64>)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                ("codex_session".into(), 100, 20, 5, None),
+                ("gemini_session".into(), 70, 12, 3, None),
+                ("grok_session".into(), 50, 8, 2, None),
+            ]
+        );
+        drop(stmt);
+        drop(conn);
+        assert_eq!(db.rollup_and_prune(30)?, 0);
+        let conn = crate::database::lock_conn!(db.conn);
+        let repeated: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_session_usage_rollups
+             WHERE data_source IN ('codex_session', 'gemini_session', 'grok_session')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(repeated, 3);
+        let global_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usage_daily_rollups
+             WHERE app_type = 'codex' AND provider_id = '_codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(global_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_preserves_raw_presence_semantics_by_source() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            let insert = |request_id: &str,
+                          app_type: &str,
+                          provider_id: &str,
+                          data_source: &str,
+                          input_token_semantics: i64,
+                          input_tokens: i64,
+                          output_tokens: i64,
+                          cache_read_tokens: i64,
+                          cache_creation_tokens: i64|
+             -> rusqlite::Result<()> {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, cache_read_tokens,
+                        cache_creation_tokens, input_token_semantics,
+                        total_cost_usd, latency_ms, status_code, created_at,
+                        session_id, data_source
+                     ) VALUES (?1, ?2, ?3, 'presence-model', ?4, ?5, ?6, ?7,
+                               ?8, '0.25', 0, 200, ?9, 'presence-session', ?10)",
+                    rusqlite::params![
+                        request_id,
+                        provider_id,
+                        app_type,
+                        input_tokens,
+                        output_tokens,
+                        cache_read_tokens,
+                        cache_creation_tokens,
+                        input_token_semantics,
+                        old_ts,
+                        data_source,
+                    ],
+                )?;
+                Ok(())
+            };
+
+            // A zero in any standard component is not source-presence proof for
+            // these direct parsers, so each affected aggregate must remain NULL.
+            insert(
+                "presence-claude-a",
+                "claude",
+                "_claude_session",
+                "session_log",
+                0,
+                10,
+                0,
+                2,
+                0,
+            )?;
+            insert(
+                "presence-claude-b",
+                "claude",
+                "_claude_session",
+                "session_log",
+                0,
+                0,
+                4,
+                0,
+                5,
+            )?;
+            insert(
+                "presence-codex-a",
+                "codex",
+                "_codex_session",
+                "codex_session",
+                0,
+                10,
+                0,
+                2,
+                0,
+            )?;
+            insert(
+                "presence-codex-b",
+                "codex",
+                "_codex_session",
+                "codex_session",
+                0,
+                0,
+                4,
+                0,
+                5,
+            )?;
+            insert(
+                "presence-gemini-a",
+                "gemini",
+                "_gemini_session",
+                "gemini_session",
+                0,
+                10,
+                0,
+                2,
+                0,
+            )?;
+            insert(
+                "presence-gemini-b",
+                "gemini",
+                "_gemini_session",
+                "gemini_session",
+                0,
+                0,
+                4,
+                0,
+                5,
+            )?;
+
+            // Grok's input/output/cache-read zeroes are source-proven.  Its
+            // cache creation field and raw cost remain unavailable.
+            insert(
+                "presence-grok-a",
+                "grokbuild",
+                "_grok_session",
+                "grok_session",
+                1,
+                10,
+                0,
+                2,
+                0,
+            )?;
+            insert(
+                "presence-grok-b",
+                "grokbuild",
+                "_grok_session",
+                "grok_session",
+                1,
+                0,
+                4,
+                0,
+                9,
+            )?;
+
+            // OpenCode proves all four generic token components, including a
+            // real cache-creation zero.
+            insert(
+                "presence-opencode-a",
+                "opencode",
+                "_opencode_session",
+                "opencode_session",
+                0,
+                10,
+                0,
+                2,
+                0,
+            )?;
+            insert(
+                "presence-opencode-b",
+                "opencode",
+                "_opencode_session",
+                "opencode_session",
+                0,
+                0,
+                4,
+                0,
+                9,
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 10);
+        let conn = crate::database::lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT data_source, request_count, request_count_semantics,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, total_cost_usd
+             FROM agent_session_usage_rollups
+             WHERE session_id = 'presence-session'
+             ORDER BY data_source",
+        )?;
+        let rows: Vec<(
+            String,
+            i64,
+            String,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+        )> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "codex_session".into(),
+                    2,
+                    "agent_call".into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                (
+                    "gemini_session".into(),
+                    2,
+                    "assistant_message".into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                (
+                    "grok_session".into(),
+                    2,
+                    "agent_call".into(),
+                    Some(10),
+                    Some(4),
+                    Some(2),
+                    None,
+                    None,
+                ),
+                (
+                    "opencode_session".into(),
+                    2,
+                    "assistant_message".into(),
+                    Some(10),
+                    Some(4),
+                    Some(2),
+                    Some(9),
+                    None,
+                ),
+                (
+                    "session_log".into(),
+                    2,
+                    "assistant_message".into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ]
+        );
+        let global_request_count: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(request_count), 0)
+             FROM usage_daily_rollups WHERE model = 'presence-model'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(global_request_count, 10);
+        drop(stmt);
+        drop(conn);
+
+        // Raw rows have been pruned, so a repeat cannot add a second copy of
+        // any durable bucket.
+        assert_eq!(db.rollup_and_prune(30)?, 0);
+        let conn = crate::database::lock_conn!(db.conn);
+        let mut repeated_stmt = conn.prepare(
+            "SELECT data_source, request_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens
+             FROM agent_session_usage_rollups
+             WHERE session_id = 'presence-session'
+             ORDER BY data_source",
+        )?;
+        let repeated: Vec<(
+            String,
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+        )> = repeated_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(repeated.len(), 5);
+        assert_eq!(repeated[0].1, 2);
+        assert_eq!(repeated[2].2, Some(10));
+        assert_eq!(repeated[3].5, Some(9));
+        assert!(repeated.iter().all(|row| row.1 == 2));
         Ok(())
     }
 }

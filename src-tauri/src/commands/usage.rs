@@ -1,10 +1,54 @@
 //! 使用统计相关命令
 
 use crate::error::AppError;
+use crate::services::agent_session_usage::{
+    AgentSessionUsageRequest, AgentSessionUsageSummary, AgentTaskUsageFilter,
+    AgentTaskUsageFilterOptions, AgentTaskUsageFilterOptionsRequest, AgentTaskUsagePage,
+    AgentUsageCapability,
+};
 use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
+use crate::services::session_usage_rebuild::{
+    AgentUsageRebuildApp, ProviderUsageRebuildResult, ProviderUsageRebuildStatus,
+    RebuildAgentSessionUsageRequest, RebuildAgentSessionUsageResult,
+};
 use crate::services::usage_stats::*;
 use crate::store::AppState;
 use tauri::State;
+
+/// 获取规范化 Agent 会话自身、全部后代及派生任务总量。
+#[tauri::command]
+pub fn get_agent_session_usage(
+    state: State<'_, AppState>,
+    request: AgentSessionUsageRequest,
+) -> Result<AgentSessionUsageSummary, AppError> {
+    crate::services::agent_session_usage::get_agent_session_usage(&state.db, &request)
+}
+
+/// 分页获取根/独立 Agent 任务用量。子代理只参与根任务聚合，不作为默认行返回。
+#[tauri::command]
+pub fn list_agent_task_usage(
+    state: State<'_, AppState>,
+    filter: AgentTaskUsageFilter,
+) -> Result<AgentTaskUsagePage, AppError> {
+    crate::services::agent_session_usage::list_agent_task_usage(&state.db, &filter)
+}
+
+/// 获取任务统计筛选器的完整原生标题/项目候选项。
+#[tauri::command]
+pub fn get_agent_task_usage_filter_options(
+    state: State<'_, AppState>,
+    request: AgentTaskUsageFilterOptionsRequest,
+) -> Result<AgentTaskUsageFilterOptions, AppError> {
+    crate::services::agent_session_usage::get_agent_task_usage_filter_options(&state.db, &request)
+}
+
+/// 获取统一的九个受管理 Agent 会话用量能力注册表。
+#[tauri::command]
+pub fn get_agent_usage_capabilities(
+    _state: State<'_, AppState>,
+) -> Result<Vec<AgentUsageCapability>, AppError> {
+    Ok(crate::services::agent_session_usage::get_agent_usage_capabilities())
+}
 
 /// 获取使用量汇总
 #[tauri::command]
@@ -262,17 +306,40 @@ pub async fn sync_session_usage(
     .map_err(|error| AppError::Message(format!("会话用量同步任务失败: {error}")))
 }
 
-/// Codex reset 成功后，无论重导是否导入新行或返回错误，都必须通知前端刷新。
-/// 调用方应只在 reset 成功后调用，避免把未发生的数据变更误报为重建完成。
+/// Codex rebuild 发布后通知前端刷新。未发布的 staged rebuild 必须保留旧
+/// generation，因而不能触发数据变化通知。
 fn finish_codex_rebuild(
     result: Result<crate::services::session_usage::SessionSyncResult, AppError>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    let result = result?;
     crate::usage_events::notify_log_recorded();
-    result
+    Ok(result)
 }
 
-/// 备份数据库后，仅重建 Codex session 用量。锁覆盖 backup → reset → import
-/// 整个序列，避免后台同步在清理和重导之间插入数据。
+/// The legacy Codex command returns a single `SessionSyncResult`, while the
+/// provider-scoped pipeline can represent a failed staging attempt as
+/// `KeptPrevious`. Do not flatten that outcome into a successful legacy call:
+/// the previous generation remains visible and no publish occurred.
+fn legacy_codex_rebuild_result(
+    provider: ProviderUsageRebuildResult,
+) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    match provider.status {
+        ProviderUsageRebuildStatus::Published => Ok(provider.sync_result),
+        ProviderUsageRebuildStatus::KeptPrevious => {
+            let detail = if provider.sync_result.errors.is_empty() {
+                "Codex staged rebuild was not published".to_string()
+            } else {
+                provider.sync_result.errors.join("; ")
+            };
+            Err(AppError::Message(format!(
+                "Codex 用量重建未发布，已保留现有数据: {detail}"
+            )))
+        }
+    }
+}
+
+/// 备份数据库后，仅重建 Codex session 用量。锁覆盖 backup → staged rebuild
+/// → publish 整个序列，避免后台同步在重建和发布之间插入数据。
 #[tauri::command]
 pub async fn rebuild_codex_usage(
     state: State<'_, AppState>,
@@ -282,13 +349,41 @@ pub async fn rebuild_codex_usage(
         .lock()
         .await;
     tauri::async_runtime::spawn_blocking(move || {
-        db.backup_database_file()?;
-        db.reset_codex_usage()?;
-        let result = crate::services::session_usage_codex::sync_codex_usage(&db);
-        finish_codex_rebuild(result)
+        let request = RebuildAgentSessionUsageRequest {
+            app_types: vec![AgentUsageRebuildApp::Codex],
+        };
+        match crate::services::session_usage_rebuild::rebuild_agent_session_usage_without_event(
+            &db, &request,
+        ) {
+            Ok(result) => {
+                let provider_result = result.providers.into_iter().next().ok_or_else(|| {
+                    AppError::Message("Codex provider rebuild returned no result".to_string())
+                });
+                finish_codex_rebuild(provider_result.and_then(legacy_codex_rebuild_result))
+            }
+            Err(error) => finish_codex_rebuild(Err(error)),
+        }
     })
     .await
     .map_err(|error| AppError::Message(format!("Codex 用量重建任务失败: {error}")))?
+}
+
+/// 显式按 provider 重建历史会话用量。每个 provider 独立暂存并发布，
+/// 失败只保留该 provider 的已发布 generation，不影响同次其它选择。
+#[tauri::command]
+pub async fn rebuild_agent_session_usage(
+    state: State<'_, AppState>,
+    request: RebuildAgentSessionUsageRequest,
+) -> Result<RebuildAgentSessionUsageResult, AppError> {
+    let db = state.db.clone();
+    let _guard = crate::services::session_usage::session_sync_mutex()
+        .lock()
+        .await;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::session_usage_rebuild::rebuild_agent_session_usage(&db, &request)
+    })
+    .await
+    .map_err(|error| AppError::Message(format!("Agent 用量重建任务失败: {error}")))?
 }
 
 /// 获取数据来源分布
@@ -317,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_rebuild_notifies_when_reimport_fails_after_reset() {
+    fn codex_rebuild_does_not_notify_when_reimport_fails() {
         crate::usage_events::take_test_notify_count();
 
         let result = finish_codex_rebuild(Err(AppError::Message(
@@ -325,6 +420,26 @@ mod tests {
         )));
 
         assert!(result.is_err());
-        assert_eq!(crate::usage_events::take_test_notify_count(), 1);
+        assert_eq!(crate::usage_events::take_test_notify_count(), 0);
+    }
+
+    #[test]
+    fn codex_rebuild_kept_previous_is_an_error_without_notification() {
+        crate::usage_events::take_test_notify_count();
+
+        let result =
+            finish_codex_rebuild(legacy_codex_rebuild_result(ProviderUsageRebuildResult {
+                app_type: AgentUsageRebuildApp::Codex,
+                status: ProviderUsageRebuildStatus::KeptPrevious,
+                sync_result: crate::services::session_usage::SessionSyncResult {
+                    errors: vec!["Codex source preflight failed".to_string()],
+                    ..Default::default()
+                },
+            }));
+
+        assert!(
+            matches!(result, Err(AppError::Message(message)) if message.contains("preflight failed"))
+        );
+        assert_eq!(crate::usage_events::take_test_notify_count(), 0);
     }
 }
