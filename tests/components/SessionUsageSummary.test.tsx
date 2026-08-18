@@ -105,6 +105,33 @@ describe("SessionUsageSummary", () => {
     expect(screen.queryByText(/descendant-1|child-1/i)).not.toBeInTheDocument();
   });
 
+  it("keeps descendant cost quality out of the self summary", () => {
+    installSummary({
+      supportsDescendants: true,
+      selfUsage: measure({ totalCostUsd: "0.01" }),
+      descendantUsage: measure({ totalCostUsd: "0.02" }),
+      descendantUsageStatus: "available",
+      totalUsage: measure({ totalCostUsd: "0.03" }),
+      descendantSessionCount: 1,
+      sourceDimensions: [
+        sourceDimension("codex", "codex_session", {
+          costStatus: "reported",
+          isDescendant: false,
+        }),
+        sourceDimension("codex", "codex_session", {
+          costStatus: "unavailable",
+          isDescendant: true,
+        }),
+      ],
+    });
+
+    renderSummary();
+
+    expect(
+      screen.getAllByTestId("usage-cost").map((element) => element.textContent),
+    ).toEqual(["$0.0100", "Unavailable"]);
+  });
+
   it("hides the descendant aggregate for a self-only source", () => {
     renderSummary();
 

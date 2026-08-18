@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskUsageTable } from "@/components/usage/TaskUsageTable";
@@ -8,6 +14,7 @@ import {
   createAgentTaskUsageRow as row,
   createAgentUsageCapability,
   createAgentUsageMeasure as measure,
+  createAgentUsageSourceDimension as sourceDimension,
 } from "../fixtures/agentUsage";
 
 const useAgentTaskUsageMock = vi.hoisted(() => vi.fn());
@@ -338,6 +345,47 @@ describe("TaskUsageTable", () => {
     expect(screen.getByText("Descendants")).toBeInTheDocument();
     expect(screen.getAllByTestId(/^task-row-/)).toHaveLength(1);
     expect(screen.queryByText("Request-exact")).not.toBeInTheDocument();
+  });
+
+  it("scopes cost quality to each expanded task measure", () => {
+    installQueryResult([
+      row({
+        descendantSessionCount: 1,
+        selfUsage: measure({ totalCostUsd: "0.01" }),
+        descendantUsage: measure({ totalCostUsd: "0.02" }),
+        descendantUsageStatus: "available",
+        totalUsage: measure({ totalCostUsd: "0.03" }),
+        sourceDimensions: [
+          sourceDimension("claude", "claude_session", {
+            costStatus: "estimated",
+            isDescendant: false,
+          }),
+          sourceDimension("claude", "claude_session", {
+            costStatus: "reported",
+            isDescendant: true,
+          }),
+        ],
+      }),
+    ]);
+    renderTable();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Self \/ descendants/ }),
+    );
+
+    const selfCard = screen
+      .getByText("Self")
+      .closest<HTMLDivElement>(".rounded-md");
+    const descendantCard = screen
+      .getByText("Descendants")
+      .closest<HTMLDivElement>(".rounded-md");
+    expect(selfCard).not.toBeNull();
+    expect(descendantCard).not.toBeNull();
+    expect(within(selfCard!).getByText(/Cost:/)).toHaveTextContent(
+      "Cost: ≈$0.0100",
+    );
+    expect(within(descendantCard!).getByText(/Cost:/)).toHaveTextContent(
+      "Cost: $0.0200",
+    );
   });
 
   it("keeps partial, sync-window and unavailable semantics truthful", async () => {

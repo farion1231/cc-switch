@@ -31,6 +31,7 @@ import {
   formatUsageCostWithStatus,
   isCodexReplayInProgress,
   resolveUsageCostStatusForMeasure,
+  usageSourceDimensionsForScope,
 } from "./format";
 import { UsageCostTooltip, UsageQualityTooltip } from "./UsageQualityTooltip";
 import {
@@ -509,7 +510,10 @@ function TaskUsageDetails({
             <MeasureBreakdown
               label={t("usage.task.self", { defaultValue: "Self" })}
               measure={row.selfUsage}
-              sourceDimensions={row.sourceDimensions}
+              sourceDimensions={usageSourceDimensionsForScope(
+                row.sourceDimensions,
+                false,
+              )}
               t={t}
             />
             <MeasureBreakdown
@@ -525,7 +529,10 @@ function TaskUsageDetails({
                     })
                   : undefined
               }
-              sourceDimensions={row.sourceDimensions}
+              sourceDimensions={usageSourceDimensionsForScope(
+                row.sourceDimensions,
+                true,
+              )}
               t={t}
             />
           </div>

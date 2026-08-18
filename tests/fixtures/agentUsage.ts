@@ -50,6 +50,7 @@ export const createAgentUsageSourceDimension = (
   dataSource = "codex_session",
   overrides: Partial<AgentUsageSourceDimension> = {},
 ): AgentUsageSourceDimension => ({
+  isDescendant: false,
   providerId: `${appType}-provider`,
   model: `${appType}-model`,
   requestModel: `${appType}-request-model`,

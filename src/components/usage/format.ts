@@ -38,6 +38,17 @@ export function fmtUsd(
 
 export type UsageCostStatus = "reported" | "estimated" | "unavailable";
 
+export function usageSourceDimensionsForScope(
+  sourceDimensions: AgentUsageSourceDimension[] | undefined,
+  isDescendant: boolean,
+): AgentUsageSourceDimension[] {
+  return (
+    sourceDimensions?.filter(
+      (dimension) => dimension.isDescendant === isDescendant,
+    ) ?? []
+  );
+}
+
 export function resolveUsageCostStatus(
   sourceDimensions: AgentUsageSourceDimension[] | undefined,
 ): UsageCostStatus {

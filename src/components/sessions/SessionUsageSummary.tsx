@@ -24,6 +24,7 @@ import {
   formatUsageCostWithStatus,
   isCodexReplayInProgress,
   resolveUsageCostStatusForMeasure,
+  usageSourceDimensionsForScope,
 } from "@/components/usage/format";
 import {
   UsageCostTooltip,
@@ -320,13 +321,21 @@ export function SessionUsageSummary({
     data.totalUsage,
     data.sourceDimensions,
   );
+  const selfSourceDimensions = usageSourceDimensionsForScope(
+    data.sourceDimensions,
+    false,
+  );
+  const descendantSourceDimensions = usageSourceDimensionsForScope(
+    data.sourceDimensions,
+    true,
+  );
   const selfCostStatus = resolveUsageCostStatusForMeasure(
     data.selfUsage,
-    data.sourceDimensions,
+    selfSourceDimensions,
   );
   const descendantCostStatus = resolveUsageCostStatusForMeasure(
     data.descendantUsage,
-    data.sourceDimensions,
+    descendantSourceDimensions,
   );
   const totalLabel = t("sessionManager.usageTaskTotal", {
     defaultValue: "Task total",

@@ -21,8 +21,8 @@ use crate::services::session_usage::{
     get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
 use crate::services::session_usage_pipeline::{
-    publish_canonical_batch_on_conn, reserve_canonical_coverage_on_conn, CanonicalUsageBatch,
-    RawUsageLogRow, UsagePublishTarget, UsageSourceSpec,
+    publish_canonical_batch_on_conn, reserve_canonical_coverage_on_conn, CanonicalReplaceScope,
+    CanonicalUsageBatch, RawUsageLogRow, UsagePublishTarget, UsageSourceSpec,
 };
 use crate::services::usage_stats::{
     find_matching_proxy_usage_log, find_model_pricing, DedupKey, SESSION_PROXY_DEDUP_WINDOW_SECONDS,
@@ -371,6 +371,13 @@ fn persist_opencode_session(
     // dimension before it replaces that fact.  Incomplete source evidence
     // remains excluded rather than being fabricated as zero-valued usage.
     let mut canonical_batch = build_usage_batch(db, &session.session_id, &canonical_messages);
+    if !has_incomplete_usage {
+        canonical_batch.replace_scopes.push(CanonicalReplaceScope {
+            app_type: "opencode".into(),
+            session_id: session.session_id.clone(),
+            data_source: "opencode_session".into(),
+        });
+    }
     canonical_batch.relation_claims.push(claim);
     let conn = lock_conn!(db.conn);
     let tx = conn.unchecked_transaction().map_err(|error| {
@@ -1307,6 +1314,116 @@ mod tests {
             )
             .expect("one-proxy counts");
         assert_eq!(counts, (2, 1, 1, 1, 10));
+    }
+
+    #[test]
+    fn complete_session_rescan_replaces_obsolete_canonical_buckets() {
+        let db = Database::memory().expect("memory database");
+        let session = session_fixture("ses_rewrite", OpenCodeStorage::Sqlite);
+        let original = completed_message(
+            "rewritten-message",
+            10,
+            5,
+            2,
+            3,
+            4,
+            Some(0.1),
+            1_800_000_000_000,
+        );
+        persist_opencode_session(
+            &db,
+            &session,
+            &OpenCodeMessageQueryResult {
+                messages: vec![original],
+                has_incomplete_usage: false,
+            },
+            &mut SessionSyncResult::default(),
+        )
+        .expect("persist original message");
+
+        persist_opencode_session(
+            &db,
+            &session,
+            &OpenCodeMessageQueryResult {
+                messages: Vec::new(),
+                has_incomplete_usage: true,
+            },
+            &mut SessionSyncResult::default(),
+        )
+        .expect("preserve baseline during incomplete scan");
+        let conn = db.conn.lock().expect("lock incomplete scan database");
+        let retained: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_usage_rollups
+                 WHERE app_type = 'opencode' AND session_id = 'ses_rewrite'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("retained rollup count");
+        assert_eq!(retained, 1);
+        drop(conn);
+
+        let mut rewritten = completed_message(
+            "rewritten-message",
+            20,
+            6,
+            1,
+            4,
+            5,
+            Some(0.2),
+            1_800_086_400_000,
+        );
+        rewritten.1.model_id = "rewritten-model".into();
+        let expected_date =
+            local_date_from_timestamp_ms(rewritten.1.timestamp_ms).expect("rewritten local date");
+        persist_opencode_session(
+            &db,
+            &session,
+            &OpenCodeMessageQueryResult {
+                messages: vec![rewritten],
+                has_incomplete_usage: false,
+            },
+            &mut SessionSyncResult::default(),
+        )
+        .expect("persist rewritten message");
+        let conn = db.conn.lock().expect("lock rewritten database");
+        let rewritten_rows: Vec<(String, String, i64)> = conn
+            .prepare(
+                "SELECT date, model, input_tokens
+                 FROM agent_session_usage_rollups
+                 WHERE app_type = 'opencode' AND session_id = 'ses_rewrite'",
+            )
+            .expect("prepare rewritten rollups")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("query rewritten rollups")
+            .collect::<Result<_, _>>()
+            .expect("collect rewritten rollups");
+        assert_eq!(
+            rewritten_rows,
+            vec![(expected_date, "rewritten-model".into(), 20)]
+        );
+        drop(conn);
+
+        persist_opencode_session(
+            &db,
+            &session,
+            &OpenCodeMessageQueryResult {
+                messages: Vec::new(),
+                has_incomplete_usage: false,
+            },
+            &mut SessionSyncResult::default(),
+        )
+        .expect("persist completed deletion");
+        let conn = db.conn.lock().expect("lock deleted database");
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_usage_rollups
+                 WHERE app_type = 'opencode' AND session_id = 'ses_rewrite'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("remaining rollup count");
+        assert_eq!(remaining, 0);
     }
 
     #[test]

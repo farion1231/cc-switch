@@ -1409,6 +1409,9 @@ impl AgentTaskUsageFilter {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentUsageSourceDimension {
+    /// Whether this source contribution belongs to a normalized descendant
+    /// rather than the selected root session itself.
+    pub is_descendant: bool,
     pub provider_id: String,
     pub model: String,
     pub request_model: String,
@@ -1531,6 +1534,7 @@ struct UsageGroup {
 /// from fields added to the API later.
 fn source_dimension_identity(dimension: &AgentUsageSourceDimension) -> AgentUsageSourceDimension {
     let mut identity = dimension.clone();
+    identity.is_descendant = false;
     identity.api_call_count = None;
     identity.cache_write_tokens = None;
     identity.reasoning_tokens = None;
@@ -1648,7 +1652,7 @@ fn descendant_count(
 
 fn usage_measure_from_group_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageGroup> {
     let root_session_id: String = row.get(0)?;
-    let is_descendant: i64 = row.get(1)?;
+    let is_descendant = row.get::<_, i64>(1)? != 0;
     let provider_id: String = row.get(2)?;
     let model: String = row.get(3)?;
     let request_model: String = row.get(4)?;
@@ -1733,9 +1737,10 @@ fn usage_measure_from_group_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Usa
     };
     Ok(UsageGroup {
         root_session_id,
-        is_descendant: is_descendant != 0,
+        is_descendant,
         measure,
         source_dimension: AgentUsageSourceDimension {
+            is_descendant,
             provider_id,
             model,
             request_model,
@@ -2246,6 +2251,20 @@ fn codex_task_data_status_on_conn(conn: &Connection) -> Result<AgentTaskUsageDat
     } else {
         Ok(AgentTaskUsageDataStatus::Rebuilding)
     }
+}
+
+fn task_data_status_on_conn(
+    conn: &Connection,
+    app_type: Option<&str>,
+) -> Result<AgentTaskUsageDataStatus, AppError> {
+    let app_type = app_type.map(canonical_query_app_type).transpose()?;
+    if app_type
+        .as_deref()
+        .is_some_and(|app_type| app_type != "codex")
+    {
+        return Ok(AgentTaskUsageDataStatus::Ready);
+    }
+    codex_task_data_status_on_conn(conn)
 }
 
 /// Shared source scope for both the paged task list and its unpaged metadata
@@ -2766,7 +2785,7 @@ pub fn list_agent_task_usage(
     }
     let (limit, offset) = filter.normalized_page();
     let conn = crate::database::lock_conn!(db.conn);
-    let data_status = codex_task_data_status_on_conn(&conn)?;
+    let data_status = task_data_status_on_conn(&conn, filter.app_type.as_deref())?;
     let (roots, total) = query_task_roots(&conn, filter)?;
     let unattributed_usage = query_unattributed_codex_usage(&conn, filter)?;
     let root_ids: Vec<String> = roots
@@ -3137,6 +3156,14 @@ mod tests {
             summary.total_usage.as_ref().unwrap().total_tokens(),
             Some(48)
         );
+        assert!(summary
+            .source_dimensions
+            .iter()
+            .any(|dimension| !dimension.is_descendant));
+        assert!(summary
+            .source_dimensions
+            .iter()
+            .any(|dimension| dimension.is_descendant));
         let child_summary = get_agent_session_usage(
             &db,
             &AgentSessionUsageRequest {
@@ -3151,6 +3178,41 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("resolved to normalized root")));
+        Ok(())
+    }
+
+    #[test]
+    fn codex_replay_status_only_applies_to_codex_inclusive_task_queries() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value)
+                 VALUES ('codex_usage_canonical_replay_v1', 'replaying')",
+                [],
+            )?;
+        }
+
+        let claude = list_agent_task_usage(
+            &db,
+            &AgentTaskUsageFilter {
+                app_type: Some("claude".into()),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(claude.data_status, AgentTaskUsageDataStatus::Ready);
+
+        let codex = list_agent_task_usage(
+            &db,
+            &AgentTaskUsageFilter {
+                app_type: Some("codex".into()),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(codex.data_status, AgentTaskUsageDataStatus::Rebuilding);
+
+        let mixed = list_agent_task_usage(&db, &AgentTaskUsageFilter::default())?;
+        assert_eq!(mixed.data_status, AgentTaskUsageDataStatus::Rebuilding);
         Ok(())
     }
 

@@ -493,6 +493,7 @@ export interface AgentSessionNodeView {
 }
 
 export interface AgentUsageSourceDimension {
+  isDescendant: boolean;
   providerId: string;
   model: string;
   requestModel: string;
