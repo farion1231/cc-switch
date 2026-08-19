@@ -1075,6 +1075,8 @@
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
     "providerFilterTooltip": "供应商筛选",
+    "accountFilterAll": "全部 Claude 账号",
+    "accountFilterTooltip": "Claude 账号筛选",
     "sessionList": "会话列表",
     "viewModeTooltip": "查看方式",
     "viewModeFlat": "列表",

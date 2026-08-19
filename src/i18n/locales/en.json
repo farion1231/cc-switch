@@ -1075,6 +1075,8 @@
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
     "providerFilterTooltip": "Provider filter",
+    "accountFilterAll": "All Claude accounts",
+    "accountFilterTooltip": "Claude account filter",
     "sessionList": "Sessions",
     "viewModeTooltip": "View mode",
     "viewModeFlat": "List",

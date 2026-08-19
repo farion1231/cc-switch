@@ -1,3 +1,4 @@
+mod claude_code_index;
 pub mod providers;
 pub mod terminal;
 
@@ -25,6 +26,8 @@ pub struct SessionMeta {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +95,10 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
         b_ts.cmp(&a_ts)
     });
+
+    if let Err(error) = claude_code_index::sync(&sessions) {
+        log::warn!("Claude Code session index sync failed: {error}");
+    }
 
     sessions
 }
@@ -202,7 +209,7 @@ fn delete_session_with_roots(
 fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
     let roots = match provider_id {
         "codex" => codex::session_roots(),
-        "claude" => vec![crate::config::get_claude_config_dir().join("projects")],
+        "claude" => claude::session_roots(),
         "opencode" => vec![opencode::get_opencode_data_dir()],
         "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],
         "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],

@@ -14,14 +14,73 @@ use super::utils::{
 
 const PROVIDER_ID: &str = "claude";
 
-pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_claude_config_dir().join("projects");
-    let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+/// All Claude transcript roots on the host. Claude Desktop/Cowork keeps a
+/// separate `.claude/projects` tree inside each local-agent session, while
+/// Claude Code uses the standard `~/.claude/projects` tree.
+pub fn session_roots() -> Vec<PathBuf> {
+    let mut roots = vec![get_claude_config_dir().join("projects")];
 
-    let mut sessions = Vec::new();
-    for path in files {
-        if let Some(meta) = parse_session(&path) {
+    #[cfg(target_os = "macos")]
+    {
+        let home = crate::config::get_home_dir();
+        for app_dir in [
+            home.join("Library/Application Support/Claude/local-agent-mode-sessions"),
+            home.join("Library/Application Support/Claude-3p/local-agent-mode-sessions"),
+        ] {
+            collect_nested_project_roots(&app_dir, &mut roots);
+        }
+    }
+
+    let mut unique = Vec::with_capacity(roots.len());
+    for root in roots {
+        if !unique.iter().any(|existing: &PathBuf| existing == &root) {
+            unique.push(root);
+        }
+    }
+    unique
+}
+
+pub fn scan_sessions() -> Vec<SessionMeta> {
+    let mut sessions: Vec<SessionMeta> = Vec::new();
+    let mut seen_paths = std::collections::HashSet::new();
+    // Claude Desktop can mirror a Claude Code transcript through a hard link
+    // under local-agent-mode-sessions. Keep the Code file as the canonical
+    // record so switching providers never creates duplicate or movable copies.
+    let mut seen_files: std::collections::HashMap<(u64, u64), usize> =
+        std::collections::HashMap::new();
+    let mut seen_account_sessions = std::collections::HashSet::new();
+    for root in session_roots() {
+        let mut files = Vec::new();
+        collect_jsonl_files(&root, &mut files);
+        for path in files {
+            let key = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if !seen_paths.insert(key) {
+                continue;
+            }
+            let Some(meta) = parse_session(&path) else {
+                continue;
+            };
+            if let Some(file_key) = file_identity(&path) {
+                if let Some(existing_index) = seen_files.get(&file_key).copied() {
+                    // The canonical Code path is scanned before Desktop mirrors,
+                    // so merge the mirror's account identity without replacing
+                    // the stable source_path used to load the transcript.
+                    if sessions[existing_index].account_label.is_none() {
+                        sessions[existing_index].account_label = meta.account_label.clone();
+                    }
+                    if let Some(account) = meta.account_label {
+                        seen_account_sessions
+                            .insert((account, sessions[existing_index].session_id.clone()));
+                    }
+                    continue;
+                }
+                seen_files.insert(file_key, sessions.len());
+            }
+            if let Some(key) = account_session_key(&meta) {
+                if !seen_account_sessions.insert(key) {
+                    continue;
+                }
+            }
             sessions.push(meta);
         }
     }
@@ -131,6 +190,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
     let mut first_user_message: Option<String> = None;
+    let mut has_conversation_record = false;
 
     // Extract metadata and first user message from head lines
     for line in &head {
@@ -138,6 +198,14 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
+        if value.get("message").is_some()
+            || matches!(
+                value.get("type").and_then(Value::as_str),
+                Some("user" | "assistant" | "custom-title")
+            )
+        {
+            has_conversation_record = true;
+        }
         if session_id.is_none() {
             session_id = value
                 .get("sessionId")
@@ -223,8 +291,24 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
     }
 
+    if !has_conversation_record {
+        has_conversation_record = tail.iter().any(|line| {
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                return false;
+            };
+            value.get("message").is_some()
+                || matches!(
+                    value.get("type").and_then(Value::as_str),
+                    Some("user" | "assistant" | "custom-title")
+                )
+        });
+    }
+
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
+    if !has_conversation_record {
+        return None;
+    }
 
     // Title priority: custom-title > first user message > directory basename
     let title = custom_title
@@ -238,6 +322,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         });
 
     let summary = summary.map(|text| truncate_summary(&text, 160));
+    let account_label = account_label_from_path(path);
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -249,6 +334,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("claude --resume {session_id}")),
+        account_label,
     })
 }
 
@@ -257,6 +343,27 @@ fn is_agent_session(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| name.starts_with("agent-"))
         .unwrap_or(false)
+}
+
+fn account_session_key(meta: &SessionMeta) -> Option<(String, String)> {
+    meta.account_label
+        .as_ref()
+        .map(|account| (account.clone(), meta.session_id.clone()))
+}
+
+#[cfg(unix)]
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_identity(_path: &Path) -> Option<(u64, u64)> {
+    // Non-Unix platforms do not expose a portable inode identity through the
+    // standard library. Canonical paths still deduplicate ordinary mirrors;
+    // avoid guessing from size/timestamps and accidentally hiding a session.
+    None
 }
 
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
@@ -283,6 +390,77 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+fn collect_nested_project_roots(root: &Path, roots: &mut Vec<PathBuf>) {
+    if !root.exists() {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some("projects")
+            && path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str())
+                == Some(".claude")
+        {
+            roots.push(path);
+            continue;
+        }
+        collect_nested_project_roots(&path, roots);
+    }
+}
+
+fn account_label_from_path(path: &Path) -> Option<String> {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir.file_name().and_then(|name| name.to_str()) == Some(".claude") {
+            let session_dir = dir.parent()?;
+            let session_id = session_dir.file_name()?.to_str()?;
+            let metadata_path = session_dir.parent()?.join(format!("{session_id}.json"));
+            if let Ok(contents) = std::fs::read_to_string(metadata_path) {
+                if let Ok(value) = serde_json::from_str::<Value>(&contents) {
+                    if let Some(email) = value
+                        .get("emailAddress")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        return Some(email.to_string());
+                    }
+                    if let Some(account) = value
+                        .get("accountName")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        return Some(account.to_string());
+                    }
+                }
+            }
+            let account_root = session_dir
+                .parent()
+                .and_then(|organization_dir| organization_dir.parent())
+                .and_then(|account_dir| account_dir.file_name())
+                .and_then(|name| name.to_str())?;
+            return Some(account_root.to_string());
+        }
+        current = dir.parent();
+    }
+    None
 }
 
 fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
@@ -329,6 +507,83 @@ mod tests {
 
         assert!(!path.exists());
         assert!(!sidecar.exists());
+    }
+
+    #[test]
+    fn account_label_reads_desktop_session_email() {
+        let temp = tempdir().expect("tempdir");
+        let account = temp.path().join("account-uuid");
+        let organization = account.join("organization-uuid");
+        let local_session = organization.join("local_session");
+        let projects = local_session.join(".claude/projects/project");
+        std::fs::create_dir_all(&projects).expect("create project");
+        std::fs::write(
+            organization.join("local_session.json"),
+            r#"{"emailAddress":"architecture@example.com"}"#,
+        )
+        .expect("write metadata");
+
+        let transcript = projects.join("session.jsonl");
+        assert_eq!(
+            account_label_from_path(&transcript).as_deref(),
+            Some("architecture@example.com")
+        );
+    }
+
+    #[test]
+    fn parse_session_skips_queue_only_jsonl() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("queued.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"queue-operation","operation":"enqueue","sessionId":"queued"}"#,
+        )
+        .expect("write queue");
+        assert!(parse_session(&path).is_none());
+    }
+
+    #[test]
+    fn scan_key_keeps_standard_sessions_and_deduplicates_account_sessions() {
+        let standard_a = SessionMeta {
+            provider_id: PROVIDER_ID.to_string(),
+            session_id: "same-id".to_string(),
+            title: None,
+            summary: None,
+            project_dir: None,
+            created_at: None,
+            last_active_at: None,
+            source_path: None,
+            resume_command: None,
+            account_label: None,
+        };
+        let mut desktop_a = standard_a.clone();
+        desktop_a.account_label = Some("account@example.com".to_string());
+        let desktop_b = desktop_a.clone();
+
+        assert_eq!(account_session_key(&standard_a), None);
+        assert_eq!(
+            account_session_key(&desktop_a),
+            account_session_key(&desktop_b)
+        );
+
+        let mut other_account = desktop_a.clone();
+        other_account.account_label = Some("other@example.com".to_string());
+        assert_ne!(
+            account_session_key(&desktop_a),
+            account_session_key(&other_account)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_identity_deduplicates_hard_linked_transcripts() {
+        let temp = tempdir().expect("tempdir");
+        let original = temp.path().join("original.jsonl");
+        let mirror = temp.path().join("mirror.jsonl");
+        std::fs::write(&original, "{}\n").expect("write original");
+        std::fs::hard_link(&original, &mirror).expect("hard link");
+
+        assert_eq!(file_identity(&original), file_identity(&mirror));
     }
 
     #[test]

@@ -93,6 +93,8 @@ type ProviderFilter =
   | "hermes"
   | "pi";
 
+type AccountFilter = "all" | string;
+
 type SessionListViewMode = "flat" | "grouped";
 
 type GroupSelectionState = {
@@ -221,6 +223,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>(
     appId as ProviderFilter,
   );
+  const [accountFilter, setAccountFilter] = useState<AccountFilter>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [listViewMode, setListViewMode] = useState<SessionListViewMode>(
     readInitialSessionListViewMode,
@@ -245,9 +248,33 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     providerFilter,
   });
 
-  const filteredSessions = useMemo(() => {
-    return searchSessions(search);
-  }, [searchSessions, search]);
+  const searchedSessions = useMemo(
+    () => searchSessions(search),
+    [searchSessions, search],
+  );
+
+  const accountOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          sessions
+            .filter((session) => session.providerId === "claude")
+            .map((session) => session.accountLabel)
+            .filter((label): label is string => Boolean(label)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [sessions],
+  );
+
+  const filteredSessions = useMemo(
+    () =>
+      accountFilter === "all"
+        ? searchedSessions
+        : searchedSessions.filter(
+            (session) => session.accountLabel === accountFilter,
+          ),
+    [accountFilter, searchedSessions],
+  );
 
   const groupedSessions = useMemo(
     () =>
@@ -299,6 +326,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       filterSetToAllowedValues(current, validGroupExpansionKeys.directoryKeys),
     );
   }, [isLoading, validGroupExpansionKeys]);
+
+  useEffect(() => {
+    if (accountFilter !== "all" && !accountOptions.includes(accountFilter)) {
+      setAccountFilter("all");
+    }
+  }, [accountFilter, accountOptions]);
+
+  useEffect(() => {
+    if (providerFilter !== "all" && providerFilter !== "claude") {
+      setAccountFilter("all");
+    }
+  }, [providerFilter]);
 
   useEffect(() => {
     if (filteredSessions.length === 0) {
@@ -1180,6 +1219,45 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </SelectItem>
                           </SelectContent>
                         </Select>
+
+                        {accountOptions.length > 0 &&
+                          (providerFilter === "all" ||
+                            providerFilter === "claude") && (
+                            <Select
+                              value={accountFilter}
+                              onValueChange={setAccountFilter}
+                            >
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <SelectTrigger
+                                    className="h-7 max-w-44 border-0 bg-transparent px-2 text-xs hover:bg-muted"
+                                    aria-label={t(
+                                      "sessionManager.accountFilterTooltip",
+                                    )}
+                                  >
+                                    <span className="truncate">
+                                      {accountFilter === "all"
+                                        ? t("sessionManager.accountFilterAll")
+                                        : accountFilter}
+                                    </span>
+                                  </SelectTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {t("sessionManager.accountFilterTooltip")}
+                                </TooltipContent>
+                              </Tooltip>
+                              <SelectContent>
+                                <SelectItem value="all">
+                                  {t("sessionManager.accountFilterAll")}
+                                </SelectItem>
+                                {accountOptions.map((account) => (
+                                  <SelectItem key={account} value={account}>
+                                    {account}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
 
                         <Tooltip>
                           <TooltipTrigger asChild>
