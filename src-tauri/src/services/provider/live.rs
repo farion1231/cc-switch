@@ -32,6 +32,8 @@ use super::normalize_claude_models_in_value;
 const CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS: &str = "372000";
 const CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW: &str = "372000";
 const KIMI_FOR_CODING_CONTEXT_TOKENS: &str = "262144";
+const STEPFUN_CONTEXT_TOKENS: &str = "262144";
+const STEPFUN_AUTO_COMPACT_WINDOW: &str = "220000";
 
 /// Model env keys Claude Code may route requests through. The defaults above
 /// are calibrated against gpt-5.6's Codex catalog, so every configured model
@@ -78,6 +80,21 @@ fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
         .map(str::trim)
         .map(|url| url.trim_end_matches('/'))
         == Some("https://api.kimi.com/coding")
+}
+
+fn is_stepfun_provider(provider: &Provider) -> bool {
+    provider
+        .settings_config
+        .pointer("/env/ANTHROPIC_BASE_URL")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(|url| url.trim_end_matches('/'))
+        .is_some_and(|url| {
+            matches!(
+                url,
+                "https://api.stepfun.com/step_plan" | "https://api.stepfun.ai/step_plan"
+            )
+        })
 }
 
 /// Claude Code assigns unknown non-Claude model ids a 200K context window.
@@ -161,6 +178,38 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
             .and_then(|provider_env| provider_env.get(key))
             .cloned()
             .unwrap_or_else(|| Value::String(KIMI_FOR_CODING_CONTEXT_TOKENS.to_string()));
+        env.insert(key.to_string(), value);
+    }
+}
+
+/// StepFun's Claude-compatible Step Plan endpoint exposes a 262,144-token
+/// context window. Apply the defaults to effective settings so providers saved
+/// before the preset gained these fields receive the fix without persisting
+/// program-owned values back into the provider.
+fn apply_stepfun_context_defaults(settings: &mut Value, provider: &Provider) {
+    if !is_stepfun_provider(provider) {
+        return;
+    }
+
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+
+    for (key, default_value) in [
+        ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", STEPFUN_CONTEXT_TOKENS),
+        (
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+            STEPFUN_AUTO_COMPACT_WINDOW,
+        ),
+    ] {
+        let value = provider_env
+            .and_then(|provider_env| provider_env.get(key))
+            .cloned()
+            .unwrap_or_else(|| Value::String(default_value.to_string()));
         env.insert(key.to_string(), value);
     }
 }
@@ -696,6 +745,7 @@ pub(crate) fn build_effective_settings_with_common_config(
     if matches!(app_type, AppType::Claude) {
         apply_codex_oauth_claude_context_defaults(&mut effective_settings, provider);
         apply_kimi_for_coding_context_defaults(&mut effective_settings, provider);
+        apply_stepfun_context_defaults(&mut effective_settings, provider);
     }
 
     Ok(effective_settings)
@@ -1010,6 +1060,33 @@ fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provide
     }
 }
 
+fn strip_injected_stepfun_context_defaults(settings: &mut Value, provider: &Provider) {
+    if !is_stepfun_provider(provider) {
+        return;
+    }
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (key, default_value) in [
+        ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", STEPFUN_CONTEXT_TOKENS),
+        (
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+            STEPFUN_AUTO_COMPACT_WINDOW,
+        ),
+    ] {
+        if provider_env.is_some_and(|provider_env| provider_env.contains_key(key)) {
+            continue;
+        }
+        if env.get(key).and_then(Value::as_str) == Some(default_value) {
+            env.remove(key);
+        }
+    }
+}
+
 fn restore_live_settings_for_provider_backfill(
     app_type: &AppType,
     provider: &Provider,
@@ -1019,6 +1096,7 @@ fn restore_live_settings_for_provider_backfill(
         let mut settings = live_settings;
         strip_injected_codex_oauth_context_defaults(&mut settings, provider);
         strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
+        strip_injected_stepfun_context_defaults(&mut settings, provider);
         return settings;
     }
     if matches!(app_type, AppType::GrokBuild) {
@@ -2322,6 +2400,96 @@ mod tests {
         assert_eq!(
             backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
             json!("262144")
+        );
+    }
+
+    #[test]
+    fn stepfun_effective_settings_backfill_context_defaults_for_both_endpoints() {
+        for base_url in [
+            "https://api.stepfun.com/step_plan/",
+            "https://api.stepfun.ai/step_plan",
+        ] {
+            let db = Database::memory().expect("create memory db");
+            let provider = Provider::with_id(
+                "stepfun".to_string(),
+                "Renamed StepFun provider".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": base_url,
+                        "ANTHROPIC_MODEL": "step-3.5-flash-2603"
+                    }
+                }),
+                None,
+            );
+
+            let effective =
+                build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                    .expect("build effective settings");
+            assert_eq!(
+                effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+                json!("262144")
+            );
+            assert_eq!(
+                effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+                json!("220000")
+            );
+        }
+    }
+
+    #[test]
+    fn stepfun_context_defaults_preserve_user_overrides() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "stepfun".to_string(),
+            "StepFun".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.stepfun.com/step_plan",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "240000",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("240000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("200000")
+        );
+    }
+
+    #[test]
+    fn stepfun_backfill_strips_only_injected_context_defaults() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "stepfun".to_string(),
+            "StepFun".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.stepfun.ai/step_plan",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "220000"
+                }
+            }),
+            None,
+        );
+
+        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+            .expect("build effective settings");
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert_eq!(
+            backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("220000")
         );
     }
 
