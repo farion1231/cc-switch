@@ -387,6 +387,8 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     }
 }
 
