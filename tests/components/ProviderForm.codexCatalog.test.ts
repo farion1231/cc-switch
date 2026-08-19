@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { replaceSingleCodexCatalogModel } from "@/components/providers/forms/CodexFormFields";
 import { normalizeCodexCatalogModelsForSave } from "@/components/providers/forms/ProviderForm";
 import { mapCodexCatalogModelForForm } from "@/components/providers/forms/hooks/useCodexConfigState";
 
@@ -115,5 +116,50 @@ describe("ProviderForm Codex catalog helpers", () => {
         { model: "glm-5.2", reasoningLevels: [" high ", "max"] },
       ]),
     ).toEqual([{ model: "glm-5.2", reasoningLevels: ["high", "max"] }]);
+  });
+
+  it("replaces a single catalog model only when explicitly requested", () => {
+    expect(
+      replaceSingleCodexCatalogModel(
+        [
+          {
+            model: "gpt-5.6-sol",
+            displayName: "gpt-5.6-sol",
+            contextWindow: 372000,
+            inputModalities: ["text", "image"],
+          },
+        ],
+        "gpt-5.3-codex",
+      ),
+    ).toEqual([
+      {
+        model: "gpt-5.3-codex",
+        displayName: "gpt-5.3-codex",
+        contextWindow: 372000,
+        inputModalities: ["text", "image"],
+      },
+    ]);
+  });
+
+  it("preserves custom display names and refuses multi-model replacement", () => {
+    const customDisplayName = [
+      { model: "gpt-5.6-sol", displayName: "Coding Model" },
+    ];
+    expect(
+      replaceSingleCodexCatalogModel(customDisplayName, "gpt-5.3-codex"),
+    ).toEqual([{ model: "gpt-5.3-codex", displayName: "Coding Model" }]);
+
+    const multipleModels = [
+      { model: "gpt-5.6-sol" },
+      { model: "gpt-5.6-luna" },
+    ];
+    expect(
+      replaceSingleCodexCatalogModel(multipleModels, "gpt-5.3-codex"),
+    ).toBe(multipleModels);
+  });
+
+  it("does not replace a catalog model with an empty value", () => {
+    const models = [{ model: "gpt-5.6-sol" }];
+    expect(replaceSingleCodexCatalogModel(models, "")).toBe(models);
   });
 });

@@ -1553,6 +1553,7 @@
     "defaultModelHint": "Codex がデフォルトでリクエストするモデルです。プリセットの更新を待たずにいつでも変更できます。空欄のままモデルマッピングを設定している場合は、マッピングの先頭行が使われます。",
     "defaultModelNotInCatalog": "このモデルはモデルマッピングにないため、Codex の /model メニューには表示されません（直接リクエストは有効です）。",
     "addToModelMapping": "マッピングに追加",
+    "replaceModelMapping": "マッピングを置換",
     "modelMappingTitle": "モデルマッピング",
     "modelMappingHint": "Codex model_catalog_json を生成し、/model コマンドでこれらの第三者モデル名を表示できるようにします。リストの内容はそのまま保存されます。変更後、モデルリストを更新するには Codex の再起動が必要です。",
     "addCatalogModel": "モデルを追加",
