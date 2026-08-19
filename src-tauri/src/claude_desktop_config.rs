@@ -1255,8 +1255,18 @@ fn windows_paths_from_local_app_data(local_app_data: &Path) -> ClaudeDesktopPath
     paths_from_dirs(normal_dir, threep_dir)
 }
 
-#[cfg(windows)]
+#[cfg(any(target_os = "windows", test))]
 fn pick_windows_claude_dir(local_app_data: &Path, threep: bool) -> Option<PathBuf> {
+    // Microsoft Store (MSIX) installs win over classic installs: the packaged
+    // Claude Desktop reads its configuration from inside the MSIX virtualized
+    // container. A plain process writing to `%LOCALAPPDATA%\Claude[-3p]` is
+    // invisible to the packaged app (MSIX file-system virtualization), so as
+    // long as the packaged app has created its container config we must target
+    // that path instead.
+    if let Some(msix_dir) = pick_windows_msix_claude_dir(local_app_data, threep) {
+        return Some(msix_dir);
+    }
+
     let exact_name = if threep { "Claude-3p" } else { "Claude" };
     let exact = local_app_data.join(exact_name);
     if exact.exists() {
@@ -1275,6 +1285,42 @@ fn pick_windows_claude_dir(local_app_data: &Path, threep: bool) -> Option<PathBu
             let starts = name.starts_with("Claude");
             let is_threep = name.contains("-3p");
             starts && is_threep == threep
+        })
+        .collect();
+    candidates.sort();
+    candidates.into_iter().next()
+}
+
+/// Locates the Claude Desktop config directory inside a Microsoft Store
+/// (MSIX) package container.
+///
+/// The 3P config (and its `configLibrary`) lives under
+/// `...\LocalCache\Local\Claude-3p`, while the non-3P config lives under
+/// `...\LocalCache\Roaming\Claude`. Only containers that already hold a
+/// config file are considered, i.e. the packaged app has run at least once.
+#[cfg(any(target_os = "windows", test))]
+fn pick_windows_msix_claude_dir(local_app_data: &Path, threep: bool) -> Option<PathBuf> {
+    let packages_dir = local_app_data.join("Packages");
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(packages_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter_map(|package_dir| {
+            let name = package_dir.file_name().and_then(|value| value.to_str())?;
+            if !name.starts_with("Claude") {
+                return None;
+            }
+            let candidate = if threep {
+                package_dir.join("LocalCache").join("Local").join("Claude-3p")
+            } else {
+                package_dir.join("LocalCache").join("Roaming").join("Claude")
+            };
+            if !candidate.is_dir() {
+                return None;
+            }
+            let has_config = candidate.join(CONFIG_FILE).is_file()
+                || (threep && candidate.join(CONFIG_LIBRARY_DIR).is_dir());
+            has_config.then_some(candidate)
         })
         .collect();
     candidates.sort();
@@ -2218,5 +2264,90 @@ mod tests {
             None,
         );
         assert!(!is_compatible_direct_provider(&missing_bearer));
+    }
+
+    #[test]
+    fn windows_pick_prefers_msix_container_over_classic_dir() {
+        let temp = TempDir::new().expect("tempdir");
+        let local = temp.path().join("Local");
+
+        let pkg = local.join("Packages").join("Claude_pzs8sxrjxfjjc");
+        let threep_msix = pkg
+            .join("LocalCache")
+            .join("Local")
+            .join("Claude-3p");
+        let normal_msix = pkg
+            .join("LocalCache")
+            .join("Roaming")
+            .join("Claude");
+        fs::create_dir_all(&threep_msix).expect("create msix threep dir");
+        fs::create_dir_all(&normal_msix).expect("create msix normal dir");
+        write_json_file(&threep_msix.join(CONFIG_FILE), &json!({"cfg": true}))
+            .expect("write msix threep config");
+        write_json_file(&normal_msix.join(CONFIG_FILE), &json!({"cfg": true}))
+            .expect("write msix normal config");
+
+        let threep_classic = local.join("Claude-3p");
+        let normal_classic = local.join("Claude");
+        fs::create_dir_all(&threep_classic).expect("create classic threep dir");
+        fs::create_dir_all(&normal_classic).expect("create classic normal dir");
+        write_json_file(&threep_classic.join(CONFIG_FILE), &json!({"cfg": true}))
+            .expect("write classic threep config");
+        write_json_file(&normal_classic.join(CONFIG_FILE), &json!({"cfg": true}))
+            .expect("write classic normal config");
+
+        assert_eq!(
+            pick_windows_claude_dir(&local, true).expect("threep dir"),
+            threep_msix
+        );
+        assert_eq!(
+            pick_windows_claude_dir(&local, false).expect("normal dir"),
+            normal_msix
+        );
+    }
+
+    #[test]
+    fn windows_pick_falls_back_to_classic_when_msix_container_empty() {
+        let temp = TempDir::new().expect("tempdir");
+        let local = temp.path().join("Local");
+
+        let pkg = local.join("Packages").join("Claude_pzs8sxrjxfjjc");
+        fs::create_dir_all(pkg.join("LocalCache").join("Local").join("Claude-3p"))
+            .expect("create msix container without config");
+
+        let threep_classic = local.join("Claude-3p");
+        fs::create_dir_all(&threep_classic).expect("create classic threep dir");
+        write_json_file(&threep_classic.join(CONFIG_FILE), &json!({"cfg": true}))
+            .expect("write classic threep config");
+
+        assert_eq!(
+            pick_windows_claude_dir(&local, true).expect("threep dir"),
+            threep_classic
+        );
+    }
+
+    #[test]
+    fn windows_pick_uses_config_library_for_msix_threep_detect() {
+        let temp = TempDir::new().expect("tempdir");
+        let local = temp.path().join("Local");
+
+        let threep_msix = local
+            .join("Packages")
+            .join("Claude_pzs8sxrjxfjjc")
+            .join("LocalCache")
+            .join("Local")
+            .join("Claude-3p");
+        fs::create_dir_all(threep_msix.join(CONFIG_LIBRARY_DIR))
+            .expect("create msix configLibrary");
+
+        let threep_classic = local.join("Claude-3p");
+        fs::create_dir_all(&threep_classic).expect("create classic threep dir");
+        write_json_file(&threep_classic.join(CONFIG_FILE), &json!({"cfg": true}))
+            .expect("write classic threep config");
+
+        assert_eq!(
+            pick_windows_claude_dir(&local, true).expect("threep dir"),
+            threep_msix
+        );
     }
 }
