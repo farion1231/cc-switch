@@ -4,6 +4,7 @@ import { RequestLogTable } from "@/components/usage/RequestLogTable";
 import type { UsageRangeSelection } from "@/types/usage";
 
 const useRequestLogsMock = vi.hoisted(() => vi.fn());
+const useUsageEndpointOptionsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -22,6 +23,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/lib/query/usage", () => ({
   useRequestLogs: (args: unknown) => useRequestLogsMock(args),
+  useUsageEndpointOptions: (args: unknown) => useUsageEndpointOptionsMock(args),
 }));
 
 vi.mock("@/components/ui/button", () => ({
@@ -58,6 +60,8 @@ vi.mock("@/components/ui/table", () => ({
 describe("RequestLogTable", () => {
   beforeEach(() => {
     useRequestLogsMock.mockReset();
+    useUsageEndpointOptionsMock.mockReset();
+    useUsageEndpointOptionsMock.mockReturnValue({ data: [] });
     useRequestLogsMock.mockImplementation(
       ({ page = 0, pageSize = 20 }: { page?: number; pageSize?: number }) => ({
         data: {

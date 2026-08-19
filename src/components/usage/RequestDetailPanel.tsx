@@ -102,6 +102,12 @@ export function RequestDetailPanel({
               </div>
               <div>
                 <dt className="text-muted-foreground">
+                  {t("usage.endpoint", "Endpoint")}
+                </dt>
+                <dd className="font-mono text-xs">{request.endpointDisplay}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">
                   {t("usage.appType", "应用类型")}
                 </dt>
                 <dd>{request.appType}</dd>
@@ -272,7 +278,7 @@ export function RequestDetailPanel({
                 className={`col-span-2 ${request.costMultiplier && parseFloat(request.costMultiplier) !== 1 ? "" : "border-t"} pt-3`}
               >
                 <dt className="text-muted-foreground">
-                  {t("usage.totalCost", "总成本")}
+                  {t("usage.totalCost", "本地定价估算")}
                   {request.costMultiplier &&
                     parseFloat(request.costMultiplier) !== 1 && (
                       <span className="ml-1 text-xs">

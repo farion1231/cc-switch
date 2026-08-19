@@ -11,6 +11,8 @@ export interface RequestLog {
   requestId: string;
   providerId: string;
   providerName?: string;
+  endpointId?: string;
+  endpointDisplay: string;
   appType: string;
   model: string;
   requestModel?: string;
@@ -56,6 +58,11 @@ export interface PaginatedLogs {
   total: number;
   page: number;
   pageSize: number;
+}
+
+export interface UsageEndpointOption {
+  endpointId: string;
+  endpointDisplay: string;
 }
 
 export interface ModelPricing {
@@ -114,6 +121,8 @@ export interface DailyStats {
 export interface ProviderStats {
   providerId: string;
   providerName: string;
+  endpointId: string;
+  endpointDisplay: string;
   requestCount: number;
   totalTokens: number;
   totalCost: string;
@@ -132,6 +141,7 @@ export interface ModelStats {
 export interface LogFilters {
   appType?: string;
   providerName?: string;
+  endpointId?: string;
   model?: string;
   statusCode?: number;
   startDate?: number;

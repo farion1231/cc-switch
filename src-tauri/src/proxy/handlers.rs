@@ -225,6 +225,7 @@ async fn handle_messages_for_app(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.upstream_endpoint_url = Some(result.upstream_endpoint_url);
     ctx.provider = result.provider;
     let api_format = result
         .claude_api_format
@@ -810,6 +811,7 @@ pub async fn handle_chat_completions(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.upstream_endpoint_url = Some(result.upstream_endpoint_url);
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -905,6 +907,7 @@ async fn handle_responses_for_app(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.upstream_endpoint_url = Some(result.upstream_endpoint_url);
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -1021,6 +1024,7 @@ pub async fn handle_alpha_search(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.upstream_endpoint_url = Some(result.upstream_endpoint_url);
     ctx.provider = result.provider;
 
     process_response(
@@ -1104,6 +1108,7 @@ async fn handle_responses_compact_for_app(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.upstream_endpoint_url = Some(result.upstream_endpoint_url);
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -2113,6 +2118,7 @@ pub async fn handle_gemini(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.upstream_endpoint_url = Some(result.upstream_endpoint_url);
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -2811,6 +2817,7 @@ async fn log_usage(
     if let Err(e) = logger.log_with_calculation(
         request_id,
         provider_id.to_string(),
+        None,
         app_type.to_string(),
         model.to_string(),
         request_model.to_string(),

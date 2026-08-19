@@ -10,11 +10,52 @@ use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
+use url::Url;
+use uuid::Uuid;
+
+#[derive(Debug, PartialEq, Eq)]
+struct EndpointIdentity {
+    fingerprint: String,
+    display_url: String,
+}
+
+/// Return a private, durable identity for an upstream base URL. Only the
+/// protocol/host/effective port are persisted for display; the path remains in
+/// the one-way fingerprint so two gateways on one host still remain distinct.
+fn endpoint_identity(raw_url: &str) -> Option<EndpointIdentity> {
+    let mut url = Url::parse(raw_url.trim()).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    let scheme = url.scheme().to_ascii_lowercase();
+    let port = url.port_or_known_default();
+    let display_port =
+        port.filter(|value| !matches!((scheme.as_str(), *value), ("http", 80) | ("https", 443)));
+    url.set_username("").ok()?;
+    url.set_password(None).ok()?;
+    url.set_query(None);
+    url.set_fragment(None);
+    let path = match url.path().trim_end_matches('/') {
+        "" => "/",
+        value => value,
+    };
+    let identity = match display_port {
+        Some(port) => format!("{scheme}://{host}:{port}{path}"),
+        None => format!("{scheme}://{host}{path}"),
+    };
+    let display_url = match display_port {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
+    };
+    Some(EndpointIdentity {
+        fingerprint: format!("{:x}", Sha256::digest(identity.as_bytes())),
+        display_url,
+    })
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct UsageSemantic {
     app_type: String,
     provider_id: String,
+    endpoint_id: Option<String>,
     model: String,
     input_token_semantics: i64,
     input_tokens: u32,
@@ -25,10 +66,11 @@ struct UsageSemantic {
 }
 
 impl UsageSemantic {
-    fn from_log(log: &RequestLog, input_token_semantics: i64) -> Self {
+    fn from_log(log: &RequestLog, input_token_semantics: i64, endpoint_id: Option<String>) -> Self {
         Self {
             app_type: log.app_type.clone(),
             provider_id: log.provider_id.clone(),
+            endpoint_id,
             model: log.model.clone(),
             input_token_semantics,
             input_tokens: log.usage.input_tokens,
@@ -43,6 +85,7 @@ impl UsageSemantic {
         let encoded = serde_json::to_vec(&(
             &self.app_type,
             &self.provider_id,
+            &self.endpoint_id,
             &self.model,
             self.input_token_semantics,
             self.input_tokens,
@@ -64,6 +107,9 @@ impl UsageSemantic {
 pub struct RequestLog {
     pub request_id: String,
     pub provider_id: String,
+    /// Actual upstream base URL selected for this request. This is resolved to
+    /// an immutable, privacy-preserving endpoint snapshot at write time.
+    pub endpoint_url: Option<String>,
     pub app_type: String,
     pub model: String,
     pub request_model: String,
@@ -100,6 +146,7 @@ impl<'a> UsageLogger<'a> {
     /// 记录成功的请求
     pub fn log_request(&self, log: &RequestLog) -> Result<(), AppError> {
         let conn = crate::database::lock_conn!(self.db.conn);
+        let endpoint_id = Self::resolve_endpoint_id(&conn, log)?;
 
         let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
             if let Some(cost) = &log.cost {
@@ -127,7 +174,7 @@ impl<'a> UsageLogger<'a> {
             } else {
                 INPUT_TOKEN_SEMANTICS_FRESH
             };
-        let semantic = UsageSemantic::from_log(log, input_token_semantics);
+        let semantic = UsageSemantic::from_log(log, input_token_semantics, endpoint_id.clone());
         let existing = Self::load_existing_semantic(&conn, &log.request_id)?;
 
         let (request_id, replace_session_log, collision) = match existing {
@@ -168,13 +215,13 @@ impl<'a> UsageLogger<'a> {
         };
         let sql = format!(
             "{insert_verb} INTO proxy_request_logs (
-                request_id, provider_id, app_type, model, request_model, pricing_model,
+                request_id, provider_id, endpoint_id, app_type, model, request_model, pricing_model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
                 provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)"
         );
         let affected_rows = conn
             .execute(
@@ -182,6 +229,7 @@ impl<'a> UsageLogger<'a> {
                 rusqlite::params![
                     request_id,
                     log.provider_id,
+                    endpoint_id,
                     log.app_type,
                     log.model,
                     log.request_model,
@@ -222,12 +270,48 @@ impl<'a> UsageLogger<'a> {
         Ok(())
     }
 
+    fn resolve_endpoint_id(
+        conn: &rusqlite::Connection,
+        log: &RequestLog,
+    ) -> Result<Option<String>, AppError> {
+        let Some(raw_url) = log.endpoint_url.as_deref() else {
+            return Ok(None);
+        };
+        let Some(identity) = endpoint_identity(raw_url) else {
+            log::warn!("[USG-004] endpoint URL 无法规范化，按未知 endpoint 记录");
+            return Ok(None);
+        };
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT OR IGNORE INTO usage_endpoints
+             (id, app_type, provider_id, url_fingerprint, display_url, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                id,
+                log.app_type,
+                log.provider_id,
+                identity.fingerprint,
+                identity.display_url,
+                chrono::Utc::now().timestamp(),
+            ],
+        )
+        .map_err(|error| AppError::Database(format!("创建 usage endpoint 失败: {error}")))?;
+        conn.query_row(
+            "SELECT id FROM usage_endpoints
+             WHERE app_type = ?1 AND provider_id = ?2 AND url_fingerprint = ?3",
+            rusqlite::params![log.app_type, log.provider_id, identity.fingerprint],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| AppError::Database(format!("查询 usage endpoint 失败: {error}")))
+    }
+
     fn load_existing_semantic(
         conn: &rusqlite::Connection,
         request_id: &str,
     ) -> Result<Option<(Option<String>, UsageSemantic)>, AppError> {
         conn.query_row(
-            "SELECT data_source, app_type, provider_id, model, input_token_semantics,
+            "SELECT data_source, app_type, provider_id, endpoint_id, model, input_token_semantics,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, status_code
              FROM proxy_request_logs WHERE request_id = ?1",
@@ -238,13 +322,14 @@ impl<'a> UsageLogger<'a> {
                     UsageSemantic {
                         app_type: row.get(1)?,
                         provider_id: row.get(2)?,
-                        model: row.get(3)?,
-                        input_token_semantics: row.get(4)?,
-                        input_tokens: row.get::<_, i64>(5)? as u32,
-                        output_tokens: row.get::<_, i64>(6)? as u32,
-                        cache_read_tokens: row.get::<_, i64>(7)? as u32,
-                        cache_creation_tokens: row.get::<_, i64>(8)? as u32,
-                        status_code: row.get::<_, i64>(9)? as u16,
+                        endpoint_id: row.get(3)?,
+                        model: row.get(4)?,
+                        input_token_semantics: row.get(5)?,
+                        input_tokens: row.get::<_, i64>(6)? as u32,
+                        output_tokens: row.get::<_, i64>(7)? as u32,
+                        cache_read_tokens: row.get::<_, i64>(8)? as u32,
+                        cache_creation_tokens: row.get::<_, i64>(9)? as u32,
+                        status_code: row.get::<_, i64>(10)? as u16,
                     },
                 ))
             },
@@ -271,6 +356,7 @@ impl<'a> UsageLogger<'a> {
         let log = RequestLog {
             request_id,
             provider_id,
+            endpoint_url: None,
             app_type,
             model,
             request_model,
@@ -312,6 +398,7 @@ impl<'a> UsageLogger<'a> {
         let log = RequestLog {
             request_id,
             provider_id,
+            endpoint_url: None,
             app_type,
             model,
             request_model,
@@ -447,6 +534,7 @@ impl<'a> UsageLogger<'a> {
         &self,
         request_id: String,
         provider_id: String,
+        endpoint_url: Option<String>,
         app_type: String,
         model: String,
         request_model: String,
@@ -481,6 +569,7 @@ impl<'a> UsageLogger<'a> {
         let log = RequestLog {
             request_id,
             provider_id,
+            endpoint_url,
             app_type,
             model,
             request_model,
@@ -505,10 +594,32 @@ impl<'a> UsageLogger<'a> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn endpoint_identity_hides_path_and_query_but_distinguishes_base_paths() {
+        let first = endpoint_identity("HTTPS://Example.COM:443/v1?api_key=secret#fragment")
+            .expect("valid endpoint");
+        let second =
+            endpoint_identity("https://example.com/v2?token=secret").expect("valid endpoint");
+
+        assert_eq!(first.display_url, "https://example.com");
+        assert!(!first.display_url.contains("v1"));
+        assert_ne!(first.fingerprint, second.fingerprint);
+    }
+
+    #[test]
+    fn endpoint_identity_normalizes_explicit_default_ports() {
+        let implicit = endpoint_identity("https://example.com/v1").expect("valid endpoint");
+        let explicit = endpoint_identity("https://example.com:443/v1").expect("valid endpoint");
+
+        assert_eq!(implicit.fingerprint, explicit.fingerprint);
+        assert_eq!(implicit.display_url, explicit.display_url);
+    }
+
     fn request_log(request_id: &str, input_tokens: u32) -> RequestLog {
         RequestLog {
             request_id: request_id.to_string(),
             provider_id: "provider-1".to_string(),
+            endpoint_url: None,
             app_type: "codex".to_string(),
             model: "gpt-5.6".to_string(),
             request_model: "gpt-5.6".to_string(),
@@ -562,6 +673,7 @@ mod tests {
         logger.log_with_calculation(
             "req-123".to_string(),
             "provider-1".to_string(),
+            None,
             "claude".to_string(),
             "test-model".to_string(),
             "req-model".to_string(),
@@ -587,6 +699,26 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
         assert_eq!(request_model, "req-model");
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_request_with_same_endpoint_is_idempotent() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let logger = UsageLogger::new(&db);
+        let mut log = request_log("same-endpoint-request", 10);
+        log.endpoint_url = Some("https://gateway.example.test/v1?secret=ignored".to_string());
+
+        logger.log_request(&log)?;
+        logger.log_request(&log)?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id LIKE 'same-endpoint-request%'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 1);
         Ok(())
     }
 
@@ -774,6 +906,7 @@ mod tests {
         let log = RequestLog {
             request_id: "grok-semantics".to_string(),
             provider_id: "grok-provider".to_string(),
+            endpoint_url: None,
             app_type: "grokbuild".to_string(),
             model: "grok-4.5".to_string(),
             request_model: "grok-4.5".to_string(),
