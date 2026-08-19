@@ -387,20 +387,26 @@ pub fn write_grok_provider_live(provider: &Provider) -> Result<(), AppError> {
     // 切换流程重新补写。非官方供应商必须携带完整的自定义模型配置。
     if provider.category.as_deref() != Some("official") {
         validate_config_toml(config)?;
+    }
 
-        // 非官方（自定义）供应商应通过 config.toml 的 `api_key` / `env_key`
-        // 认证，而不是 grok.com 官方登录。若 ~/.grok/auth.json 残留了官方
-        // OIDC 会话（例如用户之前 `grok login` 过官方账号，或 grok CLI 在
-        // 一次 401 后自动触发 auth recovery 登录了官方），grok CLI 会把官方
-        // token 一起发给第三方 base_url，导致 401 Invalid token。
-        // 这里在切到非官方供应商时清掉官方会话，杜绝该冲突。
-        // 删除失败只降级为 warn，不阻断切换（config.toml 写入仍是主交付物）。
+    write_grok_live_settings(&json!({ "config": config }))?;
+
+    // 非官方（自定义）供应商应通过 config.toml 的 `api_key` / `env_key`
+    // 认证，而不是 grok.com 官方登录。若 ~/.grok/auth.json 残留了官方
+    // OIDC 会话（例如用户之前 `grok login` 过官方账号，或 grok CLI 在
+    // 一次 401 后自动触发 auth recovery 登录了官方），grok CLI 会把官方
+    // token 一起发给第三方 base_url，导致 401 Invalid token。
+    // 这里在切到非官方供应商时清掉官方会话，杜绝该冲突。
+    // 删除必须放在 config.toml 成功写入之后：若配置写入失败（磁盘满、
+    // 原子重命名失败等），官方登录态得以保留，避免"切换失败却把用户登出"。
+    // 删除失败只降级为 warn，不阻断切换（config.toml 写入仍是主交付物）。
+    if provider.category.as_deref() != Some("official") {
         if let Err(error) = delete_file(&get_grok_config_dir().join("auth.json")) {
             log::warn!("failed to clear official grok login (~/.grok/auth.json) while switching to a custom provider: {error}");
         }
     }
 
-    write_grok_live_settings(&json!({ "config": config }))
+    Ok(())
 }
 
 /// Raw live-file writer, mirroring `read_grok_live_settings` (syntax-only).
@@ -735,6 +741,43 @@ context_window = 500000
         assert_eq!(
             fs::read_to_string(get_grok_config_path()).expect("read config"),
             valid_config()
+        );
+
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn failed_config_write_keeps_official_auth() {
+        let temp = TempDir::new().expect("temp dir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        seed_official_auth(temp.path());
+
+        // 让 config.toml 写入失败：预先把目标位置占成一个非空目录，
+        // 原子 rename 会失败，模拟磁盘满 / 重命名失败等写入错误。
+        let config_path = temp.path().join(".grok").join("config.toml");
+        std::fs::create_dir_all(config_path.join("occupied")).expect("mkdir occupied dir");
+
+        let custom = Provider::with_id(
+            "custom".to_string(),
+            "Custom".to_string(),
+            json!({ "config": valid_config() }),
+            None,
+        );
+        assert!(
+            write_grok_provider_live(&custom).is_err(),
+            "config write must fail so we can verify auth is preserved"
+        );
+
+        // 关键断言：切换失败时官方登录态必须保留，不得提前清除。
+        let auth_path = temp.path().join(".grok").join("auth.json");
+        assert!(
+            auth_path.exists(),
+            "failed switch must NOT clear the official grok login"
         );
 
         match original_test_home {
