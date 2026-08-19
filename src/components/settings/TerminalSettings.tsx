@@ -15,6 +15,7 @@ const MACOS_TERMINALS = [
   { value: "alacritty", labelKey: "settings.terminal.options.macos.alacritty" },
   { value: "kitty", labelKey: "settings.terminal.options.macos.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.macos.ghostty" },
+  { value: "otty", labelKey: "settings.terminal.options.macos.otty" },
   { value: "wezterm", labelKey: "settings.terminal.options.macos.wezterm" },
   { value: "kaku", labelKey: "settings.terminal.options.macos.kaku" },
   { value: "warp", labelKey: "settings.terminal.options.macos.warp" },
