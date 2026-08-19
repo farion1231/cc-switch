@@ -10,7 +10,13 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, Download, Trash2, Loader2 } from "lucide-react";
+import {
+  CircleAlert,
+  ExternalLink,
+  Download,
+  Trash2,
+  Loader2,
+} from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import type { DiscoverableSkill } from "@/lib/api/skills";
 
@@ -116,6 +122,15 @@ export function SkillCard({
         </CardContent>
       ) : (
         <div className="flex-1" />
+      )}
+      {skill.compatibility && (
+        <div className="mx-6 mb-4 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+          <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <p className="min-w-0 break-words leading-relaxed">
+            <span className="font-medium">{t("skills.requirements")}:</span>{" "}
+            {skill.compatibility}
+          </p>
+        </div>
       )}
       <CardFooter className="flex gap-2 pt-3 border-t border-border/50 relative z-10">
         {skill.readmeUrl && (

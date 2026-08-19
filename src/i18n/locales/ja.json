@@ -2486,6 +2486,7 @@
     "uninstall": "アンインストール",
     "uninstalling": "アンインストール中...",
     "view": "表示",
+    "requirements": "動作要件",
     "noDescription": "説明なし",
     "loadFailed": "読み込みに失敗しました",
     "installSuccess": "スキル {{name}} をインストールしました",
