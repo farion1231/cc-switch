@@ -1537,6 +1537,8 @@
     "promptCacheRoutingEnabled": "有効",
     "promptCacheRoutingDisabled": "無効",
     "promptCacheRoutingHint": "自動モードでは、互換性を確認済みの上流にのみ prompt_cache_key を送信します。他の互換ゲートウェイでは有効にし、未知のフィールドを 400 で拒否する厳格なゲートウェイでは無効にしてください。クライアントが提供した安定したセッション ID のみを使用します。",
+    "nativeModelFallbackLabel": "切り替え後に既定モデルへ追従",
+    "nativeModelFallbackHint": "再開したスレッドのモデルが現在のマッピングにない場合、このプロバイダーの既定モデルを使用します。マッピング外のモデル名を直接送信する場合は無効にしてください。",
     "upstreamModelName": "上流モデル名",
     "upstreamModelNameHint": "Chat 形式ではここに実際の上流モデルを入力します。ルーティングで Codex の Responses リクエストを Chat Completions に変換し、このモデルを維持します。",
     "modelNamePlaceholder": "例: gpt-5-codex",
