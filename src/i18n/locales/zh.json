@@ -1053,7 +1053,10 @@
     }
   },
   "appSwitcher": {
-    "more": "更多应用"
+    "more": "更多应用",
+    "hide": "从主页面隐藏",
+    "add": "添加应用到主页面",
+    "allShown": "所有应用都已显示"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
