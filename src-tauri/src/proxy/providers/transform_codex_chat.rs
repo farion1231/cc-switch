@@ -1282,7 +1282,62 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
             }
         }
     }
-    params
+    inline_ref_siblings(&params)
+}
+
+/// Recursively inline `$ref` objects that carry sibling keywords.
+///
+/// Codex dynamic tools emit JSON Schema 2020-12 style parameters where a
+/// schema inside `$defs` combines `$ref` with siblings, e.g.
+/// `{"$ref": "#/$defs/x", "type": "string", "format": "uuid"}`. Strict
+/// providers (Moonshot/Kimi) reject siblings next to `$ref` with HTTP 400,
+/// so deep-merge the referenced definition with the siblings instead.
+fn inline_ref_siblings(node: &Value) -> Value {
+    fn inner(
+        node: &Value,
+        defs: &serde_json::Map<String, Value>,
+        resolving: &mut Vec<String>,
+    ) -> Value {
+        match node {
+            Value::Array(items) => {
+                Value::Array(items.iter().map(|v| inner(v, defs, resolving)).collect())
+            }
+            Value::Object(obj) => {
+                let ref_path = obj.get("$ref").and_then(|v| v.as_str());
+                let has_siblings = obj.keys().any(|k| k != "$ref");
+                if let (Some(ref_path), true) = (ref_path, has_siblings) {
+                    if let Some(name) = ref_path.strip_prefix("#/$defs/") {
+                        if !resolving.iter().any(|n| n == name) {
+                            if let Some(target @ Value::Object(_)) = defs.get(name) {
+                                resolving.push(name.to_string());
+                                let resolved = inner(target, defs, resolving);
+                                resolving.pop();
+                                if let Value::Object(mut merged) = resolved {
+                                    for (k, v) in obj.iter().filter(|(k, _)| *k != "$ref") {
+                                        merged.insert(k.clone(), inner(v, defs, resolving));
+                                    }
+                                    return Value::Object(merged);
+                                }
+                            }
+                        }
+                    }
+                }
+                Value::Object(
+                    obj.iter()
+                        .map(|(k, v)| (k.clone(), inner(v, defs, resolving)))
+                        .collect(),
+                )
+            }
+            other => other.clone(),
+        }
+    }
+
+    let empty = serde_json::Map::new();
+    let defs = node
+        .get("$defs")
+        .and_then(|v| v.as_object())
+        .unwrap_or(&empty);
+    inner(node, defs, &mut Vec::new())
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
@@ -2400,6 +2455,50 @@ mod tests {
         assert_eq!(parameters["type"], "object");
         assert_eq!(parameters["properties"]["query"]["type"], "string");
         assert_eq!(parameters["required"], json!(["query"]));
+    }
+
+    #[test]
+    fn responses_request_to_chat_inlines_ref_siblings_in_tool_defs() {
+        // Codex dynamic tools emit JSON Schema 2020-12 style `$defs` where a
+        // `$ref` carries sibling keywords. Strict providers (Moonshot/Kimi)
+        // reject siblings next to `$ref` with HTTP 400, so they must be
+        // deep-merged into the referenced definition.
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "request_user_input",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "targetThreadId": {"$ref": "#/$defs/__schema20"}
+                    },
+                    "$defs": {
+                        "__schema7": {"type": "string"},
+                        "__schema20": {
+                            "$ref": "#/$defs/__schema7",
+                            "type": "string",
+                            "format": "uuid",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let def20 = &result["tools"][0]["function"]["parameters"]["$defs"]["__schema20"];
+
+        assert!(def20.get("$ref").is_none(), "$ref should be inlined");
+        assert_eq!(def20["type"], "string");
+        assert_eq!(def20["format"], "uuid");
+        assert_eq!(def20["minLength"], 1);
+        // A bare `$ref` without siblings stays untouched.
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["properties"]["targetThreadId"],
+            json!({"$ref": "#/$defs/__schema20"})
+        );
     }
 
     #[test]
