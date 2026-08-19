@@ -306,6 +306,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
     templateValues: {
@@ -444,13 +445,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AICodeMirror",
       options: {
-        baseURL: "https://api.aicodemirror.com/api/claudecode",
+        baseURL: "https://api.aicodemirror.ai/api/claudecode",
         apiKey: "",
         setCacheKey: true,
       },
@@ -503,13 +504,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "RunAPI",
       options: {
-        baseURL: "https://runapi.co",
+        baseURL: "https://runapi.host",
         apiKey: "",
         setCacheKey: true,
       },
@@ -523,34 +524,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "runapi",
     icon: "runapi",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "Unity2.ai",
-      options: {
-        baseURL: "https://api.unity2.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -591,13 +564,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.app",
+    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AIGoCode",
       options: {
-        baseURL: "https://api.aigocode.com",
+        baseURL: "https://api.aigocode.app",
         apiKey: "",
         setCacheKey: true,
       },
@@ -620,14 +593,43 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Qiniu",
+      options: {
+        baseURL: "https://api.qnaigc.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AICoding",
       options: {
-        baseURL: "https://api.aicoding.sh",
+        baseURL: "https://api.aicoding.inc",
         apiKey: "",
         setCacheKey: true,
       },
@@ -765,6 +767,37 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "PPIO",
+      options: {
+        baseURL: "https://api.ppio.com/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek/deepseek-v4-flash-0731": {
+          name: "Deepseek V4 Flash 0731",
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
     apiKeyUrl: "https://claudecn.ai/register?aff=HEL9",
@@ -795,14 +828,47 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "火山 Agent Plan",
+      options: {
+        baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "ark-code-latest": {
+          name: "Ark Code Latest",
+        },
+      },
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "火山 Coding Plan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "火山Agentplan",
+      name: "火山 Coding Plan",
       options: {
         baseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
         apiKey: "",
@@ -816,7 +882,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "cn_official",
     isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
+    partnerPromotionKey: "volcengine_codingplan",
     icon: "huoshan",
     iconColor: "#3370FF",
     templateValues: {
@@ -894,14 +960,14 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    name: "A6API",
+    websiteUrl: "https://www.a6api.com",
+    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "NekoCode",
+      name: "A6API",
       options: {
-        baseURL: "https://nekocode.ai/v1",
+        baseURL: "https://api.a6api.com/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -911,8 +977,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
+    partnerPromotionKey: "a6api",
+    icon: "a6api",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1185,35 +1251,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "Qiniu",
-      options: {
-        baseURL: "https://api.qnaigc.com/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    icon: "qiniu",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
@@ -1261,6 +1298,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     icon: "sudocode-us",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "XycAi",
+      options: {
+        baseURL: "https://apicdn.xycai.us/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1380,6 +1445,46 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         label: "Base URL",
         placeholder: "https://api.z.ai/api/coding/paas/v4",
         defaultValue: "https://api.z.ai/api/coding/paas/v4",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）：官方
+    // OpenCode 接入页确认 /v2/tokenplan/personal + @ai-sdk/openai-compatible；
+    // 阵容=Token Plan 主文档 2026-08-14 版六模型（ernie-5.1 8/20 下线不收）
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Baidu Qianfan Token Plan",
+      options: {
+        baseURL: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        apiKey: "",
+      },
+      models: {
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash 0731" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "glm-5.1": { name: "GLM-5.1" },
+        "kimi-k2.6": { name: "Kimi K2.6" },
+      },
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        defaultValue: "https://qianfan.baidubce.com/v2/tokenplan/personal",
         editorValue: "",
       },
       apiKey: {
@@ -1527,7 +1632,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "ZhipuAI/GLM-5.1": { name: "GLM-5.1" },
+        "ZhipuAI/GLM-5.2": { name: "GLM-5.2" },
       },
     },
     category: "aggregator",
@@ -2117,5 +2222,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "opencode",
     iconColor: "#6366F1",
     isCustomTemplate: true,
+  },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "JieKou AI",
+      options: {
+        baseURL: "https://api.jiekou.ai/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5": {
+          name: "Claude Fable 5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
   },
 ];

@@ -87,6 +87,17 @@ impl Provider {
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
+    /// Whether the provider form's "auth field" was explicitly set to
+    /// ANTHROPIC_API_KEY. The form only persists `meta.apiKeyField` for the
+    /// non-default choice, so `None` means the default ANTHROPIC_AUTH_TOKEN.
+    pub fn claude_uses_api_key_field(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.api_key_field.as_deref())
+            .map(|field| field.eq_ignore_ascii_case("ANTHROPIC_API_KEY"))
+            .unwrap_or(false)
+    }
+
     fn provider_type(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
@@ -169,11 +180,23 @@ impl Provider {
                 let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
                 (base_url, api_key)
             }
-            AppType::GrokBuild => settings
-                .get("config")
-                .and_then(Value::as_str)
-                .and_then(crate::grok_config::extract_credentials)
-                .unwrap_or_default(),
+            // GrokBuild 的 base_url 与 api_key 必须各自解析：extract_credentials 在
+            // 凭据缺失时整个 Option 变 None，一并 unwrap_or_default 会把明明写在
+            // 配置里的 base_url 也清成空串。凭据缺失是常态（env_key 指向的变量在
+            // GUI 进程里读不到），端点不该被连坐——否则用量脚本的 {{baseUrl}} 变成
+            // 相对路径、余额查询只报「API key is empty」掩盖真因。
+            // 与上面 Codex 分支的写法保持一致。
+            AppType::GrokBuild => {
+                let config_text = settings.get("config").and_then(Value::as_str);
+                let base_url = config_text
+                    .and_then(crate::grok_config::extract_base_url)
+                    .unwrap_or_default();
+                let api_key = config_text
+                    .and_then(crate::grok_config::extract_credentials)
+                    .map(|(_, api_key)| api_key)
+                    .unwrap_or_default();
+                (base_url, api_key)
+            }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
@@ -182,6 +205,11 @@ impl Provider {
             // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
             AppType::OpenClaw => (
                 str_at(settings.get("baseUrl")),
+                str_at(settings.get("apiKey")),
+            ),
+            // Pi custom providers use the native models.json field names.
+            AppType::Pi => (
+                crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 str_at(settings.get("apiKey")),
             ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
@@ -378,6 +406,12 @@ pub struct CodexChatReasoningConfig {
     /// 靠穷举字段提取、并不读取本字段；保留作文档说明与未来按格式分发（如 think_tags）的预留。
     #[serde(rename = "outputFormat", skip_serializing_if = "Option::is_none")]
     pub output_format: Option<String>,
+    /// 运行时字段（不持久化、不进 meta）：当前请求模型在平台侧声明的合法 effort
+    /// 档位，由 resolve 按请求模型从供应商 `settings_config.modelCatalog` 的
+    /// `reasoningLevels`（逐模型声明，见 #6228）查表填充。仅 "zen" 值映射消费：
+    /// Some → 钳到合法档；None → 不发 effort 字段（模型未收录或为 toggle 型）。
+    #[serde(skip)]
+    pub effort_levels: Option<Vec<String>>,
 }
 
 /// Local proxy request overrides applied after route/protocol transforms.
@@ -1502,6 +1536,25 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-openclaw".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_pi_uses_native_model_level_base_url() {
+        let p = provider_with(json!({
+            "apiKey": "sk-pi",
+            "models": [{
+                "id": "model-a",
+                "api": "openai-completions",
+                "baseUrl": "https://api.example.com/v1/"
+            }]
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Pi),
+            (
+                "https://api.example.com/v1".to_string(),
+                "sk-pi".to_string()
             )
         );
     }

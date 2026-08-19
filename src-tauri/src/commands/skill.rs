@@ -301,6 +301,10 @@ pub fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>,
 /// 添加技能仓库
 #[tauri::command]
 pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result<bool, String> {
+    // 整个结构体由前端反序列化而来，owner/name/branch 会被拼进归档下载 URL。
+    // 主防线在 download_repo，这里让非法值当场报错而不是沉淀进表。
+    SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)
+        .map_err(|e| e.to_string())?;
     app_state
         .db
         .save_skill_repo(&repo)

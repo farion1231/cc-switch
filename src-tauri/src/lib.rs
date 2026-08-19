@@ -25,10 +25,10 @@ mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
+mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
-mod provider_defaults;
 mod proxy;
 mod services;
 mod session_manager;
@@ -40,7 +40,9 @@ mod usage_events;
 mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
-pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use codex_config::{
+    get_codex_auth_path, get_codex_config_path, read_codex_live_settings, write_codex_live_atomic,
+};
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
@@ -69,6 +71,8 @@ pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
@@ -129,10 +133,25 @@ const MIN_KNOWN_SECRET_LEN: usize = 8;
 
 /// 唯一的密钥脱敏原语：把字符串里出现的、我们确切握有的密钥值替换为 [REDACTED]。
 /// 不做任何“看起来像密钥”的形状猜测——只隐藏已知值，天然收敛、不误伤正常路径。
-fn redact_known_secrets(text: &str, known_secrets: &[String]) -> String {
+pub(crate) fn redact_known_secrets(text: &str, known_secrets: &[String]) -> String {
+    redact_known_secrets_with_min_length(text, known_secrets, MIN_KNOWN_SECRET_LEN)
+}
+
+/// Exact-value redaction for user-visible error text. Unlike URL logging, a
+/// short known credential must still be hidden because the result reaches the
+/// UI rather than a diagnostic-only path.
+pub(crate) fn redact_known_secrets_strict(text: &str, known_secrets: &[String]) -> String {
+    redact_known_secrets_with_min_length(text, known_secrets, 1)
+}
+
+fn redact_known_secrets_with_min_length(
+    text: &str,
+    known_secrets: &[String],
+    minimum_chars: usize,
+) -> String {
     let mut output = text.to_string();
     for secret in known_secrets {
-        if secret.chars().count() >= MIN_KNOWN_SECRET_LEN {
+        if secret.chars().count() >= minimum_chars {
             output = output.replace(secret.as_str(), "[REDACTED]");
         }
     }
@@ -365,6 +384,22 @@ pub fn run() {
                 }
             }
         }));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let startup_page_handled = AtomicBool::new(false);
+        builder = builder.on_page_load(move |webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Finished
+                && payload.url().scheme() != "about"
+                && !startup_page_handled.swap(true, Ordering::Relaxed)
+                && !crate::settings::get_settings().silent_startup
+            {
+                let _ = webview.window().show();
+                log::info!("主页面加载完成，主窗口已显示");
+            }
+        });
     }
 
     let builder = builder
@@ -797,9 +832,9 @@ pub fn run() {
                 log::info!("✓ First-run welcome notice pending");
             }
 
-            // 1.6. 自动同步 OpenCode / OpenClaw 的 live providers 到数据库
+            // 1.6. 自动同步累加模式应用的原生 providers 到数据库
             //
-            // additive 模式（OpenCode / OpenClaw）的 import 函数按 id 幂等——
+            // additive 模式的 import 函数按 id 幂等——
             // 新 id 执行导入，已有 id 则更新 settings 和 display name，所以每次
             // 启动都跑是安全的：既保证新装用户开箱可见 live 中的供应商，也让外部
             // 修改的 live 文件能在重启后同步到数据库（与之前依赖前端"导入当前配置"
@@ -827,6 +862,13 @@ pub fn run() {
                 }
                 Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
+            }
+            match crate::services::provider::import_pi_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Pi provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No Pi provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
@@ -945,6 +987,7 @@ pub fn run() {
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
+                    crate::app_config::AppType::Pi,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1106,13 +1149,11 @@ pub fn run() {
 
             // 初始化 CodexOAuthManager (ChatGPT Plus/Pro 反代)
             {
-                use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
                 use commands::CodexOAuthState;
-                use tokio::sync::RwLock;
 
-                let app_config_dir = crate::config::get_app_config_dir();
-                let codex_oauth_manager = CodexOAuthManager::new(app_config_dir);
-                app.manage(CodexOAuthState(Arc::new(RwLock::new(codex_oauth_manager))));
+                let codex_oauth_manager =
+                    app.state::<AppState>().codex_oauth_manager.clone();
+                app.manage(CodexOAuthState(codex_oauth_manager));
                 log::info!("✓ CodexOAuthManager initialized");
             }
 
@@ -1182,6 +1223,17 @@ pub fn run() {
                     } else {
                         log::info!("Live 配置已恢复");
                     }
+                }
+
+                // 必须排在 auto-extract 之前：先把历史泄漏进 Gemini 共享片段的凭据
+                // 清干净，否则紧接着的提取会基于被污染的 live 再写一遍。
+                if let Err(e) =
+                    crate::services::provider::ProviderService::scrub_leaked_gemini_common_config(
+                        &state,
+                    )
+                    .await
+                {
+                    log::warn!("清理 Gemini 通用配置泄漏凭据失败: {e}");
                 }
 
                 initialize_common_config_snippets(&state);
@@ -1287,7 +1339,11 @@ pub fn run() {
                     log::info!("静默启动模式：主窗口已隐藏");
                 } else {
                     // 正常启动模式：显示窗口
+                    #[cfg(not(target_os = "windows"))]
                     let _ = window.show();
+                    #[cfg(target_os = "windows")]
+                    log::info!("正常启动模式：等待主页面加载完成后显示主窗口");
+                    #[cfg(not(target_os = "windows"))]
                     log::info!("正常启动模式：主窗口已显示");
 
                     // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
@@ -1396,6 +1452,16 @@ pub fn run() {
             commands::enable_prompt,
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
+            commands::get_pi_prompt_file,
+            commands::replace_pi_prompt_file,
+            commands::delete_pi_prompt_file,
+            commands::list_pi_prompt_templates,
+            commands::upsert_pi_prompt_template,
+            commands::delete_pi_prompt_template,
+            // Pi native provider and session views
+            commands::get_pi_current_state,
+            commands::update_pi_provider_usage_script,
+            commands::get_pi_session_discovery,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,
@@ -1405,6 +1471,7 @@ pub fn run() {
             commands::apply_profile,
             // model list fetch (OpenAI-compatible /v1/models)
             commands::fetch_models_for_config,
+            commands::get_opencode_models,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,
@@ -1522,7 +1589,11 @@ pub fn run() {
             commands::get_request_detail,
             commands::get_model_pricing,
             commands::update_model_pricing,
+            commands::update_model_pricing_batch,
             commands::delete_model_pricing,
+            commands::get_models_dev_sync_config,
+            commands::save_models_dev_sync_config,
+            commands::record_models_dev_sync_result,
             commands::check_provider_limits,
             // Session usage sync
             commands::sync_session_usage,

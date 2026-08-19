@@ -209,22 +209,23 @@ pub fn extract_model_config(config_toml: &str) -> Option<GrokModelConfig> {
 
 pub fn extract_credentials(config_toml: &str) -> Option<(String, String)> {
     let config = extract_model_config(config_toml)?;
-    let api_key = config
-        .api_key
-        .or_else(|| {
-            config
-                .env_key
-                .as_deref()
-                .and_then(|key| std::env::var(key).ok())
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })
-        .or_else(|| {
-            std::env::var("XAI_API_KEY")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })?;
+    // Credentials only come from two explicit, config-declared sources:
+    //   1. an inline `api_key`, or
+    //   2. the process env var named by `env_key`.
+    //
+    // Deliberately NO unconditional fallback to `XAI_API_KEY`: silently
+    // substituting a different account's key (when the declared `env_key` var is
+    // unset) would leak that key to whatever `base_url` this config points at.
+    // An unset/missing declared credential must surface as "no credential"
+    // (None) so callers can fail loudly rather than transmit the wrong secret.
+    let api_key = config.api_key.or_else(|| {
+        config
+            .env_key
+            .as_deref()
+            .and_then(|key| std::env::var(key).ok())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })?;
     Some((config.base_url, api_key))
 }
 
@@ -286,7 +287,8 @@ pub fn apply_proxy_takeover(
     token_placeholder: &str,
 ) -> Result<String, AppError> {
     let updated = update_selected_model_string(config_toml, "base_url", proxy_base_url)?;
-    update_selected_model_string(&updated, "api_key", token_placeholder)
+    let updated = update_selected_model_string(&updated, "api_key", token_placeholder)?;
+    update_selected_model_string(&updated, "api_backend", DEFAULT_API_BACKEND)
 }
 
 pub fn update_api_key(config_toml: &str, api_key: &str) -> Result<String, AppError> {
@@ -511,8 +513,12 @@ context_window = 500000
 
     #[test]
     fn takeover_preserves_env_key_profile_and_injects_inline_placeholder() {
+        let direct_config = valid_env_key_config().replace(
+            "api_backend = \"responses\"",
+            "api_backend = \"chat_completions\"",
+        );
         let updated = apply_proxy_takeover(
-            valid_env_key_config(),
+            &direct_config,
             "http://127.0.0.1:15721/grokbuild/v1",
             "PROXY_MANAGED",
         )
@@ -522,6 +528,7 @@ context_window = 500000
         assert_eq!(selected.profile, "grok-env");
         assert_eq!(selected.env_key.as_deref(), Some("GROK_TEST_API_KEY"));
         assert_eq!(selected.api_key.as_deref(), Some("PROXY_MANAGED"));
+        assert_eq!(selected.api_backend, DEFAULT_API_BACKEND);
     }
 
     #[test]
@@ -537,6 +544,48 @@ context_window = 500000
         match original {
             Some(value) => std::env::set_var("GROK_TEST_API_KEY", value),
             None => std::env::remove_var("GROK_TEST_API_KEY"),
+        }
+    }
+
+    /// 构造一个 `env_key` 指向未设置环境变量的 config——这是"声明了间接引用但
+    /// 该变量不存在"的场景，修复前会静默兜底到 `XAI_API_KEY`。
+    fn env_key_unset_config() -> &'static str {
+        r#"[models]
+default = "grok-env"
+
+[model."grok-env"]
+model = "grok-4.5"
+base_url = "https://attacker.example/v1"
+name = "Attacker Env"
+env_key = "GROK_TEST_DEFINITELY_UNSET_VAR"
+api_backend = "responses"
+context_window = 500000
+"#
+    }
+
+    #[test]
+    #[serial]
+    fn does_not_fall_back_to_xai_api_key_when_declared_env_key_is_unset() {
+        // 即使进程里恰好设了 XAI_API_KEY，也不能被静默借用到别的 base_url 上。
+        let original_xai = std::env::var_os("XAI_API_KEY");
+        let original_unset = std::env::var_os("GROK_TEST_DEFINITELY_UNSET_VAR");
+        std::env::set_var("XAI_API_KEY", "xai-secret-should-not-leak");
+        std::env::remove_var("GROK_TEST_DEFINITELY_UNSET_VAR");
+
+        let credentials = extract_credentials(env_key_unset_config());
+
+        assert!(
+            credentials.is_none(),
+            "declared env_key unset must yield None, never a borrowed XAI_API_KEY; got {credentials:?}"
+        );
+
+        match original_xai {
+            Some(value) => std::env::set_var("XAI_API_KEY", value),
+            None => std::env::remove_var("XAI_API_KEY"),
+        }
+        match original_unset {
+            Some(value) => std::env::set_var("GROK_TEST_DEFINITELY_UNSET_VAR", value),
+            None => std::env::remove_var("GROK_TEST_DEFINITELY_UNSET_VAR"),
         }
     }
 

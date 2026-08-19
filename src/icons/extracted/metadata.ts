@@ -2,6 +2,13 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  a6api: {
+    name: "a6api",
+    displayName: "A6API",
+    category: "ai-provider",
+    keywords: ["a6api", "a6", "aggregator", "relay", "gateway", "claude"],
+    defaultColor: "#3B82F6",
+  },
   aigocode: {
     name: "aigocode",
     displayName: "AIGoCode",
@@ -695,6 +702,27 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
     defaultColor: "#005AFF",
+  },
+  ppio: {
+    name: "ppio",
+    displayName: "PPIO",
+    category: "ai-provider",
+    keywords: ["ppio", "派欧云"],
+    defaultColor: "#2874FF",
+  },
+  jiekou: {
+    name: "jiekou",
+    displayName: "JieKou AI",
+    category: "ai-provider",
+    keywords: ["jiekou", "jiekou ai", "interface ai", "aggregator"],
+    defaultColor: "#000000",
+  },
+  xycai: {
+    name: "xycai",
+    displayName: "XycAi",
+    category: "ai-provider",
+    keywords: ["xycai", "xyc", "aggregator", "relay", "gateway", "token"],
+    defaultColor: "#1E88E5",
   },
 };
 

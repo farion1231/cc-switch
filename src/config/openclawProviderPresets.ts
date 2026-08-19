@@ -125,6 +125,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
     templateValues: {
@@ -300,10 +301,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     settingsConfig: {
-      baseUrl: "https://api.aicodemirror.com/api/claudecode",
+      baseUrl: "https://api.aicodemirror.ai/api/claudecode",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -383,10 +384,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     settingsConfig: {
-      baseUrl: "https://runapi.co",
+      baseUrl: "https://runapi.host",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -426,43 +427,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "runapi/claude-opus-5": { alias: "Opus" },
         "runapi/claude-sonnet-5": { alias: "Sonnet" },
         "runapi/claude-haiku-4-5": { alias: "Haiku" },
-      },
-    },
-  },
-  {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    settingsConfig: {
-      baseUrl: "https://api.unity2.ai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          contextWindow: 400000,
-          cost: { input: 5, output: 15 },
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "unity2/gpt-5.6-sol",
-      },
-      modelCatalog: {
-        "unity2/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -514,10 +478,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.app",
+    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
     settingsConfig: {
-      baseUrl: "https://api.aigocode.com",
+      baseUrl: "https://api.aigocode.app",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -559,11 +523,48 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
     settingsConfig: {
-      baseUrl: "https://api.aicoding.sh",
+      baseUrl: "https://api.qnaigc.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "qiniu/gpt-5.6-sol",
+      },
+      modelCatalog: {
+        "qiniu/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+      },
+    },
+  },
+  {
+    name: "AICoding",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
+    settingsConfig: {
+      baseUrl: "https://api.aicoding.inc",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -763,6 +764,47 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      baseUrl: "https://api.ppio.com/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek/deepseek-v4-flash-0731",
+          name: "Deepseek V4 Flash 0731",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 393216,
+          cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ppio/deepseek/deepseek-v4-flash-0731" },
+      modelCatalog: {
+        "ppio/deepseek/deepseek-v4-flash-0731": {
+          alias: "Deepseek V4 Flash 0731",
+        },
+      },
+    },
+  },
+  {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
     apiKeyUrl: "https://claudecn.ai/register?aff=HEL9",
@@ -811,13 +853,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
     websiteUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     settingsConfig: {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -844,6 +886,43 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       model: { primary: "ark_agentplan/ark-code-latest" },
       modelCatalog: {
         "ark_agentplan/ark-code-latest": { alias: "Ark Code" },
+      },
+    },
+  },
+  {
+    name: "火山 Coding Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_codingplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ark_codingplan/ark-code-latest" },
+      modelCatalog: {
+        "ark_codingplan/ark-code-latest": { alias: "Ark Code" },
       },
     },
   },
@@ -932,9 +1011,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "Pro/MiniMaxAI/MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          contextWindow: 200000,
+          id: "Pro/MiniMaxAI/MiniMax-M2.5",
+          name: "MiniMax M2.5",
+          contextWindow: 196608,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
         },
       ],
@@ -952,9 +1031,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5" },
       modelCatalog: {
-        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5": { alias: "MiniMax" },
       },
     },
   },
@@ -968,9 +1047,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMaxAI/MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          contextWindow: 200000,
+          id: "MiniMaxAI/MiniMax-M3",
+          name: "MiniMax M3",
+          contextWindow: 1048576,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
         },
       ],
@@ -988,18 +1067,18 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M3" },
       modelCatalog: {
-        "siliconflow-en/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow-en/MiniMaxAI/MiniMax-M3": { alias: "MiniMax" },
       },
     },
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    name: "A6API",
+    websiteUrl: "https://www.a6api.com",
+    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
     settingsConfig: {
-      baseUrl: "https://nekocode.ai/v1",
+      baseUrl: "https://api.a6api.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -1012,8 +1091,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
+    partnerPromotionKey: "a6api",
+    icon: "a6api",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1023,10 +1102,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "nekocode/gpt-5.6-sol",
+        primary: "a6api/gpt-5.6-sol",
       },
       modelCatalog: {
-        "nekocode/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "a6api/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -1484,43 +1563,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    settingsConfig: {
-      baseUrl: "https://api.qnaigc.com/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          contextWindow: 400000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    icon: "qiniu",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "qiniu/gpt-5.6-sol",
-      },
-      modelCatalog: {
-        "qiniu/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
-      },
-    },
-  },
-  {
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
@@ -1581,6 +1623,42 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     suggestedDefaults: {
       model: {
         primary: "sudocode-us/gpt-5.6-sol",
+      },
+    },
+  },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      baseUrl: "https://apicdn.xycai.us/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "xycai/gpt-5.6-sol",
+      },
+      modelCatalog: {
+        "xycai/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -1737,6 +1815,53 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     suggestedDefaults: {
       model: { primary: "zhipu-en/glm-5.1" },
       modelCatalog: { "zhipu-en/glm-5.1": { alias: "GLM" } },
+    },
+  },
+  {
+    // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）。模型
+    // 条目照官方 OpenClaw 接入页（2026-07-22 版）原样：cost/窗口 98304/
+    // maxTokens 65536 均为官方钦定的 OpenClaw 口径（≠平台模型列表页 1M，
+    // 与智谱预设 128000≠平台 200K 同款惯例，勿按平台口径"修正"）
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    settingsConfig: {
+      baseUrl: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-v4-pro",
+          name: "deepseek-v4-pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0.0025, output: 0.01, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 98304,
+          maxTokens: 65536,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        defaultValue: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qianfan-tokenplan/deepseek-v4-pro" },
+      modelCatalog: {
+        "qianfan-tokenplan/deepseek-v4-pro": { alias: "DeepSeek" },
+      },
     },
   },
   {
@@ -2348,8 +2473,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "ZhipuAI/GLM-5.1",
-          name: "GLM-5.1",
+          id: "ZhipuAI/GLM-5.2",
+          name: "GLM-5.2",
           contextWindow: 128000,
           cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
         },
@@ -2372,8 +2497,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "modelscope/ZhipuAI/GLM-5.1" },
-      modelCatalog: { "modelscope/ZhipuAI/GLM-5.1": { alias: "GLM" } },
+      model: { primary: "modelscope/ZhipuAI/GLM-5.2" },
+      modelCatalog: { "modelscope/ZhipuAI/GLM-5.2": { alias: "GLM" } },
     },
   },
   {
@@ -2586,5 +2711,42 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     category: "cloud_provider",
     icon: "aws",
     iconColor: "#FF9900",
+  },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      baseUrl: "https://api.jiekou.ai/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 10, output: 50 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "jiekou/claude-fable-5" },
+      modelCatalog: {
+        "jiekou/claude-fable-5": { alias: "Claude Fable 5" },
+      },
+    },
   },
 ];

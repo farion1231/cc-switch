@@ -80,6 +80,8 @@ struct ChatToResponsesState {
     latest_usage: Option<Value>,
     finish_reason: Option<String>,
     tool_context: CodexToolContext,
+    /// 本回合因缺少合法函数名而被丢弃的工具调用数（见 `finalize_tools`）。
+    dropped_tool_calls: usize,
 }
 
 impl Default for ChatToResponsesState {
@@ -100,6 +102,7 @@ impl Default for ChatToResponsesState {
             latest_usage: None,
             finish_reason: None,
             tool_context: CodexToolContext::default(),
+            dropped_tool_calls: 0,
         }
     }
 }
@@ -332,8 +335,43 @@ impl ChatToResponsesState {
         (!self.reasoning.text.trim().is_empty()).then(|| self.reasoning.text.trim().to_string())
     }
 
+    /// 上游未下发 `index` 时的 key 解析。
+    ///
+    /// `index` 在 OpenAI Chat Completions 协议里是必填字段，但部分第三方网关会省略。
+    /// 缺了它就无法从帧结构上区分「同一调用的 arguments 续帧」和「一个新调用」，
+    /// 所以这里只在**能确证是新调用**时才分配新 key：delta 带非空 `id`，且该 id 与
+    /// 所有已知调用都不同。其余情况一律归入最后一个已知 key（空 map 时为 0），保持
+    /// 既有行为——宁可两个并行调用坍缩成一个，也不能把一个调用的续帧炸成多个 item。
+    fn resolve_tool_key_without_index(&self, tool_call: &Value) -> usize {
+        let last_key = self.tools.keys().next_back().copied();
+
+        let Some(id) = tool_call
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|id| !id.is_empty())
+        else {
+            return last_key.unwrap_or(0);
+        };
+
+        if let Some((key, _)) = self.tools.iter().find(|(_, state)| state.call_id == id) {
+            return *key;
+        }
+
+        // 上游可以先发一个显式 `index: usize::MAX` 再发无 index 的新 id。这段代码
+        // 存在的理由就是应付畸形上游，所以不能用裸 `+1`（debug 下 panic、release 下
+        // 回绕到 0 覆盖已有调用）。溢出时退回并入最后一个已知调用，与本函数
+        // "宁可坍缩也不炸开" 的取向一致。
+        match last_key {
+            Some(key) => key.checked_add(1).unwrap_or(key),
+            None => 0,
+        }
+    }
+
     fn push_tool_call_delta(&mut self, tool_call: &Value, reasoning: Option<&str>) -> Vec<Bytes> {
-        let chat_index = tool_call.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let chat_index = match tool_call.get("index").and_then(|v| v.as_u64()) {
+            Some(index) => index as usize,
+            None => self.resolve_tool_key_without_index(tool_call),
+        };
         let id_delta = tool_call
             .get("id")
             .and_then(|v| v.as_str())
@@ -483,6 +521,16 @@ impl ChatToResponsesState {
             })
     }
 
+    /// 本回合最终产出里是否至少有一个可被 Codex 识别的工具调用 item。
+    fn has_emitted_tool_call(&self) -> bool {
+        self.output_items.iter().any(|(_, item)| {
+            matches!(
+                item.get("type").and_then(|v| v.as_str()),
+                Some("function_call" | "custom_tool_call" | "tool_search_call")
+            )
+        })
+    }
+
     fn finalize(&mut self) -> Vec<Bytes> {
         if self.completed {
             return Vec::new();
@@ -495,6 +543,27 @@ impl ChatToResponsesState {
         events.extend(self.finalize_tools());
 
         let status = response_status_from_finish_reason(self.finish_reason.as_deref());
+
+        // 丢弃过工具调用、且最终一个工具调用都没剩下时，Codex 会收到一个
+        // "status=completed 但 output 里没有任何工具调用" 的回合，agent loop 必然
+        // 静默收尾——这正是 #4341「答一句就停、零报错」的形态。此时如实报错，
+        // 而不是谎报成功。只要还剩下任何一个合法工具调用，Codex 本来就会继续，
+        // 判据不成立，行为保持不变。
+        //
+        // 🔴 只对本应 `completed` 的回合生效：`finish_reason=length`（含流提前断开后
+        // 合成的 length）有自己正当的终止解释，工具调用没拿到 name 是截断的后果而非
+        // 上游发了畸形数据——报成 tool_call_dropped 会给出错误的归因，而本修复的全部
+        // 意义就在于诊断信息的准确性。
+        if status == "completed" && self.dropped_tool_calls > 0 && !self.has_emitted_tool_call() {
+            let dropped = self.dropped_tool_calls;
+            let message = format!(
+                "Upstream returned {dropped} tool call(s) without a function name, \
+                 leaving no usable tool call in this turn"
+            );
+            events.push(self.failed_event(message, Some("upstream_tool_call_dropped".to_string())));
+            return events;
+        }
+
         let mut response = self.base_response(status, self.completed_output_items());
         if status == "incomplete" {
             response["incomplete_details"] = json!({ "reason": "max_output_tokens" });
@@ -545,16 +614,35 @@ impl ChatToResponsesState {
 
             // Skip tool calls with missing names (defensive: some models generate
             // tool call deltas without providing a valid function name)
+            // 纯空白名同样对应不到任何已发布工具，必须与空名同等对待——否则它会
+            // 伪装成"本回合还有工具调用"，绕过下面 finalize 里的失败判据。
             let has_bad_name = self
                 .tools
                 .get(&key)
-                .map(|state| state.name.is_empty())
+                .map(|state| state.name.trim().is_empty())
                 .unwrap_or(true);
             if has_bad_name {
+                let (call_id_empty, args_bytes) = self
+                    .tools
+                    .get(&key)
+                    .map(|state| (state.call_id.is_empty(), state.arguments.len()))
+                    .unwrap_or((true, 0));
                 if let Some(state) = self.tools.get_mut(&key) {
                     state.done = true;
                 }
-                log::warn!("[Codex] Skipping streaming tool call with missing name");
+                self.dropped_tool_calls += 1;
+                // 只记结构信息：arguments 内容可能包含用户代码，且前端日志出口是
+                // allowlist 脱敏，新字段不进白名单就不会被处理，因此只输出字节数。
+                log::warn!(
+                    "[Codex] dropped streaming tool call: model={} chat_index={} \
+                     call_id_empty={} args_bytes={} finish_reason={} tools_total={}",
+                    self.model,
+                    key,
+                    call_id_empty,
+                    args_bytes,
+                    self.finish_reason.as_deref().unwrap_or("<none>"),
+                    self.tools.len()
+                );
                 continue;
             }
 
@@ -656,14 +744,10 @@ impl ChatToResponsesState {
             "status": status,
             "model": self.model,
             "output": output,
-            "usage": self.latest_usage.clone().unwrap_or_else(|| {
-                json!({
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_tokens": 0,
-                    "output_tokens_details": { "reasoning_tokens": 0 }
-                })
-            })
+            "usage": self
+                .latest_usage
+                .clone()
+                .unwrap_or_else(|| chat_usage_to_responses_usage(None))
         })
     }
 
@@ -877,16 +961,26 @@ mod tests {
     async fn converts_text_chat_sse_to_responses_sse() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6}}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6,\"prompt_tokens_details\":{\"cached_tokens\":0},\"cache_read_input_tokens\":2}}\n\n",
             "data: [DONE]\n\n",
         ])
         .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
 
         assert!(output.contains("event: response.created"));
         assert!(output.contains("event: response.output_text.delta"));
         assert!(output.contains("\"text\":\"Hello\""));
         assert!(output.contains("event: response.completed"));
         assert!(output.contains("\"input_tokens\":4"));
+        assert_eq!(
+            completed["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            2
+        );
+        assert_eq!(completed["response"]["usage"]["cache_read_input_tokens"], 2);
     }
 
     #[tokio::test]
@@ -1031,6 +1125,149 @@ mod tests {
         assert_eq!(items[0]["call_id"], "call_valid");
         assert_eq!(items[0]["arguments"], r#"{"cmd":"date"}"#);
         assert!(!output.contains("call_missing"));
+    }
+
+    /// #4341：上游只给出畸形工具调用时，丢弃后本回合一个工具调用都不剩，
+    /// Codex 会把它当成正常完成而静默收尾。此时必须如实报错。
+    #[tokio::test]
+    async fn dropped_only_tool_call_emits_failed_without_completed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_drop\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"让我继续处理这个文件\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_drop\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_bad\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("upstream_tool_call_dropped"));
+        assert!(!output.contains("event: response.completed"));
+        // 已经推给客户端的文本增量不受影响，用户仍能看到模型说了什么。
+        assert!(output.contains("让我继续处理这个文件"));
+    }
+
+    /// `finish_reason=length`（token 截断）时工具调用往往只到一半就没了 name。
+    /// 这不是"上游发了畸形数据"，而是截断——归因必须是 incomplete，不能报成
+    /// tool_call_dropped，否则诊断信息本身就是错的。
+    #[tokio::test]
+    async fn truncated_turn_stays_incomplete_instead_of_failed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_trunc\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"我来看看\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_trunc\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_cut\",\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"pa\"}}]},\"finish_reason\":\"length\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.completed"));
+        assert!(output.contains("\"status\":\"incomplete\""));
+        assert!(!output.contains("event: response.failed"));
+    }
+
+    /// 纯空白函数名对应不到任何已发布工具，必须与空名同等对待，
+    /// 否则它会伪装成"本回合还有工具调用"而绕过判据。
+    #[tokio::test]
+    async fn whitespace_only_tool_name_is_dropped() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_ws\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_ws\",\"type\":\"function\",\"function\":{\"name\":\"   \",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("upstream_tool_call_dropped"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    /// 纯文本回合（从未出现过工具调用增量）不受判据影响。
+    #[tokio::test]
+    async fn text_only_turn_still_completes() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_text\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"完成了\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+
+        assert!(output.contains("event: response.completed"));
+        assert!(!output.contains("event: response.failed"));
+        for event_type in ["response.created", "response.completed"] {
+            let event = events
+                .iter()
+                .find(|event| event["type"] == event_type)
+                .unwrap();
+            assert_eq!(
+                event["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+                0
+            );
+        }
+    }
+
+    /// 上游省略 `index` 时，两个 id 不同的调用不得坍缩成一个。
+    #[tokio::test]
+    async fn missing_index_with_distinct_ids_keeps_calls_separate() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_noidx\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_noidx\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["call_id"], "call_a");
+        assert_eq!(items[0]["name"], "read_file");
+        assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
+        assert_eq!(items[1]["call_id"], "call_b");
+        assert_eq!(items[1]["name"], "exec_command");
+        assert_eq!(items[1]["arguments"], r#"{"cmd":"ls"}"#);
+    }
+
+    /// 上游省略 `index` 时，不带 id 的 arguments 续帧必须归入同一个调用，
+    /// 不能被当成新调用炸成多个 item。
+    #[tokio::test]
+    async fn missing_index_argument_fragments_stay_in_one_call() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"arguments\":\"\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["call_id"], "call_a");
+        assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
+    }
+
+    /// 上游省略 `index` 且重复下发同一个 id（部分网关每帧重复整个头部）时，
+    /// 不得被判成新调用。
+    #[tokio::test]
+    async fn missing_index_repeated_same_id_stays_in_one_call() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_rep\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_rep\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["call_id"], "call_a");
+        assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
     }
 
     #[tokio::test]

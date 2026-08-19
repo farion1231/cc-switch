@@ -424,7 +424,11 @@ fn apply_reasoning_options(
     let Some(effort) = body.pointer("/reasoning/effort").and_then(|v| v.as_str()) else {
         return;
     };
-    let Some(mapped) = map_reasoning_effort(effort, config.effort_value_mode.as_deref()) else {
+    let Some(mapped) = map_reasoning_effort(
+        effort,
+        config.effort_value_mode.as_deref(),
+        config.effort_levels.as_deref(),
+    ) else {
         return;
     };
 
@@ -455,15 +459,23 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str> {
+fn map_reasoning_effort<'a>(
+    effort: &str,
+    mode: Option<&str>,
+    effort_levels: Option<&'a [String]>,
+) -> Option<&'a str> {
     let effort = effort.trim().to_ascii_lowercase();
     if matches!(effort.as_str(), "none" | "off" | "disabled") {
         return None;
     }
 
+    // ultra 是 Codex 扩展档位：已知枚举的专用模式（deepseek/openrouter/low_high）
+    // 钳到自身最高合法档而非丢弃——丢弃会让"选最深思考"静默退化成"不带 effort"；
+    // passthrough 面向枚举未知的通用上游，档位由用户/预设的 reasoningLevels 声明
+    // 背书，与 max/xhigh 一样原值透传。
     match mode.unwrap_or("passthrough") {
         "deepseek" => match effort.as_str() {
-            "max" | "xhigh" => Some("max"),
+            "max" | "xhigh" | "ultra" => Some("max"),
             _ => Some("high"),
         },
         "low_high" => match effort.as_str() {
@@ -475,13 +487,38 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
         // `400 reasoning_effort: Invalid option`（见 openclaw#77350）；钳到最高合法档
         // xhigh，其余合法值透传，未知值丢弃以免被上游拒绝。
         "openrouter" => match effort.as_str() {
-            "max" | "xhigh" => Some("xhigh"),
+            "max" | "xhigh" | "ultra" => Some("xhigh"),
             "high" => Some("high"),
             "medium" => Some("medium"),
             "low" => Some("low"),
             "minimal" => Some("minimal"),
             _ => None,
         },
+        // OpenCode Zen：合法档位逐模型（表数据 = 供应商 modelCatalog 各条目的
+        // reasoningLevels，镜像 models.dev——glm-5.2 仅 high|max、deepseek-v4-flash
+        // 为 low|high|max、kimi-k3 仅 max），opencode 客户端也严格按模型声明发值，
+        // 故不能用统一并集映射。无表（模型未收录目录、或为 toggle/budget 型未声明
+        // effort）→ None，完全不发 reasoning_effort；有表 → 钳到「不小于请求的
+        // 最近合法档」，请求超出最高档则取最高合法档；请求值本身无法识别 → None
+        // （同其他模式的未知值丢弃策略）。
+        "zen" => {
+            let levels = effort_levels?;
+            let requested = zen_effort_rank(&effort)?;
+            levels
+                .iter()
+                .filter_map(|level| zen_effort_rank(level).map(|rank| (rank, level.as_str())))
+                .filter(|(rank, _)| *rank >= requested)
+                .min_by_key(|(rank, _)| *rank)
+                .or_else(|| {
+                    levels
+                        .iter()
+                        .filter_map(|level| {
+                            zen_effort_rank(level).map(|rank| (rank, level.as_str()))
+                        })
+                        .max_by_key(|(rank, _)| *rank)
+                })
+                .map(|(_, level)| level)
+        }
         _ => match effort.as_str() {
             "minimal" => Some("minimal"),
             "low" => Some("low"),
@@ -489,8 +526,24 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "high" => Some("high"),
             "xhigh" => Some("xhigh"),
             "max" => Some("max"),
+            "ultra" => Some("ultra"),
             _ => None,
         },
+    }
+}
+
+/// Codex 规范档位序（minimal < low < medium < high < xhigh < max < ultra），供 zen
+/// 逐模型钳制做大小比较；目录里的非法/扩展值（如 "none"）返回 None，查表时被滤掉。
+fn zen_effort_rank(effort: &str) -> Option<u8> {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "minimal" => Some(0),
+        "low" => Some(1),
+        "medium" => Some(2),
+        "high" => Some(3),
+        "xhigh" => Some(4),
+        "max" => Some(5),
+        "ultra" => Some(6),
+        _ => None,
     }
 }
 
@@ -1409,11 +1462,28 @@ pub(crate) fn chat_completion_to_response_with_context(
     if let Some(message_item) = chat_message_to_response_output_item(message, &response_id) {
         output.push(message_item);
     }
-    output.extend(chat_tool_calls_to_response_output_items(
-        message,
-        reasoning.as_deref(),
-        tool_context,
-    ));
+    let tool_calls =
+        chat_tool_calls_to_response_output_items(message, reasoning.as_deref(), tool_context);
+
+    // 丢弃过工具调用、且最终一个工具调用都没剩下时，Codex 会收到一个
+    // "status=completed 但 output 里没有任何工具调用" 的回合，agent loop 必然静默
+    // 收尾（#4341）。此时如实报错，而不是谎报成功。只要还剩下任何一个合法工具
+    // 调用，Codex 本来就会继续，判据不成立，行为保持不变。
+    //
+    // 🔴 与流式分支一致，只对本应 `completed` 的回合生效：`finish_reason=length`
+    // 是截断，工具调用缺 name 是截断的后果而非上游发了畸形数据，报成
+    // tool_call_dropped 会给出错误的归因。
+    if response_status_from_finish_reason(finish_reason) == "completed"
+        && tool_calls.dropped > 0
+        && tool_calls.items.is_empty()
+    {
+        return Err(ProxyError::TransformError(format!(
+            "Upstream returned {} tool call(s) without a function name, \
+             leaving no usable tool call in this turn",
+            tool_calls.dropped
+        )));
+    }
+    output.extend(tool_calls.items);
 
     let mut response = json!({
         "id": response_id,
@@ -1533,12 +1603,20 @@ fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> O
     }))
 }
 
+/// 非流式工具调用转换结果。`dropped` 记录因缺少合法函数名而被丢弃的条数，
+/// 供调用方判断本回合是否已经不可能让 Codex 继续（见 #4341）。
+struct ChatToolCallItems {
+    items: Vec<Value>,
+    dropped: usize,
+}
+
 fn chat_tool_calls_to_response_output_items(
     message: &Value,
     reasoning: Option<&str>,
     tool_context: &CodexToolContext,
-) -> Vec<Value> {
+) -> ChatToolCallItems {
     let mut output = Vec::new();
+    let mut dropped = 0usize;
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
         for (index, tool_call) in tool_calls.iter().enumerate() {
@@ -1546,8 +1624,24 @@ fn chat_tool_calls_to_response_output_items(
             // may generate tool calls without providing a valid name)
             let function = tool_call.get("function").unwrap_or(&Value::Null);
             let name = function.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if name.is_empty() {
-                log::warn!("[Codex] Skipping tool call with missing name");
+            // 纯空白名同样对应不到任何已发布工具，与空名同等对待。
+            if name.trim().is_empty() {
+                dropped += 1;
+                // 只记结构信息，不记 arguments 内容（可能包含用户代码）。
+                let call_id_empty = tool_call
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .is_none_or(str::is_empty);
+                let args_bytes = function
+                    .get("arguments")
+                    .and_then(|v| v.as_str())
+                    .map(str::len)
+                    .unwrap_or(0);
+                log::warn!(
+                    "[Codex] dropped tool call: index={index} call_id_empty={call_id_empty} \
+                     args_bytes={args_bytes} tools_total={}",
+                    tool_calls.len()
+                );
                 continue;
             }
             output.push(chat_tool_call_to_response_item(
@@ -1558,14 +1652,16 @@ fn chat_tool_calls_to_response_output_items(
             ));
         }
     } else if let Some(function_call) = message.get("function_call") {
-        if let Some(item) =
-            chat_legacy_function_call_to_response_item(function_call, reasoning, tool_context)
-        {
-            output.push(item);
+        match chat_legacy_function_call_to_response_item(function_call, reasoning, tool_context) {
+            Some(item) => output.push(item),
+            None => dropped += 1,
         }
     }
 
-    output
+    ChatToolCallItems {
+        items: output,
+        dropped,
+    }
 }
 
 fn chat_tool_call_to_response_item(
@@ -1612,9 +1708,18 @@ fn chat_legacy_function_call_to_response_item(
         .unwrap_or("");
 
     // Skip legacy function calls with missing names (defensive: some models
-    // may generate function_call without providing a valid name)
-    if name.is_empty() {
-        log::warn!("[Codex] Skipping legacy function_call with missing name");
+    // may generate function_call without providing a valid name)。
+    // 纯空白名同样对应不到任何已发布工具，与空名同等对待。
+    if name.trim().is_empty() {
+        // 只记结构信息，不记 arguments 内容（可能包含用户代码）。
+        let args_bytes = function_call
+            .get("arguments")
+            .and_then(|v| v.as_str())
+            .map(str::len)
+            .unwrap_or(0);
+        log::warn!(
+            "[Codex] dropped legacy function_call: call_id={call_id} args_bytes={args_bytes}"
+        );
         return None;
     }
 
@@ -1742,6 +1847,7 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage.filter(|value| value.is_object() && !value.is_null()) else {
         return json!({
             "input_tokens": 0,
+            "input_tokens_details": { "cached_tokens": 0 },
             "output_tokens": 0,
             "total_tokens": 0,
             "output_tokens_details": { "reasoning_tokens": 0 }
@@ -1769,10 +1875,23 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         "total_tokens": total_tokens
     });
 
-    let cached = usage
-        .pointer("/prompt_tokens_details/cached_tokens")
-        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
-        .and_then(|v| v.as_u64())
+    let direct_cache_read = usage.get("cache_read_input_tokens").and_then(Value::as_u64);
+    let cached = direct_cache_read
+        .or_else(|| {
+            usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            usage
+                .pointer("/input_tokens_details/cached_tokens")
+                .and_then(Value::as_u64)
+        })
+        // DeepSeek Chat 的文档化缓存命中字段（与 usage/parser.rs 的处理对应），末位兜底。
+        // 官方端点目前把同值镜像进未文档化的 prompt_tokens_details.cached_tokens（上面的
+        // 标准字段已命中），故仅当上游只发文档字段、不发镜像时此兜底生效（如部分中转），
+        // 并防御未文档化镜像将来消失；上游发任一标准字段时行为零变化。
+        .or_else(|| usage.get("prompt_cache_hit_tokens").and_then(Value::as_u64))
         .unwrap_or(0);
     let cache_write = usage
         .pointer("/prompt_tokens_details/cache_write_tokens")
@@ -1789,6 +1908,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
             "cached_tokens": cached,
             "cache_write_tokens": cache_write
         });
+    } else {
+        result["input_tokens_details"] = json!({ "cached_tokens": 0 });
     }
 
     if let Some(details) = usage
@@ -1804,8 +1925,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         result["output_tokens_details"] = json!({ "reasoning_tokens": 0 });
     }
 
-    if let Some(cache_read) = usage.get("cache_read_input_tokens") {
-        result["cache_read_input_tokens"] = cache_read.clone();
+    if let Some(cache_read) = direct_cache_read {
+        result["cache_read_input_tokens"] = json!(cache_read);
     }
     if cache_write > 0 {
         result["cache_creation_input_tokens"] = json!(cache_write);
@@ -1950,6 +2071,28 @@ mod tests {
 
     fn result_messages(result: &Value) -> &[Value] {
         result["messages"].as_array().unwrap()
+    }
+
+    #[test]
+    fn map_reasoning_effort_handles_ultra_per_mode() {
+        // passthrough 面向枚举未知的通用上游：ultra 与 max/xhigh 一样原值透传，
+        // 让声明了该档位的上游能收到用户选择。
+        assert_eq!(map_reasoning_effort("ultra", None, None), Some("ultra"));
+        // 已知枚举的专用模式钳到自身最高合法档，而不是走 None 被静默丢弃。
+        assert_eq!(
+            map_reasoning_effort("ultra", Some("deepseek"), None),
+            Some("max")
+        );
+        assert_eq!(
+            map_reasoning_effort("ultra", Some("low_high"), None),
+            Some("high")
+        );
+        assert_eq!(
+            map_reasoning_effort("ultra", Some("openrouter"), None),
+            Some("xhigh")
+        );
+        // 真正的未知值仍然丢弃，防上游 400。
+        assert_eq!(map_reasoning_effort("turbo", None, None), None);
     }
 
     #[test]
@@ -2443,12 +2586,35 @@ mod tests {
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn chat_usage_to_responses_usage_maps_deepseek_cache_hit_tokens() {
+        // DeepSeek Chat 的文档化缓存命中字段也要进 Responses 的
+        // input_tokens_details（issue #6073 关联）：当上游只发该字段、不镜像
+        // prompt_tokens_details.cached_tokens 时（如部分中转），少了这个兜底，
+        // 路由模式下合成的 response.completed 里 cached_tokens 为 0，
+        // Codex 侧会话记录与本地日志都拿不到缓存命中。
+        let usage = json!({
+            "prompt_tokens": 1000,
+            "completion_tokens": 100,
+            "total_tokens": 1100,
+            "prompt_cache_hit_tokens": 600,
+            "prompt_cache_miss_tokens": 400
+        });
+
+        let result = chat_usage_to_responses_usage(Some(&usage));
+        assert_eq!(result["input_tokens"], 1000);
+        assert_eq!(result["output_tokens"], 100);
+        assert_eq!(result["input_tokens_details"]["cached_tokens"], 600);
+        assert_eq!(result["input_tokens_details"]["cache_write_tokens"], 0);
     }
 
     #[test]
@@ -2462,6 +2628,7 @@ mod tests {
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
             output_format: Some("auto".to_string()),
+            effort_levels: None,
         };
 
         // max 不在 OpenRouter 枚举内（见 openclaw#77350），必须钳成 xhigh，
@@ -2503,6 +2670,7 @@ mod tests {
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
             output_format: Some("auto".to_string()),
+            effort_levels: None,
         };
 
         let input = json!({
@@ -2530,6 +2698,7 @@ mod tests {
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let input = json!({
@@ -2546,6 +2715,138 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_clamps_zen_effort_to_model_declared_levels() {
+        // OpenCode Zen 平台形态 + 逐模型档位钳制（表数据镜像 models.dev：glm-5.2
+        // 仅声明 high|max）。锁定：统一并集映射会把 Codex 默认的 medium 发给只声明
+        // high|max 的 glm-5.2（恰好是预设默认模型），严格校验的网关会报错；
+        // 低档一律上钳到最近合法档，超出最高档（含 Codex 扩展档 ultra）取最高合法档。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec!["high".to_string(), "max".to_string()]),
+        };
+
+        for (input_effort, expected) in [
+            ("minimal", "high"),
+            ("low", "high"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "max"),
+            ("max", "max"),
+            ("ultra", "max"),
+        ] {
+            let input = json!({
+                "model": "glm-5.2",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(
+                result["reasoning_effort"], expected,
+                "effort={input_effort}"
+            );
+            // 写成顶层 reasoning_effort；不发任何 thinking 字段
+            // （网关只认平台归一参数，不认厂商 thinking 形状）。
+            assert!(result.get("thinking").is_none());
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_zen_preserves_low_when_model_declares_it() {
+        // deepseek-v4-flash 声明 low|high|max：low 合法原样透传，medium 上钳 high，
+        // xhigh 上钳 max——回归锁：旧 deepseek 厂商分支把非 max 一律归 high，
+        // 逐模型钳制不得比那更差，也不得发出声明外的值。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec![
+                "low".to_string(),
+                "high".to_string(),
+                "max".to_string(),
+            ]),
+        };
+
+        for (input_effort, expected) in [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "high"),
+            ("xhigh", "max"),
+        ] {
+            let input = json!({
+                "model": "deepseek-v4-flash",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(
+                result["reasoning_effort"], expected,
+                "effort={input_effort}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_zen_single_level_model_clamps_everything_to_max() {
+        // kimi-k3 仅声明 max（全模型交集不存在，统一映射覆盖不了它——必须逐模型）：
+        // 任何请求档都钳到 max。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec!["max".to_string()]),
+        };
+
+        for input_effort in ["minimal", "medium", "high", "max"] {
+            let input = json!({
+                "model": "kimi-k3",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_omits_zen_effort_without_model_levels() {
+        // 模型未在目录声明 effort（toggle/budget 型如 glm-5.1、qwen 系，或目录未收录）
+        // → 完全不发 reasoning_effort，避免给严格校验的网关送无法核实的值。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
+        };
+
+        let input = json!({
+            "model": "glm-5.1",
+            "input": "hello",
+            "reasoning": {"effort": "medium"}
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+
+        assert!(result.get("reasoning_effort").is_none());
+        assert!(result.get("thinking").is_none());
+    }
+
+    #[test]
     fn responses_request_to_chat_maps_thinking_only_provider_without_effort() {
         let input = json!({
             "model": "kimi-k2.6",
@@ -2559,6 +2860,7 @@ mod tests {
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
@@ -2581,6 +2883,7 @@ mod tests {
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
@@ -3750,6 +4053,64 @@ mod tests {
     }
 
     #[test]
+    fn chat_usage_to_responses_includes_required_input_token_details() {
+        let usage = json!({
+            "prompt_tokens": 13,
+            "completion_tokens": 245,
+            "total_tokens": 258,
+            "prompt_tokens_details": { "cached_tokens": 0 }
+        });
+
+        let converted = chat_usage_to_responses_usage(Some(&usage));
+        assert_eq!(
+            converted["input_tokens_details"],
+            json!({ "cached_tokens": 0 })
+        );
+
+        let fallback = chat_usage_to_responses_usage(None);
+        assert_eq!(
+            fallback["input_tokens_details"],
+            json!({ "cached_tokens": 0 })
+        );
+    }
+
+    #[test]
+    fn chat_usage_to_responses_resolves_cache_read_precedence() {
+        let direct_cache_usage = json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 5,
+            "prompt_tokens_details": { "cached_tokens": 0 },
+            "cache_read_input_tokens": 40
+        });
+        let converted = chat_usage_to_responses_usage(Some(&direct_cache_usage));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 40);
+        assert_eq!(converted["cache_read_input_tokens"], 40);
+
+        let direct_zero = json!({
+            "prompt_tokens_details": { "cached_tokens": 12 },
+            "cache_read_input_tokens": 0
+        });
+        let converted = chat_usage_to_responses_usage(Some(&direct_zero));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 0);
+        assert_eq!(converted["cache_read_input_tokens"], 0);
+
+        let invalid_direct = json!({
+            "prompt_tokens_details": { "cached_tokens": 12 },
+            "cache_read_input_tokens": "invalid"
+        });
+        let converted = chat_usage_to_responses_usage(Some(&invalid_direct));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 12);
+        assert!(converted.get("cache_read_input_tokens").is_none());
+
+        let invalid_prompt_details = json!({
+            "prompt_tokens_details": { "cached_tokens": "invalid" },
+            "input_tokens_details": { "cached_tokens": 7 }
+        });
+        let converted = chat_usage_to_responses_usage(Some(&invalid_prompt_details));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 7);
+    }
+
+    #[test]
     fn chat_response_to_responses_maps_text_tool_calls_and_usage() {
         let input = json!({
             "id": "chatcmpl_1",
@@ -3950,6 +4311,165 @@ mod tests {
             result["output"][0]["input"],
             "*** Begin Patch\n*** End Patch"
         );
+    }
+
+    /// #4341（非流式路径）：丢弃后一个工具调用都不剩时，必须如实报错，
+    /// 而不是返回一个 Codex 会当成正常完成的空壳回合。
+    #[test]
+    fn chat_response_with_only_unnamed_tool_call_is_an_error() {
+        let chat = json!({
+            "id": "chatcmpl_drop",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "让我继续处理这个文件",
+                    "tool_calls": [{
+                        "id": "call_bad",
+                        "type": "function",
+                        "function": {"arguments": "{}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+        assert!(err.to_string().contains("without a function name"));
+    }
+
+    /// 只要还剩下一个合法工具调用，Codex 本来就会继续，行为保持不变。
+    #[test]
+    fn chat_response_keeps_valid_tool_call_beside_unnamed_one() {
+        let chat = json!({
+            "id": "chatcmpl_mixed",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "call_bad", "type": "function", "function": {"arguments": "{}"}},
+                        {
+                            "id": "call_good",
+                            "type": "function",
+                            "function": {"name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"}
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+        let output = result["output"].as_array().unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0]["name"], "exec_command");
+        assert_eq!(output[0]["call_id"], "call_good");
+        assert_eq!(result["status"], "completed");
+    }
+
+    /// legacy `function_call` 形态同样受判据保护。
+    #[test]
+    fn chat_response_with_unnamed_legacy_function_call_is_an_error() {
+        let chat = json!({
+            "id": "chatcmpl_legacy",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "function_call": {"id": "call_legacy", "arguments": "{}"}
+                },
+                "finish_reason": "function_call"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+    }
+
+    /// `finish_reason=length` 是截断，不是"上游发了畸形数据"——归因必须保持
+    /// incomplete，不能报成 tool_call_dropped。
+    #[test]
+    fn chat_response_truncated_stays_incomplete_instead_of_error() {
+        let chat = json!({
+            "id": "chatcmpl_trunc",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "我来看看",
+                    "tool_calls": [{
+                        "id": "call_cut",
+                        "type": "function",
+                        "function": {"arguments": "{\"pa"}
+                    }]
+                },
+                "finish_reason": "length"
+            }]
+        });
+
+        let result =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+        assert_eq!(result["status"], "incomplete");
+        assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
+    }
+
+    /// 纯空白函数名必须与空名同等对待，否则会伪装成"本回合还有工具调用"。
+    #[test]
+    fn chat_response_whitespace_only_tool_name_is_an_error() {
+        let chat = json!({
+            "id": "chatcmpl_ws",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_ws",
+                        "type": "function",
+                        "function": {"name": "   ", "arguments": "{}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+    }
+
+    /// 纯文本回合（从未出现工具调用）不受判据影响。
+    #[test]
+    fn chat_response_text_only_still_completes() {
+        let chat = json!({
+            "id": "chatcmpl_text",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {"role": "assistant", "content": "完成了"},
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+        assert_eq!(result["status"], "completed");
     }
 
     #[test]

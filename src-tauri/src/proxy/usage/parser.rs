@@ -14,6 +14,13 @@ fn openai_cache_read_tokens(usage: &Value) -> u32 {
         .get("cache_read_input_tokens")
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
         .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
+        // DeepSeek Chat 的文档化缓存命中字段，末位兜底：官方端点目前把同值
+        // 镜像进未文档化的 prompt_tokens_details.cached_tokens（上面标准字段
+        // 已命中），仅当上游只发文档字段、不发镜像时本兜底生效（如部分中转），
+        // 并防御未文档化镜像将来消失。prompt_tokens 本身已含命中+未命中
+        // （miss 见 prompt_cache_miss_tokens，仅作参考、无需在此扣减），
+        // 故命中数直接作 cache_read 即可。
+        .or_else(|| usage.get("prompt_cache_hit_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0) as u32
 }
@@ -29,6 +36,16 @@ fn openai_cache_write_tokens(usage: &Value) -> u32 {
 
 /// Session 日志 request_id 前缀，与 `session_usage.rs` 中的格式保持一致
 pub const SESSION_REQUEST_ID_PREFIX: &str = "session:";
+
+/// Claude Code and Claude Desktop share Claude message ids with the session
+/// importer, so both use the bare `session:{message_id}` namespace. Other
+/// apps retain app/provider scoping to avoid collisions between upstreams.
+pub fn dedup_scope_for_app<'a>(
+    app_type: &'a str,
+    provider_id: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    (!matches!(app_type, "claude" | "claude-desktop")).then_some((app_type, provider_id))
+}
 
 fn response_id(body: &Value, field: &str) -> Option<String> {
     body.get(field)
@@ -80,16 +97,6 @@ impl TokenUsage {
             || self.cache_read_tokens > 0
             || self.cache_creation_tokens > 0
     }
-}
-
-/// API 类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ApiType {
-    Claude,
-    OpenRouter,
-    Codex,
-    Gemini,
 }
 
 impl TokenUsage {
@@ -238,20 +245,6 @@ impl TokenUsage {
         }
     }
 
-    /// 从 OpenRouter 响应解析 (OpenAI 格式)
-    #[allow(dead_code)]
-    pub fn from_openrouter_response(body: &Value) -> Option<Self> {
-        let usage = body.get("usage")?;
-        Some(Self {
-            input_tokens: usage.get("prompt_tokens")?.as_u64()? as u32,
-            output_tokens: usage.get("completion_tokens")?.as_u64()? as u32,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
-            model: None,
-            message_id: response_id(body, "id"),
-        })
-    }
-
     /// 从 Codex API 非流式响应解析
     pub fn from_codex_response(body: &Value) -> Option<Self> {
         let usage = body.get("usage");
@@ -289,60 +282,6 @@ impl TokenUsage {
             model,
             message_id: response_id(body, "id"),
         })
-    }
-
-    /// 从 Codex API 响应解析并调整 input_tokens
-    ///
-    /// Codex 的 input_tokens 需要减去 cached_tokens 以获得实际计费的 token 数
-    /// 公式: adjusted_input = max(input_tokens - cached_tokens, 0)
-    #[allow(dead_code)]
-    pub fn from_codex_response_adjusted(body: &Value) -> Option<Self> {
-        let usage = body.get("usage")?;
-        let input_tokens = usage.get("input_tokens")?.as_u64()? as u32;
-        let output_tokens = usage.get("output_tokens")?.as_u64()? as u32;
-
-        // 获取 cached_tokens (可能在 cache_read_input_tokens 或 input_tokens_details 中)
-        let cached_tokens = openai_cache_read_tokens(usage);
-        let cache_write_tokens = openai_cache_write_tokens(usage);
-
-        // 调整 input_tokens: OpenAI total input 同时包含 cache read/write 两桶。
-        let adjusted_input = input_tokens
-            .saturating_sub(cached_tokens)
-            .saturating_sub(cache_write_tokens);
-
-        // 提取响应中的模型名称
-        let model = body
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        Some(Self {
-            input_tokens: adjusted_input,
-            output_tokens,
-            cache_read_tokens: cached_tokens,
-            cache_creation_tokens: cache_write_tokens,
-            model,
-            message_id: response_id(body, "id"),
-        })
-    }
-
-    /// 从 Codex API 流式响应解析
-    #[allow(dead_code)]
-    pub fn from_codex_stream_events(events: &[Value]) -> Option<Self> {
-        log::debug!("[Codex] 解析流式事件，共 {} 个事件", events.len());
-        for event in events {
-            if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
-                log::debug!("[Codex] 事件类型: {event_type}");
-                if event_type == "response.completed" {
-                    if let Some(response) = event.get("response") {
-                        log::debug!("[Codex] 找到 response.completed 事件，解析 usage");
-                        return Self::from_codex_response_adjusted(response);
-                    }
-                }
-            }
-        }
-        log::debug!("[Codex] 未找到 response.completed 事件");
-        None
     }
 
     /// 智能 Codex 响应解析 - 自动检测 OpenAI 或 Codex 格式
@@ -558,6 +497,25 @@ mod tests {
     }
 
     #[test]
+    fn claude_apps_share_the_session_request_id_namespace() {
+        let usage = TokenUsage {
+            message_id: Some("msg_123".to_string()),
+            ..Default::default()
+        };
+
+        for app_type in ["claude", "claude-desktop"] {
+            assert_eq!(
+                usage.dedup_request_id(dedup_scope_for_app(app_type, "provider-a")),
+                "session:msg_123"
+            );
+        }
+        assert_eq!(
+            usage.dedup_request_id(dedup_scope_for_app("codex", "provider-a")),
+            "session:codex:provider-a:msg_123"
+        );
+    }
+
+    #[test]
     fn stream_parsers_recover_ids_from_envelope_chunks() {
         let openai = vec![
             json!({"id": "chatcmpl_123", "choices": []}),
@@ -751,22 +709,6 @@ mod tests {
     }
 
     #[test]
-    fn test_openrouter_response_parsing() {
-        let response = json!({
-            "usage": {
-                "prompt_tokens": 100,
-                "completion_tokens": 50
-            }
-        });
-
-        let usage = TokenUsage::from_openrouter_response(&response).unwrap();
-        assert_eq!(usage.input_tokens, 100);
-        assert_eq!(usage.output_tokens, 50);
-        assert_eq!(usage.cache_read_tokens, 0);
-        assert_eq!(usage.cache_creation_tokens, 0);
-    }
-
-    #[test]
     fn test_gemini_response_parsing() {
         let response = json!({
             "modelVersion": "gemini-3-pro-high",
@@ -883,81 +825,6 @@ mod tests {
         assert_eq!(usage.input_tokens, 1000);
         assert_eq!(usage.cache_read_tokens, 300);
         assert_eq!(usage.cache_creation_tokens, 200);
-
-        let adjusted = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        assert_eq!(adjusted.input_tokens, 500);
-        assert_eq!(adjusted.cache_read_tokens, 300);
-        assert_eq!(adjusted.cache_creation_tokens, 200);
-    }
-
-    #[test]
-    fn test_codex_response_adjusted() {
-        let response = json!({
-            "usage": {
-                "input_tokens": 1000,
-                "output_tokens": 500,
-                "input_tokens_details": {
-                    "cached_tokens": 300
-                }
-            }
-        });
-
-        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        // input_tokens 应该被调整: 1000 - 300 = 700
-        assert_eq!(usage.input_tokens, 700);
-        assert_eq!(usage.output_tokens, 500);
-        assert_eq!(usage.cache_read_tokens, 300);
-    }
-
-    #[test]
-    fn test_codex_response_adjusted_no_cache() {
-        let response = json!({
-            "usage": {
-                "input_tokens": 1000,
-                "output_tokens": 500
-            }
-        });
-
-        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        // 没有 cached_tokens，input_tokens 保持不变
-        assert_eq!(usage.input_tokens, 1000);
-        assert_eq!(usage.output_tokens, 500);
-        assert_eq!(usage.cache_read_tokens, 0);
-    }
-
-    #[test]
-    fn test_codex_response_adjusted_cache_read_input_tokens() {
-        let response = json!({
-            "usage": {
-                "input_tokens": 1000,
-                "output_tokens": 500,
-                "cache_read_input_tokens": 200
-            }
-        });
-
-        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        assert_eq!(usage.input_tokens, 800);
-        assert_eq!(usage.output_tokens, 500);
-        assert_eq!(usage.cache_read_tokens, 200);
-    }
-
-    #[test]
-    fn test_codex_response_adjusted_saturating_sub() {
-        // 测试 cached_tokens > input_tokens 的边界情况
-        let response = json!({
-            "usage": {
-                "input_tokens": 100,
-                "output_tokens": 50,
-                "input_tokens_details": {
-                    "cached_tokens": 200
-                }
-            }
-        });
-
-        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        // saturating_sub 确保不会下溢
-        assert_eq!(usage.input_tokens, 0);
-        assert_eq!(usage.cache_read_tokens, 200);
     }
 
     #[test]
@@ -1155,6 +1022,79 @@ mod tests {
         assert_eq!(usage.output_tokens, 500);
         assert_eq!(usage.cache_read_tokens, 200);
         assert_eq!(usage.model, Some("gpt-4o".to_string()));
+    }
+
+    #[test]
+    fn test_openai_response_deepseek_cache_hit_fields() {
+        // DeepSeek Chat 格式（issue #6073 关联）：缓存命中/未命中单列在文档化的
+        // prompt_cache_hit_tokens / prompt_cache_miss_tokens，prompt_tokens 含两者。
+        // 当上游只发这套文档字段、不镜像 prompt_tokens_details.cached_tokens 时
+        // （如部分中转），缺了本兜底缓存命中会被记 0、费用相对官网按全价虚高。
+        let response = json!({
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 100,
+                "prompt_cache_hit_tokens": 600,
+                "prompt_cache_miss_tokens": 400,
+                "total_tokens": 1100
+            }
+        });
+
+        let usage = TokenUsage::from_openai_response(&response).unwrap();
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 100);
+        assert_eq!(usage.cache_read_tokens, 600);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, Some("deepseek-v4-flash".to_string()));
+    }
+
+    #[test]
+    fn openai_cache_read_prefers_standard_field_over_deepseek_specific() {
+        // 两套字段同现时标准字段权威（含显式 0：Some(0) 短路 or_else 链）——
+        // 顺位是有意设计：某中转若硬编码 cached_tokens: 0 又透传
+        // prompt_cache_hit_tokens，仍读 0，与本兜底合入前行为一致。
+        let response = json!({
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 10,
+                "prompt_tokens_details": { "cached_tokens": 0 },
+                "prompt_cache_hit_tokens": 600
+            }
+        });
+        let usage = TokenUsage::from_openai_response(&response).unwrap();
+        assert_eq!(usage.cache_read_tokens, 0);
+    }
+
+    #[test]
+    fn test_openai_stream_deepseek_cache_hit_fields() {
+        // 流式路径：usage 在末尾 chunk 上，DeepSeek 缓存命中同样要被提取。
+        let events = vec![
+            json!({
+                "id": "chatcmpl-ds",
+                "model": "deepseek-v4-flash",
+                "choices": [{"delta": {"content": "Hi"}}]
+            }),
+            json!({
+                "id": "chatcmpl-ds",
+                "model": "deepseek-v4-flash",
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 800,
+                    "completion_tokens": 50,
+                    "prompt_cache_hit_tokens": 512,
+                    "prompt_cache_miss_tokens": 288,
+                    "total_tokens": 850
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_openai_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 800);
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.cache_read_tokens, 512);
+        assert_eq!(usage.message_id.as_deref(), Some("chatcmpl-ds"));
     }
 
     #[test]
