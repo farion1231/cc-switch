@@ -565,6 +565,10 @@ impl SkillService {
         Ok(dir)
     }
 
+    fn supports_managed_skills(app: &AppType) -> bool {
+        !matches!(app, AppType::ClaudeDesktop | AppType::Cursor)
+    }
+
     /// 获取应用的 skills 目录
     pub fn get_app_skills_dir(app: &AppType) -> Result<PathBuf> {
         // 目录覆盖：优先使用用户在 settings.json 中配置的 override 目录
@@ -608,6 +612,11 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::Cursor => {
+                return Err(anyhow!(
+                    "Cursor is runtime-only and has no generic skills directory"
+                ))
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -625,6 +634,11 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::Cursor => {
+                return Err(anyhow!(
+                    "Cursor is runtime-only and has no generic skills directory"
+                ))
+            }
         })
     }
 
@@ -682,7 +696,7 @@ impl SkillService {
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if !Self::supports_managed_skills(&app) {
                 continue;
             }
             let app_dir = Self::get_app_skills_dir(&app)?;
@@ -1673,8 +1687,11 @@ impl SkillService {
         // 3. 文件移动完成后才持久化设置
         crate::settings::set_skill_storage_location(target)?;
 
-        // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
+        // 4. 刷新所有支持托管 Skills 的应用目录（指向新 SSOT）
         for app in AppType::all() {
+            if !Self::supports_managed_skills(&app) {
+                continue;
+            }
             let _ = Self::sync_to_app_unlocked(db, &app);
         }
         for (directory, deployment) in pi_deployments {

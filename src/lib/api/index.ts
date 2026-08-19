@@ -1,4 +1,6 @@
 export type { AppId } from "./types";
+import { cursorApi } from "./cursor";
+export { cursorApi };
 export { piApi } from "./pi";
 export { providersApi, universalProvidersApi } from "./providers";
 export { settingsApi } from "./settings";

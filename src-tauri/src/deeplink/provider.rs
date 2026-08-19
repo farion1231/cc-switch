@@ -155,7 +155,12 @@ pub(crate) fn build_provider_from_request(
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers must be added from the Pi provider page".to_string(),
-            ));
+            ))
+        }
+        AppType::Cursor => {
+            return Err(AppError::InvalidInput(
+                "Cursor providers are managed by the Cursor runtime page".to_string(),
+            ))
         }
     };
 

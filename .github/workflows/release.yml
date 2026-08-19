@@ -21,16 +21,23 @@ jobs:
       matrix:
         include:
           - os: windows-2022
+            sidecar_target: x86_64-pc-windows-msvc
           - os: windows-11-arm
             arch: arm64
+            sidecar_target: aarch64-pc-windows-msvc
           - os: ubuntu-22.04
+            sidecar_target: x86_64-unknown-linux-gnu
           - os: ubuntu-22.04-arm
             arch: arm64
+            sidecar_target: aarch64-unknown-linux-gnu
           - os: macos-14
+            sidecar_target: universal-apple-darwin
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -39,6 +46,41 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sidecars/cursor-byok/go.mod
+          cache-dependency-path: sidecars/cursor-byok/go.sum
+
+      - name: Setup protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "35.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protobuf Go plugins
+        shell: bash
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+
+      - name: Build and test Cursor sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
+
+      - name: Verify macOS sidecar inputs
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
+            test -x "src-tauri/binaries/cursor-sidecar-$target"
+          done
+          lipo src-tauri/binaries/cursor-sidecar-universal-apple-darwin \
+            -verify_arch arm64 x86_64
 
       - name: Add Windows ARM64 target
         if: runner.os == 'Windows' && matrix.arch == 'arm64'

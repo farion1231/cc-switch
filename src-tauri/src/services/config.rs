@@ -142,6 +142,11 @@ impl ConfigService {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
             }
+            AppType::Cursor => {
+                return Err(AppError::InvalidInput(
+                    "Cursor providers are managed by the Cursor runtime page".to_string(),
+                ))
+            }
         }
 
         Ok(())

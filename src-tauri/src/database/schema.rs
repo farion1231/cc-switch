@@ -45,6 +45,20 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // Cursor Endpoints 表。Endpoint 独立于模型存在，因此允许保留空模型集合。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cursor_endpoints (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 2. Provider Endpoints 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS provider_endpoints (
@@ -438,6 +452,14 @@ impl Database {
 
         let mut version = Self::get_user_version(conn)?;
 
+        if version == 20 && Self::is_legacy_cursor_v20_schema(conn)? {
+            log::info!("检测到已知 Cursor 开发版 v20 数据库，补齐当前 v17 账本并归一到 v18");
+            Self::migrate_v16_to_v17(conn)?;
+            Self::migrate_v17_to_v18(conn)?;
+            Self::set_user_version(conn, SCHEMA_VERSION)?;
+            version = SCHEMA_VERSION;
+        }
+
         if version > SCHEMA_VERSION {
             conn.execute("ROLLBACK TO schema_migration;", []).ok();
             conn.execute("RELEASE schema_migration;", []).ok();
@@ -535,6 +557,11 @@ impl Database {
                         log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（添加 Cursor Endpoint 持久化）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1562,6 +1589,118 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
+    }
+
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cursor_endpoints (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|error| AppError::Database(format!("创建 Cursor Endpoint 表失败: {error}")))?;
+
+        if !Self::table_exists(conn, "providers")? {
+            return Ok(());
+        }
+
+        let has_created_at = Self::has_column(conn, "providers", "created_at")?;
+        let provider_query = if has_created_at {
+            "SELECT id, settings_config, COALESCE(created_at, 0)
+             FROM providers WHERE app_type = 'cursor'
+             ORDER BY created_at, id"
+        } else {
+            "SELECT id, settings_config, 0
+             FROM providers WHERE app_type = 'cursor'
+             ORDER BY id"
+        };
+        let mut stmt = conn
+            .prepare(provider_query)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let providers = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        drop(stmt);
+
+        let mut endpoint_ids = std::collections::HashMap::<(String, String, String), String>::new();
+        for (provider_id, raw_config, created_at) in providers {
+            let mut config: serde_json::Value =
+                serde_json::from_str(&raw_config).map_err(|error| {
+                    AppError::Database(format!("解析 Cursor Provider 配置失败: {error}"))
+                })?;
+            if config
+                .get("endpointId")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| !id.trim().is_empty())
+            {
+                continue;
+            }
+
+            let provider_type = config["type"].as_str().unwrap_or("openai").to_string();
+            let base_url = config["baseURL"]
+                .as_str()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let normalized_url = url::Url::parse(&base_url)
+                .map(|mut value| {
+                    value.set_fragment(None);
+                    let path = value.path().trim_end_matches('/').to_string();
+                    value.set_path(if path.is_empty() { "/" } else { &path });
+                    value.to_string().trim_end_matches('/').to_string()
+                })
+                .unwrap_or_else(|_| base_url.trim_end_matches('/').to_string());
+            let api_key = config["apiKey"].as_str().unwrap_or_default().to_string();
+            let endpoint_id = endpoint_ids
+                .entry((
+                    provider_type.clone(),
+                    normalized_url.clone(),
+                    api_key.clone(),
+                ))
+                .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+                .clone();
+            let name = config["providerGroup"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(normalized_url.as_str())
+                .to_string();
+
+            conn.execute(
+                "INSERT OR IGNORE INTO cursor_endpoints
+                 (id, name, provider_type, base_url, api_key, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    endpoint_id,
+                    name,
+                    provider_type,
+                    base_url,
+                    api_key,
+                    created_at
+                ],
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+            config["endpointId"] = serde_json::Value::String(endpoint_id);
+            conn.execute(
+                "UPDATE providers SET settings_config = ?1
+                 WHERE id = ?2 AND app_type = 'cursor'",
+                rusqlite::params![config.to_string(), provider_id],
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        }
         Ok(())
     }
 
@@ -3066,6 +3205,38 @@ impl Database {
             )));
         }
         Ok(())
+    }
+
+    pub(crate) fn is_legacy_cursor_v20_schema(conn: &Connection) -> Result<bool, AppError> {
+        if Self::get_user_version(conn)? != 20
+            || !Self::table_exists(conn, "cursor_endpoints")?
+            || !Self::table_exists(conn, "proxy_request_logs")?
+            || !Self::table_exists(conn, "usage_daily_rollups")?
+        {
+            return Ok(false);
+        }
+
+        for column in [
+            "provider_name_snapshot",
+            "token_usage_status",
+            "cache_usage_observed",
+        ] {
+            if !Self::has_column(conn, "proxy_request_logs", column)? {
+                return Ok(false);
+            }
+        }
+        for column in [
+            "provider_name_snapshot",
+            "cache_observed_request_count",
+            "cache_observed_input_tokens",
+            "cache_observed_read_tokens",
+            "cache_observed_creation_tokens",
+        ] {
+            if !Self::has_column(conn, "usage_daily_rollups", column)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub(crate) fn table_exists(conn: &Connection, table: &str) -> Result<bool, AppError> {
