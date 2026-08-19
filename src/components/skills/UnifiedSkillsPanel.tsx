@@ -7,10 +7,18 @@ import {
   RefreshCw,
   Loader2,
   Search,
+  FolderTree,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
   type SkillBackupEntry,
@@ -34,7 +42,7 @@ import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { APP_ICON_MAP, SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -72,6 +80,83 @@ export interface UnifiedSkillsPanelHandle {
   checkUpdates: () => void;
 }
 
+interface SkillSourceGroup {
+  key: string;
+  label: string;
+  skills: InstalledSkill[];
+}
+
+interface VisibleSkillSourceGroup extends SkillSourceGroup {
+  visibleSkills: InstalledSkill[];
+}
+
+type SourceGroupAppState = "enabled" | "disabled" | "mixed";
+
+const ALL_SKILLS_SOURCE_KEY = "all";
+const LOCAL_SKILLS_SOURCE_KEY = "local";
+
+function getSkillSourceGroup(
+  skill: InstalledSkill,
+  localLabel: string,
+): Pick<SkillSourceGroup, "key" | "label"> {
+  if (skill.repoOwner && skill.repoName) {
+    return {
+      key: `repo:${skill.repoOwner.toLowerCase()}/${skill.repoName.toLowerCase()}`,
+      label: `${skill.repoOwner}/${skill.repoName}`,
+    };
+  }
+
+  return { key: LOCAL_SKILLS_SOURCE_KEY, label: localLabel };
+}
+
+function groupSkillsBySource(
+  skills: InstalledSkill[],
+  localLabel: string,
+): SkillSourceGroup[] {
+  const groups = new Map<string, SkillSourceGroup>();
+
+  for (const skill of skills) {
+    const source = getSkillSourceGroup(skill, localLabel);
+    const existing = groups.get(source.key);
+    if (existing) {
+      groups.set(source.key, {
+        ...existing,
+        skills: [...existing.skills, skill],
+      });
+    } else {
+      groups.set(source.key, { ...source, skills: [skill] });
+    }
+  }
+
+  return Array.from(groups.values());
+}
+
+function getSourceGroupAppState(
+  skills: InstalledSkill[],
+  app: AppId,
+): SourceGroupAppState {
+  const enabledCount = skills.filter((skill) =>
+    Boolean(skill.apps[app]),
+  ).length;
+  if (enabledCount === 0) return "disabled";
+  if (enabledCount === skills.length) return "enabled";
+  return "mixed";
+}
+
+function getSourceGroupAppButtonClassName(
+  state: SourceGroupAppState,
+  activeClass: string,
+): string {
+  const baseClass =
+    "relative w-7 h-7 rounded-lg flex items-center justify-center transition-all disabled:cursor-not-allowed disabled:opacity-45";
+
+  if (state === "enabled") return `${baseClass} ${activeClass}`;
+  if (state === "mixed") {
+    return `${baseClass} ${activeClass} opacity-90 ring-2 ring-yellow-400/70 ring-offset-1 ring-offset-background`;
+  }
+  return `${baseClass} opacity-35 hover:opacity-70`;
+}
+
 function formatSkillBackupDate(unixSeconds: number): string {
   const date = new Date(unixSeconds * 1000);
   return Number.isNaN(date.getTime())
@@ -102,6 +187,9 @@ const UnifiedSkillsPanel = React.forwardRef<
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [pendingBulkSourceKey, setPendingBulkSourceKey] = useState<
+    string | null
+  >(null);
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = React.useRef(false);
   const checkUpdatesLockRef = React.useRef(false);
@@ -259,10 +347,30 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
   }, [searchQuery, skills]);
 
+  const sourceGroups = useMemo<VisibleSkillSourceGroup[]>(() => {
+    if (!skills) return [];
+
+    const visibleSkillIds = new Set(filteredSkills.map((skill) => skill.id));
+    return groupSkillsBySource(skills, t("skills.local"))
+      .map((group) => ({
+        ...group,
+        visibleSkills: group.skills.filter((skill) =>
+          visibleSkillIds.has(skill.id),
+        ),
+      }))
+      .filter((group) => group.visibleSkills.length > 0);
+  }, [filteredSkills, skills, t]);
+
   const pendingApp = bulkToggleAppMutation.isPending
     ? bulkToggleAppMutation.variables?.app
     : toggleAppMutation.isPending
       ? toggleAppMutation.variables?.app
+      : null;
+
+  const pendingAllApp =
+    !bulkToggleAppMutation.isPending ||
+    pendingBulkSourceKey === ALL_SKILLS_SOURCE_KEY
+      ? pendingApp
       : null;
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
@@ -277,10 +385,15 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleToggleAll = async (app: AppId, enabled: boolean) => {
-    if (!skills || !beginWrite()) return;
+  const handleToggleSkills = async (
+    targetSkills: InstalledSkill[],
+    sourceKey: string,
+    app: AppId,
+    enabled: boolean,
+  ) => {
+    if (!beginWrite()) return;
 
-    const ids = skills
+    const ids = targetSkills
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)
       .map((skill) => skill.id);
     if (ids.length === 0) {
@@ -288,6 +401,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       return;
     }
 
+    setPendingBulkSourceKey(sourceKey);
     try {
       const result = await bulkToggleAppMutation.mutateAsync({
         ids,
@@ -305,8 +419,22 @@ const UnifiedSkillsPanel = React.forwardRef<
         description: String(error),
       });
     } finally {
+      setPendingBulkSourceKey(null);
       endWrite();
     }
+  };
+
+  const handleToggleAll = async (app: AppId, enabled: boolean) => {
+    if (!skills) return;
+    await handleToggleSkills(skills, ALL_SKILLS_SOURCE_KEY, app, enabled);
+  };
+
+  const handleToggleSourceGroup = async (
+    group: SkillSourceGroup,
+    app: AppId,
+    enabled: boolean,
+  ) => {
+    await handleToggleSkills(group.skills, group.key, app, enabled);
   };
 
   const handleUninstall = (skill: InstalledSkill) => {
@@ -629,7 +757,7 @@ const UnifiedSkillsPanel = React.forwardRef<
             appIds={visibleSkillAppIds}
             totalCount={skills?.length ?? 0}
             onToggleAll={handleToggleAll}
-            pendingApp={pendingApp}
+            pendingApp={pendingAllApp}
             disabled={interactionBlocked}
           />
         </div>
@@ -695,22 +823,31 @@ const UnifiedSkillsPanel = React.forwardRef<
             </div>
           ) : (
             <TooltipProvider delayDuration={300}>
-              <div className="rounded-xl border border-border-default overflow-hidden">
-                {filteredSkills.map((skill, index) => (
-                  <InstalledSkillListItem
-                    key={skill.id}
-                    skill={skill}
-                    hasUpdate={!!updatesMap[skill.id]}
-                    isUpdating={
-                      updateSkillMutation.isPending &&
-                      updateSkillMutation.variables === skill.id
+              <div className="space-y-3">
+                {sourceGroups.map((group) => (
+                  <SkillSourceGroupSection
+                    key={group.key}
+                    group={group}
+                    updatesMap={updatesMap}
+                    isUpdatingSkillId={
+                      updateSkillMutation.isPending
+                        ? updateSkillMutation.variables
+                        : undefined
+                    }
+                    pendingApp={
+                      bulkToggleAppMutation.isPending &&
+                      pendingBulkSourceKey === group.key
+                        ? pendingApp
+                        : null
                     }
                     actionsDisabled={interactionBlocked}
                     appIds={visibleSkillAppIds}
+                    onToggleGroupApp={(app, enabled) =>
+                      handleToggleSourceGroup(group, app, enabled)
+                    }
                     onToggleApp={handleToggleApp}
-                    onUninstall={() => handleUninstall(skill)}
-                    onUpdate={() => handleUpdateSkill(skill)}
-                    isLast={index === filteredSkills.length - 1}
+                    onUninstall={handleUninstall}
+                    onUpdate={handleUpdateSkill}
                   />
                 ))}
               </div>
@@ -757,6 +894,162 @@ const UnifiedSkillsPanel = React.forwardRef<
 });
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
+
+interface SkillSourceGroupSectionProps {
+  group: VisibleSkillSourceGroup;
+  updatesMap: Record<string, SkillUpdateInfo>;
+  isUpdatingSkillId?: string;
+  pendingApp: AppId | null;
+  actionsDisabled: boolean;
+  appIds: AppId[];
+  onToggleGroupApp: (app: AppId, enabled: boolean) => void;
+  onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
+  onUninstall: (skill: InstalledSkill) => void;
+  onUpdate: (skill: InstalledSkill) => void;
+}
+
+const SkillSourceGroupSection: React.FC<SkillSourceGroupSectionProps> = ({
+  group,
+  updatesMap,
+  isUpdatingSkillId,
+  pendingApp,
+  actionsDisabled,
+  appIds,
+  onToggleGroupApp,
+  onToggleApp,
+  onUninstall,
+  onUpdate,
+}) => {
+  const { t } = useTranslation();
+  const [isExpanded, setIsExpanded] = useState(true);
+  const disclosureLabel = `${group.label}: ${t(
+    isExpanded ? "usage.collapse" : "usage.expand",
+  )}`;
+
+  return (
+    <section
+      aria-label={group.label}
+      className="overflow-hidden rounded-xl border border-border-default bg-background/60"
+    >
+      <div
+        className={cn(
+          "group flex items-center gap-3 bg-muted/30 px-4 py-2.5",
+          isExpanded && "border-b border-border-default",
+        )}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <FolderTree size={14} className="shrink-0 text-muted-foreground" />
+          <span className="truncate text-sm font-medium">{group.label}</span>
+          <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
+            {t("skills.count", { count: group.skills.length })}
+          </Badge>
+        </div>
+
+        <SourceGroupAppToggleBar
+          groupLabel={group.label}
+          skills={group.skills}
+          pendingApp={pendingApp}
+          disabled={actionsDisabled}
+          appIds={appIds}
+          onToggle={onToggleGroupApp}
+        />
+
+        <div className="flex w-[3.625rem] shrink-0 justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            aria-label={disclosureLabel}
+            aria-expanded={isExpanded}
+            title={disclosureLabel}
+            onClick={() => setIsExpanded((expanded) => !expanded)}
+          >
+            {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </Button>
+        </div>
+      </div>
+
+      {isExpanded &&
+        group.visibleSkills.map((skill, index) => (
+          <InstalledSkillListItem
+            key={skill.id}
+            skill={skill}
+            appIds={appIds}
+            hasUpdate={!!updatesMap[skill.id]}
+            isUpdating={isUpdatingSkillId === skill.id}
+            actionsDisabled={actionsDisabled}
+            onToggleApp={onToggleApp}
+            onUninstall={() => onUninstall(skill)}
+            onUpdate={() => onUpdate(skill)}
+            isLast={index === group.visibleSkills.length - 1}
+          />
+        ))}
+    </section>
+  );
+};
+
+interface SourceGroupAppToggleBarProps {
+  groupLabel: string;
+  skills: InstalledSkill[];
+  pendingApp: AppId | null;
+  disabled: boolean;
+  appIds: AppId[];
+  onToggle: (app: AppId, enabled: boolean) => void;
+}
+
+const SourceGroupAppToggleBar: React.FC<SourceGroupAppToggleBarProps> = ({
+  groupLabel,
+  skills,
+  pendingApp,
+  disabled,
+  appIds,
+  onToggle,
+}) => {
+  const { t } = useTranslation();
+
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      {appIds.map((app) => {
+        const { label, icon, activeClass } = APP_ICON_MAP[app];
+        const state = getSourceGroupAppState(skills, app);
+        const pending = pendingApp === app;
+        const allEnabled = state === "enabled";
+        const actionLabel = allEnabled
+          ? t("common.disableAllForApp", { app: label })
+          : t("common.enableAllForApp", { app: label });
+        const scopedActionLabel = `${groupLabel}: ${actionLabel}`;
+
+        return (
+          <Tooltip key={app}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={state === "mixed" ? "mixed" : allEnabled}
+                aria-busy={pending}
+                aria-label={scopedActionLabel}
+                title={scopedActionLabel}
+                data-selection-state={pending ? "pending" : state}
+                disabled={disabled}
+                onClick={() => onToggle(app, !allEnabled)}
+                className={getSourceGroupAppButtonClassName(state, activeClass)}
+              >
+                {icon}
+                {state === "mixed" && (
+                  <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-yellow-400 ring-1 ring-background" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>{scopedActionLabel}</p>
+            </TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+};
 
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
@@ -845,7 +1138,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       />
 
       <div
-        className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+        className="flex w-[3.625rem] shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
         style={hasUpdate ? { opacity: 1 } : undefined}
       >
         {hasUpdate && onUpdate && (
