@@ -501,6 +501,11 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             set_windows_app_user_model_id(app.handle());
 
+            // A force-closed terminal or a direct process termination can skip
+            // the batch cleanup marker. Remove only old, explicitly owned
+            // Codex terminal directories; active/new terminals are preserved.
+            commands::cleanup_orphaned_codex_terminal_dirs();
+
             // 注册 Updater 插件（桌面端）；放在 logger 之后，确保失败可诊断。
             #[cfg(desktop)]
             {
