@@ -3,7 +3,7 @@
 //! Handles importing provider configurations via ccswitch:// URLs.
 
 use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
-use super::DeepLinkImportRequest;
+use super::{DeepLinkImportRequest, GrokDeeplinkModel, GrokDeeplinkModels};
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
 use crate::services::ProviderService;
@@ -479,6 +479,45 @@ fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Valu
     let endpoint = get_primary_endpoint(request).trim().to_string();
     let api_key = request.api_key.as_deref().unwrap_or("").trim();
 
+    // 内联 config 带来的完整模型目录（#6457）：逐档案保留 id/name/description/
+    // context_window，端点与密钥统一用 deeplink 显式值（或既有合并回退）覆写，
+    // backend 固定为支持的 Responses——按档案夹带的凭据/端点在提取阶段就被丢弃。
+    if let Some(catalog) = request
+        .grokbuild_models
+        .as_ref()
+        .filter(|catalog| !catalog.profiles.is_empty())
+    {
+        let default_profile = grokbuild_default_profile(catalog, model);
+        let mut config_toml = format!(
+            "[models]\ndefault = {}\n",
+            toml_edit::Value::from(default_profile).to_string()
+        );
+        for profile in &catalog.profiles {
+            config_toml.push_str(&format!(
+                "\n[model.{}]\nmodel = {}\nbase_url = {}\nname = {}\napi_key = {}\napi_backend = \"{}\"\ncontext_window = {}\n",
+                toml_edit::Value::from(profile.profile.as_str()).to_string(),
+                toml_edit::Value::from(profile.model.as_str()).to_string(),
+                toml_edit::Value::from(endpoint.as_str()).to_string(),
+                toml_edit::Value::from(profile.name.as_str()).to_string(),
+                toml_edit::Value::from(api_key).to_string(),
+                crate::grok_config::DEFAULT_API_BACKEND,
+                profile.context_window,
+            ));
+            if let Some(description) = profile
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                config_toml.push_str(&format!(
+                    "description = {}\n",
+                    toml_edit::Value::from(description).to_string()
+                ));
+            }
+        }
+        return json!({ "config": config_toml });
+    }
+
     let model_value = toml_edit::Value::from(model).to_string();
     let name_value = toml_edit::Value::from(name).to_string();
     let endpoint_value = toml_edit::Value::from(endpoint.as_str()).to_string();
@@ -491,6 +530,34 @@ fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Valu
             crate::grok_config::DEFAULT_CONTEXT_WINDOW,
         )
     })
+}
+
+/// 选出多档案目录的 `[models] default` 指向的档案键。
+///
+/// 优先级：请求模型（URL 参数或合并回退）匹配某档案键 → 匹配某档案的
+/// `model` 字段 → 内联 config 原有的 default。保证 default 一定指向一个
+/// 实际存在的档案表。
+fn grokbuild_default_profile<'a>(
+    catalog: &'a GrokDeeplinkModels,
+    requested_model: &str,
+) -> &'a str {
+    if !requested_model.trim().is_empty() {
+        if let Some(profile) = catalog
+            .profiles
+            .iter()
+            .find(|profile| profile.profile == requested_model)
+        {
+            return &profile.profile;
+        }
+        if let Some(profile) = catalog
+            .profiles
+            .iter()
+            .find(|profile| profile.model == requested_model)
+        {
+            return &profile.profile;
+        }
+    }
+    &catalog.default_profile
 }
 
 /// Build OpenCode settings configuration
@@ -896,7 +963,60 @@ fn merge_grokbuild_config(
         }
     }
 
+    // 保留内联 config 的完整模型目录（#6457）：只提取安全字段，凭据/端点/
+    // backend 留给上面的请求级合并结果在 build 阶段统一覆写。
+    request.grokbuild_models = extract_grokbuild_model_profiles(&config_toml);
+
     Ok(())
+}
+
+/// 从内联 config.toml 提取全部 `[model.*]` 档案的**安全字段**（档案键、
+/// `model`/`name`/`description`/`context_window`）。
+///
+/// `api_key` / `env_key` / `base_url` / `api_backend` 有意丢弃：deeplink 是
+/// 不可信输入，导入结果的每个档案都必须统一使用 deeplink 显式端点与密钥
+/// （或既有合并回退）和支持的 Responses backend，不能按档案夹带。
+fn extract_grokbuild_model_profiles(config_toml: &str) -> Option<GrokDeeplinkModels> {
+    fn non_empty_string(table: &toml::value::Table, key: &str) -> Option<String> {
+        table
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    }
+
+    let document = config_toml.parse::<toml::Value>().ok()?;
+    let model_entries = document.get("model")?.as_table()?;
+    let profiles: Vec<GrokDeeplinkModel> = model_entries
+        .iter()
+        .filter_map(|(profile, value)| {
+            let table = value.as_table()?;
+            Some(GrokDeeplinkModel {
+                profile: profile.clone(),
+                model: non_empty_string(table, "model").unwrap_or_else(|| profile.clone()),
+                name: non_empty_string(table, "name").unwrap_or_else(|| profile.clone()),
+                description: non_empty_string(table, "description"),
+                context_window: table
+                    .get("context_window")
+                    .and_then(toml::Value::as_integer)
+                    .filter(|value| *value > 0)
+                    .unwrap_or(crate::grok_config::DEFAULT_CONTEXT_WINDOW),
+            })
+        })
+        .collect();
+    if profiles.is_empty() {
+        return None;
+    }
+    let default_profile = document
+        .get("models")
+        .and_then(toml::Value::as_table)
+        .and_then(|models| non_empty_string(models, "default"))
+        .or_else(|| profiles.first().map(|profile| profile.profile.clone()))?;
+    Some(GrokDeeplinkModels {
+        default_profile,
+        profiles,
+    })
 }
 
 /// Merge configuration for additive mode apps (OpenClaw, OpenCode)
@@ -1022,6 +1142,107 @@ mod tests {
             Some(value) => std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", value),
             None => std::env::remove_var("CC_SWITCH_DEEPLINK_ENV_PROBE"),
         }
+    }
+
+    /// 内联 config 的完整模型目录必须在导入结果里保留（#6457）：
+    /// 每档案的 id/name/description/context_window 原样带过去，端点与密钥
+    /// 统一用 deeplink 显式 URL 参数覆写，backend 固定为支持的 Responses，
+    /// 按档案夹带的凭据/端点/backend 一律丢弃。
+    #[test]
+    fn grokbuild_deeplink_preserves_multi_model_catalog_from_inline_config() {
+        let mut request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("grokbuild".to_string()),
+            name: Some("My Relay".to_string()),
+            endpoint: Some("https://relay.example/v1".to_string()),
+            api_key: Some("sk-from-url".to_string()),
+            model: Some("grok-4.6".to_string()),
+            ..Default::default()
+        };
+        let config = serde_json::json!({
+            "config": concat!(
+                "[models]\ndefault = \"grok-4.5\"\n\n",
+                "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\n",
+                "base_url = \"https://evil.example/v1\"\nname = \"Grok 4.6\"\n",
+                "description = \"Fast flagship\"\napi_key = \"sk-per-model-4-6\"\n",
+                "api_backend = \"chat\"\ncontext_window = 1000000\n\n",
+                "[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\n",
+                "base_url = \"https://other.example/v1\"\nname = \"Grok 4.5\"\n",
+                "description = \"Stable\"\napi_key = \"sk-per-model-4-5\"\n",
+                "api_backend = \"chat\"\ncontext_window = 500000\n\n",
+                "[model.\"bare\"]\nmodel = \"grok-mini\"\nbase_url = \"https://bare.example\"\n",
+            )
+        });
+
+        merge_grokbuild_config(&mut request, &config).expect("merge should succeed");
+        let settings = build_grokbuild_settings(&request);
+        let rendered = settings["config"].as_str().expect("config string");
+
+        // 三个档案都在，各自的展示/容量字段保留（sparse 档案回落到档案键/默认值）
+        assert!(rendered.contains("[model.\"grok-4.6\"]"), "{rendered}");
+        assert!(rendered.contains("[model.\"grok-4.5\"]"), "{rendered}");
+        assert!(rendered.contains("[model.\"bare\"]"), "{rendered}");
+        assert!(rendered.contains("name = \"Grok 4.6\""));
+        assert!(rendered.contains("description = \"Fast flagship\""));
+        assert!(rendered.contains("context_window = 1000000"));
+        assert!(rendered.contains("model = \"grok-mini\""));
+        assert!(rendered.contains("name = \"bare\""));
+
+        // URL 参数统一覆写端点与密钥；backend 固定为 Responses
+        assert_eq!(
+            rendered
+                .matches("base_url = \"https://relay.example/v1\"")
+                .count(),
+            3
+        );
+        assert_eq!(rendered.matches("api_key = \"sk-from-url\"").count(), 3);
+        assert_eq!(rendered.matches("api_backend = \"responses\"").count(), 3);
+
+        // 按档案夹带的不可信值一个都不能漏进来
+        assert!(!rendered.contains("sk-per-model"), "{rendered}");
+        assert!(!rendered.contains("evil.example"), "{rendered}");
+        assert!(!rendered.contains("other.example"), "{rendered}");
+        assert!(!rendered.contains("bare.example"), "{rendered}");
+        assert!(!rendered.contains("env_key"), "{rendered}");
+
+        // URL 的 model 参数决定 default；生成结果必须能过 live 写入前的强校验
+        assert!(rendered.contains("[models]\ndefault = \"grok-4.6\""));
+        crate::grok_config::validate_config_toml(rendered).expect("valid config.toml");
+    }
+
+    /// URL 未带 model 时，default 跟随内联 config 原有的 `[models] default`；
+    /// 合并回退出的请求级密钥同样要覆写全部档案（其它档案的自带密钥丢弃）。
+    #[test]
+    fn grokbuild_deeplink_default_follows_config_when_url_model_absent() {
+        let mut request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("grokbuild".to_string()),
+            name: Some("My Relay".to_string()),
+            ..Default::default()
+        };
+        let config = serde_json::json!({
+            "config": concat!(
+                "[models]\ndefault = \"stable\"\n\n",
+                "[model.\"stable\"]\nmodel = \"grok-4.5\"\n",
+                "base_url = \"https://relay.example/v1\"\nname = \"Stable\"\n",
+                "api_key = \"sk-merged\"\napi_backend = \"responses\"\ncontext_window = 500000\n\n",
+                "[model.\"preview\"]\nmodel = \"grok-4.6\"\n",
+                "base_url = \"https://relay.example/v1\"\nname = \"Preview\"\n",
+                "api_key = \"sk-other\"\napi_backend = \"responses\"\ncontext_window = 1000000\n",
+            )
+        });
+
+        merge_grokbuild_config(&mut request, &config).expect("merge should succeed");
+        let settings = build_grokbuild_settings(&request);
+        let rendered = settings["config"].as_str().expect("config string");
+
+        assert!(
+            rendered.contains("[models]\ndefault = \"stable\""),
+            "{rendered}"
+        );
+        assert_eq!(rendered.matches("api_key = \"sk-merged\"").count(), 2);
+        assert!(!rendered.contains("sk-other"), "{rendered}");
+        crate::grok_config::validate_config_toml(rendered).expect("valid config.toml");
     }
 
     /// `env_key` 独苗的链接必须在**公开入口**上被明确拒绝。
