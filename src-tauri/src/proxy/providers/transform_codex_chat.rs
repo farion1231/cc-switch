@@ -892,6 +892,27 @@ fn flush_pending_tool_calls(
     // new assistant tool-call turn. Consecutive outputs do not enter here
     // because `pending_tool_calls` is empty after the first output.
     flush_pending_chat_tool_media(messages, pending_media);
+
+    let last_index = messages.len().checked_sub(1);
+    if let Some(last_message) = messages.last_mut() {
+        let can_merge = last_message.get("role").and_then(Value::as_str) == Some("assistant")
+            && last_message
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty);
+        if can_merge {
+            if let Some(obj) = last_message.as_object_mut() {
+                obj.insert(
+                    "tool_calls".to_string(),
+                    Value::Array(std::mem::take(pending_tool_calls)),
+                );
+            }
+            attach_pending_reasoning_to_assistant(last_message, pending_reasoning);
+            *last_assistant_index = last_index;
+            return;
+        }
+    }
+
     let mut message = json!({
         "role": "assistant",
         "content": null,
@@ -4165,6 +4186,92 @@ mod tests {
             result["usage"]["input_tokens_details"]["cache_write_tokens"],
             2
         );
+    }
+
+    #[test]
+    fn responses_chat_round_trip_preserves_combined_assistant_turn() {
+        let chat_response = json!({
+            "id": "chatcmpl_round_trip",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "reasoning_content": "Need to inspect the file.",
+                    "content": "I will inspect it now.",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"README.md\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        });
+
+        let response = chat_completion_to_response(chat_response).unwrap();
+        let request = json!({
+            "model": "kimi-k3",
+            "input": response["output"].clone()
+        });
+        let round_trip = responses_to_chat_completions(request).unwrap();
+        let messages = round_trip["messages"].as_array().unwrap();
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "one native assistant turn must stay one turn"
+        );
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "I will inspect it now.");
+        assert_eq!(
+            messages[0]["reasoning_content"],
+            "Need to inspect the file."
+        );
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+    }
+
+    #[test]
+    fn responses_request_does_not_merge_tool_calls_across_user_boundary() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": "First answer."
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "New turn."
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"README.md\"}"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert!(messages[0].get("tool_calls").is_none());
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_1");
     }
 
     #[test]
