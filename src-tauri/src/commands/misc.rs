@@ -821,7 +821,7 @@ async fn get_single_tool_version_impl(
             }
         }
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
-        "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
+        "hermes" => fetch_hermes_latest_version(&client, local).await,
         "pi" => {
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
@@ -978,17 +978,59 @@ async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Op
         .send()
         .await
     {
-        Ok(resp) => {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                json.get("tag_name")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.strip_prefix('v').unwrap_or(s).to_string())
-            } else {
-                None
-            }
-        }
+        Ok(resp) => resp
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .as_ref()
+            .and_then(github_release_version_from_json),
         Err(_) => None,
     }
+}
+
+/// 从 GitHub latest release 的 JSON 中提取展示用版本：优先 release `name` 里
+/// 能解析为语义版本的数字（Hermes 的 tag 是日历式如 `v2026.8.18`，而 CLI 自报
+/// 语义版本 `0.20.4`，后者只保留在 name "Hermes Agent v0.20.4 (2026.8.18)" 里），
+/// 提取不出再退回 `tag_name` 去掉 `v` 前缀。
+fn github_release_version_from_json(json: &serde_json::Value) -> Option<String> {
+    if let Some(name) = json.get("name").and_then(|v| v.as_str()) {
+        let extracted = extract_version(name);
+        if parse_semver(&extracted).is_some() {
+            return Some(extracted);
+        }
+    }
+    json.get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.strip_prefix('v').unwrap_or(s).to_string())
+}
+
+/// 本地版本是否已严格领先 registry 的 `latest`（说明用户在 git 主线/抢先通道），
+/// 语义与 `pick_latest_version` 对 npm 预发布通道的补查判定一致。
+fn local_version_leads(local_version: Option<&str>, latest: Option<&str>) -> bool {
+    use std::cmp::Ordering;
+    matches!(
+        (local_version, latest),
+        (Some(local), Some(latest)) if compare_semver(local, latest) == Some(Ordering::Greater)
+    )
+}
+
+/// Hermes 的「最新版本」检测：PyPI 为主、GitHub Releases 补查。
+///
+/// Hermes 官方主线已迁移到 GitHub Releases 分发，PyPI 发布滞后（#6618/#6475），
+/// git 安装的用户本地版本会严格领先 PyPI `latest`，出现「最新版本 < 当前版本」
+/// 的矛盾。仅在这种领先时（或 PyPI 不可达时）才补查 GitHub 最新 release；
+/// pip 安装的用户维持原有行为，不增加额外请求。
+async fn fetch_hermes_latest_version(
+    client: &reqwest::Client,
+    local_version: Option<&str>,
+) -> Option<String> {
+    let pypi_latest = fetch_pypi_latest_version(client, "hermes-agent").await;
+    if pypi_latest.is_some() && !local_version_leads(local_version, pypi_latest.as_deref()) {
+        return pypi_latest;
+    }
+    fetch_github_latest_version(client, "NousResearch/hermes-agent")
+        .await
+        .or(pypi_latest)
 }
 
 /// Helper function to fetch latest version from PyPI
@@ -4816,6 +4858,49 @@ mod tests {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
         assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[test]
+    fn github_release_version_prefers_semver_in_name_over_calendar_tag() {
+        // Hermes 官方 release：tag 是日历式，语义版本只在 name 里（#6618/#6475）。
+        let json = serde_json::json!({
+            "name": "Hermes Agent v0.20.4 (2026.8.18)",
+            "tag_name": "v2026.8.18"
+        });
+        assert_eq!(
+            github_release_version_from_json(&json).as_deref(),
+            Some("0.20.4")
+        );
+    }
+
+    #[test]
+    fn github_release_version_falls_back_to_tag_without_name_semver() {
+        let named = serde_json::json!({ "name": "August refresh", "tag_name": "v1.18.18" });
+        assert_eq!(
+            github_release_version_from_json(&named).as_deref(),
+            Some("1.18.18")
+        );
+        let unnamed = serde_json::json!({ "tag_name": "v1.2.3" });
+        assert_eq!(
+            github_release_version_from_json(&unnamed).as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(
+            github_release_version_from_json(&serde_json::json!({})),
+            None
+        );
+    }
+
+    #[test]
+    fn local_version_leads_requires_strictly_greater_local() {
+        // git 主线安装：本地严格领先 PyPI latest（#6618/#6475 的触发条件）
+        assert!(local_version_leads(Some("0.20.4"), Some("0.19.0")));
+        // pip 安装：本地等于或落后 PyPI latest，不触发补查
+        assert!(!local_version_leads(Some("0.19.0"), Some("0.19.0")));
+        assert!(!local_version_leads(Some("0.18.2"), Some("0.19.0")));
+        // 版本未知时保守起见不补查（保持原有 PyPI 行为）
+        assert!(!local_version_leads(None, Some("0.19.0")));
+        assert!(!local_version_leads(Some("0.20.4"), None));
     }
 
     #[test]
