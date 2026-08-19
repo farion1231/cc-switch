@@ -1056,10 +1056,8 @@
     "more": "More apps"
   },
   "grokBuild": {
-    "apiBackend": "API backend",
     "contextWindow": "Context window",
     "contextWindowInvalid": "Context window must be a positive integer",
-    "profile": "Client model profile",
     "rawConfig": "config.toml",
     "invalidToml": "Invalid config.toml: {{error}}",
     "defaultModelPlaceholder": "e.g. grok-4.5",
@@ -1575,7 +1573,7 @@
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts Codex's reasoning.effort into the upstream Chat parameter.",
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
-    "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled.",
+    "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions or Anthropic Messages protocol require routing takeover to be enabled.",
     "noCommonConfigToApply": "The common config snippet is empty or contains nothing to write"
   },
   "geminiConfig": {
