@@ -89,8 +89,70 @@ pub(crate) fn provider_supports_builtin_web_search(provider: &Provider) -> bool 
     let Some(base_url) = provider_base_url(provider) else {
         return false;
     };
-    let base_url = base_url.to_ascii_lowercase();
-    base_url.contains("kimi.com") || base_url.contains("moonshot.")
+    base_url_supports_builtin_web_search(&base_url)
+}
+
+/// URL-level check, kept separate from the provider plumbing so it can be
+/// unit-tested without constructing a full `Provider`.
+fn base_url_supports_builtin_web_search(base_url: &str) -> bool {
+    // Match against the parsed hostname (exact or subdomain), not the raw URL
+    // string: a substring match would also fire for URLs that merely mention
+    // the domains in a path/query or for lookalike hosts such as
+    // `api.kimi.com.example`, injecting a nonstandard builtin tool into
+    // upstreams that do not support it.
+    let Ok(url) = url::Url::parse(base_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    ["kimi.com", "moonshot.cn", "moonshot.ai"]
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+}
+
+/// Accumulate Chat Completions `usage` objects across bridge rounds. The
+/// bridge issues one upstream request per round (initial search + each echo),
+/// each separately billable, so the final response must carry the sum,
+/// otherwise downstream conversion/usage logging only accounts for the last
+/// echo round.
+pub(crate) fn accumulate_chat_usage(total: &mut Value, usage: &Value) {
+    const NUMERIC_FIELDS: &[&str] = &["prompt_tokens", "completion_tokens", "total_tokens"];
+    let Some(total_obj) = total.as_object_mut() else {
+        return;
+    };
+    for field in NUMERIC_FIELDS {
+        let delta = usage.get(*field).and_then(|v| v.as_u64()).unwrap_or(0);
+        let current = total_obj.get(*field).and_then(|v| v.as_u64()).unwrap_or(0);
+        total_obj.insert((*field).to_string(), json!(current + delta));
+    }
+    // Preserve nested details (cached/reasoning tokens) by summing them too
+    // when both sides carry the same sub-object shape.
+    for (details_field, sub_keys) in [
+        ("prompt_tokens_details", ["cached_tokens"].as_slice()),
+        ("completion_tokens_details", ["reasoning_tokens"].as_slice()),
+    ] {
+        let Some(usage_details) = usage.get(details_field).and_then(|v| v.as_object()) else {
+            continue;
+        };
+        let total_details = total_obj
+            .entry(details_field.to_string())
+            .or_insert_with(|| json!({}));
+        let Some(total_details) = total_details.as_object_mut() else {
+            continue;
+        };
+        for sub_key in sub_keys {
+            let delta = usage_details
+                .get(*sub_key)
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let current = total_details
+                .get(*sub_key)
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            total_details.insert(sub_key.to_string(), json!(current + delta));
+        }
+    }
 }
 
 /// Whether the original Codex Responses request declares the hosted
@@ -313,7 +375,12 @@ pub(crate) fn responses_value_to_sse_bytes(responses: &Value) -> Vec<Bytes> {
     }
 
     let mut completed = responses.clone();
-    completed["status"] = json!("completed");
+    // Preserve the converted terminal status: a truncated answer
+    // (finish_reason "length") converts to "incomplete" and must stay so;
+    // only default to "completed" when the value carries no status.
+    if completed.get("status").and_then(|s| s.as_str()).is_none() {
+        completed["status"] = json!("completed");
+    }
     events.push(sse::response_completed(&completed));
 
     events
@@ -336,6 +403,63 @@ mod tests {
         let mut body = json!({"model": "k3"});
         apply_echo_model_override("not a url", &mut body);
         assert_eq!(body["model"], json!("k3"));
+    }
+
+    #[test]
+    fn support_check_matches_parsed_hostname_only() {
+        assert!(base_url_supports_builtin_web_search(
+            "https://api.kimi.com/coding/v1"
+        ));
+        assert!(base_url_supports_builtin_web_search(
+            "https://api.moonshot.cn/v1"
+        ));
+        assert!(base_url_supports_builtin_web_search(
+            "https://api.moonshot.ai/v1"
+        ));
+        // Lookalike hosts and mere mentions in path/query must NOT match.
+        assert!(!base_url_supports_builtin_web_search(
+            "https://api.kimi.com.example.com/v1"
+        ));
+        assert!(!base_url_supports_builtin_web_search(
+            "https://relay.example.com/kimi.com/v1"
+        ));
+        assert!(!base_url_supports_builtin_web_search(
+            "https://api.openai.com/v1?q=moonshot.cn"
+        ));
+        assert!(!base_url_supports_builtin_web_search("not a url"));
+    }
+
+    #[test]
+    fn usage_accumulates_across_rounds() {
+        let mut total = json!({});
+        accumulate_chat_usage(
+            &mut total,
+            &json!({
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "total_tokens": 110,
+                "prompt_tokens_details": {"cached_tokens": 40},
+                "completion_tokens_details": {"reasoning_tokens": 5}
+            }),
+        );
+        accumulate_chat_usage(
+            &mut total,
+            &json!({
+                "prompt_tokens": 50,
+                "completion_tokens": 20,
+                "total_tokens": 70,
+                "prompt_tokens_details": {"cached_tokens": 10},
+                "completion_tokens_details": {"reasoning_tokens": 7}
+            }),
+        );
+        assert_eq!(total["prompt_tokens"], json!(150));
+        assert_eq!(total["completion_tokens"], json!(30));
+        assert_eq!(total["total_tokens"], json!(180));
+        assert_eq!(total["prompt_tokens_details"]["cached_tokens"], json!(50));
+        assert_eq!(
+            total["completion_tokens_details"]["reasoning_tokens"],
+            json!(12)
+        );
     }
 
     #[test]
@@ -446,5 +570,36 @@ mod tests {
         assert!(text.contains("event: response.completed"));
         assert!(text.contains("\"hello\""));
         assert!(text.contains("\"function_call\""));
+    }
+
+    #[test]
+    fn synthesized_sse_preserves_incomplete_status() {
+        let responses = json!({
+            "id": "resp_1",
+            "object": "response",
+            "created_at": 1,
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "model": "k3",
+            "output": [{
+                "id": "msg_1",
+                "type": "message",
+                "status": "incomplete",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "truncated…", "annotations": []}]
+            }]
+        });
+        let bytes = responses_value_to_sse_bytes(&responses);
+        let text = bytes
+            .iter()
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .collect::<Vec<_>>()
+            .join("");
+        let completed = text
+            .split("\n\n")
+            .find(|chunk| chunk.starts_with("event: response.completed"))
+            .expect("completed event present");
+        assert!(completed.contains("\"status\":\"incomplete\""));
+        assert!(!completed.contains("\"status\":\"completed\""));
     }
 }

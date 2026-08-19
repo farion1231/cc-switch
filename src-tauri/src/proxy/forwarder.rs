@@ -2460,6 +2460,13 @@ impl RequestForwarder {
             return Ok(ProxyResponse::buffered(status, headers, body));
         };
 
+        // The bridge issues one billable upstream request per round; aggregate
+        // usage across all rounds so downstream logging reflects the real cost.
+        let mut total_usage = serde_json::json!({});
+        if let Some(usage) = chat_json.get("usage") {
+            super::providers::kimi_web_search::accumulate_chat_usage(&mut total_usage, usage);
+        }
+
         let mut request_body = request_body.clone();
         // api.kimi.com's k3 chat template cannot tokenize the builtin echo
         // conversation; run the echo rounds under the kimi-for-coding alias.
@@ -2492,25 +2499,33 @@ impl RequestForwarder {
             }
             let echo_response = request.send().await.map_err(map_reqwest_send_error)?;
             let echo_status = echo_response.status();
-            let echo_headers = echo_response.headers().clone();
-            let echo_bytes = echo_response
-                .bytes()
-                .await
-                .map_err(map_reqwest_send_error)?;
+            // Bounded collection, same 128 MiB cap as every other non-streaming
+            // path, instead of reqwest's unbounded `bytes()`.
+            let echo_bytes = ProxyResponse::Reqwest(echo_response)
+                .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
+                .await?;
             if !echo_status.is_success() {
-                // Surface the upstream failure as-is so the handler's error
-                // conversion can shape it for the Codex client.
-                return Ok(ProxyResponse::buffered(
-                    echo_status,
-                    echo_headers,
-                    echo_bytes,
-                ));
+                // Return an error (not an Ok response) so the retry/failover
+                // wrapper applies its normal status categorization and can try
+                // the next provider instead of recording this as a success.
+                let body_text = String::from_utf8(echo_bytes.to_vec()).ok();
+                return Err(ProxyError::UpstreamError {
+                    status: echo_status.as_u16(),
+                    body: body_text,
+                });
             }
             chat_json = serde_json::from_slice(&echo_bytes).map_err(|e| {
                 ProxyError::TransformError(format!(
                     "Failed to parse Kimi web_search echo response: {e}"
                 ))
             })?;
+            if let Some(usage) = chat_json.get("usage") {
+                super::providers::kimi_web_search::accumulate_chat_usage(&mut total_usage, usage);
+            }
+        }
+
+        if rounds > 0 {
+            chat_json["usage"] = total_usage;
         }
 
         let mut out_headers = headers;
