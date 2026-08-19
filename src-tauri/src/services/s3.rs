@@ -40,8 +40,7 @@ fn is_aws_endpoint(endpoint: &str) -> bool {
 fn is_aliyun_oss_endpoint(endpoint: &str) -> bool {
     let (_, host) = split_scheme_host(endpoint);
     let host = host.to_ascii_lowercase();
-    host.ends_with(".aliyuncs.com")
-        && (host.starts_with("oss-") || host.starts_with("s3.oss-"))
+    host.ends_with(".aliyuncs.com") && (host.starts_with("oss-") || host.starts_with("s3.oss-"))
 }
 
 /// Split an endpoint into its scheme and host-with-port parts.
