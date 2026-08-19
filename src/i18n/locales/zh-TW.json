@@ -441,7 +441,9 @@
           "info": "一般操作資訊（預設）",
           "debug": "詳細資訊，包含 SSE 串流與請求/回應詳情",
           "trace": "全部日誌，最詳細"
-        }
+        },
+        "captureDetails": "記錄請求/回應體",
+        "captureDetailsDescription": "記錄完整的請求和回應體用於除錯（僅在需要時開啟）"
       }
     },
     "language": "介面語言",
@@ -1789,6 +1791,15 @@
     "withMultiplier": "含倍率",
     "requestDetail": "請求詳情",
     "requestNotFound": "請求未找到",
+    "detailTabs": {
+      "overview": "概覽",
+      "request": "請求詳情",
+      "response": "回應詳情",
+      "requestHeaders": "請求頭",
+      "requestBody": "請求體",
+      "responseHeaders": "回應頭",
+      "responseBody": "回應體"
+    },
     "basicInfo": "基本資訊",
     "tokenUsage": "Token 使用量",
     "cacheCreationCost": "快取寫入成本",

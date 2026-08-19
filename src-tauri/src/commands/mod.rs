@@ -31,6 +31,7 @@ mod subscription;
 mod sync_support;
 mod xai_oauth;
 
+mod detail_capture;
 mod lightweight;
 mod s3_sync;
 mod usage;
@@ -67,6 +68,7 @@ pub use stream_check::*;
 pub use subscription::*;
 pub use xai_oauth::*;
 
+pub use detail_capture::*;
 pub use lightweight::*;
 pub use s3_sync::*;
 pub use usage::*;
