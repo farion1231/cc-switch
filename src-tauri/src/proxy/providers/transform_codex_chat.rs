@@ -68,6 +68,9 @@ pub(crate) struct CodexToolContext {
     seen_chat_names: HashSet<String>,
     chat_name_to_spec: HashMap<String, CodexToolSpec>,
     namespace_name_to_chat_name: HashMap<(String, String), String>,
+    /// Responses tool types that cannot be projected to Chat safely.
+    /// Keep these visible so callers fail loudly instead of silently dropping them.
+    unsupported_response_tools: Vec<String>,
 }
 
 impl CodexToolContext {
@@ -82,6 +85,10 @@ impl CodexToolContext {
     pub(crate) fn is_custom_tool_chat_name(&self, chat_name: &str) -> bool {
         self.lookup_chat_name(chat_name)
             .is_some_and(|spec| matches!(&spec.kind, CodexToolKind::Custom))
+    }
+
+    pub(crate) fn unsupported_response_tools(&self) -> &[String] {
+        &self.unsupported_response_tools
     }
 
     pub(crate) fn chat_name_for_response_function(
@@ -230,9 +237,14 @@ impl CodexToolContext {
                 Some("custom") => self.add_custom_tool(tool),
                 Some("tool_search") => self.add_tool_search_tool(),
                 Some("namespace") => self.add_namespace_tool(tool),
-                _ => {}
+                Some(tool_type) => self.unsupported_response_tools.push(tool_type.to_string()),
+                None => self
+                    .unsupported_response_tools
+                    .push("<missing type>".to_string()),
             },
-            _ => {}
+            _ => self
+                .unsupported_response_tools
+                .push("<non-object tool>".to_string()),
         }
     }
 }
@@ -267,6 +279,15 @@ pub fn responses_to_chat_completions_with_reasoning(
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
+    if !tool_context.unsupported_response_tools().is_empty() {
+        let mut types = tool_context.unsupported_response_tools().to_vec();
+        types.sort();
+        types.dedup();
+        return Err(ProxyError::TransformError(format!(
+            "Unsupported Responses tool type(s) for Chat upstream: {}",
+            types.join(", ")
+        )));
+    }
 
     if let Some(model) = body.get("model") {
         result["model"] = model.clone();
@@ -2509,6 +2530,20 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("mcp__codex_apps__gmail"));
+    }
+
+    #[test]
+    fn unsupported_responses_tool_type_fails_loudly_instead_of_being_dropped() {
+        let error = responses_to_chat_completions(json!({
+            "model": "third-party",
+            "input": "use the hosted file index",
+            "tools": [{ "type": "file_search" }]
+        }))
+        .expect_err("unsupported Responses tools must not disappear silently");
+
+        assert!(
+            matches!(error, ProxyError::TransformError(message) if message.contains("file_search"))
+        );
     }
 
     #[test]
