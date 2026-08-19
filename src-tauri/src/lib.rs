@@ -274,6 +274,10 @@ fn handle_deeplink_url(
 
             if focus_main_window {
                 if let Some(window) = app.get_webview_window("main") {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(false);
+                    }
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
@@ -375,6 +379,13 @@ pub fn run() {
 
             // Show and focus window regardless
             if let Some(window) = app.get_webview_window("main") {
+                // 防御性重置 Windows 的 skip_taskbar：single_instance 触发时，
+                // 原进程可能因 silent_startup / 关闭到托盘等处于 skip_taskbar(true) 状态，
+                // 仅 show() 不会重置该状态，会导致窗口可见但不在任务栏、最小化后消失。
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window.set_skip_taskbar(false);
+                }
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -579,6 +590,10 @@ pub fn run() {
                     });
                     // 主窗口默认 visible:false，恢复界面必须强制显示
                     if let Some(window) = app.get_webview_window("main") {
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = window.set_skip_taskbar(false);
+                        }
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
@@ -1842,6 +1857,10 @@ pub fn run() {
 
                             // 确保主窗口可见
                             if let Some(window) = app_handle.get_webview_window("main") {
+                                #[cfg(target_os = "windows")]
+                                {
+                                    let _ = window.set_skip_taskbar(false);
+                                }
                                 let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();
