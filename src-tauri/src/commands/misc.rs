@@ -4328,6 +4328,10 @@ del \"%~f0\" >nul 2>&1
             "PowerShell",
         ),
         "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+        "wezterm" => run_windows_start_command(
+            &["wezterm-gui", "start", "--", "cmd", "/K", &bat_path],
+            "WezTerm",
+        ),
         _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
     };
 
@@ -4566,6 +4570,10 @@ read -r _
                 "PowerShell",
             ),
             "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+            "wezterm" => run_windows_start_command(
+                &["wezterm-gui", "start", "--", "cmd", "/K", &bat_path],
+                "WezTerm",
+            ),
             _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
         };
 

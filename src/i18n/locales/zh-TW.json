@@ -758,7 +758,8 @@
         "windows": {
           "cmd": "命令提示字元",
           "powershell": "PowerShell",
-          "wt": "Windows Terminal"
+          "wt": "Windows Terminal",
+          "wezterm": "WezTerm"
         },
         "linux": {
           "gnomeTerminal": "GNOME Terminal",
