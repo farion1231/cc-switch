@@ -98,7 +98,6 @@ export function SettingsPage({
     errorMessage,
     backupId,
     isImporting,
-    selectImportFile,
     importConfig,
     exportConfig,
     clearSelection,
@@ -388,7 +387,6 @@ export function SettingsPage({
                             errorMessage={errorMessage}
                             backupId={backupId}
                             isImporting={isImporting}
-                            onSelectFile={selectImportFile}
                             onImport={importConfig}
                             onExport={exportConfig}
                             onClear={clearSelection}
