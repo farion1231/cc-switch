@@ -25,6 +25,7 @@ pub mod provider_router;
 pub mod proxy_watcher;
 pub mod providers;
 pub mod response_processor;
+pub(crate) mod server;
 pub mod session;
 pub mod system_proxy;
 pub(crate) mod sse;
