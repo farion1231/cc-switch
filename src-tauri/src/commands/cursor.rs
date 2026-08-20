@@ -245,11 +245,14 @@ pub async fn start_cursor_runtime(
 }
 
 #[tauri::command]
-pub async fn stop_cursor_runtime(state: State<'_, AppState>) -> Result<CursorRuntimeState, String> {
+pub async fn stop_cursor_runtime(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CursorRuntimeState, String> {
     let _ = crate::cursor::usage::sync_usage(&state.cursor_runtime, &state.db).await;
     state
         .cursor_runtime
-        .stop()
+        .stop(&app)
         .await
         .map_err(|error| error.to_string())
 }

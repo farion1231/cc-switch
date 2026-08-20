@@ -217,8 +217,21 @@ impl CursorRuntimeService {
         Ok((generation, events))
     }
 
-    pub async fn stop(&self) -> Result<CursorRuntimeState, AppError> {
+    pub async fn stop(&self, app: &AppHandle) -> Result<CursorRuntimeState, AppError> {
         let _lifecycle_guard = self.lifecycle.lock().await;
+        let needs_maintenance_recovery = {
+            let inner = self.inner.lock().await;
+            should_launch_maintenance_recovery(
+                inner.base_url.is_some(),
+                inner.state.cursor_settings_applied,
+            )
+        };
+        let maintenance_process = if needs_maintenance_recovery {
+            Some(self.launch_sidecar(app, "restoring").await?)
+        } else {
+            None
+        };
+
         {
             let mut inner = self.inner.lock().await;
             if inner.base_url.is_none() {
@@ -229,6 +242,7 @@ impl CursorRuntimeService {
                 inner.state.proxy_running = false;
                 inner.state.cursor_settings_applied = false;
                 inner.state.last_error.clear();
+                inner.state_observed = true;
                 return Ok(inner.state.clone());
             }
             inner.phase = "restoring".to_string();
@@ -240,6 +254,7 @@ impl CursorRuntimeService {
             log::warn!("请求 Cursor sidecar 退出失败，将终止子进程: {error}");
         }
         self.force_stop().await;
+        drop(maintenance_process);
         if let Err(error) = stop_result {
             return self.fail(error.to_string()).await;
         }
@@ -609,6 +624,13 @@ impl CursorRuntimeService {
     }
 }
 
+fn should_launch_maintenance_recovery(
+    sidecar_available: bool,
+    cursor_settings_applied: bool,
+) -> bool {
+    !sidecar_available && cursor_settings_applied
+}
+
 async fn apply_config_change<C, W, WF>(
     previous_config: Option<SidecarConfig>,
     next_config: SidecarConfig,
@@ -670,7 +692,7 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    use super::apply_config_change;
+    use super::{apply_config_change, should_launch_maintenance_recovery};
     use crate::cursor::types::{SidecarConfig, SidecarHomeMetricsConfig};
     use crate::error::AppError;
 
@@ -684,6 +706,17 @@ mod tests {
             home_metrics: SidecarHomeMetricsConfig::default(),
             last_agent_model_hash: last_agent_model_hash.to_string(),
         }
+    }
+
+    #[test]
+    fn crashed_sidecar_with_applied_settings_requires_maintenance_recovery() {
+        assert!(should_launch_maintenance_recovery(false, true));
+    }
+
+    #[test]
+    fn available_sidecar_or_restored_settings_skip_maintenance_recovery() {
+        assert!(!should_launch_maintenance_recovery(true, true));
+        assert!(!should_launch_maintenance_recovery(false, false));
     }
 
     #[tokio::test]
