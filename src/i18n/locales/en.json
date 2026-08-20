@@ -2506,6 +2506,15 @@
     "updateAll": "Update All ({{count}})",
     "updatingAll": "Updating...",
     "updateAllSuccess": "Successfully updated {{count}} skill(s)",
+    "undo": "Undo",
+    "undoHint": "Undo the last app toggle (Ctrl/⌘+Z)",
+    "undoFailed": "Failed to undo",
+    "unsavedChanges": {
+      "title": "Unsaved changes",
+      "message": "The app toggles you changed here have not been saved. Choosing “Don’t save” restores the state from when you opened this page.",
+      "discard": "Don’t save",
+      "discardFailed": "Failed to restore the previous state"
+    },
     "error": {
       "skillNotFound": "Skill not found: {{directory}}",
       "missingRepoInfo": "Missing repository info (owner or name)",

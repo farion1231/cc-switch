@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -654,6 +654,21 @@ function App() {
     currentViewRef.current = currentView;
   }, [currentView]);
 
+  // Skill 面板可能持有未保存的开关改动，先让它决定是否要拦下这次返回
+  const navigateBack = useCallback(() => {
+    const view = currentViewRef.current;
+    const proceed = () =>
+      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
+
+    if (
+      view === "skills" &&
+      unifiedSkillsPanelRef.current?.confirmLeave(proceed)
+    ) {
+      return;
+    }
+    proceed();
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "," && (event.metaKey || event.ctrlKey)) {
@@ -677,14 +692,14 @@ function App() {
       if (isTextEditableTarget(event.target)) return;
 
       event.preventDefault();
-      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
+      navigateBack();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [navigateBack]);
 
   const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
   const openHermesWebUI = useOpenHermesWebUI(() =>
@@ -1283,13 +1298,7 @@ function App() {
                   variant="outline"
                   size="icon"
                   disabled={managementBusy}
-                  onClick={() =>
-                    setCurrentView(
-                      currentView === "skillsDiscovery"
-                        ? "skills"
-                        : "providers",
-                    )
-                  }
+                  onClick={navigateBack}
                   className={cn(
                     "mr-2 rounded-lg",
                     managementBusy && "disabled:opacity-100",

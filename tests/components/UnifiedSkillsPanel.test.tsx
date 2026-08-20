@@ -859,4 +859,150 @@ describe("UnifiedSkillsPanel", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
   });
+
+  it("undoes the last bulk toggle with Ctrl+Z", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "first-id" }),
+      makeInstalledSkill({ id: "second-id" }),
+    ];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["first-id", "second-id"],
+      failed: [],
+    });
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1),
+    );
+
+    await user.keyboard("{Control>}z{/Control}");
+
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenLastCalledWith({
+        ids: ["first-id", "second-id"],
+        app: "claude",
+        enabled: false,
+      });
+    });
+  });
+
+  it("undoes a single row toggle from the undo button", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "alpha-id" })];
+    renderPanel();
+
+    const user = userEvent.setup();
+    const row = screen.getByText("Alpha Skill").closest(".group")!;
+    await user.click(row.querySelector<HTMLButtonElement>("button")!);
+
+    await waitFor(() =>
+      expect(toggleSkillAppMock).toHaveBeenCalledWith({
+        id: "alpha-id",
+        app: "claude",
+        enabled: true,
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "skills.undo" }));
+
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["alpha-id"],
+        app: "claude",
+        enabled: false,
+      }),
+    );
+  });
+
+  it("leaves without confirming when no toggle was changed", () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    expect(ref.current?.confirmLeave(() => {})).toBe(false);
+    expect(
+      screen.queryByText("skills.unsavedChanges.title"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("restores the entry state when leaving without saving", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "first-id" })];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["first-id"],
+      failed: [],
+    });
+    const proceed = vi.fn();
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1),
+    );
+
+    let intercepted = false;
+    act(() => {
+      intercepted = ref.current!.confirmLeave(proceed);
+    });
+    expect(intercepted).toBe(true);
+
+    await user.click(
+      screen.getByRole("button", { name: "skills.unsavedChanges.discard" }),
+    );
+
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenLastCalledWith({
+        ids: ["first-id"],
+        app: "claude",
+        enabled: false,
+      });
+      expect(proceed).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("keeps the applied toggles when saving on leave", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "first-id" })];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["first-id"],
+      failed: [],
+    });
+    const proceed = vi.fn();
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1),
+    );
+
+    act(() => {
+      ref.current!.confirmLeave(proceed);
+    });
+    await user.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(proceed).toHaveBeenCalledTimes(1));
+    expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1);
+    expect(ref.current?.confirmLeave(proceed)).toBe(false);
+  });
 });
