@@ -34,6 +34,18 @@ const REVISION_COMPLETE_SHIFT: u32 = 60;
 const REVISION_SIZE_SHIFT: u32 = 32;
 const REVISION_MARKER: u64 = 0b101;
 const REVISION_SIZE_MASK: u64 = (1 << 28) - 1;
+const PI_REQUEST_DEDUP_SQL: &str = "SELECT EXISTS(
+         SELECT 1 FROM session_usage_dedup
+         WHERE data_source = ?1 AND request_id = ?2
+     )";
+const PI_SEMANTIC_DEDUP_SQL: &str = "SELECT EXISTS(
+         SELECT 1 FROM session_usage_dedup
+         WHERE data_source = ?1 AND semantic_id = ?2
+     )";
+const PI_LEGACY_SEMANTIC_DEDUP_SQL: &str = "SELECT EXISTS(
+         SELECT 1 FROM session_usage_dedup
+         WHERE data_source = ?1 AND semantic_id = ?2 AND has_entry_id = 0
+     )";
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PiCosts {
@@ -749,24 +761,25 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
 }
 
 fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
-    let already_seen: bool = conn
+    let request_seen: bool = conn
         .query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM session_usage_dedup
-                WHERE data_source = ?1 AND (
-                    request_id = ?2 OR
-                    (semantic_id = ?3 AND (?4 = 0 OR has_entry_id = 0))
-                )
-            )",
-            rusqlite::params![
-                DATA_SOURCE,
-                record.request_id,
-                record.semantic_id,
-                i64::from(record.has_entry_id),
-            ],
+            PI_REQUEST_DEDUP_SQL,
+            rusqlite::params![DATA_SOURCE, record.request_id],
             |row| row.get(0),
         )
         .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
+    let already_seen = request_seen
+        || conn
+            .query_row(
+                if record.has_entry_id {
+                    PI_LEGACY_SEMANTIC_DEDUP_SQL
+                } else {
+                    PI_SEMANTIC_DEDUP_SQL
+                },
+                rusqlite::params![DATA_SOURCE, record.semantic_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
     if already_seen {
         return Ok(false);
     }
@@ -889,6 +902,32 @@ mod tests {
             .expect("open session for timestamp restore")
             .set_times(FileTimes::new().set_modified(modified))
             .expect("restore session timestamp");
+    }
+
+    #[test]
+    fn dedup_lookups_use_complete_identity_indexes() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        for (sql, expected) in [
+            (PI_REQUEST_DEDUP_SQL, "(data_source=? AND request_id=?)"),
+            (PI_SEMANTIC_DEDUP_SQL, "(data_source=? AND semantic_id=?)"),
+            (
+                PI_LEGACY_SEMANTIC_DEDUP_SQL,
+                "(data_source=? AND semantic_id=? AND has_entry_id=?)",
+            ),
+        ] {
+            let mut statement = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+            let plan = statement
+                .query_map(rusqlite::params![DATA_SOURCE, "identity"], |row| {
+                    row.get::<_, String>(3)
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert!(
+                plan.iter().any(|step| step.contains(expected)),
+                "lookup does not constrain the complete identity {expected}: {plan:?}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
