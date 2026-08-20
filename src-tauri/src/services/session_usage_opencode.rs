@@ -103,7 +103,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     // 查询所有会话
     let sessions = query_sessions(&opencode_conn)?;
 
-    for (session_id, time_updated) in &sessions {
+    for (session_id, time_updated, session_created) in &sessions {
         // 检查会话是否需要重新同步
         let sync_key = format!("{db_path_str}:{session_id}");
         let (sess_last_modified, _) = get_sync_state(db, &sync_key)?;
@@ -115,7 +115,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
         // 查询该会话的所有 assistant 消息
         let mut session_has_incomplete_usage = false;
-        match query_assistant_messages(&opencode_conn, session_id) {
+        match query_assistant_messages(&opencode_conn, session_id, *session_created) {
             Ok(query_result) => {
                 session_has_incomplete_usage = query_result.has_incomplete_usage;
                 for (message_id, msg_data) in &query_result.messages {
@@ -178,11 +178,12 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 }
 
 /// 查询所有会话的 (id, sync_watermark)
-fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, AppError> {
+fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)>, AppError> {
     let mut stmt = conn
         .prepare(
             "SELECT s.id,
-                    MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) AS sync_watermark
+                    MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) AS sync_watermark,
+                    s.time_created
              FROM session s
              LEFT JOIN message m ON m.session_id = s.id
              GROUP BY s.id
@@ -192,7 +193,11 @@ fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, App
 
     let rows = stmt
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
         })
         .map_err(|e| AppError::Database(format!("查询会话失败: {e}")))?;
 
@@ -208,13 +213,14 @@ fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, App
 fn query_assistant_messages(
     conn: &rusqlite::Connection,
     session_id: &str,
+    session_created: i64,
 ) -> Result<OpenCodeMessageQueryResult, AppError> {
     let mut stmt = conn
-        .prepare("SELECT id, data FROM message WHERE session_id = ?1 ORDER BY time_created")
+        .prepare("SELECT id, data FROM message WHERE session_id = ?1 AND time_created > ?2 ORDER BY time_created")
         .map_err(|e| AppError::Database(format!("准备消息查询失败: {e}")))?;
 
     let rows = stmt
-        .query_map([session_id], |row| {
+        .query_map(rusqlite::params![session_id, session_created], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .map_err(|e| AppError::Database(format!("查询消息失败: {e}")))?;
@@ -533,25 +539,27 @@ mod tests {
             "role": "assistant",
             "tokens": { "input": 1000, "output": 200 },
             "modelID": "m",
-            "time": { "created": 1, "completed": 2 }
+            "time": { "created": 100, "completed": 200 }
         })
         .to_string();
         let in_progress = serde_json::json!({
             "role": "assistant",
             "tokens": { "input": 500, "output": 0 },
             "modelID": "m",
-            "time": { "created": 3 }
+            "time": { "created": 300 }
         })
         .to_string();
 
         conn.execute(
-            "INSERT INTO message VALUES ('done', 's1', 1, ?1), ('wip', 's1', 2, ?2)",
+            "INSERT INTO message VALUES ('done', 's1', 100, ?1), ('wip', 's1', 200, ?2)",
             rusqlite::params![done, in_progress],
         )
         .unwrap();
 
-        let result = query_assistant_messages(&conn, "s1").unwrap();
-        // 只返回已完成（带 time.completed）的消息，半截的被跳过
+        // session_created=50, so only messages with time_created > 50 are visible
+        let result = query_assistant_messages(&conn, "s1", 50).unwrap();
+        // done (time_created=100) and wip (time_created=200) both pass the filter
+        // but only done has completed usage
         assert_eq!(result.messages.len(), 1);
         assert_eq!(result.messages[0].0, "done");
         assert!(result.has_incomplete_usage);
@@ -561,7 +569,7 @@ mod tests {
     fn test_query_sessions_uses_message_update_watermark() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE session (id TEXT, time_updated INTEGER);
+            "CREATE TABLE session (id TEXT, time_updated INTEGER, time_created INTEGER);
              CREATE TABLE message (
                  id TEXT,
                  session_id TEXT,
@@ -569,12 +577,121 @@ mod tests {
                  time_updated INTEGER,
                  data TEXT
              );
-             INSERT INTO session VALUES ('s1', 100);
+             INSERT INTO session VALUES ('s1', 100, 50);
              INSERT INTO message VALUES ('m1', 's1', 90, 200, '{}');",
         )
         .unwrap();
 
         let sessions = query_sessions(&conn).unwrap();
-        assert_eq!(sessions, vec![("s1".to_string(), 200)]);
+        assert_eq!(sessions, vec![("s1".to_string(), 200, 50)]);
+    }
+
+    #[test]
+    fn test_fork_skips_copied_messages_via_time_created_filter(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let db = Database::memory()?;
+        let opencode_conn = rusqlite::Connection::open_in_memory()?;
+
+        opencode_conn.execute_batch(
+            "CREATE TABLE session (id TEXT, time_updated INTEGER, time_created INTEGER);
+             CREATE TABLE message (
+                 id TEXT,
+                 session_id TEXT,
+                 time_created INTEGER,
+                 time_updated INTEGER,
+                 data TEXT
+             );",
+        )?;
+
+        opencode_conn.execute(
+            "INSERT INTO session VALUES ('parent', 500, 100)",
+            rusqlite::params![],
+        )?;
+        // parent assistant message: time_created=150 > session.time_created=100 → included
+        let parent_msg = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 1000, "output": 200 },
+            "modelID": "claude-sonnet-4-5",
+            "time": { "created": 155000, "completed": 160000 }
+        })
+        .to_string();
+        opencode_conn.execute(
+            "INSERT INTO message VALUES ('m_parent', 'parent', 150, 500, ?1)",
+            rusqlite::params![parent_msg],
+        )?;
+
+        // child (forked) session: time_created=200 (> parent messages)
+        opencode_conn.execute(
+            "INSERT INTO session VALUES ('child', 600, 200)",
+            rusqlite::params![],
+        )?;
+        // copied message: time_created=150 preserved from parent, < child.session_created=200 → excluded
+        let copied_msg = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 1000, "output": 200 },
+            "modelID": "claude-sonnet-4-5",
+            "time": { "created": 155000, "completed": 160000 }
+        })
+        .to_string();
+        opencode_conn.execute(
+            "INSERT INTO message VALUES ('m_copied', 'child', 150, 600, ?1)",
+            rusqlite::params![copied_msg],
+        )?;
+        // new message in child: time_created=250 > child.session_created=200 → included
+        let new_msg = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 500, "output": 100 },
+            "modelID": "claude-sonnet-4-5",
+            "time": { "created": 170000, "completed": 180000 }
+        })
+        .to_string();
+        opencode_conn.execute(
+            "INSERT INTO message VALUES ('m_new', 'child', 250, 600, ?1)",
+            rusqlite::params![new_msg],
+        )?;
+
+        let sessions = query_sessions(&opencode_conn)?;
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].0, "parent");
+        assert_eq!(sessions[1].0, "child");
+
+        for (session_id, _time_updated, session_created) in &sessions {
+            let result = query_assistant_messages(&opencode_conn, session_id, *session_created)?;
+            for (message_id, msg_data) in &result.messages {
+                let request_id = format!("opencode_session:{session_id}:{message_id}");
+                insert_opencode_message(&db, &request_id, msg_data, session_id)?;
+            }
+        }
+
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+        // parent's message (m_parent) + child's new message (m_new) = 2
+        // child's copied message (m_copied) should be excluded by time_created filter
+        assert_eq!(count, 2);
+
+        let parent_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = 'opencode_session:parent:m_parent')",
+            [], |row| row.get(0),
+        )?;
+        assert!(parent_exists, "parent message must be imported");
+
+        let copied_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = 'opencode_session:child:m_copied')",
+            [], |row| row.get(0),
+        )?;
+        assert!(
+            !copied_exists,
+            "copied message must be excluded by time_created filter"
+        );
+
+        let new_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = 'opencode_session:child:m_new')",
+            [], |row| row.get(0),
+        )?;
+        assert!(new_exists, "new child message must be imported");
+
+        Ok(())
     }
 }
