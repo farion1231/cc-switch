@@ -1640,8 +1640,14 @@ impl RequestForwarder {
             &filtered_body,
             self.session_client_provided,
         );
-        let request_is_streaming =
-            is_streaming_request(&effective_endpoint, &filtered_body, headers);
+        let codex_oauth_responses_forces_sse = provider.is_codex_oauth()
+            && split_endpoint_and_query(&effective_endpoint).0 == "/responses";
+        let request_is_streaming = is_streaming_request_for_upstream(
+            &effective_endpoint,
+            &filtered_body,
+            headers,
+            codex_oauth_responses_forces_sse,
+        );
         let force_identity_encoding = needs_transform
             || codex_responses_to_chat
             || codex_responses_to_anthropic
@@ -3387,6 +3393,15 @@ fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::Head
         .unwrap_or(false)
 }
 
+fn is_streaming_request_for_upstream(
+    endpoint: &str,
+    body: &Value,
+    headers: &axum::http::HeaderMap,
+    codex_oauth_responses_forces_sse: bool,
+) -> bool {
+    codex_oauth_responses_forces_sse || is_streaming_request(endpoint, body, headers)
+}
+
 #[cfg(test)]
 fn should_force_identity_encoding(
     endpoint: &str,
@@ -4784,6 +4799,30 @@ mod tests {
             "/v1/responses",
             &json!({ "model": "gpt-5" }),
             &headers
+        ));
+    }
+
+    #[test]
+    fn codex_oauth_responses_are_streaming_without_client_stream_hints() {
+        let headers = HeaderMap::new();
+
+        assert!(is_streaming_request_for_upstream(
+            "/responses",
+            &json!({ "model": "gpt-5.6-sol" }),
+            &headers,
+            true,
+        ));
+    }
+
+    #[test]
+    fn regular_responses_without_stream_hints_remain_non_streaming() {
+        let headers = HeaderMap::new();
+
+        assert!(!is_streaming_request_for_upstream(
+            "/responses",
+            &json!({ "model": "gpt-5.6-sol" }),
+            &headers,
+            false,
         ));
     }
 

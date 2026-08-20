@@ -36,8 +36,9 @@ use super::{
     },
     response_processor::{
         create_logged_passthrough_stream, create_usage_collector, process_response,
-        read_decoded_body, strip_entity_headers_for_rebuilt_body,
-        strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
+        process_response_with_stream_hint, read_decoded_body,
+        strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
+        usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
@@ -950,12 +951,14 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    process_response(
+    let expected_sse = is_stream || ctx.provider.is_codex_oauth();
+    process_response_with_stream_hint(
         response,
         &ctx,
         &state,
         &CODEX_PARSER_CONFIG,
         connection_guard,
+        expected_sse,
     )
     .await
 }

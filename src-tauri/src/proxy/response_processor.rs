@@ -147,6 +147,10 @@ pub fn is_sse_response(response: &ProxyResponse) -> bool {
     response.is_sse()
 }
 
+fn should_handle_as_streaming(response: &ProxyResponse, expected_sse: bool) -> bool {
+    is_sse_response(response) || (expected_sse && !response.is_json())
+}
+
 /// 处理流式响应
 pub async fn handle_streaming(
     response: ProxyResponse,
@@ -173,6 +177,12 @@ pub async fn handle_streaming(
 
     let mut response_headers = response.headers().clone();
     strip_hop_by_hop_response_headers(&mut response_headers);
+    // A protocol hint can recover SSE handling when a compatible upstream
+    // omits or mislabels Content-Type. Normalize the downstream contract too.
+    response_headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
 
     let mut builder = axum::response::Response::builder().status(status);
 
@@ -330,7 +340,21 @@ pub async fn process_response(
     parser_config: &UsageParserConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<Response, ProxyError> {
-    if is_sse_response(&response) {
+    process_response_with_stream_hint(response, ctx, state, parser_config, connection_guard, false)
+        .await
+}
+
+/// Process a response whose protocol is known to be streaming even when a
+/// compatible upstream omits the SSE content type.
+pub async fn process_response_with_stream_hint(
+    response: ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    parser_config: &UsageParserConfig,
+    connection_guard: Option<ActiveConnectionGuard>,
+    expected_sse: bool,
+) -> Result<Response, ProxyError> {
+    if should_handle_as_streaming(&response, expected_sse) {
         Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
     } else {
         handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
@@ -387,8 +411,10 @@ impl SseUsageCollector {
             .unwrap_or(true)
     }
 
-    /// 标记首个被收集的 SSE 事件时间，沿用 `first_token_ms` 的既有近似语义。
-    async fn mark_first_collected_event_time(&self) {
+    /// Observe an SSE data event independently of whether its payload is kept
+    /// for usage parsing. `first_token_ms` retains its existing approximate
+    /// semantics: time to the first usable SSE event.
+    pub async fn observe_stream_event(&self) {
         if self.inner.first_event_set.load(Ordering::Acquire) {
             return;
         }
@@ -401,7 +427,6 @@ impl SseUsageCollector {
 
     /// 推送 SSE 事件
     pub async fn push(&self, event: Value) {
-        self.mark_first_collected_event_time().await;
         let mut events = self.inner.events.lock().await;
         events.push(event);
     }
@@ -755,6 +780,9 @@ pub fn create_logged_passthrough_stream(
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
                                         if data.trim() != "[DONE]" {
+                                            if let Some(c) = &collector {
+                                                c.observe_stream_event().await;
+                                            }
                                             let collected = match &collector {
                                                 Some(c) if c.should_collect(data) => {
                                                     match serde_json::from_str::<Value>(data) {
@@ -887,6 +915,63 @@ mod tests {
         assert!(formatted.contains("cf-ray=abc123-SJC"), "{formatted}");
         assert!(!formatted.contains("super-secret"), "{formatted}");
         assert!(!formatted.contains("cookie-secret"), "{formatted}");
+    }
+
+    #[test]
+    fn expected_sse_recovers_streaming_when_content_type_is_missing() {
+        let response = ProxyResponse::buffered(
+            http::StatusCode::OK,
+            HeaderMap::new(),
+            Bytes::from_static(b"data: {}\n\n"),
+        );
+
+        assert!(should_handle_as_streaming(&response, true));
+    }
+
+    #[test]
+    fn expected_sse_does_not_override_explicit_json() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let response = ProxyResponse::buffered(
+            http::StatusCode::OK,
+            headers,
+            Bytes::from_static(br#"{"ok":true}"#),
+        );
+
+        assert!(!should_handle_as_streaming(&response, true));
+    }
+
+    #[test]
+    fn missing_content_type_without_stream_hint_remains_non_streaming() {
+        let response = ProxyResponse::buffered(
+            http::StatusCode::OK,
+            HeaderMap::new(),
+            Bytes::from_static(b"opaque response"),
+        );
+
+        assert!(!should_handle_as_streaming(&response, false));
+    }
+
+    #[tokio::test]
+    async fn first_token_timing_is_not_delayed_until_usage_event() {
+        let start_time = std::time::Instant::now();
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let captured_for_callback = captured.clone();
+        let collector = SseUsageCollector::new(start_time, None, move |_, first_token_ms| {
+            *captured_for_callback.lock().unwrap() = first_token_ms;
+        });
+
+        collector.observe_stream_event().await;
+        let observed_by_ms = start_time.elapsed().as_millis() as u64;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        collector.push(serde_json::json!({"usage": {}})).await;
+        collector.finish().await;
+
+        let first_token_ms = captured.lock().unwrap().expect("first event timing");
+        assert!(
+            first_token_ms <= observed_by_ms + 5,
+            "first event timing {first_token_ms}ms should precede delayed usage; observation completed by {observed_by_ms}ms"
+        );
     }
 
     #[tokio::test]
