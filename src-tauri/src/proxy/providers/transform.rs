@@ -550,6 +550,16 @@ fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
 
 /// OpenAI 响应 → Anthropic 响应
 pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
+    // A few OpenAI-compatible gateways wrap an otherwise standard completion in
+    // `data`; use it only when the top-level response has no choices.
+    let body = if body.get("choices").is_none() {
+        body.get("data")
+            .filter(|data| data.get("choices").is_some())
+            .cloned()
+            .unwrap_or(body)
+    } else {
+        body
+    };
     let choices = body
         .get("choices")
         .and_then(|c| c.as_array())
@@ -1333,6 +1343,31 @@ mod tests {
         assert_eq!(result["stop_reason"], "end_turn");
         assert_eq!(result["usage"]["input_tokens"], 10);
         assert_eq!(result["usage"]["output_tokens"], 5);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_unwraps_data_wrapped_completion() {
+        let input = json!({
+            "success": true,
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "object": "chat.completion",
+                "model": "kimi-k3",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "OK"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}
+            }
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+
+        assert_eq!(result["id"], "chatcmpl-wrapped");
+        assert_eq!(result["model"], "kimi-k3");
+        assert_eq!(result["content"][0]["text"], "OK");
+        assert_eq!(result["usage"]["input_tokens"], 10);
+        assert_eq!(result["usage"]["output_tokens"], 2);
     }
 
     #[test]
