@@ -84,12 +84,16 @@ fn search_session(meta: &SessionMeta, needle: &[char]) -> Option<SessionSearchHi
         .iter()
         .enumerate()
         .filter_map(|(message_index, message)| {
-            let start = find_subslice(&lower_chars(&message.content), needle)?;
+            let (lowered, origin) = lower_with_origin(&message.content);
+            let start = find_subslice(&lowered, needle)?;
+            // Map the match back through the fold, which may have expanded chars.
+            let first = origin[start];
+            let last = origin[start + needle.len() - 1];
             let chars: Vec<char> = message.content.chars().collect();
             Some(SessionSearchSnippet {
                 message_index,
                 role: message.role.clone(),
-                text: snippet_around(&chars, start, needle.len()),
+                text: snippet_around(&chars, first, last - first + 1),
             })
         })
         .take(MAX_SNIPPETS_PER_SESSION)
@@ -107,12 +111,25 @@ fn search_session(meta: &SessionMeta, needle: &[char]) -> Option<SessionSearchHi
     })
 }
 
-/// Lowercase one char at a time so the result keeps a 1:1 index mapping with the
-/// source text and match offsets stay valid in the original.
+/// Lowercase `text` for matching. `char::to_lowercase` can expand one char into
+/// several — `İ` (U+0130) is the only such char in Unicode — so this is not a 1:1
+/// mapping and offsets into the result are not offsets into the source.
 fn lower_chars(text: &str) -> Vec<char> {
-    text.chars()
-        .map(|c| c.to_lowercase().next().unwrap_or(c))
-        .collect()
+    text.chars().flat_map(char::to_lowercase).collect()
+}
+
+/// Same fold as [`lower_chars`], plus the source char index each folded char came
+/// from, so a match found in folded space can be sliced out of the original.
+fn lower_with_origin(text: &str) -> (Vec<char>, Vec<usize>) {
+    let mut lowered = Vec::new();
+    let mut origin = Vec::new();
+    for (index, c) in text.chars().enumerate() {
+        for folded in c.to_lowercase() {
+            lowered.push(folded);
+            origin.push(index);
+        }
+    }
+    (lowered, origin)
 }
 
 fn find_subslice(haystack: &[char], needle: &[char]) -> Option<usize> {
@@ -210,6 +227,19 @@ mod tests {
 
         assert!(search(&path, "éclair").is_some());
         assert!(search(&path, "ÉCLAIR").is_some());
+    }
+
+    /// `İ` (U+0130) is the only char in Unicode whose lowercase expands to more
+    /// than one char, so it is the only input that exercises the origin map.
+    /// Without this the map could be reverted to a 1:1 fold and every other test
+    /// would still pass.
+    #[test]
+    fn folds_expanding_chars_without_dropping_code_points() {
+        assert_eq!(lower_chars("\u{0130}"), vec!['i', '\u{0307}']);
+
+        let (lowered, origin) = lower_with_origin("a\u{0130}b");
+        assert_eq!(lowered, vec!['a', 'i', '\u{0307}', 'b']);
+        assert_eq!(origin, vec![0, 1, 1, 2]);
     }
 
     #[test]
