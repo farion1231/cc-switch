@@ -581,6 +581,29 @@ fn normalize_provider_models_for_write(config: &mut serde_json::Value) {
     }
 }
 
+/// Pin the declared `models:` list as Hermes' only source of truth.
+///
+/// Hermes live-probes `/v1/models` by default and treats a dict-shaped
+/// `models:` field as per-model metadata, not an allowlist. CC Switch users
+/// expect their configured model list to be authoritative, so every provider
+/// that declares models must opt out of discovery.
+fn pin_discover_models_for_write(config: &mut serde_json::Value) {
+    let Some(obj) = config.as_object_mut() else {
+        return;
+    };
+    let has_models = obj
+        .get("models")
+        .and_then(|v| v.as_object())
+        .map(|m| !m.is_empty())
+        .unwrap_or(false);
+    if has_models {
+        obj.insert(
+            "discover_models".to_string(),
+            serde_json::Value::Bool(false),
+        );
+    }
+}
+
 /// If `config.models` is a JSON dict, convert it in-place to the ordered array
 /// shape. No-op when `models` is absent or already an array.
 fn denormalize_provider_models_for_read(config: &mut serde_json::Value) {
@@ -810,6 +833,7 @@ pub fn set_provider(
 
     // Normalize `models` from UI array to Hermes YAML dict before serializing.
     normalize_provider_models_for_write(&mut normalized);
+    pin_discover_models_for_write(&mut normalized);
 
     // Extract the first model id (now a key in the normalized dict) so we can
     // propagate it to the singular `model:` field Hermes reads.
@@ -1955,6 +1979,13 @@ custom_providers:
                     .unwrap(),
                 200000
             );
+            assert_eq!(
+                provider
+                    .get("discover_models")
+                    .and_then(|v| v.as_bool()),
+                Some(false),
+                "declared models must opt out of Hermes live discovery"
+            );
             // id should not leak into each model value
             assert!(model_a.get("id").is_none());
         });
@@ -1999,6 +2030,10 @@ custom_providers:
             let providers = get_providers().unwrap();
             let provider = providers.get("simple").unwrap();
             assert!(provider.get("models").is_none());
+            assert!(
+                provider.get("discover_models").is_none(),
+                "no pin needed when there are no declared models"
+            );
             assert!(
                 provider.get("model").is_none(),
                 "singular `model:` should not appear when no models are declared"
