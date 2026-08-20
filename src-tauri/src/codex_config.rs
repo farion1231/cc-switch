@@ -3667,6 +3667,29 @@ base_url = "https://single.example.com/v1"
     }
 
     #[test]
+    fn marker_matches_across_key_shapes_but_not_across_people() {
+        // marker 一律由 claims 推导（复合键），而升级前存下的账号 key 仍是裸工作区 ID。
+        // 这一跨形状必须判定为同一次登录，否则 marker 既刷不新也清不掉。
+        assert!(managed_marker_refers_to_account(
+            "alice-sub::team-ws",
+            "team-ws"
+        ));
+        assert!(managed_marker_refers_to_account(
+            "team-ws",
+            "alice-sub::team-ws"
+        ));
+        // 但同工作区的两个成员是两个人，不能因为工作区相同就互认。
+        assert!(!managed_marker_refers_to_account(
+            "alice-sub::team-ws",
+            "bob-sub::team-ws"
+        ));
+        assert!(!managed_marker_refers_to_account(
+            "alice-sub::team-ws",
+            "other-ws"
+        ));
+    }
+
+    #[test]
     fn a_workspaceless_account_never_leaks_its_key_into_native_auth() {
         // 没有工作区 claim 的账号，主键就是裸个人身份（可能是 email）。它绝不能出现在
         // 原生 auth.json 的 tokens.account_id——Codex CLI 会把该字段当

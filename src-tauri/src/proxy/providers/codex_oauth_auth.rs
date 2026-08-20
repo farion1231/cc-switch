@@ -1887,7 +1887,7 @@ fn compose_primary_account_id(
 /// 从 token 响应中提取 (account_id, email, chatgpt_account_id)
 ///
 /// `account_id` 为区分不同个人的唯一标识（Primary Key）：
-/// 个人身份优先级 email > openai_auth.user_id > sub，再拼接工作区 ID；
+/// 个人身份优先级 openai_auth.user_id > sub > email，再拼接工作区 ID；
 /// 完全没有个人 claim 时退化为工作区 ID。
 ///
 /// `chatgpt_account_id` 为 OpenAI Workspace/Team ID
