@@ -35,6 +35,10 @@ function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+function endOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59);
+}
+
 function isSameDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&
@@ -61,12 +65,15 @@ function fmtTime(ts: number): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function parseDateInput(ts: number, value: string): number {
+function getDayBoundaryTs(day: Date, field: DraftField): number {
+  return toTs(field === "start" ? startOfDay(day) : endOfDay(day));
+}
+
+function parseDateInput(ts: number, value: string, field: DraftField): number {
   const [y, m, d] = value.split("-").map(Number);
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d))
     return ts;
-  const base = fromTs(ts);
-  return toTs(new Date(y, m - 1, d, base.getHours(), base.getMinutes()));
+  return getDayBoundaryTs(new Date(y, m - 1, d), field);
 }
 
 function parseTimeInput(ts: number, value: string): number {
@@ -121,6 +128,9 @@ export function UsageDateRangePicker({
   const [draftLiveEnd, setDraftLiveEnd] = useState(
     selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
   );
+  const [hasEditedCustomDraft, setHasEditedCustomDraft] = useState(
+    selection.preset === "custom",
+  );
   const [displayMonth, setDisplayMonth] = useState(
     () =>
       new Date(
@@ -143,6 +153,7 @@ export function UsageDateRangePicker({
     setDraftLiveEnd(
       selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
     );
+    setHasEditedCustomDraft(selection.preset === "custom");
     setDisplayMonth(
       new Date(
         fromTs(r.startDate).getFullYear(),
@@ -193,28 +204,30 @@ export function UsageDateRangePicker({
       return;
     }
 
-    const nextTs = setDateKeepTime(
-      activeField === "start" ? draftStart : draftEnd,
-      day,
-    );
+    const nextTs = getDayBoundaryTs(day, activeField);
 
     if (activeField === "start") {
       setDraftStart(nextTs);
-      // Auto-swap if start > end
-      if (nextTs > draftEnd) {
-        setDraftEnd(nextTs);
+      const shouldUseSingleDay =
+        !hasEditedCustomDraft ||
+        isSameDay(startDay, endDay) ||
+        nextTs > draftEnd;
+      if (shouldUseSingleDay) {
+        setDraftEnd(getDayBoundaryTs(day, "end"));
       }
       // Auto-advance to end field
       setActiveField("end");
     } else {
       // If picked end < start, treat as new start and auto-advance
       if (nextTs < draftStart) {
-        setDraftStart(nextTs);
+        setDraftStart(getDayBoundaryTs(day, "start"));
+        setDraftEnd(getDayBoundaryTs(day, "end"));
         setActiveField("end");
       } else {
         setDraftEnd(nextTs);
       }
     }
+    setHasEditedCustomDraft(true);
 
     // Navigate calendar if the day is outside the displayed month
     if (
@@ -249,11 +262,35 @@ export function UsageDateRangePicker({
     const isActive = activeField === field;
     const isEndLive = field === "end" && draftLiveEnd;
     const ts = field === "start" ? draftStart : draftEnd;
-    const setTs = field === "start" ? setDraftStart : setDraftEnd;
     const label =
       field === "start"
         ? t("usage.startTime", "开始时间")
         : t("usage.endTime", "结束时间");
+
+    const handleDateInputChange = (value: string) => {
+      const next = parseDateInput(ts, value, field);
+      const nextDay = fromTs(next);
+
+      if (field === "start") {
+        setDraftStart(next);
+        const shouldUseSingleDay =
+          !hasEditedCustomDraft ||
+          isSameDay(startDay, endDay) ||
+          next > draftEnd;
+        if (shouldUseSingleDay) {
+          setDraftEnd(getDayBoundaryTs(nextDay, "end"));
+        }
+      } else if (next < draftStart) {
+        setDraftStart(getDayBoundaryTs(nextDay, "start"));
+        setDraftEnd(next);
+      } else {
+        setDraftEnd(next);
+      }
+
+      setHasEditedCustomDraft(true);
+      setDisplayMonth(new Date(nextDay.getFullYear(), nextDay.getMonth(), 1));
+      setError(null);
+    };
 
     return (
       <div
@@ -282,11 +319,7 @@ export function UsageDateRangePicker({
             value={fmtDate(ts)}
             onChange={(e) => {
               if (isEndLive) return;
-              const next = parseDateInput(ts, e.target.value);
-              setTs(next);
-              const d = fromTs(next);
-              setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
-              setError(null);
+              handleDateInputChange(e.target.value);
             }}
             onFocus={() => {
               if (!isEndLive) setActiveField(field);
@@ -303,7 +336,11 @@ export function UsageDateRangePicker({
             value={fmtTime(ts)}
             onChange={(e) => {
               if (isEndLive) return;
-              setTs(parseTimeInput(ts, e.target.value));
+              if (field === "start") {
+                setDraftStart(parseTimeInput(ts, e.target.value));
+              } else {
+                setDraftEnd(parseTimeInput(ts, e.target.value));
+              }
               setError(null);
             }}
             onFocus={() => {
