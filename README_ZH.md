@@ -448,6 +448,20 @@ paru -S cc-switch-bin
 - pnpm 8+
 - Rust 1.85+
 - Tauri CLI 2.8+
+- Go 1.25+
+- Protocol Buffers 编译器（`protoc`）35+
+- `protoc-gen-go` 1.36.11
+- `protoc-gen-connect-go` 1.19.1
+
+Tauri 开发和构建命令会编译内置的 Cursor sidecar。安装项目依赖前，请先初始化其子模块并安装固定版本的 protobuf 生成器：
+
+```bash
+git submodule update --init --recursive
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+```
+
+请确保 Go 二进制目录（通常为 `$(go env GOPATH)/bin`）已经加入 `PATH`。
 
 ### 开发命令
 

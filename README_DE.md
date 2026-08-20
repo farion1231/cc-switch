@@ -445,6 +445,20 @@ Laden Sie den neuesten Linux-Build von der Seite [Releases](../../releases) heru
 - pnpm 8+
 - Rust 1.85+
 - Tauri CLI 2.8+
+- Go 1.25+
+- Protocol-Buffers-Compiler (`protoc`) 35+
+- `protoc-gen-go` 1.36.11
+- `protoc-gen-connect-go` 1.19.1
+
+Die Tauri-Entwicklungs- und Build-Befehle kompilieren das mitgelieferte Cursor-Sidecar. Initialisieren Sie vor der Installation der Projektabhängigkeiten das Submodul und installieren Sie die festgelegten protobuf-Generatoren:
+
+```bash
+git submodule update --init --recursive
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+```
+
+Stellen Sie sicher, dass das Go-Binärverzeichnis (normalerweise `$(go env GOPATH)/bin`) in `PATH` enthalten ist.
 
 ### Entwicklungsbefehle
 

@@ -445,6 +445,20 @@ paru -S cc-switch-bin
 - pnpm 8+
 - Rust 1.85+
 - Tauri CLI 2.8+
+- Go 1.25+
+- Protocol Buffers コンパイラ（`protoc`）35+
+- `protoc-gen-go` 1.36.11
+- `protoc-gen-connect-go` 1.19.1
+
+Tauri の開発・ビルドコマンドは同梱の Cursor sidecar をコンパイルします。プロジェクトの依存関係をインストールする前に、サブモジュールを初期化し、固定バージョンの protobuf ジェネレーターをインストールしてください：
+
+```bash
+git submodule update --init --recursive
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+```
+
+Go のバイナリディレクトリ（通常は `$(go env GOPATH)/bin`）が `PATH` に含まれていることを確認してください。
 
 ### 開発コマンド
 
