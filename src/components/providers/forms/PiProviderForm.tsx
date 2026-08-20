@@ -20,6 +20,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Label } from "@/components/ui/label";
 import {
   Popover,
@@ -46,6 +47,7 @@ import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
+import { normalizeProviderKey } from "./helpers/providerKey";
 import {
   piProviderPresets,
   type PiApiFormat,
@@ -586,6 +588,11 @@ export function PiProviderForm({
     [updateSettingsConfig],
   );
 
+  // Returns false when the settings JSON draft cannot be parsed, so callers
+  // can roll back state they mutated alongside the models (see addModel).
+  // That is not a user-visible rejection path: every control that commits
+  // models sits inside the fieldset isSettingsConfigValid disables, so a
+  // keystroke cannot reach an unparseable draft.
   const commitModels = useCallback(
     (nextModels: PiModelDraft[]) => {
       if (!syncModelsToSettingsConfig(nextModels)) return false;
@@ -1055,11 +1062,6 @@ export function PiProviderForm({
     [updateSettingsConfig],
   );
 
-  const handleProviderKeyChange = useCallback((value: string) => {
-    const normalized = value.toLowerCase().replace(/[^a-z0-9-]/g, "");
-    setProviderKey(normalized);
-  }, []);
-
   const submit = async (identity: ProviderFormData) => {
     onSubmittingChange?.(true);
     setFormError(null);
@@ -1342,6 +1344,10 @@ export function PiProviderForm({
           </p>
         )}
 
+        {/* The JSON editor below stays outside this fieldset so an unparseable
+            draft remains repairable. Disabling everything else is what keeps
+            the structured controls and the draft from disagreeing: no field
+            can commit while updateSettingsConfig would reject the write. */}
         {hasConfigurationSelection && (
           <fieldset
             disabled={!isSettingsConfigValid}
@@ -1361,12 +1367,11 @@ export function PiProviderForm({
                         *
                       </span>
                     </Label>
-                    <Input
+                    <ImeSafeInput
                       id="pi-provider-key"
                       value={providerKey}
-                      onChange={(event) =>
-                        handleProviderKeyChange(event.target.value)
-                      }
+                      onValueChange={setProviderKey}
+                      normalize={normalizeProviderKey}
                       disabled={isEdit}
                       placeholder="my-provider"
                       autoComplete="off"
@@ -1564,11 +1569,11 @@ export function PiProviderForm({
                             />
                           </Button>
                           <div className="flex min-w-0 flex-1 gap-1">
-                            <Input
+                            <ImeSafeInput
                               id={`pi-model-id-${model.key}`}
                               value={model.id}
-                              onChange={(event) =>
-                                changeModelId(model.key, event.target.value)
+                              onValueChange={(next) =>
+                                changeModelId(model.key, next)
                               }
                               placeholder="model-id"
                               aria-label={t("pi.form.modelId")}
@@ -1582,12 +1587,12 @@ export function PiProviderForm({
                               />
                             )}
                           </div>
-                          <Input
+                          <ImeSafeInput
                             id={`pi-model-name-${model.key}`}
                             value={model.name}
-                            onChange={(event) =>
+                            onValueChange={(next) =>
                               updateModelOverride(model.key, {
-                                name: event.target.value,
+                                name: next,
                                 hasName: true,
                               })
                             }
@@ -1897,20 +1902,19 @@ export function PiProviderForm({
                                                     "pi.form.thinkingLevelMapTo",
                                                   )}
                                                 </label>
-                                                <Input
+                                                <ImeSafeInput
                                                   value={
                                                     typeof mappedValue ===
                                                     "string"
                                                       ? mappedValue
                                                       : level
                                                   }
-                                                  onChange={(event) =>
+                                                  onValueChange={(next) =>
                                                     updateThinkingLevelMap(
                                                       model.key,
                                                       (map) => ({
                                                         ...map,
-                                                        [level]:
-                                                          event.target.value,
+                                                        [level]: next,
                                                       }),
                                                     )
                                                   }

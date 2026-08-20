@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import {
   Select,
   SelectContent,
@@ -713,7 +714,7 @@ export function ClaudeFormFields({
                 <FormLabel htmlFor={`template-${key}`}>
                   {config.label}
                 </FormLabel>
-                <Input
+                <ImeSafeInput
                   id={`template-${key}`}
                   type="text"
                   required
@@ -723,7 +724,7 @@ export function ClaudeFormFields({
                     config.defaultValue ??
                     ""
                   }
-                  onChange={(e) => onTemplateValueChange(key, e.target.value)}
+                  onValueChange={(next) => onTemplateValueChange(key, next)}
                   placeholder={config.placeholder || config.label}
                   autoComplete="off"
                 />
@@ -997,13 +998,10 @@ export function ClaudeFormFields({
                       {row.label}
                     </div>
                     {row.displayNameField ? (
-                      <Input
+                      <ImeSafeInput
                         value={row.displayName ?? ""}
-                        onChange={(event) =>
-                          onModelChange(
-                            row.displayNameField!,
-                            event.target.value,
-                          )
+                        onValueChange={(next) =>
+                          onModelChange(row.displayNameField!, next)
                         }
                         placeholder={
                           modelBase ||

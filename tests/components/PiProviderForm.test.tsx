@@ -2276,4 +2276,39 @@ describe("PiProviderForm", () => {
       models: [{ id: "model" }],
     });
   });
+
+  // #6308: the provider key normalizes to [a-z0-9-] on every change. Running
+  // that on marked text erases the composition as it is typed, so the
+  // normalization has to wait for the IME to commit (same fix as the Hermes
+  // provider ID in #6333).
+  it("defers provider key normalization until the IME commits", () => {
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save Pi provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    const providerKeyInput = screen.getByPlaceholderText("my-provider");
+
+    fireEvent.compositionStart(providerKeyInput);
+    fireEvent.change(providerKeyInput, { target: { value: "深度求索" } });
+
+    // Normalizing mid-composition would strip every CJK character and leave the
+    // field empty while the candidate window is still open.
+    expect(providerKeyInput).toHaveValue("深度求索");
+
+    fireEvent.compositionEnd(providerKeyInput, {
+      data: "深度求索-Key",
+      target: { value: "深度求索-Key" },
+    });
+
+    // Normalization still applies once, to the committed value.
+    expect(providerKeyInput).toHaveValue("-key");
+  });
 });
