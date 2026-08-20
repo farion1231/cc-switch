@@ -66,6 +66,27 @@ pub fn fresh_input_sql(alias: &str) -> String {
     )
 }
 
+/// Build an SQL expression for the latency users perceive before a response
+/// becomes usable.
+///
+/// For streaming responses that is time-to-first-token. Measuring until the
+/// stream closes makes longer, successful generations look artificially slow.
+/// Non-streaming responses still use the full request latency. Legacy or
+/// incomplete streaming rows fall back to the full latency.
+pub fn perceived_latency_sql(alias: &str) -> String {
+    let prefix = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{alias}.")
+    };
+    format!(
+        "CASE WHEN {prefix}is_streaming = 1 \
+                    AND {prefix}first_token_ms IS NOT NULL \
+              THEN {prefix}first_token_ms \
+              ELSE {prefix}latency_ms END"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,7 +102,10 @@ mod tests {
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-                input_token_semantics INTEGER NOT NULL DEFAULT 0
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                latency_ms INTEGER NOT NULL DEFAULT 0,
+                first_token_ms INTEGER,
+                is_streaming INTEGER NOT NULL DEFAULT 0
             );",
         )
         .unwrap();
@@ -193,5 +217,56 @@ mod tests {
         let sql = format!("SELECT {expr} FROM proxy_request_logs l");
         let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
         assert_eq!(value, 500);
+    }
+
+    #[test]
+    fn perceived_latency_uses_first_token_for_streaming_rows() {
+        let conn = setup_conn();
+        conn.execute(
+            "INSERT INTO proxy_request_logs
+                (request_id, app_type, latency_ms, first_token_ms, is_streaming)
+             VALUES ('stream', 'codex', 60000, 1000, 1)",
+            [],
+        )
+        .unwrap();
+
+        let expr = perceived_latency_sql("l");
+        let sql = format!("SELECT {expr} FROM proxy_request_logs l");
+        let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
+        assert_eq!(value, 1000);
+    }
+
+    #[test]
+    fn perceived_latency_uses_full_latency_for_non_streaming_rows() {
+        let conn = setup_conn();
+        conn.execute(
+            "INSERT INTO proxy_request_logs
+                (request_id, app_type, latency_ms, first_token_ms, is_streaming)
+             VALUES ('non-stream', 'codex', 2000, 1000, 0)",
+            [],
+        )
+        .unwrap();
+
+        let expr = perceived_latency_sql("l");
+        let sql = format!("SELECT {expr} FROM proxy_request_logs l");
+        let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
+        assert_eq!(value, 2000);
+    }
+
+    #[test]
+    fn perceived_latency_falls_back_when_first_token_is_missing() {
+        let conn = setup_conn();
+        conn.execute(
+            "INSERT INTO proxy_request_logs
+                (request_id, app_type, latency_ms, is_streaming)
+             VALUES ('legacy-stream', 'codex', 3000, 1)",
+            [],
+        )
+        .unwrap();
+
+        let expr = perceived_latency_sql("l");
+        let sql = format!("SELECT {expr} FROM proxy_request_logs l");
+        let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
+        assert_eq!(value, 3000);
     }
 }
