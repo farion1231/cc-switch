@@ -2503,9 +2503,11 @@ impl ProxyService {
             }
         }
 
-        doc.get("base_url")
-            .and_then(|value| value.as_str())
-            .is_some_and(predicate)
+        ["openai_base_url", "base_url"].into_iter().any(|key| {
+            doc.get(key)
+                .and_then(|value| value.as_str())
+                .is_some_and(&predicate)
+        })
     }
 
     async fn live_takeover_matches_current_proxy(
@@ -4082,6 +4084,25 @@ mod tests {
                 None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    #[test]
+    fn codex_base_url_matcher_recognizes_builtin_openai_override() {
+        let config = r#"model_provider = "openai"
+openai_base_url = "http://127.0.0.1:15721/v1"
+
+[model_providers.cc-switch-official]
+name = "OpenAI"
+base_url = "http://127.0.0.1:15721/v1"
+requires_openai_auth = true
+supports_websockets = false
+wire_api = "responses"
+"#;
+
+        assert!(ProxyService::codex_config_has_base_url_matching(
+            config,
+            |url| ProxyService::proxy_urls_match(url, "http://127.0.0.1:15721/v1")
+        ));
     }
 
     fn assert_env_str(env: &Map<String, Value>, key: &str, expected: Option<&str>) {
@@ -5847,15 +5868,27 @@ wire_api = "responses"
             Some("openai"),
             "new official threads must stay in the native openai bucket"
         );
-        for provider_id in ["openai", "cc-switch-official"] {
-            assert_eq!(
-                live_doc["model_providers"][provider_id]
-                    .get("base_url")
-                    .and_then(toml::Value::as_str),
-                Some(expected_proxy_base_url.as_str()),
-                "both current and legacy official thread buckets must use the local route"
-            );
-        }
+        assert_eq!(
+            live_doc
+                .get("openai_base_url")
+                .and_then(toml::Value::as_str),
+            Some(expected_proxy_base_url.as_str()),
+            "native OpenAI threads must use Codex's supported built-in base URL override"
+        );
+        assert!(
+            live_doc
+                .get("model_providers")
+                .and_then(|providers| providers.get("openai"))
+                .is_none(),
+            "the reserved built-in OpenAI provider must never be redefined"
+        );
+        assert_eq!(
+            live_doc["model_providers"]["cc-switch-official"]
+                .get("base_url")
+                .and_then(toml::Value::as_str),
+            Some(expected_proxy_base_url.as_str()),
+            "legacy CC Switch thread buckets must keep their legal local provider alias"
+        );
         let state_conn = rusqlite::Connection::open(&state_db_path).expect("reopen state db");
         for (thread_id, expected_provider) in
             [("existing", "openai"), ("legacy", "cc-switch-official")]
@@ -6733,11 +6766,11 @@ wire_api = "chat"
         .expect("apply official proxy config");
         let parsed: toml::Value = toml::from_str(&output).expect("valid official route");
         assert_eq!(parsed["model_provider"].as_str(), Some("openai"));
-        for route_id in ["openai", "cc-switch-official"] {
-            let route = &parsed["model_providers"][route_id];
-            assert_eq!(route["base_url"].as_str(), Some(proxy_url));
-            assert_eq!(route["requires_openai_auth"].as_bool(), Some(true));
-        }
+        assert_eq!(parsed["openai_base_url"].as_str(), Some(proxy_url));
+        assert!(parsed["model_providers"].get("openai").is_none());
+        let legacy_route = &parsed["model_providers"]["cc-switch-official"];
+        assert_eq!(legacy_route["base_url"].as_str(), Some(proxy_url));
+        assert_eq!(legacy_route["requires_openai_auth"].as_bool(), Some(true));
         assert!(parsed.get("experimental_bearer_token").is_none());
     }
 
