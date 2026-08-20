@@ -1741,7 +1741,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: { primary: "zhipu/glm-5.1" },
-      modelCatalog: { "zhipu/glm-5.1": { alias: "GLM" } },
+      modelCatalog: {
+        "zhipu/glm-5.1": { alias: "GLM" },
+        "zhipu/glm-5.3": { alias: "GLM-5.3" },
+      },
     },
   },
   {
@@ -1785,7 +1788,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: { primary: "zhipu-en/glm-5.1" },
-      modelCatalog: { "zhipu-en/glm-5.1": { alias: "GLM" } },
+      modelCatalog: {
+        "zhipu-en/glm-5.1": { alias: "GLM" },
+        "zhipu-en/glm-5.3": { alias: "GLM-5.3" },
+      },
     },
   },
   {
