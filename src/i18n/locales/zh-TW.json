@@ -2511,8 +2511,8 @@
     "undoHint": "復原上一步應用開關變更（Ctrl/⌘+Z）",
     "undoFailed": "復原失敗",
     "unsavedChanges": {
-      "title": "有未儲存的變更",
-      "message": "本次修改的應用開關尚未儲存。選擇「不儲存」將還原到進入本頁時的狀態。",
+      "title": "有待確認的變更",
+      "message": "你在本頁修改了應用開關。選擇「不儲存」將還原到進入本頁時的狀態。",
       "discard": "不儲存",
       "discardFailed": "還原失敗"
     },

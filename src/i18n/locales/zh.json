@@ -2510,8 +2510,8 @@
     "undoHint": "撤销上一步应用开关改动（Ctrl/⌘+Z）",
     "undoFailed": "撤销失败",
     "unsavedChanges": {
-      "title": "有未保存的改动",
-      "message": "本次修改的应用开关尚未保存。选择「不保存」将还原到进入本页时的状态。",
+      "title": "有待确认的改动",
+      "message": "你在本页修改了应用开关。选择「不保存」将还原到进入本页时的状态。",
       "discard": "不保存",
       "discardFailed": "还原失败"
     },

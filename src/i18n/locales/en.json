@@ -2510,8 +2510,8 @@
     "undoHint": "Undo the last app toggle (Ctrl/⌘+Z)",
     "undoFailed": "Failed to undo",
     "unsavedChanges": {
-      "title": "Unsaved changes",
-      "message": "The app toggles you changed here have not been saved. Choosing “Don’t save” restores the state from when you opened this page.",
+      "title": "Changes to confirm",
+      "message": "You changed app toggles on this page. Choosing “Don’t save” restores the state from when you opened it.",
       "discard": "Don’t save",
       "discardFailed": "Failed to restore the previous state"
     },
