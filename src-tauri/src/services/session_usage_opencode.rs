@@ -34,6 +34,9 @@ struct OpenCodeMessageData {
     cost: f64,
     model_id: String,
     timestamp_ms: i64,
+    /// time.completed - time.created；离线回填只有整条消息的起止时间，
+    /// 没有首字时间，所以 latency 有值而 first_token_ms 恒为空
+    latency_ms: i64,
 }
 
 struct OpenCodeMessageQueryResult {
@@ -302,6 +305,18 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
 
+    // 调用方已过滤掉没有 time.completed 的未完成消息；这里再兜底：
+    // created 缺失（timestamp_ms 回退为 0，差值会变成毫秒纪元值）或
+    // 时钟倒挂（completed 不晚于 created）时按 0 处理
+    let latency_ms = match value
+        .get("time")
+        .and_then(|t| t.get("completed"))
+        .and_then(|v| v.as_i64())
+    {
+        Some(completed) if timestamp_ms > 0 && completed > timestamp_ms => completed - timestamp_ms,
+        _ => 0,
+    };
+
     Some(OpenCodeMessageData {
         input_tokens,
         output_tokens,
@@ -311,6 +326,7 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         cost,
         model_id,
         timestamp_ms,
+        latency_ms,
     })
 }
 
@@ -421,7 +437,8 @@ fn insert_opencode_message(
             cache_read_cost,
             cache_creation_cost,
             total_cost,
-            0i64,                  // latency_ms
+            msg.latency_ms,
+            // opencode.db 里没有首字时间字段，离线回填无法测量 first_token_ms
             Option::<i64>::None,   // first_token_ms
             200i64,                // status_code
             Option::<String>::None,// error_message
@@ -473,6 +490,41 @@ mod tests {
         assert!((data.cost - 0.0023113).abs() < 1e-10);
         assert_eq!(data.model_id, "deepseek-v4-pro");
         assert_eq!(data.timestamp_ms, 1779755333700);
+        assert_eq!(data.latency_ms, 1779755350639 - 1779755333700);
+    }
+
+    #[test]
+    fn test_parse_message_data_latency_fallbacks() {
+        // 没有 time.completed：latency 回退为 0
+        let no_completed = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 1000, "output": 200 },
+            "modelID": "m",
+            "time": { "created": 1000i64 }
+        });
+        let data = parse_message_data(&no_completed).unwrap();
+        assert_eq!(data.latency_ms, 0);
+
+        // completed 早于 created：saturating_sub 兜底为 0，不出负数
+        let negative = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 1000, "output": 200 },
+            "modelID": "m",
+            "time": { "created": 2000i64, "completed": 1000i64 }
+        });
+        let data = parse_message_data(&negative).unwrap();
+        assert_eq!(data.latency_ms, 0);
+
+        // 有 completed 但缺 created：差值不能拿毫秒纪元值来算
+        let no_created = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 1000, "output": 200 },
+            "modelID": "m",
+            "time": { "completed": 1779755350639i64 }
+        });
+        let data = parse_message_data(&no_created).unwrap();
+        assert_eq!(data.timestamp_ms, 0);
+        assert_eq!(data.latency_ms, 0);
     }
 
     #[test]
