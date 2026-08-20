@@ -3,22 +3,10 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronDown,
-  ChevronRight,
-  Download,
-  Loader2,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { Download, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import {
   Form,
   FormControl,
@@ -35,7 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
@@ -69,6 +56,7 @@ import {
   type ClaudeDesktopDefaultRoute,
 } from "@/lib/api/providers";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import type { ManagedAuthProvider } from "@/lib/api";
 import { useCopilotAuth, useCodexOauth, useXaiOauth } from "./hooks";
 import { isOAuthProviderType } from "@/config/constants";
 
@@ -105,6 +93,7 @@ export interface ClaudeDesktopProviderFormProps {
     iconColor?: string;
   };
   showButtons?: boolean;
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
 }
 
 type RouteRow = {
@@ -257,6 +246,7 @@ export function ClaudeDesktopProviderForm({
   onSubmittingChange,
   initialData,
   showButtons = true,
+  onManageAuthAccounts,
 }: ClaudeDesktopProviderFormProps) {
   const { t } = useTranslation();
   const initialMode = isOAuthProviderType(initialData?.meta?.providerType)
@@ -301,24 +291,25 @@ export function ClaudeDesktopProviderForm({
     providerType?: string;
     requiresOAuth?: boolean;
   } | null>(null);
-  const [routes, setRoutes] = useState<RouteRow[]>(() => {
+  const [directRoutes, setDirectRoutes] = useState<RouteRow[]>(() => {
     const rows = initialRouteRows(initialData?.meta?.claudeDesktopModelRoutes);
-    // proxy 模式归一化成固定三档；但初始无任何 route 时保持空数组，交给 seed
+    return initialMode === "direct" ? rows : [];
+  });
+  const [proxyRoutes, setProxyRoutes] = useState<RouteRow[]>(() => {
+    const rows = initialRouteRows(initialData?.meta?.claudeDesktopModelRoutes);
+    // proxy 模式归一化成固定四档；但初始无任何 route 时保持空数组，交给 seed
     // effect 用默认路由回填（默认 1M 声明、ANTHROPIC_MODEL 预填），避免过早
-    // normalize 成空三档把 routes.length 撑到 3、永久挡住 seed。
+    // normalize 成空四档把 routes.length 撑到 4、永久挡住 seed。
     return initialMode === "proxy" && rows.length > 0
       ? normalizeProxyRows(rows)
-      : rows;
+      : [];
   });
-  const didSeedDefaultRoutes = useRef(
-    Object.keys(initialData?.meta?.claudeDesktopModelRoutes ?? {}).length > 0,
+  const didSeedDefaultProxyRoutes = useRef(
+    initialMode === "proxy" &&
+      Object.keys(initialData?.meta?.claudeDesktopModelRoutes ?? {}).length > 0,
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
-  const [directModelsExpanded, setDirectModelsExpanded] = useState(
-    initialMode === "direct" &&
-      Object.keys(initialData?.meta?.claudeDesktopModelRoutes ?? {}).length > 0,
-  );
   const { data: defaultRoutes = [] } = useQuery({
     queryKey: ["claudeDesktopDefaultRoutes"],
     queryFn: () => providersApi.getClaudeDesktopDefaultRoutes(),
@@ -388,6 +379,7 @@ export function ClaudeDesktopProviderForm({
     useCopilotAuth();
   const {
     isAuthenticated: isCodexOauthAuthenticated,
+    defaultAccountId: codexOauthDefaultAccountId,
     accounts: codexOauthAccounts,
   } = useCodexOauth();
   const {
@@ -402,6 +394,8 @@ export function ClaudeDesktopProviderForm({
     isOAuthProviderType(activeProviderType);
   const effectiveMode: "direct" | "proxy" = usesManagedOAuth ? "proxy" : mode;
   const needsModelMapping = effectiveMode === "proxy";
+  const routes = needsModelMapping ? proxyRoutes : directRoutes;
+  const setRoutes = needsModelMapping ? setProxyRoutes : setDirectRoutes;
 
   // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
   const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
@@ -434,10 +428,22 @@ export function ClaudeDesktopProviderForm({
       preset.requiresOAuth === true || isOAuthProviderType(preset.providerType)
         ? "proxy"
         : preset.mode;
-    didSeedDefaultRoutes.current = true;
     setMode(presetMode);
+    setDirectRoutes(
+      presetMode === "direct" && preset.modelRoutes
+        ? preset.modelRoutes.map((route) =>
+            createRouteRow({
+              route: route.upstreamModel,
+              model: "",
+              labelOverride: route.labelOverride ?? "",
+              supports1m: route.supports1m,
+            }),
+          )
+        : [],
+    );
     if (presetMode === "proxy" && preset.modelRoutes) {
-      setRoutes(
+      didSeedDefaultProxyRoutes.current = true;
+      setProxyRoutes(
         normalizeProxyRows(
           preset.modelRoutes.map((r) =>
             createRouteRow({
@@ -450,7 +456,8 @@ export function ClaudeDesktopProviderForm({
         ),
       );
     } else {
-      setRoutes([]);
+      didSeedDefaultProxyRoutes.current = false;
+      setProxyRoutes([]);
     }
   };
 
@@ -464,9 +471,10 @@ export function ClaudeDesktopProviderForm({
       setApiKey("");
       setApiKeyField("ANTHROPIC_AUTH_TOKEN");
       setApiFormat("anthropic");
-      didSeedDefaultRoutes.current = false;
+      didSeedDefaultProxyRoutes.current = false;
       setMode("direct");
-      setRoutes([]);
+      setDirectRoutes([]);
+      setProxyRoutes([]);
       return;
     }
 
@@ -494,19 +502,18 @@ export function ClaudeDesktopProviderForm({
     if (usesManagedOAuth) return;
     setMode(checked ? "proxy" : "direct");
     if (checked) {
-      // 切到 proxy：归一化成固定 Sonnet / Opus / Haiku 三档；
-      // 若当前无路由则以后端默认路由作为来源（保留 Sonnet 默认模型）。
-      setRoutes((current) => {
+      // 切到 proxy：只恢复/初始化映射模式自己的固定四档，不复用直连模型列表。
+      setProxyRoutes((current) => {
         // 默认路由（默认 1M 声明、ANTHROPIC_MODEL 预填）异步加载完成前，若当前
         // 无路由则保持空数组，交给 seed effect 在加载后回填；不要过早 normalize
-        // 成空三档（会把 routes.length 撑到 3、永久挡住 seed）。
+        // 成空四档（会把 routes.length 撑到 4、永久挡住 seed）。
         if (current.length === 0 && defaultProxyRouteRows.length === 0) {
           return current;
         }
         const useDefaults =
           current.length === 0 && defaultProxyRouteRows.length > 0;
         if (useDefaults) {
-          didSeedDefaultRoutes.current = true;
+          didSeedDefaultProxyRoutes.current = true;
         }
         return normalizeProxyRows(
           useDefaults ? defaultProxyRouteRows : current,
@@ -517,17 +524,17 @@ export function ClaudeDesktopProviderForm({
 
   useEffect(() => {
     if (
-      didSeedDefaultRoutes.current ||
+      didSeedDefaultProxyRoutes.current ||
       effectiveMode !== "proxy" ||
-      routes.length > 0 ||
+      proxyRoutes.length > 0 ||
       defaultProxyRouteRows.length === 0
     ) {
       return;
     }
 
-    didSeedDefaultRoutes.current = true;
-    setRoutes(normalizeProxyRows(defaultProxyRouteRows));
-  }, [defaultProxyRouteRows, effectiveMode, routes.length]);
+    didSeedDefaultProxyRoutes.current = true;
+    setProxyRoutes(normalizeProxyRows(defaultProxyRouteRows));
+  }, [defaultProxyRouteRows, effectiveMode, proxyRoutes.length]);
 
   const handleFetchModels = async () => {
     if (!baseUrl.trim() || !apiKey.trim()) {
@@ -599,12 +606,29 @@ export function ClaudeDesktopProviderForm({
       );
       return;
     }
-    const selectedAccountIsUsable = (
+    const selectedAccountExists = (
       accountId: string | null,
-      accounts: Array<{ id: string; requires_reauth: boolean }>,
+      accounts: Array<{ id: string }>,
     ) =>
       accountId === null ||
-      accounts.some(
+      accounts.some((account) => account.id === accountId);
+    const selectedCodexAccountIsUsable = (accountId: string | null) => {
+      const effectiveAccountId =
+        accountId ??
+        codexOauthDefaultAccountId ??
+        codexOauthAccounts.find((account) => account.is_default)?.id ??
+        codexOauthAccounts[0]?.id;
+      return (
+        !!effectiveAccountId &&
+        codexOauthAccounts.some(
+          (account) =>
+            account.id === effectiveAccountId && !account.reauth_required,
+        )
+      );
+    };
+    const selectedXaiAccountIsUsable = (accountId: string | null) =>
+      accountId === null ||
+      xaiOauthAccounts.some(
         (account) => account.id === accountId && !account.requires_reauth,
       );
     const managedAuthState =
@@ -640,13 +664,18 @@ export function ClaudeDesktopProviderForm({
       toast.error(managedAuthState.loginMessage);
       return;
     }
-    if (
-      managedAuthState &&
-      !selectedAccountIsUsable(
-        managedAuthState.accountId,
-        managedAuthState.accounts,
-      )
-    ) {
+    const selectedManagedAccountIsUsable =
+      activeProviderType === "codex_oauth"
+        ? selectedCodexAccountIsUsable(selectedCodexAccountId)
+        : activeProviderType === "xai_oauth"
+          ? selectedXaiAccountIsUsable(selectedXaiAccountId)
+          : managedAuthState
+            ? selectedAccountExists(
+                managedAuthState.accountId,
+                managedAuthState.accounts,
+              )
+            : true;
+    if (managedAuthState && !selectedManagedAccountIsUsable) {
       toast.error(
         t("managedAuth.selectedAccountUnavailable", {
           defaultValue: "已绑定账号不存在或需要重新登录，请重新选择账号",
@@ -832,7 +861,7 @@ export function ClaudeDesktopProviderForm({
       <form
         id="provider-form"
         onSubmit={form.handleSubmit(handleSubmit)}
-        className="space-y-6"
+        className="space-y-6 glass rounded-xl p-6 border border-white/10"
       >
         {!initialData && (
           <ProviderPresetSelector
@@ -861,13 +890,25 @@ export function ClaudeDesktopProviderForm({
               <div className="rounded-lg border border-border-default bg-muted/20 p-3">
                 {activeProviderType === "github_copilot" ? (
                   <CopilotAuthSection
+                    mode="select"
                     selectedAccountId={selectedGitHubAccountId}
                     onAccountSelect={setSelectedGitHubAccountId}
+                    onManageAccounts={
+                      onManageAuthAccounts
+                        ? () => onManageAuthAccounts("github_copilot")
+                        : undefined
+                    }
                   />
                 ) : activeProviderType === "codex_oauth" ? (
                   <CodexOAuthSection
+                    mode="select"
                     selectedAccountId={selectedCodexAccountId}
                     onAccountSelect={setSelectedCodexAccountId}
+                    onManageAccounts={
+                      onManageAuthAccounts
+                        ? () => onManageAuthAccounts("codex_oauth")
+                        : undefined
+                    }
                     fastModeEnabled={codexFastMode}
                     onFastModeChange={setCodexFastMode}
                   />
@@ -908,343 +949,349 @@ export function ClaudeDesktopProviderForm({
               showManageButton={false}
             />
 
-            <div className="space-y-3 rounded-lg border border-border-default bg-muted/20 p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="space-y-1">
+            <div className="space-y-4 border-l border-border-default pl-3">
+              <div className="flex items-stretch justify-between gap-4">
+                <div className="min-w-0 flex-1 space-y-1 pr-3">
                   <Label>
-                    {t("claudeDesktop.modelMappingToggle", {
-                      defaultValue: "需要模型映射",
+                    {t("claudeDesktop.modelConfigTitle", {
+                      defaultValue: "模型配置",
                     })}
                   </Label>
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     {needsModelMapping
                       ? t("claudeDesktop.modelMappingOnHint", {
                           defaultValue:
-                            "Claude Desktop 只接受 claude-sonnet-* / claude-opus-* / claude-haiku-* 三档角色 ID。开启后 CC Switch 会把这三档映射到供应商的实际模型，并在使用期间保持本地路由开启。",
+                            "Claude Desktop 只接受 claude-sonnet-* / claude-opus-* / claude-haiku-* 三档角色 ID。选择模型映射后，CC Switch 会把这三档映射到供应商的实际模型，并在使用期间保持本地路由开启。",
                         })
                       : t("claudeDesktop.modelMappingOffHint", {
                           defaultValue:
-                            "仅当供应商直接接受 Claude Desktop 可识别的三档角色 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）时才适用直连；其他模型名（含 claude-3-5-sonnet-… 等旧式 ID）请打开此开关走映射。",
+                            "仅当供应商直接接受 Claude Desktop 可识别的三档角色 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）时才适用直连；其他模型名（含 claude-3-5-sonnet-… 等旧式 ID）请选择模型映射。",
                         })}
                   </p>
                 </div>
-                <Switch
-                  checked={needsModelMapping}
-                  onCheckedChange={handleModelMappingChange}
-                  disabled={usesManagedOAuth}
-                  aria-label={t("claudeDesktop.modelMappingToggle", {
-                    defaultValue: "需要模型映射",
-                  })}
-                />
-              </div>
-            </div>
-
-            {needsModelMapping && (
-              <div className="space-y-4 rounded-lg border border-border-default p-4">
-                {activeProviderType !== "xai_oauth" && (
-                  <div className="space-y-2">
-                    <Label>
-                      {t("providerForm.apiFormat", {
-                        defaultValue: "API 格式",
+                <div className="flex shrink-0 items-center gap-2 border-l border-border-default pl-4">
+                  <Label
+                    htmlFor="claude-desktop-model-mode"
+                    className="text-sm font-normal text-muted-foreground"
+                  >
+                    {t("claudeDesktop.modelModeLabel", {
+                      defaultValue: "接入方式",
+                    })}
+                  </Label>
+                  <Select
+                    value={effectiveMode}
+                    onValueChange={(value) =>
+                      handleModelMappingChange(value === "proxy")
+                    }
+                    disabled={usesManagedOAuth}
+                  >
+                    <SelectTrigger
+                      id="claude-desktop-model-mode"
+                      className="w-[156px]"
+                      aria-label={t("claudeDesktop.modelModeLabel", {
+                        defaultValue: "接入方式",
                       })}
-                    </Label>
-                    <Select
-                      value={apiFormat}
-                      onValueChange={(value) =>
-                        setApiFormat(value as ClaudeApiFormat)
-                      }
                     >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="anthropic">
-                          {t("providerForm.apiFormatAnthropic", {
-                            defaultValue: "Anthropic Messages (原生)",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="openai_chat">
-                          {t("providerForm.apiFormatOpenAIChat", {
-                            defaultValue:
-                              "OpenAI Chat Completions (需开启路由)",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="openai_responses">
-                          {t("providerForm.apiFormatOpenAIResponses", {
-                            defaultValue: "OpenAI Responses API (需开启路由)",
-                          })}
-                        </SelectItem>
-                        <SelectItem value="gemini_native">
-                          {t("providerForm.apiFormatGeminiNative", {
-                            defaultValue:
-                              "Gemini Native generateContent (需开启路由)",
-                          })}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                <div className="space-y-3">
-                  <div className="space-y-1 border-t border-border-default pt-4">
-                    <div className="flex items-center justify-between">
-                      <Label>
-                        {t("claudeDesktop.routeMapTitle", {
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="direct">
+                        {t("claudeDesktop.modelModeDirect", {
+                          defaultValue: "直连",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="proxy">
+                        {t("claudeDesktop.modelModeProxy", {
                           defaultValue: "模型映射",
                         })}
-                      </Label>
-                      {!usesManagedOAuth && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={handleFetchModels}
-                          disabled={isFetchingModels}
-                          className="h-7 gap-1"
-                        >
-                          {isFetchingModels ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Download className="h-3.5 w-3.5" />
-                          )}
-                          {t("providerForm.fetchModels", {
-                            defaultValue: "获取模型",
-                          })}
-                        </Button>
-                      )}
-                    </div>
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      {t("claudeDesktop.routeMapHint", {
-                        defaultValue:
-                          "为 Sonnet、Opus、Haiku 三档分别填写实际请求模型；菜单显示名可写 DeepSeek、Kimi 等品牌名。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
-                      })}
-                    </p>
-                  </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
 
-                  <div className="hidden grid-cols-[140px_1fr_1fr_116px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
-                    <span>
-                      {t("claudeDesktop.routeModelLabel", {
-                        defaultValue: "模型角色",
-                      })}
-                    </span>
-                    <span>
-                      {t("claudeDesktop.labelOverrideLabel", {
-                        defaultValue: "菜单显示名",
-                      })}
-                    </span>
-                    <span>
-                      {t("claudeDesktop.upstreamModelLabel", {
-                        defaultValue: "实际请求模型",
-                      })}
-                    </span>
-                    <span>
-                      {t("claudeDesktop.supports1mLabel", {
-                        defaultValue: "声明支持 1M",
-                      })}
-                    </span>
-                  </div>
-                  {routes.map((route, index) => {
-                    const role = routeRoleFromId(route.route);
-                    const roleLabel =
-                      role === "opus"
-                        ? t("claudeDesktop.routeRoleOpus", {
-                            defaultValue: "Opus",
-                          })
-                        : role === "haiku"
-                          ? t("claudeDesktop.routeRoleHaiku", {
-                              defaultValue: "Haiku",
-                            })
-                          : role === "fable"
-                            ? t("claudeDesktop.routeRoleFable", {
-                                defaultValue: "Fable",
-                              })
-                            : t("claudeDesktop.routeRoleSonnet", {
-                                defaultValue: "Sonnet",
-                              });
-                    // Haiku 档示范映射到轻量模型（flash），其余档映射到 pro；
-                    // 两列占位联动，保持每行「菜单显示名 ↔ 实际请求模型」品牌一致。
-                    const isHaikuRole = role === "haiku";
-                    const labelPlaceholder = isHaikuRole
-                      ? "DeepSeek V4 Flash"
-                      : "DeepSeek V4 Pro";
-                    const modelPlaceholder = isHaikuRole
-                      ? "deepseek-v4-flash"
-                      : "deepseek-v4-pro";
-                    return (
-                      <div
-                        key={route.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px]"
+              {needsModelMapping && (
+                <div className="space-y-4 border-t border-border-default pt-4">
+                  {activeProviderType !== "xai_oauth" && (
+                    <div className="space-y-2">
+                      <Label>
+                        {t("providerForm.apiFormat", {
+                          defaultValue: "上游格式",
+                        })}
+                      </Label>
+                      <Select
+                        value={apiFormat}
+                        onValueChange={(value) =>
+                          setApiFormat(value as ClaudeApiFormat)
+                        }
                       >
-                        <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
-                          {roleLabel}
-                        </div>
-                        <Input
-                          value={route.labelOverride}
-                          onChange={(event) =>
-                            updateRoute(index, {
-                              labelOverride: event.target.value,
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="anthropic">
+                            {t("providerForm.apiFormatAnthropic", {
+                              defaultValue: "Anthropic Messages (原生)",
+                            })}
+                          </SelectItem>
+                          <SelectItem value="openai_chat">
+                            {t("providerForm.apiFormatOpenAIChat", {
+                              defaultValue:
+                                "OpenAI Chat Completions (需开启路由)",
+                            })}
+                          </SelectItem>
+                          <SelectItem value="openai_responses">
+                            {t("providerForm.apiFormatOpenAIResponses", {
+                              defaultValue: "OpenAI Responses API (需开启路由)",
+                            })}
+                          </SelectItem>
+                          <SelectItem value="gemini_native">
+                            {t("providerForm.apiFormatGeminiNative", {
+                              defaultValue:
+                                "Gemini Native generateContent (需开启路由)",
+                            })}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    <div className="space-y-1 border-t border-border-default pt-4">
+                      <div className="flex items-center justify-between">
+                        <Label>
+                          {t("claudeDesktop.routeMapTitle", {
+                            defaultValue: "模型映射",
+                          })}
+                        </Label>
+                        {!usesManagedOAuth && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleFetchModels}
+                            disabled={isFetchingModels}
+                            className="h-7 gap-1"
+                          >
+                            {isFetchingModels ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Download className="h-3.5 w-3.5" />
+                            )}
+                            {t("providerForm.fetchModels", {
+                              defaultValue: "获取模型",
+                            })}
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {t("claudeDesktop.routeMapHint", {
+                          defaultValue:
+                            "为 Sonnet、Opus、Haiku 三档分别填写实际请求模型；菜单显示名可写 DeepSeek、Kimi 等品牌名。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
+                        })}
+                      </p>
+                    </div>
+
+                    <div className="hidden grid-cols-[140px_1fr_1fr_116px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                      <span>
+                        {t("claudeDesktop.routeModelLabel", {
+                          defaultValue: "模型角色",
+                        })}
+                      </span>
+                      <span>
+                        {t("claudeDesktop.labelOverrideLabel", {
+                          defaultValue: "菜单显示名",
+                        })}
+                      </span>
+                      <span>
+                        {t("claudeDesktop.upstreamModelLabel", {
+                          defaultValue: "实际请求模型",
+                        })}
+                      </span>
+                      <span>
+                        {t("claudeDesktop.supports1mLabel", {
+                          defaultValue: "声明支持 1M",
+                        })}
+                      </span>
+                    </div>
+                    {routes.map((route, index) => {
+                      const role = routeRoleFromId(route.route);
+                      const roleLabel =
+                        role === "opus"
+                          ? t("claudeDesktop.routeRoleOpus", {
+                              defaultValue: "Opus",
                             })
-                          }
-                          placeholder={labelPlaceholder}
-                        />
-                        <div className="flex gap-1">
+                          : role === "haiku"
+                            ? t("claudeDesktop.routeRoleHaiku", {
+                                defaultValue: "Haiku",
+                              })
+                            : role === "fable"
+                              ? t("claudeDesktop.routeRoleFable", {
+                                  defaultValue: "Fable",
+                                })
+                              : t("claudeDesktop.routeRoleSonnet", {
+                                  defaultValue: "Sonnet",
+                                });
+                      // Haiku 档示范映射到轻量模型（flash），其余档映射到 pro；
+                      // 两列占位联动，保持每行「菜单显示名 ↔ 实际请求模型」品牌一致。
+                      const isHaikuRole = role === "haiku";
+                      const labelPlaceholder = isHaikuRole
+                        ? "DeepSeek V4 Flash"
+                        : "DeepSeek V4 Pro";
+                      const modelPlaceholder = isHaikuRole
+                        ? "deepseek-v4-flash"
+                        : "deepseek-v4-pro";
+                      return (
+                        <div
+                          key={route.rowId}
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px]"
+                        >
+                          <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
+                            {roleLabel}
+                          </div>
                           <Input
-                            value={route.model}
+                            value={route.labelOverride}
                             onChange={(event) =>
-                              updateRoute(index, { model: event.target.value })
+                              updateRoute(index, {
+                                labelOverride: event.target.value,
+                              })
                             }
-                            placeholder={modelPlaceholder}
-                            className="flex-1"
+                            placeholder={labelPlaceholder}
                           />
-                          {fetchedModels.length > 0 && (
-                            <ModelDropdown
-                              models={fetchedModels}
-                              onSelect={(id) =>
+                          <div className="flex gap-1">
+                            <Input
+                              value={route.model}
+                              onChange={(event) =>
                                 updateRoute(index, {
-                                  model: id,
-                                  labelOverride: route.labelOverride || id,
+                                  model: event.target.value,
+                                })
+                              }
+                              placeholder={modelPlaceholder}
+                              className="flex-1"
+                            />
+                            {fetchedModels.length > 0 && (
+                              <ModelDropdown
+                                models={fetchedModels}
+                                onSelect={(id) =>
+                                  updateRoute(index, {
+                                    model: id,
+                                    labelOverride: route.labelOverride || id,
+                                  })
+                                }
+                              />
+                            )}
+                          </div>
+                          <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                            <Checkbox
+                              checked={route.supports1m}
+                              onCheckedChange={(checked) =>
+                                updateRoute(index, {
+                                  supports1m: checked === true,
                                 })
                               }
                             />
-                          )}
+                            {t("claudeDesktop.supports1mShort", {
+                              defaultValue: "1M",
+                            })}
+                          </label>
                         </div>
-                        <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
-                          <Checkbox
-                            checked={route.supports1m}
-                            onCheckedChange={(checked) =>
-                              updateRoute(index, {
-                                supports1m: checked === true,
-                              })
-                            }
-                          />
-                          {t("claudeDesktop.supports1mShort", {
-                            defaultValue: "1M",
-                          })}
-                        </label>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {!needsModelMapping && (
-              <Collapsible
-                open={directModelsExpanded}
-                onOpenChange={setDirectModelsExpanded}
-              >
-                <CollapsibleTrigger asChild>
-                  <Button
-                    type="button"
-                    variant={null}
-                    size="sm"
-                    className="h-8 gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
-                  >
-                    {directModelsExpanded ? (
-                      <ChevronDown className="h-4 w-4" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4" />
-                    )}
-                    {t("claudeDesktop.directModelListTitle", {
-                      defaultValue:
-                        "手动指定 Claude Desktop 模型列表（高级，可选）",
+                      );
                     })}
-                  </Button>
-                </CollapsibleTrigger>
-                {!directModelsExpanded && (
-                  <p className="ml-1 mt-1 text-xs text-muted-foreground">
-                    {t("claudeDesktop.directModelListCollapsedHint", {
+                  </div>
+                </div>
+              )}
+
+              {!needsModelMapping && (
+                <div className="space-y-3 border-t border-border-default pt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <Label>
+                      {t("claudeDesktop.directModelListTitle", {
+                        defaultValue: "模型列表",
+                      })}
+                    </Label>
+                    {renderActionButtons(
+                      () =>
+                        setRoutes((current) => [
+                          ...current,
+                          createRouteRow({
+                            route: "",
+                            model: "",
+                            labelOverride: "",
+                            supports1m: false,
+                          }),
+                        ]),
+                      t("claudeDesktop.addModel", {
+                        defaultValue: "添加模型",
+                      }),
+                    )}
+                  </div>
+
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t("claudeDesktop.directModelListHint", {
                       defaultValue:
-                        "原生 Claude 模型供应商通常不用填写，Claude Desktop 会自动读取 /v1/models。",
+                        "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空时 Claude Desktop 会自动读取 /v1/models；勾选 1M 会声明支持 1M 上下文。",
                     })}
                   </p>
-                )}
-                <CollapsibleContent className="space-y-4 pt-2">
-                  <div className="space-y-4 rounded-lg border border-border-default p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <p className="flex-1 text-xs leading-relaxed text-muted-foreground">
-                        {t("claudeDesktop.directModelListHint", {
-                          defaultValue:
-                            "仅当供应商的 /v1/models 不可用或没有返回 Claude Desktop 可识别的 Sonnet / Opus / Haiku 模型名时填写；勾选 1M 会向 Claude Desktop 声明支持 1M 上下文。",
-                        })}
-                      </p>
-                      {renderActionButtons(
-                        () =>
-                          setRoutes((current) => [
-                            ...current,
-                            createRouteRow({
-                              route: "",
-                              model: "",
-                              labelOverride: "",
-                              supports1m: false,
-                            }),
-                          ]),
-                        t("claudeDesktop.addModel", {
-                          defaultValue: "添加模型",
-                        }),
-                      )}
-                    </div>
 
-                    {routes.length > 0 ? (
-                      <div className="space-y-2">
-                        {routes.map((route, index) => (
-                          <div
-                            key={route.rowId}
-                            className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_116px_36px]"
-                          >
-                            <div className="flex gap-1">
-                              <Input
-                                value={route.route}
-                                onChange={(event) =>
-                                  updateRoute(index, {
-                                    route: event.target.value,
-                                  })
-                                }
-                                placeholder="claude-sonnet-4-6"
-                                className="flex-1"
-                              />
-                              {fetchedModels.length > 0 && (
-                                <ModelDropdown
-                                  models={fetchedModels}
-                                  onSelect={(id) =>
-                                    updateRoute(index, { route: id })
-                                  }
-                                />
-                              )}
-                            </div>
-                            <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
-                              <Checkbox
-                                checked={route.supports1m}
-                                onCheckedChange={(checked) =>
-                                  updateRoute(index, {
-                                    supports1m: checked === true,
-                                  })
-                                }
-                              />
-                              {t("claudeDesktop.supports1mShort", {
-                                defaultValue: "1M",
-                              })}
-                            </label>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() =>
-                                setRoutes((current) =>
-                                  current.filter((_, i) => i !== index),
-                                )
+                  {routes.length > 0 ? (
+                    <div className="space-y-2">
+                      {routes.map((route, index) => (
+                        <div
+                          key={route.rowId}
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_116px_36px]"
+                        >
+                          <div className="flex gap-1">
+                            <Input
+                              value={route.route}
+                              onChange={(event) =>
+                                updateRoute(index, {
+                                  route: event.target.value,
+                                })
                               }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                              placeholder="claude-sonnet-4-6"
+                              className="flex-1"
+                            />
+                            {fetchedModels.length > 0 && (
+                              <ModelDropdown
+                                models={fetchedModels}
+                                onSelect={(id) =>
+                                  updateRoute(index, { route: id })
+                                }
+                              />
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            )}
+                          <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                            <Checkbox
+                              checked={route.supports1m}
+                              onCheckedChange={(checked) =>
+                                updateRoute(index, {
+                                  supports1m: checked === true,
+                                })
+                              }
+                            />
+                            {t("claudeDesktop.supports1mShort", {
+                              defaultValue: "1M",
+                            })}
+                          </label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() =>
+                              setRoutes((current) =>
+                                current.filter((_, i) => i !== index),
+                              )
+                            }
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
 
             <FormField
               control={form.control}
