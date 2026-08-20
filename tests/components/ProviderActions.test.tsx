@@ -52,6 +52,20 @@ function renderPiActions({
 }
 
 describe("ProviderActions Pi provider switching", () => {
+  it("omits duplication when the caller disallows it", () => {
+    render(
+      <ProviderActions
+        appId="codex"
+        isCurrent={false}
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTitle("provider.duplicate")).not.toBeInTheDocument();
+  });
+
   it("enables a provider that is not in Pi", async () => {
     const user = userEvent.setup();
     const { onSwitch } = renderPiActions({});

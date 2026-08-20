@@ -117,6 +117,11 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
+<td width="180"><a href="https://ppio.com/activity/ccswitch"><img src="assets/partners/logos/ppio-banner.png" alt="PPIO" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている PPIO に感謝します！PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、PPTV 創業者の姚欣氏と元 PPTV チーフアーキテクトの王聞宇氏が 2018 年に共同設立しました。API キー 1 つで DeepSeek-V4-Flash、Kimi-K3、GLM-5.2、MiniMax-M3 など、すべての主要なオープンソースモデルを利用できます。法人向け Token Plan は最大 40% オフで、200 席まで対応。Fusion 融合モデルは 1/10 の価格で Fable5 に匹敵します。<a href="https://ppio.com/activity/ccswitch">こちらのリンク</a>から登録し実名認証を完了すると、¥10 のクーポンがもらえます。友人を招待してチャージしてもらうと、最大 15% のキャッシュバックも獲得できます。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.newapi.ai/"><img src="assets/partners/logos/newapi-banner.png" alt="new-api" width="150"></a></td>
 <td>オープンソースの AI インフラプロジェクト <a href="https://www.newapi.ai/">new-api</a> による本プロジェクトへの多大なご支援に感謝します！new-api は QuantumNous（锟腾科技）が開発したオープンソースの AI インフラプロジェクトであり、活発さと利用規模の面でリードする LLM 統合アクセス・配信プロジェクトの一つで、開発者・チーム・企業がより低コストで管理・拡張可能な AI サービスプラットフォームを構築できるよう支援することに注力しています。同じくオープンソースエコシステムに根ざすプロジェクトとして、new-api はスポンサーシップを通じて、より多くの優れたオープンソースプロジェクトの継続的な発展を支援したいと考えています。🌟 new-api への Star で応援をお願いします：<a href="https://github.com/QuantumNous/new-api">https://github.com/QuantumNous/new-api</a>。公式サイト：<a href="https://www.newapi.ai/">https://www.newapi.ai/</a>。</td>
 </tr>

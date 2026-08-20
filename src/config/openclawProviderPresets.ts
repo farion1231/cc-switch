@@ -764,6 +764,47 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      baseUrl: "https://api.ppio.com/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek/deepseek-v4-flash-0731",
+          name: "Deepseek V4 Flash 0731",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 393216,
+          cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ppio/deepseek/deepseek-v4-flash-0731" },
+      modelCatalog: {
+        "ppio/deepseek/deepseek-v4-flash-0731": {
+          alias: "Deepseek V4 Flash 0731",
+        },
+      },
+    },
+  },
+  {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
     apiKeyUrl: "https://claudecn.ai/register?aff=HEL9",
@@ -970,9 +1011,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "Pro/MiniMaxAI/MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          contextWindow: 200000,
+          id: "Pro/MiniMaxAI/MiniMax-M2.5",
+          name: "MiniMax M2.5",
+          contextWindow: 196608,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
         },
       ],
@@ -990,9 +1031,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5" },
       modelCatalog: {
-        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5": { alias: "MiniMax" },
       },
     },
   },
@@ -1006,9 +1047,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMaxAI/MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          contextWindow: 200000,
+          id: "MiniMaxAI/MiniMax-M3",
+          name: "MiniMax M3",
+          contextWindow: 1048576,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
         },
       ],
@@ -1026,9 +1067,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M3" },
       modelCatalog: {
-        "siliconflow-en/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow-en/MiniMaxAI/MiniMax-M3": { alias: "MiniMax" },
       },
     },
   },
@@ -1777,6 +1818,53 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）。模型
+    // 条目照官方 OpenClaw 接入页（2026-07-22 版）原样：cost/窗口 98304/
+    // maxTokens 65536 均为官方钦定的 OpenClaw 口径（≠平台模型列表页 1M，
+    // 与智谱预设 128000≠平台 200K 同款惯例，勿按平台口径"修正"）
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    settingsConfig: {
+      baseUrl: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-v4-pro",
+          name: "deepseek-v4-pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0.0025, output: 0.01, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 98304,
+          maxTokens: 65536,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        defaultValue: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qianfan-tokenplan/deepseek-v4-pro" },
+      modelCatalog: {
+        "qianfan-tokenplan/deepseek-v4-pro": { alias: "DeepSeek" },
+      },
+    },
+  },
+  {
     name: "Qwen Coder",
     websiteUrl: "https://bailian.console.aliyun.com",
     apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
@@ -2385,8 +2473,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "ZhipuAI/GLM-5.1",
-          name: "GLM-5.1",
+          id: "ZhipuAI/GLM-5.2",
+          name: "GLM-5.2",
           contextWindow: 128000,
           cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
         },
@@ -2409,8 +2497,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "modelscope/ZhipuAI/GLM-5.1" },
-      modelCatalog: { "modelscope/ZhipuAI/GLM-5.1": { alias: "GLM" } },
+      model: { primary: "modelscope/ZhipuAI/GLM-5.2" },
+      modelCatalog: { "modelscope/ZhipuAI/GLM-5.2": { alias: "GLM" } },
     },
   },
   {
@@ -2623,45 +2711,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     category: "cloud_provider",
     icon: "aws",
     iconColor: "#FF9900",
-  },
-  {
-    name: "PPIO",
-    websiteUrl: "https://ppio.com",
-    apiKeyUrl: "https://ppio.com/settings/key-management",
-    settingsConfig: {
-      baseUrl: "https://api.ppio.com/openai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "deepseek/deepseek-v4-flash-0731",
-          name: "Deepseek V4 Flash 0731",
-          reasoning: true,
-          input: ["text"],
-          contextWindow: 1048576,
-          maxTokens: 393216,
-          cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
-        },
-      ],
-    },
-    category: "aggregator",
-    icon: "ppio",
-    iconColor: "#2874FF",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "sk-...",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: { primary: "ppio/deepseek/deepseek-v4-flash-0731" },
-      modelCatalog: {
-        "ppio/deepseek/deepseek-v4-flash-0731": {
-          alias: "Deepseek V4 Flash 0731",
-        },
-      },
-    },
   },
   {
     name: "JieKou AI",

@@ -142,7 +142,10 @@ export type CodexChatEffortValueMode =
   | "low_high"
   | "deepseek"
   // OpenRouter effort 枚举 xhigh|high|medium|low|minimal（无 max，max 钳到 xhigh）
-  | "openrouter";
+  | "openrouter"
+  // OpenCode Zen 网关：合法档位逐模型，见 modelCatalog 各条目 reasoningLevels
+  // （镜像 models.dev）；代理转换层按请求模型查表钳制，无表不发 effort 字段
+  | "zen";
 
 export type CodexChatReasoningOutputFormat =
   | "auto"
