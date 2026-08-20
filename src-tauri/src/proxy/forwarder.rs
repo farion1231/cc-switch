@@ -288,6 +288,19 @@ impl RequestForwarder {
         !self.policy.classifier_routed && self.current_provider_id_at_start.as_str() != provider_id
     }
 
+    /// 成功回源后是否应把 `current_providers`（即 status.active_targets）刷成实际使用的 provider
+    ///
+    /// 与 `should_sync_current_provider` 是两条独立的泄漏路径：那个管的是**持久**切换
+    /// （写 settings / 刷托盘 / 发 provider-switched），这个管的是 UI 上的「当前正在用哪家」
+    /// 标记 —— `ProxyServer::get_status` 把它暴露为 `active_targets`，前端据此给供应商卡片
+    /// 画绿色边框。分类器请求若写进去，会一直显示到下一次常规请求为止。
+    ///
+    /// 注意这里**不能**复用 `should_sync_current_provider`：那个在「实际 provider == 起始
+    /// provider」时也返回 false，会导致代理刚启动、尚未发生任何切换时 active_targets 永远为空。
+    fn should_update_active_target(&self) -> bool {
+        !self.policy.classifier_routed
+    }
+
     async fn record_success_result(
         &self,
         provider_id: &str,
@@ -565,7 +578,7 @@ impl RequestForwarder {
                         .await;
 
                     // 更新当前应用类型使用的 provider
-                    {
+                    if self.should_update_active_target() {
                         let mut current_providers = self.current_providers.write().await;
                         current_providers.insert(
                             app_type_str.to_string(),
@@ -667,7 +680,7 @@ impl RequestForwarder {
                                     )
                                     .await;
 
-                                    {
+                                    if self.should_update_active_target() {
                                         let mut current_providers =
                                             self.current_providers.write().await;
                                         current_providers.insert(
@@ -811,7 +824,7 @@ impl RequestForwarder {
                                         .await;
 
                                         // 更新当前应用类型使用的 provider
-                                        {
+                                        if self.should_update_active_target() {
                                             let mut current_providers =
                                                 self.current_providers.write().await;
                                             current_providers.insert(
@@ -979,7 +992,7 @@ impl RequestForwarder {
                                     )
                                     .await;
 
-                                    {
+                                    if self.should_update_active_target() {
                                         let mut current_providers =
                                             self.current_providers.write().await;
                                         current_providers.insert(
@@ -3789,6 +3802,20 @@ mod tests {
         fwd.policy.classifier_routed = true;
         assert!(!fwd.should_sync_current_provider("cheap"));
         assert!(!fwd.should_sync_current_provider("main"));
+    }
+
+    #[test]
+    fn should_update_active_target_skips_only_classifier_routed_requests() {
+        let mut fwd = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        fwd.current_provider_id_at_start = "main".to_string();
+
+        // 常规请求必须刷新 active_targets —— 包括「实际 provider == 起始 provider」的情况，
+        // 否则代理刚启动、还没发生任何切换时前端拿不到任何 active_target。
+        assert!(fwd.should_update_active_target());
+
+        // 分类器请求走侧信道，不得污染 UI 上的「当前正在用哪家」标记
+        fwd.policy.classifier_routed = true;
+        assert!(!fwd.should_update_active_target());
     }
 
     #[test]
