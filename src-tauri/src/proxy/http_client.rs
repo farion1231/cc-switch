@@ -10,6 +10,8 @@ use std::net::IpAddr;
 use std::sync::RwLock;
 use std::time::Duration;
 
+use super::system_proxy;
+
 /// 全局 HTTP 客户端实例
 static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
 
@@ -18,6 +20,17 @@ static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
 
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
+
+/// 出站代理模式
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ProxyMode {
+    /// 用户显式配置的全局代理（最高优先级，不受系统代理变化影响）
+    Explicit,
+    /// 跟随系统代理（注册表/环境变量），由监视器动态刷新
+    System,
+}
+
+static PROXY_MODE: OnceCell<RwLock<ProxyMode>> = OnceCell::new();
 
 /// 设置 CC Switch 代理服务器的监听端口
 ///
@@ -49,32 +62,27 @@ fn get_proxy_port() -> u16 {
 ///
 /// # Arguments
 /// * `proxy_url` - 代理 URL，如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`
-///   传入 None 或空字符串表示直连
+///   传入 None 或空字符串表示跟随系统代理（注册表/环境变量）
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let client = build_client(effective_url)?;
+    let explicit = proxy_url.filter(|s| !s.trim().is_empty());
+    let resolved = resolve_proxy(explicit);
+    let client = build_client(resolved.as_deref())?;
 
     // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
     if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
         log::warn!(
             "[GlobalProxy] [GP-003] Already initialized, updating instead: {}",
-            effective_url
-                .map(mask_url)
-                .unwrap_or_else(|| "direct connection".to_string())
+            label_for(&resolved)
         );
         // 已初始化，改用 apply_proxy 更新
         return apply_proxy(proxy_url);
     }
 
     // 初始化代理 URL 记录
-    let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
+    let _ = CURRENT_PROXY_URL.set(RwLock::new(resolved.clone()));
+    set_proxy_mode(explicit.is_some());
 
-    log::info!(
-        "[GlobalProxy] Initialized: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
+    log::info!("[GlobalProxy] Initialized: {}", label_for(&resolved));
 
     Ok(())
 }
@@ -104,8 +112,9 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// # Arguments
 /// * `proxy_url` - 代理 URL，None 或空字符串表示直连
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
+    let explicit = proxy_url.filter(|s| !s.trim().is_empty());
+    let resolved = resolve_proxy(explicit);
+    let new_client = build_client(resolved.as_deref())?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -125,15 +134,11 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
             log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
             "Failed to update proxy URL record: lock poisoned".to_string()
         })?;
-        *url = effective_url.map(|s| s.to_string());
+        *url = resolved.clone();
     }
+    set_proxy_mode(explicit.is_some());
 
-    log::info!(
-        "[GlobalProxy] Applied: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
+    log::info!("[GlobalProxy] Applied: {}", label_for(&resolved));
 
     Ok(())
 }
@@ -148,8 +153,9 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
 #[allow(dead_code)]
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
+    let explicit = proxy_url.filter(|s| !s.trim().is_empty());
+    let resolved = resolve_proxy(explicit);
+    let new_client = build_client(resolved.as_deref())?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -169,17 +175,103 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
             log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
             "Failed to update proxy URL record: lock poisoned".to_string()
         })?;
-        *url = effective_url.map(|s| s.to_string());
+        *url = resolved.clone();
+    }
+    set_proxy_mode(explicit.is_some());
+
+    log::info!("[GlobalProxy] Updated: {}", label_for(&resolved));
+
+    Ok(())
+}
+
+/// 刷新系统代理（由监视器周期性调用）
+///
+/// 仅在「跟随系统代理」模式下生效; 用户显式配置的全局代理优先且不受影响。
+/// 检测到系统代理变化时热更新全局 HTTP 客户端。
+///
+/// 返回是否有变化。
+pub fn refresh_system_proxy() -> bool {
+    if !is_system_mode() {
+        return false;
+    }
+    // 未初始化时由 init 负责，跳过
+    if GLOBAL_CLIENT.get().is_none() {
+        return false;
+    }
+
+    let detected = system_proxy::detect_loopback_safe(get_proxy_port());
+    let current = get_current_proxy_url();
+    if current == detected {
+        return false;
+    }
+
+    let new_client = match build_client(detected.as_deref()) {
+        Ok(client) => client,
+        Err(e) => {
+            log::warn!(
+                "[GlobalProxy] [GP-012] Failed to rebuild client after system proxy change: {e}"
+            );
+            return false;
+        }
+    };
+
+    if let Some(lock) = GLOBAL_CLIENT.get() {
+        if let Ok(mut client) = lock.write() {
+            *client = new_client;
+        }
+    }
+    if let Some(lock) = CURRENT_PROXY_URL.get() {
+        if let Ok(mut url) = lock.write() {
+            *url = detected.clone();
+        }
     }
 
     log::info!(
-        "[GlobalProxy] Updated: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
+        "[GlobalProxy] System proxy changed: {} -> {}",
+        label_for(&current),
+        label_for(&detected)
     );
+    true
+}
 
-    Ok(())
+/// 解析出站代理：显式全局代理优先，否则跟随系统代理。
+fn resolve_proxy(explicit: Option<&str>) -> Option<String> {
+    match explicit {
+        Some(url) => Some(url.to_string()),
+        None => system_proxy::detect_loopback_safe(get_proxy_port()),
+    }
+}
+
+fn label_for(url: &Option<String>) -> String {
+    url.as_deref()
+        .map(mask_url)
+        .unwrap_or_else(|| "direct connection".to_string())
+}
+
+fn set_proxy_mode(explicit: bool) {
+    let mode = if explicit {
+        ProxyMode::Explicit
+    } else {
+        ProxyMode::System
+    };
+    match PROXY_MODE.get() {
+        Some(lock) => {
+            if let Ok(mut m) = lock.write() {
+                *m = mode;
+            }
+        }
+        None => {
+            let _ = PROXY_MODE.set(RwLock::new(mode));
+        }
+    }
+}
+
+fn is_system_mode() -> bool {
+    PROXY_MODE
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|m| *m == ProxyMode::System)
+        .unwrap_or(true)
 }
 
 /// 获取全局 HTTP 客户端
