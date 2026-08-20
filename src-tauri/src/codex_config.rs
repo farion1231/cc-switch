@@ -1791,7 +1791,12 @@ fn codex_vendor_catalog_model_entry(
 /// field ..."). `base_instructions` is the other known required field; the
 /// templates always carry it and `codex_catalog_model_entry` handles it.
 /// When Codex requires a new field, add it here AND to the static templates.
-const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &["supports_reasoning_summaries"];
+const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &[
+    "supports_reasoning_summaries",
+    // codex 0.148.0 rejects the catalog without it (#6661); a models_cache.json
+    // written by an older build can lack it.
+    "supports_parallel_tool_calls",
+];
 
 /// `models_cache.json` is shared by every Codex install on the machine (npm
 /// CLI, desktop-bundled binary, ...), and each version serializes its own
@@ -4045,6 +4050,18 @@ base_url = "https://production.api/v1"
         assert!(template.get("supports_search_tool").is_none());
         assert!(template.get("supports_image_detail_original").is_none());
         assert!(template.get("web_search_tool_type").is_none());
+
+        // A cache template missing supports_parallel_tool_calls gets the
+        // static gpt-5.5 default backfilled (codex 0.148.0 rejects the
+        // catalog without it, #6661).
+        let mut stale = json!({ "slug": "gpt-5.5" });
+        fill_template_fields_from_static(&mut stale);
+        assert_eq!(
+            stale
+                .get("supports_parallel_tool_calls")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
@@ -4072,6 +4089,12 @@ base_url = "https://production.api/v1"
         assert_eq!(
             catalog["models"][0]
                 .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            catalog["models"][0]
+                .get("supports_parallel_tool_calls")
                 .and_then(Value::as_bool),
             Some(true)
         );
