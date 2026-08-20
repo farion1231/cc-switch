@@ -1718,7 +1718,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "glm-5.3",
           name: "GLM-5.3",
-          contextWindow: 128000,
+          contextWindow: 1000000,
           cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
         },
       ],
@@ -1765,7 +1765,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "glm-5.3",
           name: "GLM-5.3",
-          contextWindow: 128000,
+          contextWindow: 1000000,
           cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
         },
       ],
