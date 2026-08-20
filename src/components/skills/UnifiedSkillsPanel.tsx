@@ -345,7 +345,13 @@ const UnifiedSkillsPanel = React.forwardRef<
 
     try {
       const result = await bulkToggleAppMutation.mutateAsync(step);
-      setUndoSteps((steps) => steps.slice(0, -1));
+      // 写回失败的条目留在栈顶，否则它们既没还原也无从重试
+      const failedIds = result.failed.map((failure) => failure.item);
+      setUndoSteps((steps) =>
+        failedIds.length > 0
+          ? [...steps.slice(0, -1), { ...step, ids: failedIds }]
+          : steps.slice(0, -1),
+      );
       if (result.failed.length > 0) {
         toast.error(
           t("common.bulkToggleFailed", { count: result.failed.length }),

@@ -915,6 +915,52 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
+  it("keeps failed IDs on the undo stack after a partial undo", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "first-id" }),
+      makeInstalledSkill({ id: "second-id" }),
+    ];
+    bulkToggleSkillAppMock.mockResolvedValueOnce({
+      succeeded: ["first-id", "second-id"],
+      failed: [],
+    });
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1),
+    );
+
+    bulkToggleSkillAppMock.mockResolvedValueOnce({
+      succeeded: ["first-id"],
+      failed: [{ item: "second-id", error: new Error("permission denied") }],
+    });
+    await user.click(screen.getByRole("button", { name: "skills.undo" }));
+
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenLastCalledWith({
+        ids: ["first-id", "second-id"],
+        app: "claude",
+        enabled: false,
+      }),
+    );
+
+    bulkToggleSkillAppMock.mockResolvedValueOnce({
+      succeeded: ["second-id"],
+      failed: [],
+    });
+    await user.click(screen.getByRole("button", { name: "skills.undo" }));
+
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenLastCalledWith({
+        ids: ["second-id"],
+        app: "claude",
+        enabled: false,
+      }),
+    );
+  });
+
   it("leaves without confirming when no toggle was changed", () => {
     installedSkillsMock = [makeInstalledSkill()];
     const ref = createRef<UnifiedSkillsPanelHandle>();
