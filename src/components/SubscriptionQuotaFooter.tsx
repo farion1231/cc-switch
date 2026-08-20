@@ -4,6 +4,12 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import { useSubscriptionQuota } from "@/lib/query/subscription";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
+import {
+  isOverPace,
+  parseResetsAtMs,
+  splitUsedElapsedPercent,
+  tierElapsedPercent,
+} from "@/utils/quotaWindow";
 
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
@@ -53,7 +59,9 @@ export function utilizationColor(utilization: number): string {
 /** 计算倒计时的纯时间字符串，如 "2h30m"、"3d12h" */
 export function countdownStr(resetsAt: string | null): string | null {
   if (!resetsAt) return null;
-  const diffMs = new Date(resetsAt).getTime() - Date.now();
+  // 走 parseResetsAtMs 而非裸 new Date()：无时区的重置时间按 UTC 解释，
+  // 与托盘 tray.rs / 时间% 保持一致，避免倒计时整体偏一个时区。
+  const diffMs = parseResetsAtMs(resetsAt) - Date.now();
   if (diffMs <= 0) return null;
 
   const hours = Math.floor(diffMs / (1000 * 60 * 60));
@@ -306,6 +314,30 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   );
 };
 
+/** 用量%-时间%：超进度时只加粗用量数字 */
+export const UsedElapsedText: React.FC<{
+  usedPercent: number;
+  elapsedPercent: number | undefined;
+  className?: string;
+  title?: string;
+}> = ({ usedPercent, elapsedPercent, className, title }) => {
+  const parts = splitUsedElapsedPercent(usedPercent, elapsedPercent);
+  return (
+    <span className={className} title={title}>
+      <span
+        className={
+          parts.overPace
+            ? "font-extrabold underline decoration-2 underline-offset-2"
+            : undefined
+        }
+      >
+        {parts.usedText}
+      </span>
+      {parts.elapsedText !== undefined ? `-${parts.elapsedText}` : null}
+    </span>
+  );
+};
+
 /** inline 模式下的单个 tier 显示 */
 export const TierBadge: React.FC<{
   tier: QuotaTier;
@@ -315,17 +347,26 @@ export const TierBadge: React.FC<{
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
   const countdown = countdownStr(tier.resetsAt);
+  const elapsed = tierElapsedPercent(tier.name, tier.resetsAt);
+  const overPace = isOverPace(tier.utilization, elapsed);
 
   const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
 
   return (
     <div className="flex items-center gap-0.5">
       <span className="text-gray-500 dark:text-gray-400">{label}:</span>
-      <span
+      <UsedElapsedText
+        usedPercent={tier.utilization}
+        elapsedPercent={elapsed}
         className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
-      >
-        {t("subscription.utilization", { value: Math.round(tier.utilization) })}
-      </span>
+        title={
+          elapsed !== undefined
+            ? overPace
+              ? t("subscription.overPaceHint")
+              : t("subscription.utilizationWithTimeHint")
+            : undefined
+        }
+      />
       {hasUsd && (
         <span className="text-muted-foreground/60">
           (${tier.usedValueUsd!.toFixed(2)}/${tier.maxValueUsd!.toFixed(2)})
@@ -350,6 +391,8 @@ const TierBar: React.FC<{
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
   const resetText = formatResetTime(tier.resetsAt, t);
+  const elapsed = tierElapsedPercent(tier.name, tier.resetsAt);
+  const overPace = isOverPace(tier.utilization, elapsed);
 
   return (
     <div className="flex items-center gap-3 text-xs">
@@ -378,11 +421,18 @@ const TierBar: React.FC<{
         className="flex items-center gap-2 flex-shrink-0"
         style={{ width: "30%" }}
       >
-        <span
+        <UsedElapsedText
+          usedPercent={tier.utilization}
+          elapsedPercent={elapsed}
           className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
-        >
-          {Math.round(tier.utilization)}%
-        </span>
+          title={
+            elapsed === undefined
+              ? undefined
+              : overPace
+                ? t("subscription.overPaceHint")
+                : t("subscription.utilizationWithTimeHint")
+          }
+        />
         {resetText && (
           <span
             className="text-[10px] text-muted-foreground/70 truncate"

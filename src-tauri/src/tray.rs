@@ -201,19 +201,190 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
     }
 }
 
+/// 托盘单档摘要：`h3%` 或带时间占比的 `h3%-37%`（用量%-时间%）。
+/// 时间% = 窗口已流逝占比，与 vscode-gptx / 用量面板语义一致：
+/// 用量 90% 时，时间 10% 与 99% 意义完全不同。
+#[derive(Debug, Clone, Copy)]
+struct TierSummaryPart {
+    label: &'static str,
+    used_percent: f64,
+    elapsed_percent: Option<f64>,
+}
+
+/// 用量是否跑赢时间进度（烧得比时间快）——对齐 vscode-gptx `isOverPace`。
+fn is_over_pace(used_percent: f64, elapsed_percent: Option<f64>) -> bool {
+    match elapsed_percent {
+        Some(elapsed) if used_percent.is_finite() && elapsed.is_finite() => used_percent > elapsed,
+        _ => false,
+    }
+}
+
+/// 托盘菜单是纯文本，无法 CSS 加粗；用量超进度时用数学粗体数字（𝟎-𝟗）提醒。
+fn math_bold_digits(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '0'..='9' => {
+                // U+1D7CE MATHEMATICAL BOLD DIGIT ZERO
+                char::from_u32(0x1D7CE + (c as u32 - '0' as u32)).unwrap_or(c)
+            }
+            _ => c,
+        })
+        .collect()
+}
+
+fn format_tier_summary_part(part: &TierSummaryPart) -> String {
+    let used = part.used_percent.round() as i64;
+    let used_text = format!("{used}%");
+    let used_fmt = if is_over_pace(part.used_percent, part.elapsed_percent) {
+        math_bold_digits(&used_text)
+    } else {
+        used_text
+    };
+    match part.elapsed_percent {
+        Some(elapsed) => format!("{}{}-{}%", part.label, used_fmt, elapsed.round() as i64),
+        None => format!("{}{}", part.label, used_fmt),
+    }
+}
+
+fn format_tier_summary_body(parts: &[TierSummaryPart]) -> String {
+    parts
+        .iter()
+        .map(format_tier_summary_part)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// tier 名 → 窗口时长（秒）。未知窗口（如 Gemini 模型档）返回 None，托盘只显示用量%。
+fn tier_window_seconds(name: &str) -> Option<i64> {
+    use crate::services::subscription::{
+        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS, TIER_SEVEN_DAY_SONNET,
+        TIER_THIRTY_DAY, TIER_WEEKLY_LIMIT,
+    };
+    match name {
+        n if n == TIER_FIVE_HOUR => Some(5 * 3600),
+        n if n == TIER_SEVEN_DAY
+            || n == TIER_SEVEN_DAY_OPUS
+            || n == TIER_SEVEN_DAY_SONNET
+            || n == TIER_WEEKLY_LIMIT =>
+        {
+            Some(7 * 24 * 3600)
+        }
+        n if n == TIER_MONTHLY || n == TIER_THIRTY_DAY => Some(30 * 24 * 3600),
+        other => parse_dynamic_window_seconds(other),
+    }
+}
+
+/// 兼容 Codex `window_seconds_to_tier_name` 动态产物：`1_hour` / `2_day` 等。
+fn parse_dynamic_window_seconds(name: &str) -> Option<i64> {
+    if let Some(hours) = name.strip_suffix("_hour") {
+        let hours: i64 = hours.parse().ok()?;
+        if hours > 0 {
+            return Some(hours * 3600);
+        }
+    }
+    if let Some(days) = name.strip_suffix("_day") {
+        let days: i64 = days.parse().ok()?;
+        if days > 0 {
+            return Some(days * 24 * 3600);
+        }
+    }
+    None
+}
+
+/// 允许「距重置」略超窗口长的容差（刚重置 + 客户端时钟偏差）。
+/// 与前端 `src/utils/quotaWindow.ts` 的同名常量保持一致。
+const WINDOW_OVERSHOOT_TOLERANCE: f64 = 0.05;
+
+/// 窗口时间流逝百分比：(窗口长 - 距重置) / 窗口长，clamp 到 [0,100]。
+///
+/// 若「距重置」明显超过窗口长，说明该 tier 的窗口时长只是启发式猜测
+/// （如 Grok 按重置距离反推的 `weekly_limit` / `monthly`，见
+/// `subscription_grok::tier_name_for_reset` 把 4–12 天都标成周窗口），此时返回
+/// None 退化为只显示用量%——而不是 clamp 成 0% 后把任何非零用量都误判成
+/// 「超进度」并加粗。
+fn elapsed_percent_from_reset(window_seconds: i64, resets_at: &str, now_ms: i64) -> Option<f64> {
+    if window_seconds <= 0 {
+        return None;
+    }
+    let reset_ms = parse_resets_at_ms(resets_at)?;
+    let window_ms = (window_seconds as f64) * 1000.0;
+    let remaining_ms = (reset_ms - now_ms) as f64;
+    if remaining_ms > window_ms * (1.0 + WINDOW_OVERSHOOT_TOLERANCE) {
+        return None;
+    }
+    // ratio 为 0–1 的流逝占比，再换成 0–100 的百分比
+    let ratio = (window_ms - remaining_ms) / window_ms;
+    Some((ratio * 100.0).clamp(0.0, 100.0))
+}
+
+fn parse_resets_at_ms(resets_at: &str) -> Option<i64> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(resets_at) {
+        return Some(dt.timestamp_millis());
+    }
+    // 兼容部分接口返回的空格分隔 UTC（非严格 RFC3339）
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(resets_at, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(naive.and_utc().timestamp_millis());
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(resets_at, "%Y-%m-%d %H:%M:%S") {
+        return Some(naive.and_utc().timestamp_millis());
+    }
+    None
+}
+
+fn now_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// UsageData.extra 可能是纯 ISO 重置时间，或 JSON（含 resetsAt，ZenMux 等）。
+fn extract_resets_at_from_usage_extra(extra: Option<&str>) -> Option<String> {
+    let extra = extra?.trim();
+    if extra.is_empty() {
+        return None;
+    }
+    if extra.starts_with('{') {
+        let value: serde_json::Value = serde_json::from_str(extra).ok()?;
+        return value
+            .get("resetsAt")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+    }
+    // Copilot 等： "Reset: 2026-..." 不是可计算窗口重置点
+    if extra.starts_with("Reset:") || extra.starts_with("reset:") {
+        return None;
+    }
+    Some(extra.to_string())
+}
+
 fn format_subscription_summary(
     quota: &crate::services::subscription::SubscriptionQuota,
+) -> Option<String> {
+    format_subscription_summary_at(quota, now_millis())
+}
+
+fn format_subscription_summary_at(
+    quota: &crate::services::subscription::SubscriptionQuota,
+    now_ms: i64,
 ) -> Option<String> {
     if !quota.success {
         return None;
     }
 
-    let entries: Vec<(&str, f64)> = quota
+    let entries: Vec<(&str, f64, Option<&str>)> = quota
         .tiers
         .iter()
-        .map(|tier| (tier.name.as_str(), tier.utilization))
+        .map(|tier| {
+            (
+                tier.name.as_str(),
+                tier.utilization,
+                tier.resets_at.as_deref(),
+            )
+        })
         .collect();
-    let parts = labeled_tier_parts(&entries);
+    let parts = labeled_tier_parts(&entries, now_ms);
 
     if parts.is_empty() {
         return None;
@@ -222,32 +393,35 @@ fn format_subscription_summary(
     // 色标取所有已选 tier 里最高的利用率——用户更关心"离上限多近"。
     let worst = parts
         .iter()
-        .map(|(_, u)| *u)
+        .map(|p| p.used_percent)
         .fold(f64::NEG_INFINITY, f64::max);
     if !worst.is_finite() {
         return None;
     }
 
     let emoji = emoji_for_utilization(worst);
-    let body = parts
-        .iter()
-        .map(|(label, u)| format!("{label}{}%", u.round() as i64))
-        .collect::<Vec<_>>()
-        .join(" ");
-    Some(format!("{emoji} {body}"))
+    Some(format!("{} {}", emoji, format_tier_summary_body(&parts)))
 }
 
-fn labeled_tier_parts(entries: &[(&str, f64)]) -> Vec<(&'static str, f64)> {
+fn labeled_tier_parts(entries: &[(&str, f64, Option<&str>)], now_ms: i64) -> Vec<TierSummaryPart> {
     let mut parts = Vec::new();
     for &(label, tier_names) in TIER_LABEL_GROUPS {
-        let max_utilization = entries
+        // 同组取最高用量；时间%取该胜出条目的 resets_at（同窗时长下应接近）。
+        let best = entries
             .iter()
-            .filter(|(name, _)| tier_names.contains(name))
-            .map(|(_, utilization)| *utilization)
-            .filter(|utilization| utilization.is_finite())
-            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        if let Some(utilization) = max_utilization {
-            parts.push((label, utilization));
+            .filter(|(name, _, _)| tier_names.contains(name))
+            .filter(|(_, utilization, _)| utilization.is_finite())
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        if let Some((name, utilization, resets_at)) = best {
+            let elapsed = resets_at.and_then(|reset| {
+                tier_window_seconds(name)
+                    .and_then(|secs| elapsed_percent_from_reset(secs, reset, now_ms))
+            });
+            parts.push(TierSummaryPart {
+                label,
+                used_percent: *utilization,
+                elapsed_percent: elapsed,
+            });
         }
     }
     parts
@@ -261,6 +435,10 @@ fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
 }
 
 fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
+    format_script_summary_at(result, now_millis())
+}
+
+fn format_script_summary_at(result: &crate::provider::UsageResult, now_ms: i64) -> Option<String> {
     if !result.success {
         return None;
     }
@@ -271,25 +449,26 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
 
     // commands::provider 的 token_plan / official_subscription 分支都会把
     // SubscriptionQuota 的每个 tier 扁平化为一条 UsageData（plan_name 承载
-    // tier 名），所以这里按 plan_name 恢复托盘短标签。其余 usage 结果
-    //（Copilot / balance / 自定义脚本）走 fallback。
-    let entries: Vec<(&str, f64)> = data
+    // tier 名；extra 常为 resets_at 或含 resetsAt 的 JSON），所以这里按
+    // plan_name 恢复托盘短标签。其余 usage 结果（Copilot / balance / 自定义
+    // 脚本）走 fallback。
+    let owned_resets: Vec<Option<String>> = data
         .iter()
-        .filter_map(|d| Some((d.plan_name.as_deref()?, tier_pct(d)?)))
+        .map(|d| extract_resets_at_from_usage_extra(d.extra.as_deref()))
         .collect();
-    let parts = labeled_tier_parts(&entries);
+    let entries: Vec<(&str, f64, Option<&str>)> = data
+        .iter()
+        .zip(owned_resets.iter())
+        .filter_map(|(d, reset)| Some((d.plan_name.as_deref()?, tier_pct(d)?, reset.as_deref())))
+        .collect();
+    let parts = labeled_tier_parts(&entries, now_ms);
     if !parts.is_empty() {
         let worst = parts
             .iter()
-            .map(|(_, u)| *u)
+            .map(|p| p.used_percent)
             .fold(f64::NEG_INFINITY, f64::max);
         let emoji = emoji_for_utilization(worst);
-        let body = parts
-            .iter()
-            .map(|(label, u)| format!("{label}{}%", u.round() as i64))
-            .collect::<Vec<_>>()
-            .join(" ");
-        return Some(format!("{emoji} {body}"));
+        return Some(format!("{} {}", emoji, format_tier_summary_body(&parts)));
     }
 
     let first = data.first()?;
@@ -1177,8 +1356,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_script_summary, format_subscription_summary, provider_uses_official_subscription,
-        TRAY_ID, TRAY_SECTIONS,
+        elapsed_percent_from_reset, format_script_summary, format_script_summary_at,
+        format_subscription_summary, format_subscription_summary_at,
+        provider_uses_official_subscription, tier_window_seconds, TRAY_ID, TRAY_SECTIONS,
     };
     use crate::app_config::AppType;
     use crate::provider::{Provider, UsageData, UsageResult};
@@ -1304,10 +1484,14 @@ mod tests {
     }
 
     fn tier(name: &str, utilization: f64) -> QuotaTier {
+        tier_with_reset(name, utilization, None)
+    }
+
+    fn tier_with_reset(name: &str, utilization: f64, resets_at: Option<&str>) -> QuotaTier {
         QuotaTier {
             name: name.to_string(),
             utilization,
-            resets_at: None,
+            resets_at: resets_at.map(String::from),
             used_value_usd: None,
             max_value_usd: None,
         }
@@ -1440,9 +1624,17 @@ mod tests {
     }
 
     fn usage_data(plan_name: Option<&str>, utilization: f64) -> UsageData {
+        usage_data_with_extra(plan_name, utilization, None)
+    }
+
+    fn usage_data_with_extra(
+        plan_name: Option<&str>,
+        utilization: f64,
+        extra: Option<&str>,
+    ) -> UsageData {
         UsageData {
             plan_name: plan_name.map(String::from),
-            extra: None,
+            extra: extra.map(String::from),
             is_valid: Some(true),
             invalid_message: None,
             total: Some(100.0),
@@ -1618,5 +1810,177 @@ mod tests {
     fn script_summary_empty_data_returns_none() {
         let r = usage_result(true, vec![]);
         assert!(format_script_summary(&r).is_none());
+    }
+
+    #[test]
+    fn tier_window_seconds_maps_known_and_dynamic_names() {
+        assert_eq!(tier_window_seconds(TIER_FIVE_HOUR), Some(5 * 3600));
+        assert_eq!(tier_window_seconds(TIER_SEVEN_DAY), Some(7 * 24 * 3600));
+        assert_eq!(tier_window_seconds(TIER_THIRTY_DAY), Some(30 * 24 * 3600));
+        assert_eq!(tier_window_seconds("2_hour"), Some(2 * 3600));
+        assert_eq!(tier_window_seconds("3_day"), Some(3 * 24 * 3600));
+        assert_eq!(tier_window_seconds(TIER_GEMINI_PRO), None);
+    }
+
+    #[test]
+    fn elapsed_percent_is_window_elapsed_ratio() {
+        // 5h 窗口，还剩 1h → 已流逝 80%
+        let now = 1_700_000_000_000_i64;
+        let resets = chrono::DateTime::from_timestamp_millis(now + 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        let elapsed = elapsed_percent_from_reset(5 * 3600, &resets, now).unwrap();
+        assert!((elapsed - 80.0).abs() < 0.01, "elapsed={elapsed}");
+    }
+
+    #[test]
+    fn elapsed_percent_parses_offset_free_reset_as_utc() {
+        // 12:00Z 起算的 5h 窗口，此刻 13:00Z，重置写成无时区的 16:00 → 已流逝 40%。
+        // 前端 `parseResetsAtMs` 与此保持一致，两处显示才不会差一个时区。
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-12T13:00:00Z")
+            .unwrap()
+            .timestamp_millis();
+        for reset in ["2026-08-12T16:00:00", "2026-08-12 16:00:00"] {
+            let elapsed = elapsed_percent_from_reset(5 * 3600, reset, now).unwrap();
+            assert!(
+                (elapsed - 40.0).abs() < 0.01,
+                "reset={reset} elapsed={elapsed}"
+            );
+        }
+    }
+
+    #[test]
+    fn elapsed_percent_omits_when_reset_exceeds_assumed_window() {
+        // Grok 的 tier 名是启发式：4–12 天后重置都叫 weekly_limit。
+        // 10 天后重置搭 7 天窗口算不出有意义的时间%，应返回 None 而非 clamp 到 0。
+        let now = 1_700_000_000_000_i64;
+        let ten_days = chrono::DateTime::from_timestamp_millis(now + 10 * 24 * 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        assert_eq!(
+            elapsed_percent_from_reset(7 * 24 * 3600, &ten_days, now),
+            None
+        );
+        // 刚重置（剩余 ≈ 窗口长）落在容差内，仍算 0%
+        let just_reset = chrono::DateTime::from_timestamp_millis(now + 7 * 24 * 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        let elapsed = elapsed_percent_from_reset(7 * 24 * 3600, &just_reset, now).unwrap();
+        assert!(elapsed.abs() < 0.01, "elapsed={elapsed}");
+    }
+
+    #[test]
+    fn subscription_summary_appends_time_percent_when_reset_known() {
+        // five_hour: 用量 9%，时间已过 40%（还剩 3h）
+        // seven_day: 用量 27%，时间已过 50%（还剩 3.5d）
+        let now = 1_700_000_000_000_i64;
+        let h_reset = chrono::DateTime::from_timestamp_millis(now + 3 * 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        let w_reset =
+            chrono::DateTime::from_timestamp_millis(now + 3 * 24 * 3600 * 1000 + 12 * 3600 * 1000)
+                .unwrap()
+                .to_rfc3339();
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![
+                tier_with_reset(TIER_FIVE_HOUR, 9.0, Some(&h_reset)),
+                tier_with_reset(TIER_SEVEN_DAY, 27.0, Some(&w_reset)),
+            ],
+        );
+        let s = format_subscription_summary_at(&quota, now).expect("should format");
+        assert!(s.contains("h9%-40%"), "expected h9%-40% in {s}");
+        assert!(s.contains("w27%-50%"), "expected w27%-50% in {s}");
+    }
+
+    #[test]
+    fn subscription_summary_bolds_used_when_over_pace() {
+        // 用量 80% > 时间 20% → 用量数字用数学粗体
+        let now = 1_700_000_000_000_i64;
+        // 5h 窗口还剩 4h → 已流逝 20%
+        let h_reset = chrono::DateTime::from_timestamp_millis(now + 4 * 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier_with_reset(TIER_FIVE_HOUR, 80.0, Some(&h_reset))],
+        );
+        let s = format_subscription_summary_at(&quota, now).expect("should format");
+        let bold_80: String = ['8', '0']
+            .into_iter()
+            .map(|c| char::from_u32(0x1D7CE + (c as u32 - '0' as u32)).unwrap())
+            .collect();
+        assert!(
+            s.contains(&format!("h{bold_80}%")),
+            "expected bold used digits h{bold_80}%-20% in {s}"
+        );
+        assert!(s.contains("-20%"), "expected time% in {s}");
+
+        // 未超进度：用量 10% < 时间 20% → 保持 ASCII
+        let under = make_quota(
+            "claude",
+            true,
+            vec![tier_with_reset(TIER_FIVE_HOUR, 10.0, Some(&h_reset))],
+        );
+        let s2 = format_subscription_summary_at(&under, now).expect("should format");
+        assert!(
+            s2.contains("h10%-20%"),
+            "under-pace should stay plain ASCII: {s2}"
+        );
+    }
+
+    #[test]
+    fn subscription_summary_omits_time_percent_without_reset() {
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier(TIER_FIVE_HOUR, 9.0), tier(TIER_SEVEN_DAY, 27.0)],
+        );
+        let s = format_subscription_summary(&quota).expect("should format");
+        assert!(s.contains("h9%"), "expected h9% in {s}");
+        assert!(s.contains("w27%"), "expected w27% in {s}");
+        assert!(
+            !s.contains("h9%-"),
+            "must not invent time% without reset: {s}"
+        );
+    }
+
+    #[test]
+    fn script_summary_reads_resets_at_from_plain_extra() {
+        let now = 1_700_000_000_000_i64;
+        let h_reset = chrono::DateTime::from_timestamp_millis(now + 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        let r = usage_result(
+            true,
+            vec![usage_data_with_extra(
+                Some(TIER_FIVE_HOUR),
+                12.0,
+                Some(&h_reset),
+            )],
+        );
+        let s = format_script_summary_at(&r, now).expect("should format");
+        assert!(s.contains("h12%-80%"), "expected h12%-80% in {s}");
+    }
+
+    #[test]
+    fn script_summary_reads_resets_at_from_json_extra() {
+        let now = 1_700_000_000_000_i64;
+        let h_reset = chrono::DateTime::from_timestamp_millis(now + 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        let extra = format!(r#"{{"resetsAt":"{h_reset}","usedValueUsd":1.0}}"#);
+        let r = usage_result(
+            true,
+            vec![usage_data_with_extra(
+                Some(TIER_FIVE_HOUR),
+                12.0,
+                Some(&extra),
+            )],
+        );
+        let s = format_script_summary_at(&r, now).expect("should format");
+        assert!(s.contains("h12%-80%"), "expected h12%-80% in {s}");
     }
 }
