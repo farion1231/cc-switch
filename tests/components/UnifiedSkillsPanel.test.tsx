@@ -888,6 +888,18 @@ describe("UnifiedSkillsPanel", () => {
     });
   });
 
+  it("keeps the undo button unreachable until something is toggled", () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    renderPanel();
+
+    expect(
+      screen.getByRole("button", { name: "skills.undo", hidden: true }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "skills.undo" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("undoes a single row toggle from the undo button", async () => {
     installedSkillsMock = [makeInstalledSkill({ id: "alpha-id" })];
     renderPanel();

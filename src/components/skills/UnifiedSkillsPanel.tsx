@@ -762,6 +762,7 @@ const UnifiedSkillsPanel = React.forwardRef<
             maxWidth: canUndo ? "160px" : "0px",
             opacity: canUndo ? 1 : 0,
           }}
+          aria-hidden={!canUndo}
         >
           <Button
             type="button"
@@ -769,7 +770,8 @@ const UnifiedSkillsPanel = React.forwardRef<
             size="sm"
             className="h-7 gap-1 whitespace-nowrap text-xs disabled:opacity-100"
             onClick={handleUndoLast}
-            disabled={interactionBlocked}
+            // 收起时仅是视觉隐藏，必须禁用才不会留下看不见的焦点目标
+            disabled={interactionBlocked || !canUndo}
             title={t("skills.undoHint")}
           >
             <Undo2 size={12} />
