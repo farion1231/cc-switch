@@ -777,6 +777,8 @@
     "browsePlaceholderApp": "e.g., C:\\Users\\Administrator\\.cc-switch",
     "claudeConfigDir": "Claude Code Configuration Directory",
     "claudeConfigDirDescription": "Override Claude configuration directory (settings.json). Custom directories store .claude.json (MCP) inside the directory; the default ~/.claude directory keeps Claude Code's split ~/.claude.json path.",
+    "codefreeConfigDir": "CodeFree Configuration Directory",
+    "codefreeConfigDirDescription": "Override CodeFree configuration directory.",
     "codexConfigDir": "Codex Configuration Directory",
     "codexConfigDirDescription": "Override Codex configuration directory.",
     "geminiConfigDir": "Gemini Configuration Directory",
@@ -798,6 +800,7 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderCodefree": "e.g., C:\\\\Users\\\\<your-username>\\\\.codefree-o",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
@@ -904,6 +907,7 @@
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
+    "codefree": "CodeFree",
     "codex": "Codex",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
@@ -1070,7 +1074,7 @@
   },
   "sessionManager": {
     "title": "Session Manager",
-    "subtitle": "Manage Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and Pi sessions",
+    "subtitle": "Manage Claude Code, CodeFree, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and Pi sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
@@ -1712,6 +1716,7 @@
     "appFilter": {
       "all": "All",
       "claude": "Claude Code",
+      "codefree": "CodeFree",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
@@ -2008,6 +2013,7 @@
       "noSearchResults": "No MCP servers match your search",
       "apps": {
         "claude": "Claude",
+        "codefree": "CodeFree",
         "codex": "Codex",
         "gemini": "Gemini",
         "grokbuild": "Grok Build",
@@ -2624,6 +2630,7 @@
     },
     "apps": {
       "claude": "Claude",
+      "codefree": "CodeFree",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
