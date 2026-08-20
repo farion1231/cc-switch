@@ -2420,7 +2420,7 @@ mod tests {
         let manager = CodexOAuthManager::new(temp.path().to_path_buf());
 
         // 两个属于同一 Team 工作区（相同 chatgpt_account_id）但不同邮箱的账号
-        let team_workspace_id = "e7a7bd67-d460-48dd-b066-0a550abd3778";
+        let team_workspace_id = "11111111-1111-4111-8111-111111111111";
         let acct_1 = format!("user1@example.com::{team_workspace_id}");
         let acct_2 = format!("user2@example.com::{team_workspace_id}");
 
@@ -2454,10 +2454,10 @@ mod tests {
         assert_eq!(accounts.len(), 2, "两个同 Team 账号必须独立并存");
         assert!(accounts
             .iter()
-            .any(|a| a.id == acct_1 && a.login == "user1@example.com (e7a7bd67)"));
+            .any(|a| a.id == acct_1 && a.login == "user1@example.com (11111111)"));
         assert!(accounts
             .iter()
-            .any(|a| a.id == acct_2 && a.login == "user2@example.com (e7a7bd67)"));
+            .any(|a| a.id == acct_2 && a.login == "user2@example.com (11111111)"));
 
         assert_eq!(
             manager
@@ -2481,8 +2481,8 @@ mod tests {
         let manager = CodexOAuthManager::new(temp.path().to_path_buf());
 
         // 同一个邮箱加入两个不同的 Team 以及一个 Personal 空间
-        let team_1 = "e7a7bd67-d460-48dd-b066-0a550abd3778";
-        let team_2 = "9b32f10a-81c2-48dd-b066-0a550abd9999";
+        let team_1 = "11111111-1111-4111-8111-111111111111";
+        let team_2 = "22222222-2222-4222-8222-222222222222";
         let acct_team_1 = format!("user@example.com::{team_1}");
         let acct_team_2 = format!("user@example.com::{team_2}");
         let acct_personal = "user@example.com".to_string();
@@ -2534,10 +2534,10 @@ mod tests {
         );
         assert!(accounts
             .iter()
-            .any(|a| a.id == acct_team_1 && a.login == "user@example.com (e7a7bd67)"));
+            .any(|a| a.id == acct_team_1 && a.login == "user@example.com (11111111)"));
         assert!(accounts
             .iter()
-            .any(|a| a.id == acct_team_2 && a.login == "user@example.com (9b32f10a)"));
+            .any(|a| a.id == acct_team_2 && a.login == "user@example.com (22222222)"));
         assert!(accounts
             .iter()
             .any(|a| a.id == acct_personal && a.login == "user@example.com"));
