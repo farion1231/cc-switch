@@ -34,8 +34,6 @@ export interface UniversalProviderPreset {
   description?: string;
   /** 是否为自定义模板（允许用户完全自定义） */
   isCustomTemplate?: boolean;
-  /** 是否隐藏（不显示在预设选择器中，仅代码内部使用） */
-  hidden?: boolean;
 }
 
 /**
@@ -64,7 +62,6 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
   {
     name: "聚合代理",
     providerType: "cc_switch",
-    hidden: true,
     defaultApps: {
       claude: true,
       codex: true,

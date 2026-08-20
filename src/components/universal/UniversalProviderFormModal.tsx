@@ -96,11 +96,9 @@ export function UniversalProviderFormModal({
       );
       setSelectedPreset(preset || null);
     } else {
-      // 新建模式：使用传入的预设或默认选择第一个可见预设
+      // 新建模式：使用传入的预设或默认选择第一个预设
       const defaultPreset =
-        initialPreset ||
-        universalProviderPresets.find((p) => !p.hidden) ||
-        universalProviderPresets[0];
+        initialPreset || universalProviderPresets[0];
       setSelectedPreset(defaultPreset);
       setName(defaultPreset.name);
       setBaseUrl(
@@ -436,9 +434,7 @@ requires_openai_auth = true`;
               })}
             </Label>
             <div className="flex flex-wrap gap-2">
-              {universalProviderPresets
-                .filter((preset) => !preset.hidden)
-                .map((preset) => (
+              {universalProviderPresets.map((preset) => (
                   <button
                     key={preset.providerType}
                     type="button"
