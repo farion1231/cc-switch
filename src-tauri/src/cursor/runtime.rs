@@ -671,21 +671,18 @@ mod tests {
     use std::rc::Rc;
 
     use super::apply_config_change;
-    use crate::cursor::types::{SidecarConfig, SidecarHomeMetricsConfig, SidecarRoutingConfig};
+    use crate::cursor::types::{SidecarConfig, SidecarHomeMetricsConfig};
     use crate::error::AppError;
 
-    fn config(mode: &str) -> SidecarConfig {
+    fn config(last_agent_model_hash: &str) -> SidecarConfig {
         SidecarConfig {
             log: false,
             provider_stream_idle_timeout: 240,
             backend_listen_addr: "127.0.0.1:18090".to_string(),
             proxy_listen_addr: "127.0.0.1:18080".to_string(),
             model_adapters: Vec::new(),
-            routing: SidecarRoutingConfig {
-                mode: mode.to_string(),
-            },
             home_metrics: SidecarHomeMetricsConfig::default(),
-            last_agent_model_hash: String::new(),
+            last_agent_model_hash: last_agent_model_hash.to_string(),
         }
     }
 
@@ -703,7 +700,7 @@ mod tests {
             {
                 let writes = Rc::clone(&writes);
                 move |config| {
-                    writes.borrow_mut().push(config.routing.mode);
+                    writes.borrow_mut().push(config.last_agent_model_hash);
                     std::future::ready(Ok(()))
                 }
             },
@@ -733,7 +730,7 @@ mod tests {
                 move |config| {
                     events
                         .borrow_mut()
-                        .push(format!("sidecar:{}", config.routing.mode));
+                        .push(format!("sidecar:{}", config.last_agent_model_hash));
                     std::future::ready(Ok(()))
                 }
             },
@@ -772,7 +769,7 @@ mod tests {
             {
                 let writes = Rc::clone(&writes);
                 move |config| {
-                    writes.borrow_mut().push(config.routing.mode);
+                    writes.borrow_mut().push(config.last_agent_model_hash);
                     std::future::ready(Ok(()))
                 }
             },

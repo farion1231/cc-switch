@@ -140,15 +140,8 @@ pub struct SidecarConfig {
     pub backend_listen_addr: String,
     pub proxy_listen_addr: String,
     pub model_adapters: Vec<SidecarModelAdapter>,
-    pub routing: SidecarRoutingConfig,
     pub home_metrics: SidecarHomeMetricsConfig,
     pub last_agent_model_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SidecarRoutingConfig {
-    pub mode: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -284,7 +277,10 @@ fn default_cursor_usage_event_kind() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CursorModelConfig, CursorUsageEvent, SidecarModelAdapter, SidecarRuntimeState};
+    use super::{
+        CursorModelConfig, CursorUsageEvent, SidecarConfig, SidecarHomeMetricsConfig,
+        SidecarModelAdapter, SidecarRuntimeState,
+    };
 
     #[test]
     fn cursor_usage_event_defaults_legacy_kind_to_provider_call() {
@@ -382,6 +378,24 @@ mod tests {
         assert!(adapter.source_provider_name.is_empty());
         assert!(adapter.pricing_model.is_empty());
         assert!(adapter.anthropic_thinking_effort.is_empty());
+    }
+
+    #[test]
+    fn sidecar_config_omits_removed_routing_field() {
+        let config = SidecarConfig {
+            log: true,
+            provider_stream_idle_timeout: 240,
+            backend_listen_addr: "127.0.0.1:18090".to_string(),
+            proxy_listen_addr: "127.0.0.1:18080".to_string(),
+            model_adapters: Vec::new(),
+            home_metrics: SidecarHomeMetricsConfig::default(),
+            last_agent_model_hash: String::new(),
+        };
+
+        let value = serde_json::to_value(config).expect("serialize sidecar config");
+        assert!(value.get("routing").is_none());
+        assert!(value.get("modelAdapters").is_some());
+        assert!(value.get("homeMetrics").is_some());
     }
 
     #[test]

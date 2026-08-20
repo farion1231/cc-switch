@@ -1,6 +1,5 @@
 use crate::cursor::types::{
     CursorModelConfig, SidecarConfig, SidecarHomeMetricsConfig, SidecarModelAdapter,
-    SidecarRoutingConfig,
 };
 use crate::database::Database;
 use crate::error::AppError;
@@ -95,9 +94,6 @@ pub fn project_enabled_provider_map(
         backend_listen_addr: "127.0.0.1:18090".to_string(),
         proxy_listen_addr: "127.0.0.1:18080".to_string(),
         model_adapters: adapters,
-        routing: SidecarRoutingConfig {
-            mode: "local".to_string(),
-        },
         home_metrics: SidecarHomeMetricsConfig::default(),
         last_agent_model_hash: String::new(),
     })
