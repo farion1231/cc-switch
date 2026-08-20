@@ -291,8 +291,13 @@ pub(crate) fn identity_owns_account_id(
     account_id: &str,
 ) -> bool {
     match split_composite_account_id(account_id) {
+        // 工作区先认 claims，claims 没有时回落到 `tokens.account_id`：轮换出的 token
+        // 可能保留个人 claim 却不再带工作区 claim，而写盘时 `synced_chatgpt_account_id()`
+        // 会保留已存的工作区。只比 claims 会让账号认不回自己的 auth.json。回落不会让同
+        // 工作区的两个成员互认——个人身份那一半仍然要命中。
         Some((user, workspace)) => {
-            identity.matches_user(user) && claims_workspace_id == Some(workspace)
+            identity.matches_user(user)
+                && claims_workspace_id.or(tokens_account_id) == Some(workspace)
         }
         // 裸 key 有两种：升级前存下的工作区 ID，以及没有工作区 claim 的个人账号。
         // 字符串本身分不出来，两种都要试。

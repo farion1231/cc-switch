@@ -3667,6 +3667,27 @@ base_url = "https://single.example.com/v1"
     }
 
     #[test]
+    fn live_auth_ownership_survives_a_token_that_drops_the_workspace_claim() {
+        // 轮换出的 token 保留个人 claim 但不再带工作区 claim 时，
+        // `synced_chatgpt_account_id()` 会保留已存的工作区并写进 `tokens.account_id`。
+        // 归属判定必须认同一份 auth.json，否则 CLI 轮换采纳、同步与托管清理全部失效。
+        let rotated = chatgpt_bundle(
+            json!({ "email": "user@example.com" }),
+            "team-ws",
+            "2026-01-02T03:04:05.000000000Z",
+        );
+
+        assert!(codex_live_auth_is_managed_chatgpt_login(
+            &rotated,
+            "user@example.com::team-ws"
+        ));
+        assert!(
+            !codex_live_auth_is_managed_chatgpt_login(&rotated, "other@example.com::team-ws"),
+            "the personal claim still has to discriminate members of one workspace"
+        );
+    }
+
+    #[test]
     fn marker_matches_across_key_shapes_but_not_across_people() {
         // marker 一律由 claims 推导（复合键），而升级前存下的账号 key 仍是裸工作区 ID。
         // 这一跨形状必须判定为同一次登录，否则 marker 既刷不新也清不掉。
