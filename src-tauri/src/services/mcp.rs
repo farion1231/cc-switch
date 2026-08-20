@@ -46,9 +46,6 @@ impl McpService {
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
-        if prev_apps.codefree && !server.apps.codefree {
-            Self::remove_server_from_app(state, &server.id, &AppType::Codefree)?;
-        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -78,15 +75,13 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
-        let mut servers = state.db.get_all_mcp_servers()?;
-
-        if let Some(server) = servers.get_mut(server_id) {
-            server.apps.set_enabled_for(&app, enabled);
-            state.db.save_mcp_server(server)?;
-
+        if let Some(server) = state
+            .db
+            .update_mcp_server_app_enabled(server_id, &app, enabled)?
+        {
             // 同步到对应应用
             if enabled {
-                Self::sync_server_to_app(state, server, &app)?;
+                Self::sync_server_to_app(state, &server, &app)?;
             } else {
                 Self::remove_server_from_app(state, server_id, &app)?;
             }
@@ -157,6 +152,7 @@ impl McpService {
                     &server.server,
                 )?;
             }
+            AppType::Pi => {}
         }
         Ok(())
     }
@@ -196,6 +192,7 @@ impl McpService {
             AppType::Codefree => {
                 mcp::remove_server_from_codefree(id)?;
             }
+            AppType::Pi => {}
         }
         Ok(())
     }
@@ -240,7 +237,10 @@ impl McpService {
         servers: &IndexMap<String, McpServer>,
         app: &AppType,
     ) -> Result<(), AppError> {
-        if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
+        if matches!(
+            app,
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Pi
+        ) {
             return Ok(());
         }
 
@@ -512,36 +512,6 @@ impl McpService {
 
                     // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
                     // 显式编辑、启用/禁用或手动同步时再执行写回。
-                }
-            }
-        }
-
-        Ok(new_count)
-    }
-
-    /// 从 CodeFree 导入 MCP
-    pub fn import_from_codefree(state: &AppState) -> Result<usize, AppError> {
-        let mut temp_config = crate::app_config::MultiAppConfig::default();
-
-        let count = crate::mcp::import_from_codefree(&mut temp_config)?;
-
-        let mut new_count = 0;
-
-        if count > 0 {
-            if let Some(servers) = &temp_config.mcp.servers {
-                let mut existing = state.db.get_all_mcp_servers()?;
-                for server in servers.values() {
-                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
-                        let mut merged = existing_server.clone();
-                        merged.apps.codefree = true;
-                        merged
-                    } else {
-                        new_count += 1;
-                        server.clone()
-                    };
-
-                    state.db.save_mcp_server(&to_save)?;
-                    existing.insert(to_save.id.clone(), to_save.clone());
                 }
             }
         }

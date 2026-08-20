@@ -121,6 +121,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
   const [configError, setConfigError] = useState("");
   const [saving, setSaving] = useState(false);
+  const savingRef = React.useRef(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [idError, setIdError] = useState("");
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -291,6 +292,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   };
 
   const handleSubmit = async () => {
+    if (savingRef.current) return;
+
     const trimmedId = formId.trim();
     if (!trimmedId) {
       toast.error(t("mcp.error.idRequired"), { duration: 3000 });
@@ -360,6 +363,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
     try {
       const nameTrimmed = (formName || trimmedId).trim();
@@ -413,6 +417,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       const msg = mapped || detail || t("mcp.error.saveFailed");
       toast.error(msg, { duration: mapped || detail ? 6000 : 4000 });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -426,7 +431,9 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       <FullScreenPanel
         isOpen={true}
         title={getFormTitle()}
-        onClose={onClose}
+        onClose={() => {
+          if (!savingRef.current) onClose();
+        }}
         footer={
           <Button
             type="button"

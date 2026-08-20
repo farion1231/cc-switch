@@ -74,6 +74,7 @@ pub fn write_codefree_config(config: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
     let config = read_codefree_config()?;
     Ok(config
@@ -81,6 +82,54 @@ pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
         .and_then(|v| v.as_object())
         .cloned()
         .unwrap_or_default())
+}
+
+/// 读取 CodeFree 配置中的所有供应商
+#[allow(dead_code)]
+pub fn get_providers() -> Result<Map<String, Value>, AppError> {
+    let config = read_codefree_config()?;
+    Ok(config
+        .get("provider")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default())
+}
+
+/// 写入/更新 CodeFree 配置中的单个供应商
+///
+/// CodeFree 采用 Additive 模式，供应商共存于 `codefree.json` 的 `provider` 段。
+pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+    let mut full_config = read_codefree_config()?;
+
+    if !full_config.get("provider").is_some_and(Value::is_object) {
+        if full_config.get("provider").is_some() {
+            log::warn!("codefree.json 的 provider 不是对象，已重置为空对象");
+        }
+        full_config["provider"] = json!({});
+    }
+
+    if let Some(providers) = full_config
+        .get_mut("provider")
+        .and_then(|v| v.as_object_mut())
+    {
+        providers.insert(id.to_string(), config);
+    }
+
+    write_codefree_config(&full_config)
+}
+
+/// 从 CodeFree 配置中移除指定供应商
+#[allow(dead_code)]
+pub fn remove_provider(id: &str) -> Result<(), AppError> {
+    let mut config = read_codefree_config()?;
+
+    if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
+        providers.remove(id);
+    } else if config.get("provider").is_some() {
+        log::warn!("codefree.json 的 provider 不是对象，无法删除供应商 '{id}'");
+    }
+
+    write_codefree_config(&config)
 }
 
 pub fn set_mcp_server(id: &str, spec: Value) -> Result<(), AppError> {

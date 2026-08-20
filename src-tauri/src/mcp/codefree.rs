@@ -38,6 +38,7 @@ pub fn remove_server_from_codefree(id: &str) -> Result<(), AppError> {
     codefree_config::remove_mcp_server(id)
 }
 
+#[allow(dead_code)]
 pub fn import_from_codefree(config: &mut MultiAppConfig) -> Result<usize, AppError> {
     let mcp_map = codefree_config::get_mcp_servers()?;
     if mcp_map.is_empty() {

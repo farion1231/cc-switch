@@ -14,7 +14,8 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes"
-  | "codefree";
+  | "codefree"
+  | "pi";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -27,6 +28,7 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   codefree: string;
+  pi: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -42,6 +44,7 @@ const APP_DIRECTORY_META: Record<
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   codefree: { key: "codefree", defaultFolder: ".codefree-o" },
+  pi: { key: "pi", defaultFolder: ".pi/agent" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -56,6 +59,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   codefree: "codefreeConfigDir",
+  pi: "piConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -143,6 +147,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     codefree: "",
+    pi: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -156,6 +161,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     codefree: "",
+    pi: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
 
@@ -176,6 +182,7 @@ export function useDirectorySettings({
           openclawDir,
           hermesDir,
           codefreeDir,
+          piDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -185,6 +192,7 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultCodefreeDir,
+          defaultPiDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
@@ -195,6 +203,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
           settingsApi.getConfigDir("codefree"),
+          settingsApi.getConfigDir("pi"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -204,6 +213,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("codefree"),
+          computeDefaultConfigDir("pi"),
         ]);
 
         if (!active) return;
@@ -220,6 +230,7 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           codefree: defaultCodefreeDir ?? "",
+          pi: defaultPiDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -235,6 +246,7 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           codefree: codefreeDir || defaultsRef.current.codefree,
+          pi: piDir || defaultsRef.current.pi,
         });
       } catch (error) {
         console.error(
@@ -378,6 +390,7 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         codefree: overrides?.codefree ?? defaultsRef.current.codefree,
+        pi: overrides?.pi ?? defaultsRef.current.pi,
       });
     },
     [],

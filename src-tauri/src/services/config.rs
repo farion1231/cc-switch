@@ -139,7 +139,11 @@ impl ConfigService {
                 // Hermes uses additive mode, no live sync needed
             }
             AppType::Codefree => {
-                // Codefree uses additive mode, no live sync needed
+                // CodeFree uses additive mode, no live sync needed
+            }
+            AppType::Pi => {
+                // Pi owns its shared models/settings documents; this legacy
+                // single-provider live-sync path must not rewrite them.
             }
         }
 

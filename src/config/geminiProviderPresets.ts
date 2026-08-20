@@ -68,7 +68,12 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "packycode",
-    endpointCandidates: ["https://www.packyapi.ai"],
+    endpointCandidates: [
+      "https://www.packyapi.ai",
+      "https://cf.api.fan",
+      "https://slb-v1.api.fan",
+      "https://www.packyapi.com",
+    ],
     icon: "packycode",
   },
   {
@@ -112,24 +117,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.unity2.ai",
-        GEMINI_MODEL: "gemini-3.1-pro",
-      },
-    },
-    baseURL: "https://api.unity2.ai",
-    model: "gemini-3.1-pro",
-    description: "Unity2.ai",
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
-  },
-  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -167,6 +154,29 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://api.aigocode.app"],
     icon: "aigocode",
     iconColor: "#5B7FFF",
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://api.qnaigc.com/bypass/vertex",
+    model: "gemini-3.6-flash",
+    description: "Qiniu",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    endpointCandidates: [
+      "https://api.qnaigc.com/bypass/vertex",
+      "https://api.modelink.ai/bypass/vertex",
+    ],
+    icon: "qiniu",
   },
   {
     name: "AICoding",
@@ -234,16 +244,34 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://code0.ai",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-3.6-flash",
       },
     },
     baseURL: "https://code0.ai",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3.6-flash",
     description: "Code0",
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "code0",
     icon: "code0",
+  },
+  {
+    name: "A6API",
+    websiteUrl: "https://www.a6api.com",
+    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.a6api.com",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://api.a6api.com",
+    model: "gemini-3.6-flash",
+    description: "A6API",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "a6api",
+    icon: "a6api",
   },
   {
     name: "SSSAiCode",
@@ -335,29 +363,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
-      },
-    },
-    baseURL: "https://api.qnaigc.com/bypass/vertex",
-    model: "gemini-3.1-pro-preview",
-    description: "Qiniu",
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    endpointCandidates: [
-      "https://api.qnaigc.com/bypass/vertex",
-      "https://api.modelink.ai/bypass/vertex",
-    ],
-    icon: "qiniu",
-  },
-  {
     name: "SudoCode.us",
     websiteUrl: "https://sudocode.us",
     apiKeyUrl: "https://sudocode.us",
@@ -375,6 +380,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
     icon: "sudocode-us",
+  },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://apicdn.xycai.us",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://apicdn.xycai.us",
+    model: "gemini-3.6-flash",
+    description: "XycAi",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
+    icon: "xycai",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {

@@ -21,7 +21,7 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
-  codefreeDir?: string;
+  piDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -40,7 +40,7 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
-  codefreeDir,
+  piDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -175,14 +175,14 @@ export function DirectorySettings({
         />
 
         <DirectoryInput
-          label={t("settings.codefreeConfigDir")}
+          label={t("settings.piConfigDir")}
           description={undefined}
-          value={codefreeDir}
-          resolvedValue={resolvedDirs.codefree}
-          placeholder={t("settings.browsePlaceholderCodefree")}
-          onChange={(val) => onDirectoryChange("codefree", val)}
-          onBrowse={() => onBrowseDirectory("codefree")}
-          onReset={() => onResetDirectory("codefree")}
+          value={piDir}
+          resolvedValue={resolvedDirs.pi}
+          placeholder={t("settings.browsePlaceholderPi")}
+          onChange={(val) => onDirectoryChange("pi", val)}
+          onBrowse={() => onBrowseDirectory("pi")}
+          onReset={() => onResetDirectory("pi")}
         />
       </section>
     </div>

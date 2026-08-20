@@ -4,7 +4,7 @@ pub mod terminal;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use providers::{claude, codefree, codex, gemini, grokbuild, hermes, openclaw, opencode};
+use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode, pi};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +64,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         let h5 = s.spawn(gemini::scan_sessions);
         let h6 = s.spawn(hermes::scan_sessions);
         let h7 = s.spawn(grokbuild::scan_sessions);
-        let h8 = s.spawn(codefree::scan_sessions);
+        let h8 = s.spawn(pi::scan_sessions);
         (
             h1.join().unwrap_or_default(),
             h2.join().unwrap_or_default(),
@@ -104,9 +104,6 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
     if provider_id == "hermes" && source_path.starts_with("sqlite:") {
         return hermes::load_messages_sqlite(source_path);
     }
-    if provider_id == "codefree" && source_path.starts_with("sqlite:") {
-        return codefree::load_messages_sqlite(source_path);
-    }
 
     let path = Path::new(source_path);
     match provider_id {
@@ -117,6 +114,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "gemini" => gemini::load_messages(path),
         "grokbuild" => grokbuild::load_messages(path),
         "hermes" => hermes::load_messages(path),
+        "pi" => pi::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -129,9 +127,6 @@ pub fn delete_session(
     // SQLite sessions bypass the file-based deletion path
     if provider_id == "opencode" && source_path.starts_with("sqlite:") {
         return opencode::delete_session_sqlite(session_id, source_path);
-    }
-    if provider_id == "codefree" && source_path.starts_with("sqlite:") {
-        return codefree::delete_session_sqlite(session_id, source_path);
     }
     if provider_id == "hermes" && source_path.starts_with("sqlite:") {
         return hermes::delete_session_sqlite(session_id, source_path);
@@ -182,6 +177,7 @@ fn delete_session_with_roots(
                     grokbuild::delete_session(&validated_root, &validated_source, session_id)
                 }
                 "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
+                "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
                 _ => Err(format!("Unsupported provider: {provider_id}")),
             };
         }
@@ -212,7 +208,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
         "grokbuild" => grokbuild::session_roots(),
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
-        "codefree" => vec![crate::codefree_config::get_codefree_data_dir()],
+        "pi" => pi::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

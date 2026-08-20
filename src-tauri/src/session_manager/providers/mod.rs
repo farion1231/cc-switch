@@ -6,4 +6,5 @@ pub mod grokbuild;
 pub mod hermes;
 pub mod openclaw;
 pub mod opencode;
+pub mod pi;
 mod utils;

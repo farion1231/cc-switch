@@ -10,18 +10,11 @@ use crate::opencode_config::get_opencode_dir;
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
-    if matches!(app, AppType::ClaudeDesktop) {
+    if matches!(app, AppType::ClaudeDesktop | AppType::Codefree) {
         return Err(AppError::localized(
             "app.prompts_unsupported",
             "当前应用暂不支持 Prompts",
             "This app does not support Prompts",
-        ));
-    }
-    if matches!(app, AppType::Codefree) {
-        return Err(AppError::localized(
-            "codefree.prompts_unsupported",
-            "CodeFree 暂不支持 Prompts",
-            "CodeFree does not support Prompts",
         ));
     }
 
@@ -33,20 +26,18 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Codefree => unreachable!("handled above"),
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
+        AppType::ClaudeDesktop | AppType::Codefree => unreachable!("handled above"),
     };
 
     let filename = match app {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
-        AppType::GrokBuild
-        | AppType::OpenCode
-        | AppType::Codefree
-        | AppType::OpenClaw
-        | AppType::Hermes => "AGENTS.md",
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
+        AppType::Hermes => "SOUL.md",
+        AppType::Pi => "AGENTS.md",
+        AppType::ClaudeDesktop | AppType::Codefree => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))
@@ -67,4 +58,29 @@ fn get_base_dir_with_fallback(
                 format!("Cannot determine {fallback_dir} config directory: user home not found"),
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hermes_prompt_file_uses_soul_md() {
+        let path = prompt_file_path(&AppType::Hermes).expect("Hermes prompt path");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("SOUL.md")
+        );
+    }
+
+    #[test]
+    fn pi_prompt_file_uses_agents_md() {
+        let path = prompt_file_path(&AppType::Pi).expect("Pi prompt path");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("AGENTS.md")
+        );
+    }
 }
