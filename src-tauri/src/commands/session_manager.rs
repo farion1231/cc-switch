@@ -10,6 +10,20 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
     Ok(sessions)
 }
 
+/// Full-content search across session transcripts. `providerId` is `None` when
+/// the list is showing every provider.
+#[tauri::command]
+pub async fn search_sessions(
+    query: String,
+    providerId: Option<String>,
+) -> Result<Vec<session_manager::SessionSearchHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::search_sessions(&query, providerId.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Failed to search sessions: {e}"))
+}
+
 #[tauri::command]
 pub async fn get_session_messages(
     providerId: String,

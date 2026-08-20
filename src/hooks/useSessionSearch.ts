@@ -1,6 +1,7 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import FlexSearch from "flexsearch";
-import type { SessionMeta } from "@/types";
+import { sessionsApi } from "@/lib/api";
+import type { SessionMeta, SessionSearchSnippet } from "@/types";
 
 interface UseSessionSearchOptions {
   sessions: SessionMeta[];
@@ -69,4 +70,73 @@ export function useSessionSearch({
   );
 
   return { search };
+}
+
+const CONTENT_SEARCH_DEBOUNCE_MS = 300;
+const NO_SNIPPETS = new Map<string, SessionSearchSnippet[]>();
+
+interface ContentSearchState {
+  query: string;
+  providerFilter: string;
+  snippets: Map<string, SessionSearchSnippet[]>;
+}
+
+/**
+ * 后端会话正文搜索（元数据索引只覆盖标题/摘要/路径，搜不到对话中段的内容）
+ *
+ * 结果携带产生它的 query 与 providerFilter，只有两者都与当前值相符时才对外暴露；
+ * 因此一次慢的后台扫描返回时，不会把上一个关键词的命中泄漏到新的搜索结果里。
+ */
+export function useSessionContentSearch(query: string, providerFilter: string) {
+  const [state, setState] = useState<ContentSearchState | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const needle = query.trim();
+
+  useEffect(() => {
+    if (!needle) {
+      setState(null);
+      setIsSearching(false);
+      return;
+    }
+
+    let active = true;
+    setIsSearching(true);
+
+    const timer = setTimeout(() => {
+      sessionsApi
+        .search(needle, providerFilter === "all" ? undefined : providerFilter)
+        .then((hits) => {
+          if (!active) return;
+          setState({
+            query: needle,
+            providerFilter,
+            snippets: new Map(
+              hits.map((hit) => [hit.sourcePath, hit.snippets]),
+            ),
+          });
+        })
+        .catch(() => {
+          // 正文搜索只是元数据索引的增强，失败时退回到元数据结果即可
+          if (!active) return;
+          setState({ query: needle, providerFilter, snippets: NO_SNIPPETS });
+        })
+        .finally(() => {
+          if (active) setIsSearching(false);
+        });
+    }, CONTENT_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [needle, providerFilter]);
+
+  const snippetsBySource =
+    state !== null &&
+    state.query === needle &&
+    state.providerFilter === providerFilter
+      ? state.snippets
+      : NO_SNIPPETS;
+
+  return { snippetsBySource, isSearching };
 }

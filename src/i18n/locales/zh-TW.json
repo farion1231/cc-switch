@@ -1074,6 +1074,8 @@
     "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 與 Pi 工作階段紀錄",
     "searchPlaceholder": "搜尋對話內容、目錄或 ID",
     "searchSessions": "搜尋工作階段",
+    "searchingContent": "正在搜尋對話內容",
+    "jumpToMatch": "跳至相符位置",
     "providerFilterAll": "全部",
     "providerFilterTooltip": "供應商篩選",
     "sessionList": "工作階段清單",

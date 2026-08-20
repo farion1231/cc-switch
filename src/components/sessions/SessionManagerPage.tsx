@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSessionSearch } from "@/hooks/useSessionSearch";
+import {
+  useSessionContentSearch,
+  useSessionSearch,
+} from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
@@ -205,6 +208,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
     null,
   );
+  // 从搜索片段跳转时，消息要等选中会话加载完才能滚动
+  const [pendingMessageIndex, setPendingMessageIndex] = useState<number | null>(
+    null,
+  );
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [deleteTargets, setDeleteTargets] = useState<SessionMeta[] | null>(
@@ -239,15 +246,31 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     setProviderFilter(appId as ProviderFilter);
   }, [appId]);
 
-  // 使用 FlexSearch 全文搜索
+  // 元数据索引（标题/摘要/目录/ID），毫秒级
   const { search: searchSessions } = useSessionSearch({
     sessions,
     providerFilter,
   });
+  // 会话正文搜索，覆盖元数据索引搜不到的对话中段内容
+  const { snippetsBySource, isSearching } = useSessionContentSearch(
+    search,
+    providerFilter,
+  );
 
   const filteredSessions = useMemo(() => {
-    return searchSessions(search);
-  }, [searchSessions, search]);
+    const metaHits = searchSessions(search);
+    if (snippetsBySource.size === 0) return metaHits;
+
+    // 正文命中排在元数据命中之后：标题命中通常更贴近用户意图
+    const matched = new Set(metaHits.map((session) => session.sourcePath));
+    const contentHits = sessions.filter(
+      (session) =>
+        session.sourcePath &&
+        snippetsBySource.has(session.sourcePath) &&
+        !matched.has(session.sourcePath),
+    );
+    return [...metaHits, ...contentHits];
+  }, [searchSessions, search, sessions, snippetsBySource]);
 
   const groupedSessions = useMemo(
     () =>
@@ -402,6 +425,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     setTocDialogOpen(false);
     setTimeout(() => setActiveMessageIndex(null), 2000);
   };
+
+  const handleSnippetSelect = (session: SessionMeta, messageIndex: number) => {
+    setSelectedKey(getSessionKey(session));
+    setPendingMessageIndex(messageIndex);
+  };
+
+  // 目标会话的消息到位后再滚动
+  useEffect(() => {
+    if (pendingMessageIndex === null || messages.length === 0) return;
+    scrollToMessage(Math.min(pendingMessageIndex, messages.length - 1));
+    setPendingMessageIndex(null);
+  }, [pendingMessageIndex, messages]);
 
   const handleCopy = useCallback(
     async (text: string, successMessage: string) => {
@@ -703,10 +738,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         isSelected={isSelected}
         selectionMode={selectionMode}
         searchQuery={search}
+        snippets={
+          session.sourcePath
+            ? snippetsBySource.get(session.sourcePath)
+            : undefined
+        }
         isChecked={selectedSessionKeys.has(sessionKey)}
         isCheckDisabled={!session.sourcePath}
         onSelect={setSelectedKey}
         onToggleChecked={(checked) => toggleSessionChecked(session, checked)}
+        onSnippetSelect={handleSnippetSelect}
       />
     );
   };
@@ -846,7 +887,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                 {isSearchOpen ? (
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                      {isSearching ? (
+                        // 定位与旋转必须分层：animate-spin 会整体覆写 transform
+                        <span className="absolute left-2.5 top-1/2 flex -translate-y-1/2">
+                          <RefreshCw
+                            className="size-3.5 animate-spin text-muted-foreground"
+                            aria-label={t("sessionManager.searchingContent", {
+                              defaultValue: "正在搜索会话内容",
+                            })}
+                          />
+                        </span>
+                      ) : (
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                      )}
                       <Input
                         ref={searchInputRef}
                         value={search}

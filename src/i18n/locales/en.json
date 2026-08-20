@@ -1073,6 +1073,8 @@
     "subtitle": "Manage Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and Pi sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
+    "searchingContent": "Searching session content",
+    "jumpToMatch": "Jump to match",
     "providerFilterAll": "All",
     "providerFilterTooltip": "Provider filter",
     "sessionList": "Sessions",

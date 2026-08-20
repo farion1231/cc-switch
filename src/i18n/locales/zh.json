@@ -1073,6 +1073,8 @@
     "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 与 Pi 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
+    "searchingContent": "正在搜索会话内容",
+    "jumpToMatch": "跳转到匹配位置",
     "providerFilterAll": "全部",
     "providerFilterTooltip": "供应商筛选",
     "sessionList": "会话列表",

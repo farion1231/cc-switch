@@ -485,6 +485,19 @@ export interface SessionMessage {
   ts?: number;
 }
 
+export interface SessionSearchSnippet {
+  messageIndex: number;
+  role: string;
+  text: string;
+}
+
+export interface SessionSearchHit {
+  providerId: string;
+  sessionId: string;
+  sourcePath: string;
+  snippets: SessionSearchSnippet[];
+}
+
 // MCP 服务器连接参数（宽松：允许扩展字段）
 export interface McpServerSpec {
   // 可选：社区常见 .mcp.json 中 stdio 配置可不写 type
