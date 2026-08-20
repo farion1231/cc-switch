@@ -7208,7 +7208,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::DeepSeekHarness => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config
@@ -7226,6 +7226,30 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::DeepSeekHarness => {
+                let api_key = provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.deepseek_harness.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("baseURL")
+                    .or_else(|| provider.settings_config.get("baseUrl"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

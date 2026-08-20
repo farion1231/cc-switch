@@ -189,6 +189,9 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::DeepSeekHarness => {
+            crate::deepseek_harness_config::provider_exists_in_live_config()
+        }
         _ => Ok(false),
     }
 }
@@ -1694,7 +1697,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
     // import_xxx_providers_from_live functions, not this generic default config import
-    if app_type.is_additive_mode() {
+    if app_type.is_additive_mode() || matches!(app_type, AppType::DeepSeekHarness) {
         return Ok(false);
     }
 
@@ -1792,13 +1795,15 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
+        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above.
+        // DeepSeek Harness uses one exclusive route, but importing live settings needs its
+        // credentials file as well as settings.yaml, so it is not handled by this generic path.
         AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
         | AppType::DeepSeekHarness => {
-            unreachable!("additive mode apps are handled by early return")
+            unreachable!("unsupported apps are handled by early return")
         }
     };
 
@@ -1867,7 +1872,7 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() {
+    if app_type.is_additive_mode() || matches!(app_type, AppType::DeepSeekHarness) {
         return Ok(false);
     }
 
