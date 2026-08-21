@@ -24,6 +24,7 @@ describe("ProviderForm Codex catalog helpers", () => {
           model: "MiniMax-M3",
           displayName: "MiniMax-M3",
           contextWindow: 1000000,
+          useResponsesLite: true,
           supportsParallelToolCalls: true,
           inputModalities: ["text", "image"],
           baseInstructions:
@@ -33,6 +34,7 @@ describe("ProviderForm Codex catalog helpers", () => {
         // empty/whitespace baseInstructions dropped
         {
           model: "mimo-v2.5-pro",
+          useResponsesLite: false,
           supportsParallelToolCalls: false,
           inputModalities: [],
           baseInstructions: "   ",
@@ -43,11 +45,16 @@ describe("ProviderForm Codex catalog helpers", () => {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
         contextWindow: 1000000,
+        useResponsesLite: true,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         baseInstructions: "You are Codex, a coding agent based on MiniMax-M3.",
       },
-      { model: "mimo-v2.5-pro", supportsParallelToolCalls: false },
+      {
+        model: "mimo-v2.5-pro",
+        useResponsesLite: false,
+        supportsParallelToolCalls: false,
+      },
     ]);
   });
 

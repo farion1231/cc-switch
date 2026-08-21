@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::config::{
     atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
@@ -21,6 +22,9 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// cleaned up without mistaking a user's own local provider for takeover.
 pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+const CC_SWITCH_CODEX_CATALOG_METADATA_KEY: &str = "cc_switch";
+const CC_SWITCH_CODEX_CATALOG_METADATA_VERSION: u64 = 1;
+const CC_SWITCH_CODEX_LITE_OVERRIDES_KEY: &str = "use_responses_lite_overrides";
 const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 #[cfg(target_os = "windows")]
@@ -303,6 +307,8 @@ impl CodexLiveStateSnapshot {
 /// - `ProxyChat`: cc-switch's proxy takes over and converts Responses<->Chat,
 ///   so the catalog keeps Codex's default tool set (incl. the freeform
 ///   `apply_patch` custom tool, which the proxy rewrites to a function tool).
+///   Responses Lite stays disabled because that transport omits the tool array
+///   before the proxy can perform the conversion.
 /// - `NativeResponses`: Codex talks directly to a provider's native
 ///   `/responses` endpoint (no proxy). Such gateways (e.g. Xiaomi MiMo,
 ///   MiniMax) reject `type=="custom"` tools, so the catalog must suppress the
@@ -1097,6 +1103,34 @@ fn codex_catalog_input_modalities(
     modalities.iter().map(|item| (*item).to_string()).collect()
 }
 
+/// Match an upstream model id to a Codex-official model capability entry.
+/// Relays commonly prefix the real model with a vendor (`relay/gpt-5.6-sol`),
+/// so capability matching uses the final path segment while the generated slug
+/// keeps the original request model verbatim.
+fn codex_official_model_capability_overlay(model: &str) -> Option<Value> {
+    let model = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .trim()
+        .to_ascii_lowercase();
+    static REGISTRY: OnceLock<Value> = OnceLock::new();
+    let registry = REGISTRY.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "resources/codex_official_model_capabilities.json"
+        ))
+        .expect("bundled Codex official model capability registry must be valid JSON")
+    });
+    registry.get("models")?.get(&model).cloned()
+}
+
+fn apply_codex_model_capability_overlay(entry: &mut serde_json::Map<String, Value>, model: &str) {
+    let Some(Value::Object(overlay)) = codex_official_model_capability_overlay(model) else {
+        return;
+    };
+    entry.extend(overlay);
+}
+
 /// Canonical reasoning effort levels Codex understands, with the same
 /// descriptions the official gpt-5.5 template uses. `none` disables thinking.
 const CODEX_REASONING_LEVEL_DESCRIPTIONS: &[(&str, &str)] = &[
@@ -1193,6 +1227,12 @@ fn codex_catalog_model_entry(
         return json!({});
     };
 
+    // Start from the exact capability profile for models Codex already knows.
+    // This prevents a gpt-5.5 template from flattening GPT-5.6 reasoning levels
+    // and preserves `use_responses_lite=true` when the native Responses profile
+    // can actually use that transport. Conversion profiles disable it below.
+    apply_codex_model_capability_overlay(entry_obj, &spec.model);
+
     let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
     let context_window = spec.context_window.unwrap_or(default_context_window);
     entry_obj.insert("slug".to_string(), json!(spec.model));
@@ -1205,6 +1245,9 @@ fn codex_catalog_model_entry(
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+    if let Some(use_responses_lite) = spec.use_responses_lite {
+        entry_obj.insert("use_responses_lite".to_string(), json!(use_responses_lite));
+    }
 
     // Image support is a model capability, not a tool-profile capability.
     // Trust hidden preset metadata first, then the confirmed text-only registry;
@@ -1218,12 +1261,27 @@ fn codex_catalog_model_entry(
         )),
     );
 
-    if profile != CodexCatalogToolProfile::ProxyChat {
+    let declared_responses_lite = entry_obj
+        .get("use_responses_lite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    // Responses Lite requests omit the ordinary tools array. That is safe only
+    // when Codex talks directly to a compatible native Responses endpoint.
+    // ProxyChat cannot reconstruct those tools before converting to Chat, and
+    // Anthropic is not a Responses endpoint at all.
+    if profile != CodexCatalogToolProfile::NativeResponses {
+        entry_obj.insert("use_responses_lite".to_string(), json!(false));
+    }
+    let use_responses_lite =
+        profile == CodexCatalogToolProfile::NativeResponses && declared_responses_lite;
+    let strip_custom_tools = profile == CodexCatalogToolProfile::Anthropic
+        || (profile == CodexCatalogToolProfile::NativeResponses && !use_responses_lite);
+
+    if strip_custom_tools {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
-        // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
-        // emit a custom/freeform tool, and rely on shell_type="shell_command" for
-        // edits. Defensive even though the native template is already clean
-        // (guards against template drift / an accidental gpt-5.5 clone).
+        // `apply_patch` (type=="custom") tool unless the native model explicitly
+        // uses Responses Lite, whose protocol accepts custom tools and converts
+        // hosted search into client-executed search. Anthropic always strips.
         //
         // NOTE: `base_instructions` is NOT stripped — Codex's catalog parser
         // treats it as a REQUIRED field and refuses to load the file without
@@ -1238,7 +1296,9 @@ fn codex_catalog_model_entry(
             entry_obj.remove(key);
         }
         entry_obj.insert("shell_type".to_string(), json!("shell_command"));
+    }
 
+    if profile != CodexCatalogToolProfile::ProxyChat {
         if let Some(base_instructions) = spec
             .base_instructions
             .as_deref()
@@ -1252,13 +1312,14 @@ fn codex_catalog_model_entry(
         }
     }
 
-    // Per-model reasoning levels override the template's conservative
-    // none/high default (e.g. a LiteLLM gateway serving a model that accepts
-    // low/medium/high/xhigh/max). Applies to every profile.
-    let template_default = template
+    // Per-model reasoning levels override the base entry's default (including
+    // an official-model overlay) while preserving that default when it remains
+    // supported. Applies to every profile.
+    let base_default = entry_obj
         .get("default_reasoning_level")
-        .and_then(|value| value.as_str());
-    apply_codex_reasoning_level_override(entry_obj, template_default, spec);
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    apply_codex_reasoning_level_override(entry_obj, base_default.as_deref(), spec);
 
     entry
 }
@@ -1273,6 +1334,8 @@ struct CodexCatalogModelSpec {
     /// `model_context_window` (or 128k) — except official vendor catalog
     /// entries, which keep the vendor's declared window.
     context_window: Option<u64>,
+    /// Explicit UI override. `None` follows the bundled official-model registry.
+    use_responses_lite: Option<bool>,
     /// Per-row override for the native template's `supports_parallel_tool_calls`
     /// (e.g. MiniMax=true, MiMo=false). Only consulted for `NativeResponses`.
     supports_parallel_tool_calls: Option<bool>,
@@ -1342,6 +1405,10 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             .get("supportsParallelToolCalls")
             .or_else(|| model_config.get("supports_parallel_tool_calls"))
             .and_then(|value| value.as_bool());
+        let use_responses_lite = model_config
+            .get("useResponsesLite")
+            .or_else(|| model_config.get("use_responses_lite"))
+            .and_then(|value| value.as_bool());
         let input_modalities = model_config
             .get("inputModalities")
             .or_else(|| model_config.get("input_modalities"))
@@ -1389,6 +1456,7 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             model: model.to_string(),
             display_name,
             context_window,
+            use_responses_lite,
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
@@ -1878,7 +1946,27 @@ fn codex_model_catalog_from_specs(
         })
         .collect();
 
-    json!({ "models": entries })
+    // The rendered `use_responses_lite` value is profile-dependent: Chat and
+    // Anthropic catalogs force it off even when the user's stored choice is
+    // Auto or Enabled. Keep the original explicit overrides in cc-switch-only
+    // top-level metadata so reverse-parsing the generated catalog does not
+    // turn those derived values into new user choices. Codex's ModelsResponse
+    // ignores unknown top-level fields.
+    let use_responses_lite_overrides: serde_json::Map<String, Value> = specs
+        .iter()
+        .filter_map(|spec| {
+            spec.use_responses_lite
+                .map(|value| (spec.model.clone(), json!(value)))
+        })
+        .collect();
+
+    json!({
+        "models": entries,
+        (CC_SWITCH_CODEX_CATALOG_METADATA_KEY): {
+            "version": CC_SWITCH_CODEX_CATALOG_METADATA_VERSION,
+            (CC_SWITCH_CODEX_LITE_OVERRIDES_KEY): use_responses_lite_overrides,
+        }
+    })
 }
 
 fn codex_model_catalog_from_settings(
@@ -2057,6 +2145,11 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// the "user left it blank" intent across round-trip; an unavoidable edge case
 /// is that a user-typed value that happens to equal the fallback also collapses
 /// to blank, but the next save writes the same fallback so behavior is stable.
+/// `useResponsesLite` is restored only from cc-switch provenance metadata,
+/// never from the rendered model entry: the latter is an effective value that
+/// conversion profiles may force to `false`. Catalogs created before that
+/// metadata existed therefore migrate to Auto, which was their only possible
+/// user state before the three-way control was introduced.
 ///
 /// All failure modes (missing file, parse error, no `model_catalog_json`,
 /// entries without `slug`) collapse to `Ok(None)` so callers can treat this
@@ -2194,6 +2287,15 @@ pub(crate) fn resolve_cc_switch_catalog_path(
 fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) -> Option<Value> {
     let catalog: Value = serde_json::from_str(catalog_text).ok()?;
     let models = catalog.get("models").and_then(|m| m.as_array())?;
+    let use_responses_lite_overrides = catalog
+        .get(CC_SWITCH_CODEX_CATALOG_METADATA_KEY)
+        .and_then(Value::as_object)
+        .filter(|metadata| {
+            metadata.get("version").and_then(Value::as_u64)
+                == Some(CC_SWITCH_CODEX_CATALOG_METADATA_VERSION)
+        })
+        .and_then(|metadata| metadata.get(CC_SWITCH_CODEX_LITE_OVERRIDES_KEY))
+        .and_then(Value::as_object);
 
     let default_context_window =
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
@@ -2227,6 +2329,13 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             .filter(|v| *v > 0 && *v != default_context_window)
         {
             obj.insert("contextWindow".to_string(), json!(context_window));
+        }
+
+        if let Some(use_responses_lite) = use_responses_lite_overrides
+            .and_then(|overrides| overrides.get(model))
+            .and_then(Value::as_bool)
+        {
+            obj.insert("useResponsesLite".to_string(), json!(use_responses_lite));
         }
 
         // Preserve native-profile per-row overrides so a DB-SSOT-missing
@@ -4057,6 +4166,7 @@ base_url = "https://production.api/v1"
             model: "k3".to_string(),
             display_name: Some("Kimi K3".to_string()),
             context_window: Some(262_144),
+            use_responses_lite: None,
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
@@ -4179,6 +4289,168 @@ base_url = "https://production.api/v1"
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
         );
+    }
+
+    #[test]
+    fn official_models_keep_reasoning_and_responses_lite_capabilities() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "relay/gpt-5.6-sol" },
+                    { "model": "gpt-5.6-luna" },
+                    { "model": "gpt-5.5" },
+                    { "model": "gpt-5.4" },
+                    { "model": "gpt-5.4-mini" },
+                    { "model": "gpt-5.6-terra", "useResponsesLite": false },
+                    { "model": "custom-lite", "use_responses_lite": true }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should succeed")
+        .expect("models should generate a catalog");
+        let models = catalog["models"].as_array().expect("models array");
+        let entry = |slug: &str| {
+            models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing catalog entry for {slug}"))
+        };
+        let efforts = |model: &Value| {
+            model["supported_reasoning_levels"]
+                .as_array()
+                .expect("reasoning levels")
+                .iter()
+                .filter_map(|level| level["effort"].as_str())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        let expected_efforts = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect::<Vec<_>>()
+        };
+
+        let sol = entry("relay/gpt-5.6-sol");
+        assert_eq!(sol["use_responses_lite"], json!(true));
+        assert_eq!(
+            efforts(sol),
+            expected_efforts(&["low", "medium", "high", "xhigh", "max", "ultra"])
+        );
+        assert_eq!(sol["supports_search_tool"], json!(true));
+        assert_eq!(sol["apply_patch_tool_type"], json!("freeform"));
+        assert_eq!(sol["supports_parallel_tool_calls"], json!(true));
+        assert_eq!(
+            sol["max_context_window"],
+            json!(128_000),
+            "the official overlay must not assign Codex's 872k maximum to a third-party relay"
+        );
+
+        for slug in [
+            "relay/gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+        ] {
+            assert_eq!(
+                entry(slug)["include_plugin_usage_instructions"],
+                json!(true),
+                "the 0.147 compatibility snapshot enables plugin usage instructions for {slug}"
+            );
+            assert_eq!(
+                entry(slug)["include_apps_usage_instructions"],
+                json!(true),
+                "the 0.147 compatibility snapshot enables app usage instructions for {slug}"
+            );
+        }
+
+        assert_eq!(
+            efforts(entry("gpt-5.6-luna")),
+            expected_efforts(&["low", "medium", "high", "xhigh", "max"])
+        );
+
+        let gpt_5_5 = entry("gpt-5.5");
+        assert_eq!(gpt_5_5["use_responses_lite"], json!(false));
+        assert_eq!(
+            efforts(gpt_5_5),
+            expected_efforts(&["low", "medium", "high", "xhigh"])
+        );
+        assert!(
+            gpt_5_5.get("apply_patch_tool_type").is_none(),
+            "non-Lite native models keep the existing custom-tool safety profile"
+        );
+
+        for slug in ["gpt-5.4", "gpt-5.4-mini"] {
+            assert_eq!(
+                entry(slug)["include_skills_usage_instructions"],
+                json!(true),
+                "current stable Codex catalogs enable skill usage instructions for {slug}"
+            );
+        }
+
+        let disabled = entry("gpt-5.6-terra");
+        assert_eq!(disabled["use_responses_lite"], json!(false));
+        assert!(
+            disabled.get("apply_patch_tool_type").is_none(),
+            "an explicit false must override the official automatic capability"
+        );
+        assert_eq!(entry("custom-lite")["use_responses_lite"], json!(true));
+    }
+
+    #[test]
+    fn anthropic_catalog_never_advertises_responses_lite() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "custom", "useResponsesLite": true }
+                ]
+            }
+        });
+
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::Anthropic)
+                .expect("catalog generation should succeed")
+                .expect("models should generate a catalog");
+
+        for entry in catalog["models"].as_array().expect("models array") {
+            assert_eq!(entry["use_responses_lite"], json!(false));
+            assert!(entry.get("apply_patch_tool_type").is_none());
+        }
+    }
+
+    #[test]
+    fn proxy_chat_catalog_never_advertises_responses_lite_and_keeps_tools() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "custom", "useResponsesLite": true }
+                ]
+            }
+        });
+
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation should succeed")
+                .expect("models should generate a catalog");
+
+        for entry in catalog["models"].as_array().expect("models array") {
+            assert_eq!(entry["use_responses_lite"], json!(false));
+            assert_eq!(
+                entry.get("apply_patch_tool_type").and_then(Value::as_str),
+                Some("freeform"),
+                "ProxyChat must keep the tools that its Responses-to-Chat adapter converts"
+            );
+        }
     }
 
     #[test]
@@ -4414,6 +4686,7 @@ base_url = "https://production.api/v1"
                 model: "gpt-5.4".to_string(),
                 display_name: Some("GPT 5.4".to_string()),
                 context_window: Some(128_000),
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
@@ -4424,6 +4697,7 @@ base_url = "https://production.api/v1"
                 model: "deepseek/deepseek-v4-pro".to_string(),
                 display_name: Some("DeepSeek V4 Pro".to_string()),
                 context_window: Some(128_000),
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
@@ -4434,6 +4708,7 @@ base_url = "https://production.api/v1"
                 model: "glm-5.2v".to_string(),
                 display_name: Some("GLM 5.2V".to_string()),
                 context_window: Some(128_000),
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
@@ -4444,6 +4719,7 @@ base_url = "https://production.api/v1"
                 model: "deepseek-v4-flash".to_string(),
                 display_name: Some("Explicit Visual Override".to_string()),
                 context_window: Some(128_000),
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
@@ -4454,6 +4730,7 @@ base_url = "https://production.api/v1"
                 model: "custom-text-alias".to_string(),
                 display_name: Some("Explicit Text Override".to_string()),
                 context_window: Some(128_000),
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
@@ -4726,6 +5003,7 @@ wire_api = "responses"
             model: "x".to_string(),
             display_name: Some("x".to_string()),
             context_window: Some(128_000),
+            use_responses_lite: None,
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
@@ -4974,9 +5252,16 @@ web_search = "disabled"
     fn build_simplified_catalog_round_trips_user_input() {
         let config = "";
         let catalog = r#"{
+            "cc_switch": {
+                "version": 1,
+                "use_responses_lite_overrides": {
+                    "deepseek-v4-pro": true,
+                    "deepseek-v4-flash": false
+                }
+            },
             "models": [
-                { "slug": "deepseek-v4-pro", "display_name": "deepseek-v4-pro", "context_window": 1000000 },
-                { "slug": "deepseek-v4-flash", "display_name": "DeepSeek Flash", "context_window": 1000000 }
+                { "slug": "deepseek-v4-pro", "display_name": "deepseek-v4-pro", "context_window": 1000000, "use_responses_lite": true },
+                { "slug": "deepseek-v4-flash", "display_name": "DeepSeek Flash", "context_window": 1000000, "use_responses_lite": false }
             ]
         }"#;
         let result = build_simplified_catalog_from_texts(config, catalog).expect("entries found");
@@ -4997,12 +5282,91 @@ web_search = "disabled"
             models[0].get("contextWindow").and_then(|v| v.as_u64()),
             Some(1_000_000)
         );
+        assert_eq!(models[0].get("useResponsesLite"), Some(&json!(true)));
 
         // Second entry: display_name distinct from slug → preserved.
         assert_eq!(
             models[1].get("displayName").and_then(|v| v.as_str()),
             Some("DeepSeek Flash")
         );
+        assert_eq!(models[1].get("useResponsesLite"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn responses_lite_override_provenance_survives_profile_projection() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "custom-enabled", "useResponsesLite": true },
+                    { "model": "custom-disabled", "useResponsesLite": false }
+                ]
+            }
+        });
+        let specs = codex_catalog_model_specs(&settings);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &json!({}),
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+
+        for entry in catalog["models"].as_array().expect("models") {
+            assert_eq!(
+                entry["use_responses_lite"],
+                json!(false),
+                "ProxyChat must render Lite disabled for every row"
+            );
+        }
+        assert_eq!(
+            catalog[CC_SWITCH_CODEX_CATALOG_METADATA_KEY][CC_SWITCH_CODEX_LITE_OVERRIDES_KEY],
+            json!({
+                "custom-enabled": true,
+                "custom-disabled": false
+            })
+        );
+
+        let catalog_text = serde_json::to_string(&catalog).expect("serialize catalog");
+        let simplified =
+            build_simplified_catalog_from_texts("", &catalog_text).expect("reverse parse");
+        let models = simplified["models"].as_array().expect("models");
+        let entry = |slug: &str| {
+            models
+                .iter()
+                .find(|model| model["model"] == slug)
+                .unwrap_or_else(|| panic!("missing simplified row for {slug}"))
+        };
+
+        assert!(
+            entry("gpt-5.6-sol").get("useResponsesLite").is_none(),
+            "an automatic choice must stay automatic even though ProxyChat rendered false"
+        );
+        assert_eq!(
+            entry("custom-enabled").get("useResponsesLite"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            entry("custom-disabled").get("useResponsesLite"),
+            Some(&json!(false))
+        );
+    }
+
+    #[test]
+    fn unprovenanced_responses_lite_values_migrate_to_auto() {
+        let catalog = r#"{
+            "models": [
+                { "slug": "gpt-5.6-sol", "use_responses_lite": false },
+                { "slug": "custom", "use_responses_lite": true }
+            ]
+        }"#;
+        let simplified = build_simplified_catalog_from_texts("", catalog).expect("reverse parse");
+
+        for entry in simplified["models"].as_array().expect("models") {
+            assert!(
+                entry.get("useResponsesLite").is_none(),
+                "legacy effective values have no user-override provenance"
+            );
+        }
     }
 
     #[test]
