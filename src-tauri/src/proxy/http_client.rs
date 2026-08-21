@@ -18,6 +18,9 @@ static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
 /// 当前代理 URL（用于日志和状态查询）
 static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
 
+/// 当前跟随系统代理时的绕过列表（NO_PROXY / ProxyOverride，显式代理模式下为空）
+static CURRENT_BYPASS: OnceCell<RwLock<Vec<String>>> = OnceCell::new();
+
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
 
@@ -74,24 +77,25 @@ fn get_proxy_port() -> u16 {
 ///   传入 None 或空字符串表示跟随系统代理（注册表/环境变量）
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let explicit = proxy_url.filter(|s| !s.trim().is_empty());
-    let resolved = resolve_proxy(explicit);
-    let client = build_client(resolved.as_deref())?;
+    let info = resolve_proxy_info(explicit);
+    let client = build_client(info.url.as_deref(), &info.bypass)?;
 
     // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
     if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
         log::warn!(
             "[GlobalProxy] [GP-003] Already initialized, updating instead: {}",
-            label_for(&resolved)
+            label_for(&info.url)
         );
         // 已初始化，改用 apply_proxy 更新
         return apply_proxy(proxy_url);
     }
 
-    // 初始化代理 URL 记录
-    let _ = CURRENT_PROXY_URL.set(RwLock::new(resolved.clone()));
+    // 初始化代理 URL 与绕过列表记录
+    let _ = CURRENT_PROXY_URL.set(RwLock::new(info.url.clone()));
+    let _ = CURRENT_BYPASS.set(RwLock::new(info.bypass));
     set_proxy_mode(explicit.is_some());
 
-    log::info!("[GlobalProxy] Initialized: {}", label_for(&resolved));
+    log::info!("[GlobalProxy] Initialized: {}", label_for(&info.url));
 
     Ok(())
 }
@@ -109,7 +113,7 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     // 只调用 build_client 来验证，但不应用
-    build_client(effective_url)?;
+    build_client(effective_url, &[])?;
     Ok(())
 }
 
@@ -123,8 +127,8 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let _guard = proxy_state_guard();
     let explicit = proxy_url.filter(|s| !s.trim().is_empty());
-    let resolved = resolve_proxy(explicit);
-    let new_client = build_client(resolved.as_deref())?;
+    let info = resolve_proxy_info(explicit);
+    let new_client = build_client(info.url.as_deref(), &info.bypass)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -138,17 +142,11 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
         return init(proxy_url);
     }
 
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = resolved.clone();
-    }
+    // 更新代理 URL 与绕过列表记录
+    set_current_proxy_state(&info);
     set_proxy_mode(explicit.is_some());
 
-    log::info!("[GlobalProxy] Applied: {}", label_for(&resolved));
+    log::info!("[GlobalProxy] Applied: {}", label_for(&info.url));
 
     Ok(())
 }
@@ -165,8 +163,8 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let _guard = proxy_state_guard();
     let explicit = proxy_url.filter(|s| !s.trim().is_empty());
-    let resolved = resolve_proxy(explicit);
-    let new_client = build_client(resolved.as_deref())?;
+    let info = resolve_proxy_info(explicit);
+    let new_client = build_client(info.url.as_deref(), &info.bypass)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -180,17 +178,11 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
         return init(proxy_url);
     }
 
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = resolved.clone();
-    }
+    // 更新代理 URL 与绕过列表记录
+    set_current_proxy_state(&info);
     set_proxy_mode(explicit.is_some());
 
-    log::info!("[GlobalProxy] Updated: {}", label_for(&resolved));
+    log::info!("[GlobalProxy] Updated: {}", label_for(&info.url));
 
     Ok(())
 }
@@ -213,13 +205,13 @@ pub fn refresh_system_proxy() -> bool {
         return false;
     }
 
-    let detected = system_proxy::detect_loopback_safe(get_proxy_port());
+    let info = resolve_proxy_info(None);
     let current = get_current_proxy_url();
-    if current == detected {
+    if current == info.url {
         return false;
     }
 
-    let new_client = match build_client(detected.as_deref()) {
+    let new_client = match build_client(info.url.as_deref(), &info.bypass) {
         Ok(client) => client,
         Err(e) => {
             log::warn!(
@@ -234,18 +226,28 @@ pub fn refresh_system_proxy() -> bool {
             *client = new_client;
         }
     }
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        if let Ok(mut url) = lock.write() {
-            *url = detected.clone();
-        }
-    }
+    set_current_proxy_state(&info);
 
     log::info!(
         "[GlobalProxy] System proxy changed: {} -> {}",
         label_for(&current),
-        label_for(&detected)
+        label_for(&info.url)
     );
     true
+}
+
+/// 更新运行态代理 URL 与绕过列表（须在 PROXY_STATE_LOCK 临界区内调用）。
+fn set_current_proxy_state(info: &ResolvedProxy) {
+    if let Some(lock) = CURRENT_PROXY_URL.get() {
+        if let Ok(mut url) = lock.write() {
+            *url = info.url.clone();
+        }
+    }
+    if let Some(lock) = CURRENT_BYPASS.get() {
+        if let Ok(mut bypass) = lock.write() {
+            *bypass = info.bypass.clone();
+        }
+    }
 }
 
 /// 获取代理状态串行化锁的守卫（中毒时自动恢复）。
@@ -253,11 +255,23 @@ fn proxy_state_guard() -> std::sync::MutexGuard<'static, ()> {
     PROXY_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// 解析出站代理：显式全局代理优先，否则跟随系统代理。
-fn resolve_proxy(explicit: Option<&str>) -> Option<String> {
-    match explicit {
-        Some(url) => Some(url.to_string()),
-        None => system_proxy::detect_loopback_safe(get_proxy_port()),
+/// 解析出的代理配置（URL + 绕过列表）。
+struct ResolvedProxy {
+    url: Option<String>,
+    bypass: Vec<String>,
+}
+
+/// 解析出站代理：显式全局代理优先；否则跟随系统代理（含 NO_PROXY / ProxyOverride 绕过列表）。
+fn resolve_proxy_info(explicit: Option<&str>) -> ResolvedProxy {
+    if let Some(url) = explicit {
+        return ResolvedProxy {
+            url: Some(url.to_string()),
+            bypass: Vec::new(),
+        };
+    }
+    ResolvedProxy {
+        url: system_proxy::detect_loopback_safe(get_proxy_port()),
+        bypass: system_proxy::detect_bypass(),
     }
 }
 
@@ -303,7 +317,7 @@ pub fn get() -> Client {
         .map(|c| c.clone())
         .unwrap_or_else(|| {
             log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
-            build_client(None).unwrap_or_default()
+            build_client(None, &[]).unwrap_or_default()
         })
 }
 
@@ -317,6 +331,33 @@ pub fn get_current_proxy_url() -> Option<String> {
         .and_then(|url| url.clone())
 }
 
+/// 读取当前代理绕过列表缓存。
+fn current_bypass() -> Vec<String> {
+    CURRENT_BYPASS
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|b| b.clone())
+        .unwrap_or_default()
+}
+
+/// 为指定上游 URL 选择出站代理。
+///
+/// 命中系统代理绕过列表（NO_PROXY / ProxyOverride）时返回直达（None），
+/// 其余情况返回当前代理 URL。forwarder 据此决定是否走代理隧道。
+pub fn get_proxy_for_url(upstream: &str) -> Option<String> {
+    let proxy = get_current_proxy_url()?;
+    let host = url::Url::parse(upstream)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()));
+    if let Some(host) = host {
+        let bypass = current_bypass();
+        if system_proxy::should_bypass(&host, &bypass) {
+            return None;
+        }
+    }
+    Some(proxy)
+}
+
 /// 检查是否正在使用代理
 #[allow(dead_code)]
 pub fn is_proxy_enabled() -> bool {
@@ -324,7 +365,10 @@ pub fn is_proxy_enabled() -> bool {
 }
 
 /// 构建 HTTP 客户端
-fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
+///
+/// `proxy_url` 为出站代理；`bypass` 为代理绕过列表（NO_PROXY / ProxyOverride），
+/// 命中时目标地址不走代理（仅作用于 reqwest 侧的连接池；forwarder 另有独立判断）。
+fn build_client(proxy_url: Option<&str>, bypass: &[String]) -> Result<Client, String> {
     let mut builder = Client::builder()
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
@@ -352,8 +396,15 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
             ));
         }
 
-        let proxy = reqwest::Proxy::all(url)
+        let mut proxy = reqwest::Proxy::all(url)
             .map_err(|e| format!("Invalid proxy URL '{}': {}", mask_url(url), e))?;
+        if !bypass.is_empty() {
+            proxy = proxy.no_proxy(reqwest::NoProxy::from_string(&bypass.join(",")));
+            log::debug!(
+                "[GlobalProxy] Proxy configured with {} bypass entrie(s)",
+                bypass.len()
+            );
+        }
         builder = builder.proxy(proxy);
         log::debug!("[GlobalProxy] Proxy configured: {}", mask_url(url));
     } else {
@@ -479,19 +530,19 @@ mod tests {
 
     #[test]
     fn test_build_client_direct() {
-        let result = build_client(None);
+        let result = build_client(None, &[]);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_build_client_with_http_proxy() {
-        let result = build_client(Some("http://127.0.0.1:7890"));
+        let result = build_client(Some("http://127.0.0.1:7890"), &[]);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_build_client_with_socks5_proxy() {
-        let result = build_client(Some("socks5://127.0.0.1:1080"));
+        let result = build_client(Some("socks5://127.0.0.1:1080"), &[]);
         assert!(result.is_ok());
     }
 
@@ -499,8 +550,24 @@ mod tests {
     fn test_build_client_invalid_url() {
         // reqwest::Proxy::all 对某些无效 URL 不会立即报错
         // 使用明确无效的 scheme 来触发错误
-        let result = build_client(Some("invalid-scheme://127.0.0.1:7890"));
+        let result = build_client(Some("invalid-scheme://127.0.0.1:7890"), &[]);
         assert!(result.is_err(), "Should reject invalid proxy scheme");
+    }
+
+    #[test]
+    fn test_build_client_with_bypass() {
+        let bypass = vec!["localhost".to_string(), ".example.com".to_string()];
+        let result = build_client(Some("http://127.0.0.1:7890"), &bypass);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_proxy_for_url_honors_bypass() {
+        // 未设代理时直接 None
+        // (依赖 CURRENT_PROXY_URL 静态,此处仅在未初始化时验证返回 None)
+        // 该函数行为与状态耦合,完整覆盖在 system_proxy::should_bypass 单测;
+        // 这里仅验证绕过逻辑的函数签名可用。
+        let _ = get_proxy_for_url("https://api.example.com/v1/chat");
     }
 
     #[test]

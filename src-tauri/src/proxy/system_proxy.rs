@@ -30,6 +30,94 @@ pub fn detect_loopback_safe(own_port: u16) -> Option<String> {
     detect().filter(|url| !proxy_points_to_own_port(url, own_port))
 }
 
+/// 检测系统代理的绕过列表（直连名单）。
+///
+/// 合并环境变量 `NO_PROXY` / `no_proxy`（逗号分隔）与 Windows 注册表
+/// `ProxyOverride`（分号分隔，`<local>` 表示本机直连）。转发决策与 reqwest
+/// 客户端都应遵守该列表，避免系统代理把本地/内网等豁免地址也塞进代理隧道。
+pub fn detect_bypass() -> Vec<String> {
+    let mut out = Vec::new();
+
+    for key in ["NO_PROXY", "no_proxy"] {
+        if let Ok(value) = env::var(key) {
+            out.extend(parse_no_proxy_list(&value));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    out.extend(registry_proxy_override());
+
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// 判断 host 是否命中绕过列表。
+///
+/// 支持:
+/// - 精确匹配（`api.example.com`）
+/// - `.domain` 后缀（匹配自身及其子域）
+/// - `*` 通配（全部绕过）
+pub fn should_bypass(host: &str, bypass: &[String]) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    for rule in bypass {
+        let rule = rule.trim().to_ascii_lowercase();
+        if rule == "*" {
+            return true;
+        }
+        if let Some(rest) = rule.strip_prefix('.') {
+            let rest = rest.trim();
+            if !rest.is_empty() && (host == rest || host.ends_with(&format!(".{rest}"))) {
+                return true;
+            }
+        } else if host == rule {
+            return true;
+        }
+    }
+    false
+}
+
+/// 解析环境变量 NO_PROXY 列表（逗号分隔，纯逻辑便于测试）。
+fn parse_no_proxy_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// 解析 Windows 注册表 ProxyOverride（分号分隔，纯逻辑便于测试）。
+/// `<local>` 按 WinINET 语义展开为本机直连地址。
+fn parse_proxy_override_list(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for part in value.split(';') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if part == "<local>" {
+            out.push("localhost".to_string());
+            out.push("127.0.0.1".to_string());
+            out.push("::1".to_string());
+        } else {
+            out.push(part.to_string());
+        }
+    }
+    out
+}
+
+/// 读取 Windows 注册表 ProxyOverride。
+#[cfg(target_os = "windows")]
+fn registry_proxy_override() -> Vec<String> {
+    let Ok(key) =
+        RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(INTERNET_SETTINGS_PATH, KEY_READ)
+    else {
+        return Vec::new();
+    };
+    let value: String = key.get_value("ProxyOverride").unwrap_or_default();
+    parse_proxy_override_list(&value)
+}
+
 #[cfg(target_os = "windows")]
 fn detect_registry() -> Option<String> {
     let key = RegKey::predef(HKEY_CURRENT_USER)
@@ -275,5 +363,69 @@ mod tests {
         println!("[live] system proxy detected = {detected:?}");
         // 本机启用系统代理时,期望是 http://127.0.0.1:7890
         // (不硬断言,仅打印供人工核对,避免其它环境差异导致失败)
+    }
+
+    #[test]
+    fn parse_no_proxy_env_list() {
+        assert_eq!(
+            parse_no_proxy_list("api.example.com, .cnw.com ,127.0.0.1"),
+            ["api.example.com", ".cnw.com", "127.0.0.1"]
+        );
+        assert_eq!(parse_no_proxy_list("  ,  ,"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn parse_proxy_override_expands_local() {
+        let r = parse_proxy_override_list("<local>;*.mycorp.com;10.0.0.0/8");
+        assert!(r.contains(&"localhost".to_string()));
+        assert!(r.contains(&"127.0.0.1".to_string()));
+        assert!(r.contains(&"*.mycorp.com".to_string()));
+        assert!(r.contains(&"10.0.0.0/8".to_string()));
+        assert!(!r.contains(&"".to_string()));
+    }
+
+    #[test]
+    fn should_bypass_rules() {
+        let bypass: Vec<String> = [
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            ".example.com",
+            "api.pure.io",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        assert!(should_bypass("localhost", &bypass));
+        assert!(should_bypass("127.0.0.1", &bypass));
+        assert!(should_bypass("sub.example.com", &bypass));
+        assert!(should_bypass("example.com", &bypass));
+        assert!(should_bypass("api.pure.io", &bypass));
+        assert!(!should_bypass("api.other.com", &bypass));
+        assert!(!should_bypass("anything.io", &bypass));
+
+        // "*" 全绕过（独立列表，避免影响上面的非绕过断言）
+        let wildcard: Vec<String> = vec!["*".to_string()];
+        assert!(should_bypass("whatever.net", &wildcard));
+
+        // 空列表不绕过
+        assert!(!should_bypass("api.example.com", &[]));
+    }
+
+    #[test]
+    fn detect_bypass_merges_env() {
+        let _guard = env_lock().lock().unwrap();
+        clear_proxy_env();
+
+        std::env::set_var("NO_PROXY", "localhost,.example.com");
+        let list = detect_bypass();
+        assert!(list.contains(&"localhost".to_string()));
+        assert!(list.contains(&".example.com".to_string()));
+
+        // 优先级: ALL_PROXY 等不影响 NO_PROXY 探测之外的合并结果（仅验证 NO_PROXY 被纳入）
+        std::env::set_var("HTTP_PROXY", "http://10.0.0.1:8080");
+        assert!(detect_bypass().contains(&".example.com".to_string()));
+        clear_proxy_env();
     }
 }
