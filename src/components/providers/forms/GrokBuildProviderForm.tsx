@@ -46,6 +46,7 @@ import {
 import {
   buildGrokBuildConfig,
   GROK_BUILD_DEFAULT_API_BACKEND,
+  isSyntacticallyValidGrokToml,
   parseGrokBuildConfig,
   updateGrokBuildConfig,
   validateGrokBuildConfig,
@@ -104,6 +105,7 @@ export function GrokBuildProviderForm({
   );
   const [baseUrl, setBaseUrl] = useState(initialConfig.baseUrl);
   const [apiKey, setApiKey] = useState(initialConfig.apiKey);
+  const [apiBackend, setApiBackend] = useState(initialConfig.apiBackend);
   const [contextWindow, setContextWindow] = useState(
     String(initialConfig.contextWindow),
   );
@@ -114,6 +116,10 @@ export function GrokBuildProviderForm({
     (initialData?.meta?.apiFormat as CodexApiFormat | undefined) ??
       "openai_responses",
   );
+  // 用户是否显式动过上游格式（选择器/预设）。加载时没有 meta.apiFormat 的
+  // 供应商保存后应保持缺席，让代理转换判定回落 TOML api_backend 探测——
+  // 否则一次保存就把默认格式写进 meta，掩蔽掉手导供应商的 api_backend
+  const [apiFormatTouched, setApiFormatTouched] = useState(false);
   const [anthropicAuthField, setAnthropicAuthField] =
     useState<ClaudeApiKeyField>(
       initialData?.meta?.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN",
@@ -218,7 +224,7 @@ export function GrokBuildProviderForm({
       apiKey,
       contextWindow: Number.parseInt(contextWindow, 10),
       ...overrides,
-      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+      apiBackend,
     };
     setRawConfig((current) => updateGrokBuildConfig(current, next));
   };
@@ -274,6 +280,8 @@ export function GrokBuildProviderForm({
     setApiKey(presetApiKey);
     setUpstreamModel(presetModel);
     setApiFormat(presetApiFormat);
+    setApiFormatTouched(true);
+    setApiBackend(GROK_BUILD_DEFAULT_API_BACKEND);
     setPresetEndpoints(preset.endpointCandidates ?? []);
     setRawConfig(
       buildGrokBuildConfig({
@@ -290,12 +298,15 @@ export function GrokBuildProviderForm({
 
   const handleRawConfigChange = (value: string) => {
     setRawConfig(value);
-    if (validateGrokBuildConfig(value)) return;
+    // 只跳过语法损坏的回读（输入中途）；语义不完整（如 api_key 未填）仍要回读，
+    // 否则先手改 api_backend、后补 API Key 时，结构化同步会用旧值把它覆盖掉
+    if (!isSyntacticallyValidGrokToml(value)) return;
     const parsed = parseGrokBuildConfig(value, form.getValues("name"));
     setProfile(parsed.model);
     setUpstreamModel(parsed.upstreamModel ?? parsed.model);
     setBaseUrl(parsed.baseUrl);
     setApiKey(parsed.apiKey);
+    setApiBackend(parsed.apiBackend);
     setContextWindow(String(parsed.contextWindow));
     if (parsed.name) form.setValue("name", parsed.name);
   };
@@ -350,7 +361,7 @@ export function GrokBuildProviderForm({
       baseUrl,
       name,
       apiKey,
-      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+      apiBackend,
       contextWindow: parsedContextWindow,
     });
     const configError = validateGrokBuildConfig(finalConfig);
@@ -384,7 +395,12 @@ export function GrokBuildProviderForm({
     delete initialMeta.custom_endpoints;
     const meta: ProviderMeta = {
       ...initialMeta,
-      apiFormat,
+      // 加载时无 meta.apiFormat 且用户未动格式时保持缺席：代理转换判定会因 meta
+      // 优先而跳过 TOML api_backend 探测，写默认格式会掩蔽手导供应商的协议
+      apiFormat:
+        initialData?.meta?.apiFormat !== undefined || apiFormatTouched
+          ? apiFormat
+          : undefined,
       apiKeyField: anthropicAuthField,
       isFullUrl,
       endpointAutoSelect,
@@ -475,6 +491,7 @@ export function GrokBuildProviderForm({
               apiFormat={apiFormat}
               onApiFormatChange={(value) => {
                 setApiFormat(value);
+                setApiFormatTouched(true);
               }}
               anthropicAuthField={anthropicAuthField}
               onAnthropicAuthFieldChange={setAnthropicAuthField}

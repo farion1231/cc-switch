@@ -210,8 +210,6 @@ jobs:
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
         run: |
-          $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
           $testList = cargo test --lib --manifest-path src-tauri/Cargo.toml -- --ignored --list
           if ($LASTEXITCODE -ne 0) {
@@ -221,6 +219,15 @@ jobs:
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
+          # TEMP only points into WSL2 once the binary is fully linked. On cold
+          # builds (fork PRs cannot restore the upstream cache) the next run-mode
+          # cargo invocation re-links the lib test binary even though --no-run
+          # built it above, and link.exe/mt.exe cannot create manifests when TEMP
+          # is a WSL UNC path (LNK1327). The --list call above absorbs that
+          # rebuild with a native TEMP; the run below executes the fresh binary
+          # without re-linking.
+          $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           cargo test --lib --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE

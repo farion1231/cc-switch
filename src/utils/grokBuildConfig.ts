@@ -161,6 +161,22 @@ export function validateGrokBuildConfig(configToml: string): string | null {
   }
 }
 
+/**
+ * 只做语法检查，不校验语义（缺 api_key / base_url 等仍算有效）。
+ * 表单在输入中途需要区分两者：语法损坏时跳过解析回读（防止半截输入
+ * 冲掉状态），语义不完整时仍要回读（否则手改的 api_backend 会被
+ * 结构化同步用旧值覆盖）。
+ */
+export function isSyntacticallyValidGrokToml(configToml: string): boolean {
+  if (!configToml.trim()) return false;
+  try {
+    parseToml(configToml);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function extractGrokBuildBaseUrl(configToml: string): string {
   return parseGrokBuildConfig(configToml).baseUrl;
 }

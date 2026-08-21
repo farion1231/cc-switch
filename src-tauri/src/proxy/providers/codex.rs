@@ -55,6 +55,20 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         return is_chat_wire_api(&wire_api);
     }
 
+    // Grok Build TOML declares the upstream protocol via `api_backend` inside
+    // [model."<profile>"], which the Codex-shaped wire_api probe above can never
+    // match. Codex configs have no [models]/[model.*] tables, so
+    // extract_model_config returns None for them and this branch stays inert.
+    if let Some(api_backend) = provider
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .and_then(crate::grok_config::extract_model_config)
+        .map(|config| config.api_backend)
+    {
+        return is_chat_wire_api(&api_backend);
+    }
+
     if let Some(base_url) = provider
         .settings_config
         .get("base_url")
@@ -163,8 +177,9 @@ pub fn inject_codex_chat_prompt_cache_key(
 /// Messages protocol (`/v1/messages`). The local Codex client always talks to CC
 /// Switch through the Responses API, so CC Switch bridges Responses ⇄ Anthropic.
 ///
-/// Determined solely from explicit config (apiFormat / wire_api); no base_url
-/// guessing — Anthropic gateway addresses vary widely and guessing easily misfires.
+/// Determined solely from explicit config (apiFormat / wire_api / Grok Build
+/// api_backend); no base_url guessing — Anthropic gateway addresses vary widely
+/// and guessing easily misfires.
 pub fn codex_provider_uses_anthropic(provider: &Provider) -> bool {
     if let Some(api_format) = provider
         .meta
@@ -186,13 +201,28 @@ pub fn codex_provider_uses_anthropic(provider: &Provider) -> bool {
         return is_anthropic_wire_api(api_format);
     }
 
-    provider
+    if let Some(wire_api) = provider
         .settings_config
         .get("config")
         .and_then(|v| v.as_str())
         .and_then(extract_codex_wire_api_from_toml)
-        .map(|wire_api| is_anthropic_wire_api(&wire_api))
-        .unwrap_or(false)
+    {
+        return is_anthropic_wire_api(&wire_api);
+    }
+
+    // Same Grok Build `api_backend` probe as codex_provider_uses_chat_completions
+    // above — see there for why it stays inert for Codex configs.
+    if let Some(api_backend) = provider
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .and_then(crate::grok_config::extract_model_config)
+        .map(|config| config.api_backend)
+    {
+        return is_anthropic_wire_api(&api_backend);
+    }
+
+    false
 }
 
 pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint: &str) -> bool {
@@ -1048,6 +1078,7 @@ context_window = 500000
     }
 
     #[test]
+    #[test]
     fn explicit_codex_official_cards_use_chatgpt_backend() {
         let mut provider = create_provider(json!({
             "auth": {
@@ -1155,6 +1186,124 @@ context_window = 500000
         grok_official.id = crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID.to_string();
         grok_official.category = Some("official".to_string());
         assert!(!is_codex_official_provider(&grok_official));
+    }
+
+    #[test]
+    fn grok_api_backend_chat_completions_converts_responses_to_chat() {
+        let provider = create_provider(json!({
+            "config": r#"
+[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "upstream-chat-model"
+base_url = "https://relay.example.com/v1/"
+name = "Chat Relay"
+api_key = "grok-secret"
+api_backend = "chat_completions"
+context_window = 500000
+"#
+        }));
+
+        assert!(codex_provider_uses_chat_completions(&provider));
+        assert!(should_convert_codex_responses_to_chat(
+            &provider,
+            "/responses"
+        ));
+        assert!(!codex_provider_uses_anthropic(&provider));
+    }
+
+    #[test]
+    fn grok_api_backend_messages_converts_responses_to_anthropic() {
+        let provider = create_provider(json!({
+            "config": r#"
+[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "upstream-claude-model"
+base_url = "https://relay.example.com/v1/"
+name = "Anthropic Relay"
+api_key = "grok-secret"
+api_backend = "messages"
+context_window = 500000
+"#
+        }));
+
+        assert!(codex_provider_uses_anthropic(&provider));
+        assert!(should_convert_codex_responses_to_anthropic(
+            &provider,
+            "/responses"
+        ));
+        assert!(!codex_provider_uses_chat_completions(&provider));
+    }
+
+    #[test]
+    fn grok_api_backend_responses_stays_native() {
+        let provider = create_provider(json!({
+            "config": r#"
+[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "upstream-grok-model"
+base_url = "https://relay.example.com/v1/"
+name = "Responses Relay"
+api_key = "grok-secret"
+api_backend = "responses"
+context_window = 500000
+"#
+        }));
+
+        assert!(!codex_provider_uses_chat_completions(&provider));
+        assert!(!codex_provider_uses_anthropic(&provider));
+    }
+
+    #[test]
+    fn codex_toml_without_wire_api_is_not_misread_as_grok() {
+        // Regression guard: plain Codex TOML has no [models]/[model.*] tables, so
+        // the grok api_backend probe must stay inert and fall through to the
+        // base_url heuristic (which is also negative here).
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://example.com/v1"
+"#
+        }));
+
+        assert!(!codex_provider_uses_chat_completions(&provider));
+        assert!(!codex_provider_uses_anthropic(&provider));
+    }
+
+    #[test]
+    fn grok_meta_api_format_overrides_toml_api_backend() {
+        // Explicit meta short-circuits before any TOML probing: a grok
+        // chat_completions config pinned to openai_responses must stay native.
+        let mut provider = create_provider(json!({
+            "config": r#"
+[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "upstream-chat-model"
+base_url = "https://relay.example.com/v1/"
+name = "Chat Relay"
+api_key = "grok-secret"
+api_backend = "chat_completions"
+context_window = 500000
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        assert!(!codex_provider_uses_chat_completions(&provider));
+        assert!(!codex_provider_uses_anthropic(&provider));
     }
 
     #[test]
