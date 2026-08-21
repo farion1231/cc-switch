@@ -147,8 +147,71 @@ pub fn is_sse_response(response: &ProxyResponse) -> bool {
     response.is_sse()
 }
 
-fn should_handle_as_streaming(response: &ProxyResponse, expected_sse: bool) -> bool {
-    is_sse_response(response) || (expected_sse && !response.is_json())
+fn sniff_unlabelled_body_as_json(bytes: &[u8]) -> Option<bool> {
+    let bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &bytes[3..]
+    } else if bytes.len() < 3 && [0xEF, 0xBB, 0xBF].starts_with(bytes) {
+        return None;
+    } else {
+        bytes
+    };
+    bytes
+        .iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .map(|byte| matches!(byte, b'{' | b'['))
+}
+
+/// Classify an expected SSE response without trusting the protocol hint over
+/// the actual payload. Some compatible gateways ignore `stream:true` and send
+/// one complete Responses JSON document without a Content-Type header.
+///
+/// Only enough bytes to identify the first non-whitespace byte are consumed,
+/// then every consumed chunk is replayed before the untouched upstream stream.
+async fn prepare_response_for_handling(
+    response: ProxyResponse,
+    expected_sse: bool,
+) -> (ProxyResponse, bool) {
+    if is_sse_response(&response) {
+        return (response, true);
+    }
+    if response.is_json() || !expected_sse {
+        return (response, false);
+    }
+
+    const MAX_SNIFF_BYTES: usize = 8 * 1024;
+    let status = response.status();
+    let headers = response.headers().clone();
+    let mut upstream = Box::pin(response.bytes_stream());
+    let mut replay = Vec::new();
+    let mut prefix = Vec::new();
+    let is_streaming = loop {
+        match upstream.next().await {
+            Some(Ok(chunk)) => {
+                if prefix.len() < MAX_SNIFF_BYTES {
+                    let remaining = MAX_SNIFF_BYTES - prefix.len();
+                    prefix.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+                }
+                replay.push(Ok(chunk));
+                if let Some(is_json) = sniff_unlabelled_body_as_json(&prefix) {
+                    break !is_json;
+                }
+                if prefix.len() >= MAX_SNIFF_BYTES {
+                    break true;
+                }
+            }
+            Some(Err(error)) => {
+                replay.push(Err(error));
+                break true;
+            }
+            None => break true,
+        }
+    };
+    let replayed = futures::stream::iter(replay).chain(upstream);
+    (
+        ProxyResponse::streamed(status, headers, replayed),
+        is_streaming,
+    )
 }
 
 /// 处理流式响应
@@ -354,7 +417,8 @@ pub async fn process_response_with_stream_hint(
     connection_guard: Option<ActiveConnectionGuard>,
     expected_sse: bool,
 ) -> Result<Response, ProxyError> {
-    if should_handle_as_streaming(&response, expected_sse) {
+    let (response, is_streaming) = prepare_response_for_handling(response, expected_sse).await;
+    if is_streaming {
         Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
     } else {
         handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
@@ -780,8 +844,10 @@ pub fn create_logged_passthrough_stream(
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
                                         if data.trim() != "[DONE]" {
-                                            if let Some(c) = &collector {
-                                                c.observe_stream_event().await;
+                                            if is_productive_sse_data(data) {
+                                                if let Some(c) = &collector {
+                                                    c.observe_stream_event().await;
+                                                }
                                             }
                                             let collected = match &collector {
                                                 Some(c) if c.should_collect(data) => {
@@ -828,6 +894,29 @@ pub fn create_logged_passthrough_stream(
         if let Some(guard) = &mut finish_guard {
             guard.disarm();
         }
+    }
+}
+
+fn is_productive_sse_data(data: &str) -> bool {
+    let Ok(event) = serde_json::from_str::<Value>(data) else {
+        // Preserve the historical behavior for non-JSON SSE protocols.
+        return true;
+    };
+    let Some(event_type) = event.get("type").and_then(Value::as_str) else {
+        // OpenAI Chat Completions and several compatible protocols do not use
+        // Responses-style event names. Keep their existing timing semantics.
+        return true;
+    };
+    if !event_type.starts_with("response.") {
+        return true;
+    }
+    if !event_type.ends_with(".delta") {
+        return false;
+    }
+    match event.get("delta") {
+        Some(Value::String(delta)) => !delta.is_empty(),
+        Some(Value::Null) | None => false,
+        Some(_) => true,
     }
 }
 
@@ -917,19 +1006,20 @@ mod tests {
         assert!(!formatted.contains("cookie-secret"), "{formatted}");
     }
 
-    #[test]
-    fn expected_sse_recovers_streaming_when_content_type_is_missing() {
+    #[tokio::test]
+    async fn expected_sse_recovers_streaming_when_content_type_is_missing() {
         let response = ProxyResponse::buffered(
             http::StatusCode::OK,
             HeaderMap::new(),
             Bytes::from_static(b"data: {}\n\n"),
         );
 
-        assert!(should_handle_as_streaming(&response, true));
+        let (_, is_streaming) = prepare_response_for_handling(response, true).await;
+        assert!(is_streaming);
     }
 
-    #[test]
-    fn expected_sse_does_not_override_explicit_json() {
+    #[tokio::test]
+    async fn expected_sse_does_not_override_explicit_json() {
         let mut headers = HeaderMap::new();
         headers.insert("content-type", "application/json".parse().unwrap());
         let response = ProxyResponse::buffered(
@@ -938,18 +1028,44 @@ mod tests {
             Bytes::from_static(br#"{"ok":true}"#),
         );
 
-        assert!(!should_handle_as_streaming(&response, true));
+        let (_, is_streaming) = prepare_response_for_handling(response, true).await;
+        assert!(!is_streaming);
     }
 
-    #[test]
-    fn missing_content_type_without_stream_hint_remains_non_streaming() {
+    #[tokio::test]
+    async fn expected_sse_does_not_override_unlabelled_complete_json() {
+        let body = Bytes::from_static(br#"{"id":"resp_123","object":"response"}"#);
+        let response = ProxyResponse::streamed(
+            http::StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::iter([
+                Ok::<_, std::io::Error>(Bytes::from_static(b" \r\n")),
+                Ok(body.clone()),
+            ]),
+        );
+
+        let (response, is_streaming) = prepare_response_for_handling(response, true).await;
+        assert!(!is_streaming);
+        let replayed = response
+            .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
+            .await
+            .unwrap();
+        assert_eq!(
+            replayed,
+            Bytes::from_static(b" \r\n{\"id\":\"resp_123\",\"object\":\"response\"}")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_content_type_without_stream_hint_remains_non_streaming() {
         let response = ProxyResponse::buffered(
             http::StatusCode::OK,
             HeaderMap::new(),
             Bytes::from_static(b"opaque response"),
         );
 
-        assert!(!should_handle_as_streaming(&response, false));
+        let (_, is_streaming) = prepare_response_for_handling(response, false).await;
+        assert!(!is_streaming);
     }
 
     #[tokio::test]
@@ -971,6 +1087,46 @@ mod tests {
         assert!(
             first_token_ms <= observed_by_ms + 5,
             "first event timing {first_token_ms}ms should precede delayed usage; observation completed by {observed_by_ms}ms"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_lifecycle_events_do_not_start_first_token_timer() {
+        let start_time = std::time::Instant::now();
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let captured_for_callback = captured.clone();
+        let collector = SseUsageCollector::new(start_time, None, move |_, first_token_ms| {
+            *captured_for_callback.lock().unwrap() = first_token_ms;
+        });
+        let upstream = async_stream::stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"data: {\"type\":\"response.created\"}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+            ));
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"data: [DONE]\n\n"));
+        };
+        let output = create_logged_passthrough_stream(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        tokio::pin!(output);
+        while let Some(chunk) = output.next().await {
+            chunk.unwrap();
+        }
+
+        let first_token_ms = captured.lock().unwrap().expect("productive event timing");
+        assert!(
+            first_token_ms >= 40,
+            "lifecycle metadata started the first-token timer at {first_token_ms}ms"
         );
     }
 
