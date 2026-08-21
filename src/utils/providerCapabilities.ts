@@ -69,13 +69,21 @@ export function resolveCodexOfficialIdentity(
     return null;
   }
 
+  // Checked before the third-party upstream test, matching
+  // `is_codex_official_provider` (`proxy/providers/codex.rs`): a managed
+  // binding decides where the credentials come from, and a card may point an
+  // official ChatGPT login at a self-hosted gateway. Testing the upstream
+  // first would report such a card as non-official and strand it — the backend
+  // would inject its OAuth token while `supportsOfficialProxyTakeover` denied
+  // the switch during takeover.
+  if (managedAccountId) {
+    return "managed_account";
+  }
+
   if (hasExplicitCodexThirdPartyUpstream(settings)) {
     return null;
   }
 
-  if (managedAccountId) {
-    return "managed_account";
-  }
   if (hasStoredCodexApiKey(settings)) {
     return provider.category === "official" ? "api_key" : null;
   }

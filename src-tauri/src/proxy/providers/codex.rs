@@ -280,10 +280,6 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
         return false;
     }
 
-    if has_explicit_codex_third_party_upstream(provider) {
-        return false;
-    }
-
     let has_managed_account = provider
         .meta
         .as_ref()
@@ -291,6 +287,10 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
         .is_some_and(|account_id| !account_id.trim().is_empty());
     if has_managed_account {
         return true;
+    }
+
+    if has_explicit_codex_third_party_upstream(provider) {
+        return false;
     }
 
     let has_stored_api_key = provider
@@ -317,7 +317,22 @@ pub fn resolve_codex_catalog_tool_profile(
     provider: &Provider,
 ) -> crate::codex_config::CodexCatalogToolProfile {
     use crate::codex_config::CodexCatalogToolProfile;
+    // Keyed on the credential source, not the upstream host. An official login
+    // with no upstream of its own is a Responses passthrough. Once it does carry
+    // a custom gateway (see `extract_base_url`), that gateway's declared
+    // protocol picks the profile, read through the very functions the router
+    // consults in `should_convert_codex_responses_to_chat`/`_to_anthropic` — so
+    // the catalog cannot disagree with the transform actually applied. Official
+    // cards have no `meta.api_format`, but their TOML `wire_api` is signal
+    // enough, and both helpers fall through to `NativeResponses` when the card
+    // declares neither.
     if is_codex_official_provider(provider) {
+        if codex_provider_uses_anthropic(provider) {
+            return CodexCatalogToolProfile::Anthropic;
+        }
+        if codex_provider_uses_chat_completions(provider) {
+            return CodexCatalogToolProfile::ProxyChat;
+        }
         return CodexCatalogToolProfile::NativeResponses;
     }
     // xAI OAuth pins the native Responses profile regardless of editable
@@ -847,8 +862,37 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        // `is_codex_official_provider` answers where the credentials come from,
+        // not where the request goes. A card can hold an official ChatGPT login
+        // and still route through a self-hosted gateway — Codex CLI supports
+        // exactly that via `model_providers.<id>.requires_openai_auth = true`
+        // next to a custom `base_url`. Only an official login *without* an
+        // explicit upstream of its own targets the ChatGPT backend.
+        //
+        // An official card never falls through to the generic resolution below:
+        // that path scans for the first literal `base_url = "` in the text, so a
+        // leftover `[model_providers.*]` the active provider does not point at
+        // would receive the request — and with it the ChatGPT bearer token the
+        // forwarder passes through. Either the active `model_provider` names an
+        // upstream we can resolve, or the card keeps targeting ChatGPT.
+        //
+        // Only the active table counts. `extract_codex_base_url` would also
+        // accept a top-level `base_url`, which the official card UI cannot even
+        // set and which typically survives from an earlier third-party setup —
+        // the same leak by another route.
         if is_codex_official_provider(provider) {
-            return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
+            let upstream = provider
+                .settings_config
+                .get("config")
+                .and_then(JsonValue::as_str)
+                .and_then(|text| crate::codex_config::strip_codex_unified_session_bucket(text).ok())
+                .and_then(|text| {
+                    crate::codex_config::extract_active_codex_provider_base_url(&text)
+                });
+
+            return Ok(upstream
+                .map(|url| url.trim_end_matches('/').to_string())
+                .unwrap_or_else(|| super::CHATGPT_CODEX_BASE_URL.to_string()));
         }
 
         // xAI OAuth: ignore editable provider base URLs and always use the xAI
@@ -882,6 +926,14 @@ impl ProviderAdapter for CodexAdapter {
             }
 
             // 尝试解析 TOML 字符串格式
+            //
+            // The literal scans below take the first `base_url` in the text
+            // regardless of which table `model_provider` selects, so a card that
+            // switched upstreams and left the old `[model_providers.*]` behind
+            // can still be routed to it. Official cards return above precisely
+            // to avoid that; third-party cards remain exposed, risking their own
+            // key rather than a ChatGPT token. Fixing it here means auditing
+            // every third-party shape that relies on this scan.
             if let Some(config_str) = config.as_str() {
                 if let Some(url) = crate::grok_config::extract_base_url(config_str) {
                     return Ok(url.trim_end_matches('/').to_string());
@@ -1066,15 +1118,7 @@ context_window = 500000
         assert!(is_codex_official_provider(&native));
 
         provider.id = "managed-official-account".to_string();
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            auth_binding: Some(crate::provider::AuthBinding {
-                source: crate::provider::AuthBindingSource::ManagedAccount,
-                auth_provider: Some("codex_oauth".to_string()),
-                account_id: Some("acct-managed".to_string()),
-            }),
-            ..Default::default()
-        });
+        provider.meta = managed_codex_oauth_meta();
         let adapter = CodexAdapter::new();
 
         assert!(is_codex_official_provider(&provider));
@@ -1155,6 +1199,272 @@ context_window = 500000
         grok_official.id = crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID.to_string();
         grok_official.category = Some("official".to_string());
         assert!(!is_codex_official_provider(&grok_official));
+    }
+
+    /// A self-hosted gateway that fronts the ChatGPT backend: Codex CLI keeps
+    /// authenticating with the login stored in `auth.json`
+    /// (`requires_openai_auth = true`) while the requests leave for our own
+    /// origin.
+    const WORKER_UPSTREAM_CONFIG: &str = r#"model_provider = "myworker"
+
+[model_providers.myworker]
+name = "My Worker"
+base_url = "https://worker.example.com/backend-api/codex"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+    fn managed_codex_oauth_meta() -> Option<crate::provider::ProviderMeta> {
+        Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        })
+    }
+
+    fn managed_oauth_provider(config: &str) -> Provider {
+        let mut provider = create_provider(json!({ "auth": {}, "config": config }));
+        provider.id = "managed-worker-account".to_string();
+        provider.category = Some("official".to_string());
+        provider.meta = managed_codex_oauth_meta();
+        provider
+    }
+
+    /// The fixed official id short-circuits `is_codex_official_provider` before
+    /// the third-party upstream check, so it reaches `extract_base_url` through
+    /// a different branch than a managed binding does.
+    fn fixed_official_provider(config: &str) -> Provider {
+        let mut provider = create_provider(json!({ "auth": {}, "config": config }));
+        provider.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        provider.category = Some("official".to_string());
+        provider
+    }
+
+    #[test]
+    fn managed_oauth_card_with_custom_upstream_keeps_official_credentials() {
+        let provider = managed_oauth_provider(WORKER_UPSTREAM_CONFIG);
+        assert!(
+            is_codex_official_provider(&provider),
+            "a self-hosted upstream must not demote the credential source: the \
+             managed ChatGPT token still has to be synced into ~/.codex/auth.json"
+        );
+    }
+
+    #[test]
+    fn official_cards_with_a_custom_upstream_route_to_that_upstream() {
+        let adapter = CodexAdapter::new();
+        let mut unbound = create_provider(json!({
+            "auth": {},
+            "config": WORKER_UPSTREAM_CONFIG
+        }));
+        unbound.category = Some("official".to_string());
+
+        for provider in [
+            managed_oauth_provider(WORKER_UPSTREAM_CONFIG),
+            fixed_official_provider(WORKER_UPSTREAM_CONFIG),
+            unbound,
+        ] {
+            assert_eq!(
+                adapter
+                    .extract_base_url(&provider)
+                    .expect("worker base url"),
+                "https://worker.example.com/backend-api/codex",
+                "routing an official card to chatgpt.com would silently bypass the \
+                 gateway the user configured, with no error to notice"
+            );
+        }
+    }
+
+    #[test]
+    fn official_cards_without_a_custom_upstream_still_target_chatgpt() {
+        let adapter = CodexAdapter::new();
+        let mut unbound = create_provider(json!({ "auth": {}, "config": "" }));
+        unbound.category = Some("official".to_string());
+
+        for provider in [
+            managed_oauth_provider(""),
+            fixed_official_provider(""),
+            unbound,
+        ] {
+            assert_eq!(
+                adapter
+                    .extract_base_url(&provider)
+                    .expect("official base url"),
+                super::super::CHATGPT_CODEX_BASE_URL,
+                "cards without an upstream of their own keep the pre-existing route"
+            );
+        }
+    }
+
+    #[test]
+    fn official_cards_never_route_to_a_table_the_active_provider_skips() {
+        let adapter = CodexAdapter::new();
+        // These once looked like "has a custom upstream" to the third-party
+        // heuristic while offering no resolvable URL, which is how they reached
+        // the text scan. The official branch no longer consults that heuristic,
+        // so they are kept as regression guards: the `baseUrl` card in
+        // particular must never again be routed by a settings field the branch
+        // deliberately does not read.
+        let mut settings_field = managed_oauth_provider("");
+        settings_field.settings_config["baseUrl"] = json!("https://stale.example.com/v1");
+
+        for provider in [
+            // `model_provider` names a table that is not in the config, next to
+            // a leftover one that is.
+            managed_oauth_provider(
+                r#"model_provider = "ollama"
+
+[model_providers.old]
+base_url = "https://old.example.com/v1"
+"#,
+            ),
+            managed_oauth_provider("experimental_bearer_token = \"sk-legacy\""),
+            settings_field,
+        ] {
+            assert_eq!(
+                adapter
+                    .extract_base_url(&provider)
+                    .expect("official base url"),
+                super::super::CHATGPT_CODEX_BASE_URL,
+                "falling through to the generic text scan would send the request \
+                 — and the ChatGPT bearer token the forwarder passes through — to \
+                 a host the active `model_provider` never selected"
+            );
+        }
+    }
+
+    /// A URL only counts when `model_provider` selects the table holding it.
+    /// The official card UI cannot set a top-level `base_url`, so one that is
+    /// present survived from an earlier third-party setup — honouring it would
+    /// hand the ChatGPT token to a host the active provider never named.
+    #[test]
+    fn only_the_table_the_active_provider_selects_can_take_the_request() {
+        let adapter = CodexAdapter::new();
+
+        for config in [
+            "base_url = \"https://top.example.com/v1\"",
+            "[model_providers.any]\nbase_url = \"https://unselected.example.com/v1\"\n",
+            "model_provider = \"myworker\"\n\n[model_providers.myworker]\nbase_url = \"   \"\n",
+        ] {
+            let provider = managed_oauth_provider(config);
+            assert_eq!(
+                adapter
+                    .extract_base_url(&provider)
+                    .expect("official base url"),
+                super::super::CHATGPT_CODEX_BASE_URL,
+                "nothing here is an upstream the active `model_provider` named"
+            );
+        }
+    }
+
+    /// `validate_config_toml` rejects an unparsable config when the provider is
+    /// saved, so this state is not reachable from the UI. Pinned anyway because
+    /// the parse error is swallowed here rather than surfaced: if that
+    /// validation is ever relaxed, the card stays on the official route instead
+    /// of resolving to something arbitrary.
+    #[test]
+    fn an_unparsable_config_keeps_the_official_route() {
+        let adapter = CodexAdapter::new();
+        let provider = managed_oauth_provider("model_provider = \"myworker\"\n[[[broken");
+        assert_eq!(
+            adapter
+                .extract_base_url(&provider)
+                .expect("official base url"),
+            super::super::CHATGPT_CODEX_BASE_URL
+        );
+    }
+
+    #[test]
+    fn custom_upstream_url_comes_from_the_active_model_provider() {
+        let adapter = CodexAdapter::new();
+        let provider = managed_oauth_provider(
+            r#"model_provider = "second"
+
+[model_providers.first]
+base_url = "https://first.example.com/v1"
+
+[model_providers.second]
+base_url = "https://second.example.com/v1"
+requires_openai_auth = true
+"#,
+        );
+        assert_eq!(
+            adapter
+                .extract_base_url(&provider)
+                .expect("active base url"),
+            "https://second.example.com/v1",
+            "a textual scan would return the first `base_url` in the file rather \
+             than the table `model_provider` actually selects"
+        );
+    }
+
+    /// Once an official card can carry its own gateway, the catalog profile has
+    /// to follow that gateway's protocol: the router reads the same `wire_api`
+    /// in `should_convert_codex_responses_to_chat` and transforms the request,
+    /// so pinning `NativeResponses` here would advertise a tool set the
+    /// converted route does not actually serve.
+    #[test]
+    fn official_card_on_a_chat_gateway_gets_the_chat_catalog() {
+        let provider = managed_oauth_provider(
+            r#"
+model_provider = "gw"
+[model_providers.gw]
+base_url = "https://gw.example.com/v1"
+wire_api = "chat"
+requires_openai_auth = true
+"#,
+        );
+
+        assert!(
+            should_convert_codex_responses_to_chat(&provider, "/v1/responses"),
+            "precondition: the router converts this card to Chat Completions"
+        );
+        assert!(matches!(
+            resolve_codex_catalog_tool_profile(&provider),
+            crate::codex_config::CodexCatalogToolProfile::ProxyChat
+        ));
+    }
+
+    #[test]
+    fn official_card_on_an_anthropic_gateway_gets_the_anthropic_catalog() {
+        let provider = managed_oauth_provider(
+            r#"
+model_provider = "gw"
+[model_providers.gw]
+base_url = "https://gw.example.com/v1"
+wire_api = "anthropic"
+requires_openai_auth = true
+"#,
+        );
+
+        assert!(
+            codex_provider_uses_anthropic(&provider),
+            "precondition: the router treats this card as an Anthropic upstream"
+        );
+        assert!(matches!(
+            resolve_codex_catalog_tool_profile(&provider),
+            crate::codex_config::CodexCatalogToolProfile::Anthropic
+        ));
+    }
+
+    /// The common case must not move: an official card that declares no
+    /// protocol of its own stays a Responses passthrough.
+    #[test]
+    fn official_card_without_a_protocol_signal_keeps_native_responses() {
+        for provider in [
+            managed_oauth_provider(WORKER_UPSTREAM_CONFIG),
+            managed_oauth_provider(""),
+            fixed_official_provider(""),
+        ] {
+            assert!(matches!(
+                resolve_codex_catalog_tool_profile(&provider),
+                crate::codex_config::CodexCatalogToolProfile::NativeResponses
+            ));
+        }
     }
 
     #[test]

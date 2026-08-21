@@ -900,6 +900,27 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 /// `[model_providers.*]` section — the frontend `extractCodexBaseUrl`
 /// (`getRecoverableBaseUrlAssignments`) excludes those too, and a leftover
 /// section unrelated to the active provider must not leak into `{{baseUrl}}`.
+/// The `base_url` of the table `model_provider` selects — without the
+/// top-level fallback `extract_codex_base_url` accepts, and rejecting a blank
+/// value.
+///
+/// Callers that forward a first-party credential need this stricter form. A
+/// top-level `base_url` can linger from an earlier third-party setup and is not
+/// reachable from the official card UI, so honouring it would send the
+/// credential to a host the active provider never named.
+pub fn extract_active_codex_provider_base_url(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<toml::Value>().ok()?;
+    let active = doc.get("model_provider")?.as_str()?;
+    let base_url = doc
+        .get("model_providers")?
+        .get(active)?
+        .get("base_url")?
+        .as_str()?
+        .trim();
+
+    (!base_url.is_empty()).then(|| base_url.to_string())
+}
+
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
 
