@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code のオールインワン管理ツール
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、VS Code Copilot、GitHub Copilot CLI、OpenClaw、Hermes Agent、Pi、MiniMax Code のオールインワン管理ツール
 
 **ワンクリックで API プロバイダを切り替え、MCP・Skills・プロンプトを一元管理。JSON / TOML / YAML の設定ファイルを手作業で編集する必要はもうありません。**
 
@@ -215,7 +215,7 @@ Claude Code、Codex、Gemini CLI などの AI コーディングツールは、�
 
 **CC Switch** は、こうした作業を 1 つのデスクトップアプリに集約します。プリセットを選んでキーを入力すれば、ワンクリックで切り替えられます。既存の設定が失われることもありません。
 
-- **1 つのアプリで 10 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code
+- **1 つのアプリで 12 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、VS Code Copilot、GitHub Copilot CLI、OpenClaw、Hermes、Pi、MiniMax Code
 - **手動編集は不要** — AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 90 以上のプロバイダプリセットを内蔵
 - **Claude Code で GPT を、Codex で Claude を使う** — ローカルルーティングを内蔵し、Anthropic、OpenAI、Gemini の API 形式を自動で変換。自動フェイルオーバーにも対応
 - **MCP・Skills・プロンプトを一元管理** — MCP と Skills は一度追加すれば、ツールごとにチェックを入れて同期。プロンプトはツールごとに個別に管理
@@ -285,7 +285,7 @@ paru -S cc-switch-bin
 1. **プロバイダ追加**: ツールバーの「新しいプロバイダーを追加」（+ ボタン）をクリック → プリセットを選ぶかカスタム設定を作成
 2. **プロバイダ切り替え**:
    - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code ではボタンが「追加」になります。この 4 つのツールと Pi は共存型のツールで、複数のプロバイダを同時に追加できます）
-   - システムトレイ: プロバイダ名をクリック（Claude Code、Codex、Gemini CLI、Grok Build に対応）
+   - システムトレイ: プロバイダ名をクリック（Claude Code、Codex、Gemini CLI、Grok Build、GitHub Copilot CLI に対応）
 3. **反映**: Claude Code は再起動不要。Codex、Gemini CLI、Grok Build はターミナルまたは CLI ツールを再起動、Claude Desktop はアプリ自体を再起動（詳しくはよくある質問を参照）
 4. **公式ログインに戻す**: リストに含まれている公式プロバイダ（例：「Claude Official」）に切り替え、ツールを再起動してログイン/OAuth フローを実行
 5. **ローカルルーティング（任意）**: Claude Code で OpenAI 形式や Gemini 形式のプロバイダを使う場合や、Codex で Claude を使う場合は、ローカルルーティングを有効にする必要があります。「設定 → ルーティング → ローカルルーティング」で「ルーティング総スイッチ」をオンにし、「ルーティング有効」で対象のツールをオンにしてください。メインページ上部から直接オン/オフしたい場合は、「メインページにルーティング切り替えを表示」をオンにします
@@ -316,6 +316,8 @@ paru -S cc-switch-bin
 | Gemini CLI | 切り替え | ✓ | ✓ | ✓ | ✓ | GEMINI.md | ✓ | ✓ |
 | Grok Build | 切り替え | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | OpenCode | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| VS Code Copilot | 共存 | – | – | ✓ | ✓ | *.prompt.md | ✓ | ✓ |
+| GitHub Copilot CLI | 切替 | – | ✓ | ✓ | ✓ | copilot-instructions.md | ✓ | ✓ |
 | OpenClaw | 共存 | – | – | – | – | ワークスペースエディタ | ✓ | – |
 | Hermes | 共存 | – | – | ✓ | ✓ | メモリ | ✓ | – |
 | Pi | 共存 | – | – | – | ✓ | AGENTS.md、SYSTEM.md、プロンプトテンプレート | ✓ | ✓ |
@@ -335,7 +337,7 @@ paru -S cc-switch-bin
 - **OAuth 認証センター（Beta）** — 「設定 → 認証」で GitHub Copilot、ChatGPT、xAI（Grok）の複数アカウントにログインし、サブスクリプションをプロバイダとして Claude Code、Claude Desktop、Codex で利用（Codex の OpenAI Official 以外はすべてローカルルーティングの有効化が必要）。公式クライアント以外でサブスクリプションを使用すると、ベンダーの利用規約に違反する可能性があります。リスクはご自身で判断してください
 - **Claude Desktop でサードパーティを利用** — Anthropic 互換エンドポイントに直接接続可能。Claude 以外のモデルは「モデルマッピング」を選び、ローカルルーティング経由で Sonnet、Opus、Haiku などのティアをプロバイダの実際のモデルにマッピング
 - **ユニバーサルプロバイダ** — 1 つの設定を Claude Code、Codex、Gemini CLI に同期
-- ワンクリック切り替え、システムトレイからのクイック切り替え（Claude Code、Codex、Gemini CLI、Grok Build）、ドラッグ＆ドロップ並び替え、インポート/エクスポート
+- ワンクリック切り替え、システムトレイからのクイック切り替え（Claude Code、Codex、Gemini CLI、Grok Build、GitHub Copilot CLI）、ドラッグ＆ドロップ並び替え、インポート/エクスポート
 
 ### ローカルルーティング & フェイルオーバー
 
@@ -378,7 +380,9 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
 
-CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code** の 10 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**VS Code Copilot**、**GitHub Copilot CLI**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code** の 12 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
+
+**VS Code Copilot** と **GitHub Copilot CLI** は、プロバイダカタログとセッションを分離した独立したアプリです。GitHub Copilot のデスクトップアプリは管理対象ではありません。[VS Code Copilot ガイド](docs/vscode-copilot-byok.md)と [Copilot CLI ガイド](docs/copilot-cli.md)をご覧ください。
 
 </details>
 

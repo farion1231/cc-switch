@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code 的全方位管理工具
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、VS Code Copilot、GitHub Copilot CLI、OpenClaw、Hermes Agent、Pi、MiniMax Code 的全方位管理工具
 
 **一键切换 API 供应商，统一管理 MCP、Skills 与提示词，不用再手改 JSON / TOML / YAML 配置文件。**
 
@@ -216,7 +216,7 @@ Claude Code、Codex、Gemini CLI 等 AI 编程工具各有各的配置格式。�
 
 **CC Switch** 把这些工作集中到一个桌面应用里：选一个预设、填入 Key，一键即可切换，原有配置不会丢失。
 
-- **一个应用，十个工具** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code
+- **一个应用，十二个工具** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、VS Code Copilot、GitHub Copilot CLI、OpenClaw、Hermes、Pi、MiniMax Code
 - **告别手动编辑** — 90+ 供应商预设，包括 AWS Bedrock、NVIDIA NIM 和社区中转服务
 - **在 Claude Code 里用 GPT，在 Codex 里用 Claude** — 内置本地路由，自动转换 Anthropic、OpenAI、Gemini 的接口格式，并支持自动故障转移
 - **MCP、Skills 与提示词集中管理** — MCP 和 Skills 添加一次，按工具勾选同步；提示词按工具分别维护
@@ -286,7 +286,7 @@ paru -S cc-switch-bin
 1. **添加供应商**：点击工具栏的“添加新供应商”（+ 按钮）→ 选择预设或创建自定义配置
 2. **切换供应商**：
    - 主界面：选择供应商 → 点击“启用”（OpenCode、OpenClaw、Hermes、MiniMax Code 的按钮为“添加”；这四个工具和 Pi 是共存式工具，可以同时添加多个供应商）
-   - 系统托盘：直接点击供应商名称（支持 Claude Code、Codex、Gemini CLI、Grok Build）
+   - 系统托盘：直接点击供应商名称（支持 Claude Code、Codex、Gemini CLI、Grok Build、GitHub Copilot CLI）
 3. **生效方式**：Claude Code 无需重启；Codex、Gemini CLI、Grok Build 需重启终端或对应的 CLI 工具；Claude Desktop 需重启应用本身（详见常见问题）
 4. **恢复官方登录**：切换到列表中自带的官方供应商（如“Claude Official”），重启工具后按照其登录/OAuth 流程操作
 5. **本地路由（可选）**：想在 Claude Code 里使用 OpenAI 或 Gemini 格式的供应商，或在 Codex 里使用 Claude，需要开启本地路由。做法是在「设置 → 路由 → 本地路由」里打开“路由总开关”，再在“路由启用”里打开对应的工具。想在主页顶部直接开关，可以打开“在主页面显示本地路由开关”
@@ -317,6 +317,8 @@ paru -S cc-switch-bin
 | Gemini CLI | 切换 | ✓ | ✓ | ✓ | ✓ | GEMINI.md | ✓ | ✓ |
 | Grok Build | 切换 | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | OpenCode | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| VS Code Copilot | 共存 | – | – | ✓ | ✓ | *.prompt.md | ✓ | ✓ |
+| GitHub Copilot CLI | 切换 | – | ✓ | ✓ | ✓ | copilot-instructions.md | ✓ | ✓ |
 | OpenClaw | 共存 | – | – | – | – | 工作区编辑器 | ✓ | – |
 | Hermes | 共存 | – | – | ✓ | ✓ | 记忆管理 | ✓ | – |
 | Pi | 共存 | – | – | – | ✓ | AGENTS.md、SYSTEM.md、提示词模板 | ✓ | ✓ |
@@ -336,7 +338,7 @@ paru -S cc-switch-bin
 - **OAuth 认证中心（Beta）** — 在「设置 → 认证」里登录多个 GitHub Copilot、ChatGPT、xAI（Grok）账号，把订阅当作供应商用在 Claude Code、Claude Desktop 和 Codex 中（除 Codex 的 OpenAI Official 外，都需要开启本地路由）。在官方客户端以外使用订阅可能违反厂商的服务条款，请自行评估风险
 - **Claude Desktop 接入第三方** — 可以直连 Anthropic 兼容端点；非 Claude 模型选“模型映射”，经本地路由把 Sonnet、Opus、Haiku 等档位映射到供应商的实际模型
 - **通用供应商** — 一份配置同步到 Claude Code、Codex 和 Gemini CLI
-- 一键切换、系统托盘快速切换（Claude Code、Codex、Gemini CLI、Grok Build）、拖拽排序、导入导出
+- 一键切换、系统托盘快速切换（Claude Code、Codex、Gemini CLI、Grok Build、GitHub Copilot CLI）、拖拽排序、导入导出
 
 ### 本地路由与故障转移
 
@@ -379,7 +381,9 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch 支持哪些 AI 工具？</strong></summary>
 
-CC Switch 支持十个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**。每个工具都有专属的供应商预设和配置管理，各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
+CC Switch 支持十二个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**VS Code Copilot**、**GitHub Copilot CLI**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**。每个工具都有专属的供应商预设和配置管理，各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
+
+**VS Code Copilot** 与 **GitHub Copilot CLI** 是两个独立的一等应用，供应商目录和会话互不混用；这里不管理 GitHub Copilot 桌面应用。详见 [VS Code Copilot 指南](docs/vscode-copilot-byok.md)与 [Copilot CLI 指南](docs/copilot-cli.md)。
 
 </details>
 

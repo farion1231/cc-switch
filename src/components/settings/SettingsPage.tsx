@@ -46,7 +46,10 @@ import { BackupListSection } from "@/components/settings/BackupListSection";
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { ProxyTabContent } from "@/components/settings/ProxyTabContent";
-import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import {
+  UsageDashboard,
+  type UsageDefaultFilter,
+} from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
@@ -61,6 +64,7 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void | Promise<void>;
   defaultTab?: string;
+  usageDefaultFilter?: UsageDefaultFilter;
 }
 
 export function SettingsPage({
@@ -68,6 +72,7 @@ export function SettingsPage({
   onOpenChange,
   onImportSuccess,
   defaultTab = "general",
+  usageDefaultFilter,
 }: SettingsDialogProps) {
   const { t } = useTranslation();
   const {
@@ -486,6 +491,7 @@ export function SettingsPage({
 
               <TabsContent value="usage" className="mt-0">
                 <UsageDashboard
+                  defaultFilter={usageDefaultFilter}
                   refreshIntervalMs={settings?.usageDashboardRefreshIntervalMs}
                   onRefreshIntervalChange={(usageDashboardRefreshIntervalMs) =>
                     handleAutoSave({ usageDashboardRefreshIntervalMs })
