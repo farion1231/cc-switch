@@ -16,18 +16,70 @@ use winreg::RegKey;
 #[cfg(target_os = "windows")]
 const INTERNET_SETTINGS_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
-/// 检测当前系统代理,返回形如 `http://127.0.0.1:7890` 的 URL。
-/// 系统代理被禁用或配置无效时返回 `None`。
-pub fn detect() -> Option<String> {
-    if let Some(url) = detect_registry() {
-        return Some(url);
-    }
-    detect_from_env()
+/// 按协议区分（scheme）的系统代理映射。
+///
+/// - `http`: 用于 `http://` 上游
+/// - `https`: 用于 `https://` 上游（CONNECT 隧道）
+/// - `socks`: 兜底（上游 scheme 非 http/https 时）
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProxySchemeMap {
+    pub http: Option<String>,
+    pub https: Option<String>,
+    pub socks: Option<String>,
 }
 
-/// 检测系统代理,并过滤指向 CC Switch 自身监听端口的自环地址。
-pub fn detect_loopback_safe(own_port: u16) -> Option<String> {
-    detect().filter(|url| !proxy_points_to_own_port(url, own_port))
+impl ProxySchemeMap {
+    /// 代表 URL（状态展示/日志用）：优先 http，其次 https，最后 socks。
+    pub fn representative(&self) -> Option<String> {
+        self.http
+            .clone()
+            .or_else(|| self.https.clone())
+            .or_else(|| self.socks.clone())
+    }
+
+    /// 单一通用代理：http 与 https 为同一 URL 且无 socks 段时返回它。
+    /// 此形态与「单一全局代理」等价，用于保证行为零变化。
+    pub fn single_url(&self) -> Option<String> {
+        if self.socks.is_none() && self.http.is_some() && self.http == self.https {
+            self.http.clone()
+        } else {
+            None
+        }
+    }
+
+    /// 按上游 scheme 选代理；缺失名目回退代表值（避免 https 因缺配置突然变直连）。
+    pub fn for_scheme(&self, scheme: &str) -> Option<String> {
+        let rep = self.representative();
+        match scheme {
+            "http" => self.http.clone().or(rep),
+            "https" => self.https.clone().or(rep),
+            _ => self.socks.clone().or(rep),
+        }
+    }
+}
+
+/// 检测系统代理（按 scheme 区分）。
+///
+/// Windows: 优先注册表（ProxyEnable/ProxyServer），无则回退环境变量；
+/// 其他平台: 环境变量。
+pub fn detect_map() -> ProxySchemeMap {
+    #[cfg(target_os = "windows")]
+    {
+        let registry = detect_registry_map();
+        if registry.representative().is_some() {
+            return registry;
+        }
+    }
+    detect_from_env_map()
+}
+
+/// 检测系统代理映射，并过滤指向 CC Switch 自身监听端口的自环地址。
+pub fn detect_map_loopback_safe(own_port: u16) -> ProxySchemeMap {
+    let mut map = detect_map();
+    map.http = map.http.filter(|u| !proxy_points_to_own_port(u, own_port));
+    map.https = map.https.filter(|u| !proxy_points_to_own_port(u, own_port));
+    map.socks = map.socks.filter(|u| !proxy_points_to_own_port(u, own_port));
+    map
 }
 
 /// 检测系统代理的绕过列表（直连名单）。
@@ -119,72 +171,81 @@ fn registry_proxy_override() -> Vec<String> {
 }
 
 #[cfg(target_os = "windows")]
-fn detect_registry() -> Option<String> {
-    let key = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey_with_flags(INTERNET_SETTINGS_PATH, KEY_READ)
-        .ok()?;
+fn detect_registry_map() -> ProxySchemeMap {
+    let Ok(key) =
+        RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(INTERNET_SETTINGS_PATH, KEY_READ)
+    else {
+        return ProxySchemeMap::default();
+    };
 
     let proxy_enable: u32 = key.get_value("ProxyEnable").unwrap_or(0);
     if proxy_enable == 0 {
-        return None;
+        return ProxySchemeMap::default();
     }
 
-    let server: String = key.get_value("ProxyServer").ok()?;
-    let server = server.trim();
-    if server.is_empty() {
-        return None;
-    }
-
-    parse_proxy_server_value(server)
+    let Ok(server) = key.get_value::<String, _>("ProxyServer") else {
+        return ProxySchemeMap::default();
+    };
+    parse_proxy_server_map(&server)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn detect_registry() -> Option<String> {
-    None
+fn detect_registry_map() -> ProxySchemeMap {
+    ProxySchemeMap::default()
 }
 
-fn detect_from_env() -> Option<String> {
-    const KEYS: [&str; 6] = [
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "HTTP_PROXY",
-        "http_proxy",
-    ];
-
-    for key in KEYS {
-        let Ok(value) = env::var(key) else {
-            continue;
-        };
-        let value = value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        return Some(normalize_proxy_addr("http", value));
-    }
-    None
-}
-
-/// 解析 Windows 注册表 `ProxyServer` 值,支持:
+/// 从环境变量构建按 scheme 的代理映射。
 ///
-/// - `host:port`
+/// 优先级: `ALL_PROXY` 作为通用底座，`HTTPS_PROXY` / `HTTP_PROXY` 再分别覆盖，
+/// 特性配置优先于通用配置（大小写变体同义，后写覆盖）。
+fn detect_from_env_map() -> ProxySchemeMap {
+    let mut map = ProxySchemeMap::default();
+
+    for key in ["ALL_PROXY", "all_proxy"] {
+        if let Ok(value) = env::var(key) {
+            let value = value.trim();
+            if !value.is_empty() {
+                let url = normalize_proxy_addr("http", value);
+                map.http = Some(url.clone());
+                map.https = Some(url);
+            }
+        }
+    }
+    for key in ["HTTPS_PROXY", "https_proxy"] {
+        if let Ok(value) = env::var(key) {
+            let value = value.trim();
+            if !value.is_empty() {
+                map.https = Some(normalize_proxy_addr("http", value));
+            }
+        }
+    }
+    for key in ["HTTP_PROXY", "http_proxy"] {
+        if let Ok(value) = env::var(key) {
+            let value = value.trim();
+            if !value.is_empty() {
+                map.http = Some(normalize_proxy_addr("http", value));
+            }
+        }
+    }
+
+    map
+}
+
+/// 解析 Windows 注册表 `ProxyServer` 值为按 scheme 的映射,支持:
+///
+/// - `host:port`（单一地址：同时用于 http 与 https，保持旧行为）
 /// - `http://host:port`
 /// - `http=host:port;https=host:port;socks=host:1080` (多协议)
-///
-/// 多协议时优先返回 HTTP 段;无 HTTP 段时返回第一个可用段。
 // 仅 Windows 注册表路径使用；非 Windows 下仅被测试引用，避免 -D warnings 误报死代码。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn parse_proxy_server_value(value: &str) -> Option<String> {
+fn parse_proxy_server_map(value: &str) -> ProxySchemeMap {
     let v = value.trim();
     if v.is_empty() {
-        return None;
+        return ProxySchemeMap::default();
     }
 
     if v.contains('=') {
-        let mut http_proxy: Option<String> = None;
-        let mut first: Option<String> = None;
-
+        let mut map = ProxySchemeMap::default();
         for section in v.split(';') {
             let section = section.trim();
             if section.is_empty() {
@@ -204,20 +265,36 @@ fn parse_proxy_server_value(value: &str) -> Option<String> {
                 "socks" | "socks5" | "socks5h" => "socks5h",
                 _ => continue,
             };
-
             let url = normalize_proxy_addr(scheme, addr);
-            if first.is_none() {
-                first = Some(url.clone());
-            }
-            if http_proxy.is_none() && matches!(protocol.as_str(), "http" | "https") {
-                http_proxy = Some(url);
+
+            match protocol.as_str() {
+                "http" => {
+                    if map.http.is_none() {
+                        map.http = Some(url);
+                    }
+                }
+                "https" => {
+                    if map.https.is_none() {
+                        map.https = Some(url);
+                    }
+                }
+                _ => {
+                    if map.socks.is_none() {
+                        map.socks = Some(url);
+                    }
+                }
             }
         }
-
-        return http_proxy.or(first);
+        return map;
     }
 
-    Some(normalize_proxy_addr("http", v))
+    // 单一地址同时用于 http 与 https（mixed 端口语义，与旧实现等价）
+    let url = normalize_proxy_addr("http", v);
+    ProxySchemeMap {
+        http: Some(url.clone()),
+        https: Some(url),
+        socks: None,
+    }
 }
 
 fn normalize_proxy_addr(default_scheme: &str, addr: &str) -> String {
@@ -275,61 +352,101 @@ mod tests {
     }
 
     #[test]
-    fn parse_plain_host_port() {
-        assert_eq!(
-            parse_proxy_server_value("127.0.0.1:7890").as_deref(),
-            Some("http://127.0.0.1:7890")
-        );
+    fn parse_plain_host_port_is_universal() {
+        let map = parse_proxy_server_map("127.0.0.1:7890");
+        assert_eq!(map.http.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(map.https.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(map.socks, None);
+        // 单一地址必须退回“单一代理”形态，保证行为零变化
+        assert_eq!(map.single_url().as_deref(), Some("http://127.0.0.1:7890"));
     }
 
     #[test]
-    fn parse_with_scheme() {
-        assert_eq!(
-            parse_proxy_server_value("http://127.0.0.1:7890").as_deref(),
-            Some("http://127.0.0.1:7890")
-        );
+    fn parse_with_scheme_is_universal() {
+        let map = parse_proxy_server_map("http://127.0.0.1:7890");
+        assert_eq!(map.http.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(map.https.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(map.single_url().as_deref(), Some("http://127.0.0.1:7890"));
     }
 
     #[test]
-    fn parse_multi_protocol_prefers_http() {
-        assert_eq!(
-            parse_proxy_server_value(
-                "http=127.0.0.1:7890;https=127.0.0.1:7890;socks=127.0.0.1:7891"
-            )
-            .as_deref(),
-            Some("http://127.0.0.1:7890")
-        );
+    fn parse_multi_protocol_keeps_scheme_entries() {
+        let map =
+            parse_proxy_server_map("http=127.0.0.1:7890;https=127.0.0.1:7891;socks=127.0.0.1:7892");
+        assert_eq!(map.http.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(map.https.as_deref(), Some("http://127.0.0.1:7891"));
+        assert_eq!(map.socks.as_deref(), Some("socks5h://127.0.0.1:7892"));
+        // 多名目形态不再视为单一代理
+        assert_eq!(map.single_url(), None);
     }
 
     #[test]
     fn parse_multi_protocol_socks_only() {
+        let map = parse_proxy_server_map("socks=127.0.0.1:7891");
+        assert_eq!(map.http, None);
+        assert_eq!(map.https, None);
+        assert_eq!(map.socks.as_deref(), Some("socks5h://127.0.0.1:7891"));
         assert_eq!(
-            parse_proxy_server_value("socks=127.0.0.1:7891").as_deref(),
+            map.representative().as_deref(),
             Some("socks5h://127.0.0.1:7891")
         );
     }
 
     #[test]
     fn parse_empty_or_invalid() {
-        assert_eq!(parse_proxy_server_value(""), None);
-        assert_eq!(parse_proxy_server_value("   "), None);
-        assert_eq!(parse_proxy_server_value("socks5=   "), None);
+        assert_eq!(parse_proxy_server_map(""), ProxySchemeMap::default());
+        assert_eq!(parse_proxy_server_map("   "), ProxySchemeMap::default());
+        assert_eq!(
+            parse_proxy_server_map("socks5=   "),
+            ProxySchemeMap::default()
+        );
     }
 
     #[test]
-    fn detect_from_env_priority() {
+    fn parse_missing_https_falls_back() {
+        // 只有 http 段时，https 上游必须回退到代表值，不能变成直连
+        let map = parse_proxy_server_map("http=127.0.0.1:7890");
+        assert_eq!(map.https, None);
+        assert_eq!(
+            map.for_scheme("https").as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(
+            map.for_scheme("http").as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
+    }
+
+    #[test]
+    fn detect_from_env_map_priority() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
 
+        // 仅 HTTP_PROXY：全体回退到它
         std::env::set_var("HTTP_PROXY", "10.0.0.1:8080");
-        assert_eq!(detect_from_env().as_deref(), Some("http://10.0.0.1:8080"));
+        let map = detect_from_env_map();
+        assert_eq!(map.http.as_deref(), Some("http://10.0.0.1:8080"));
+        assert_eq!(
+            map.for_scheme("https").as_deref(),
+            Some("http://10.0.0.1:8080")
+        );
         clear_proxy_env();
 
+        // ALL_PROXY 底座 + HTTPS_PROXY 覆盖 https
         std::env::set_var("ALL_PROXY", "socks5://10.0.0.1:1080");
-        assert_eq!(detect_from_env().as_deref(), Some("socks5://10.0.0.1:1080"));
+        std::env::set_var("HTTPS_PROXY", "10.0.0.2:8443");
+        let map = detect_from_env_map();
+        assert_eq!(
+            map.for_scheme("https").as_deref(),
+            Some("http://10.0.0.2:8443")
+        );
+        assert_eq!(
+            map.for_scheme("http").as_deref(),
+            Some("socks5://10.0.0.1:1080")
+        );
         clear_proxy_env();
 
-        assert_eq!(detect_from_env(), None);
+        assert_eq!(detect_from_env_map(), ProxySchemeMap::default());
     }
 
     #[test]
@@ -344,11 +461,21 @@ mod tests {
     }
 
     #[test]
-    fn detect_loopback_safe_filters_own_port() {
-        // 无法注入注册表,这里只验证过滤逻辑: 手动构造已检测 URL 的场景
+    fn detect_map_loopback_safe_filters_own_port() {
+        // 无法注入注册表,这里只验证过滤逻辑逐槽生效
+        let full = detect_map();
+        let safe = detect_map_loopback_safe(15721);
         assert_eq!(
-            detect_loopback_safe(15721),
-            detect().filter(|u| !proxy_points_to_own_port(u, 15721))
+            safe.http,
+            full.http.filter(|u| !proxy_points_to_own_port(u, 15721))
+        );
+        assert_eq!(
+            safe.https,
+            full.https.filter(|u| !proxy_points_to_own_port(u, 15721))
+        );
+        assert_eq!(
+            safe.socks,
+            full.socks.filter(|u| !proxy_points_to_own_port(u, 15721))
         );
     }
 
@@ -358,7 +485,7 @@ mod tests {
     fn live_registry_detect_on_machine() {
         let guard = env_lock().lock().unwrap();
         clear_proxy_env();
-        let detected = detect();
+        let detected = detect_map().representative();
         drop(guard);
         println!("[live] system proxy detected = {detected:?}");
         // 本机启用系统代理时,期望是 http://127.0.0.1:7890
