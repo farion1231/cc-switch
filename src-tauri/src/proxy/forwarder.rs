@@ -1440,6 +1440,8 @@ impl RequestForwarder {
             || codex_anthropic_base_is_full_endpoint
         {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
+        } else if is_copilot && matches!(app_type, AppType::Codex | AppType::GrokBuild) {
+            build_codex_copilot_url(&base_url, &effective_endpoint)
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
         };
@@ -2895,6 +2897,19 @@ fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<S
     (rewritten, passthrough_query)
 }
 
+/// Build the upstream URL for GitHub Copilot under Codex/GrokBuild. Copilot's
+/// chat endpoint has no `/v1` prefix (`…/chat/completions`), while
+/// `CodexAdapter::build_url` auto-prepends `/v1` to an origin-only base URL —
+/// so the rewrite path must concatenate directly instead. The Claude side is
+/// unaffected: `ClaudeAdapter::build_url` already concatenates as-is.
+fn build_codex_copilot_url(base_url: &str, endpoint: &str) -> String {
+    format!(
+        "{}/{}",
+        base_url.trim_end_matches('/'),
+        endpoint.trim_start_matches('/')
+    )
+}
+
 /// Claude Code client fingerprint (used for Codex→Anthropic emulation to pass a
 /// gateway's "Claude Code only" check).
 const CLAUDE_CODE_USER_AGENT: &str = "claude-cli/1.0.119 (external, cli)";
@@ -4229,6 +4244,27 @@ mod tests {
 
         assert_eq!(endpoint, "/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn build_codex_copilot_url_skips_v1_prefix() {
+        // Copilot's chat endpoint lives at the origin root (no /v1); the plain
+        // concatenation must not let CodexAdapter's /v1 auto-prefix leak in.
+        assert_eq!(
+            build_codex_copilot_url(
+                "https://api.githubcopilot.com",
+                "/chat/completions"
+            ),
+            "https://api.githubcopilot.com/chat/completions"
+        );
+        // Enterprise dynamic endpoints and trailing slashes stay correct.
+        assert_eq!(
+            build_codex_copilot_url(
+                "https://copilot-api.corp.example.com/",
+                "/chat/completions?x=1"
+            ),
+            "https://copilot-api.corp.example.com/chat/completions?x=1"
+        );
     }
 
     #[test]

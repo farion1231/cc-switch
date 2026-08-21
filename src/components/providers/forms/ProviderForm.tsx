@@ -571,7 +571,7 @@ function ProviderFormFull({
     [localApiKeyField, form, handleSettingsConfigChange],
   );
 
-  // Copilot OAuth 认证状态（仅 Claude 应用需要）
+  // Copilot OAuth 认证状态（Claude / Codex 应用共用托管账号）
   const {
     isAuthenticated: isCopilotAuthenticated,
     isStatusSuccess: isCopilotStatusSuccess,
@@ -793,7 +793,7 @@ function ProviderFormFull({
   const presetProviderType = getPresetProviderType(selectedPresetEntry?.preset);
   const initialProviderType = initialData?.meta?.providerType;
   const isCopilotProvider =
-    appId === "claude" &&
+    (appId === "claude" || appId === "codex") &&
     (presetProviderType === "github_copilot" ||
       initialProviderType === "github_copilot" ||
       baseUrl.includes("githubcopilot.com"));
@@ -1352,6 +1352,15 @@ function ProviderFormFull({
       toast.error(
         t("managedAuth.selectedAccountUnavailable", {
           defaultValue: "已绑定账号不存在，请重新选择账号",
+        }),
+      );
+      return;
+    }
+    // Copilot 预设默认模型为空（由用户拉取账号模型后选择），空模型无法接管
+    if (appId === "codex" && isCopilotProvider && !codexModel.trim()) {
+      toast.error(
+        t("copilot.modelRequired", {
+          defaultValue: "请先获取并选择模型",
         }),
       );
       return;
@@ -2447,6 +2456,10 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
+              isCopilotPreset={isCopilotProvider}
+              isCopilotAuthenticated={isCopilotAuthenticated}
+              selectedGitHubAccountId={selectedGitHubAccountId}
+              onGitHubAccountSelect={setSelectedGitHubAccountId}
               codexApiKey={codexApiKey}
               onApiKeyChange={handleCodexApiKeyChange}
               category={category}

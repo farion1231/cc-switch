@@ -169,7 +169,7 @@ export function useProviderActions(
   const switchProvider = useCallback(
     async (provider: Provider) => {
       const isCopilotProvider =
-        activeApp === "claude" &&
+        (activeApp === "claude" || activeApp === "codex") &&
         provider.meta?.providerType === "github_copilot";
       const isCodexChatFormat =
         (activeApp === "codex" || activeApp === "grokbuild") &&
