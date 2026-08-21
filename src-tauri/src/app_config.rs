@@ -112,6 +112,8 @@ pub struct SkillApps {
     pub hermes: bool,
     #[serde(default)]
     pub pi: bool,
+    #[serde(default)]
+    pub zcode: bool,
 }
 
 impl SkillApps {
@@ -126,8 +128,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
-            // ZCode uses its own plugin system, not CC Switch skill sync
-            AppType::ZCode => false,
+            AppType::ZCode => self.zcode,
             AppType::ClaudeDesktop => false,
         }
     }
@@ -143,8 +144,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
-            // ZCode uses its own plugin system, ignore skill sync
-            AppType::ZCode => {}
+            AppType::ZCode => self.zcode = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
     }
@@ -173,6 +173,9 @@ impl SkillApps {
         if self.pi {
             apps.push(AppType::Pi);
         }
+        if self.zcode {
+            apps.push(AppType::ZCode);
+        }
         apps
     }
 
@@ -185,6 +188,7 @@ impl SkillApps {
             && !self.opencode
             && !self.hermes
             && !self.pi
+            && !self.zcode
     }
 
     /// 仅启用指定应用（其他应用设为禁用）

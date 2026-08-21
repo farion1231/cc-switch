@@ -42,7 +42,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   zcode: true,
 };
 
-/** App IDs shown in Skills panels (excludes OpenClaw and ZCode — they use their own plugin systems) */
+/** App IDs shown in Skills panels (excludes OpenClaw — it uses its own plugin system) */
 export const SKILLS_APP_IDS: AppId[] = [
   "claude",
   "codex",
@@ -51,6 +51,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "opencode",
   "hermes",
   "pi",
+  "zcode",
 ];
 
 export type ProxyAppId = Extract<
