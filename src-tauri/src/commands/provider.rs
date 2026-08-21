@@ -551,7 +551,7 @@ async fn query_provider_usage_inner(
     // 从数据库读取供应商信息，检查特殊模板类型
     let providers = state
         .db
-        .get_all_providers(app_type.as_str())
+        .get_all_providers(crate::copilot_byok::provider_database_app_type(&app_type))
         .map_err(|e| format!("Failed to get providers: {e}"))?;
     let provider = providers.get(provider_id);
     let usage_script = provider

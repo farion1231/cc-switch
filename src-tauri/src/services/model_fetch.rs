@@ -16,6 +16,8 @@ use std::time::Duration;
 pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// 模型列表响应的兼容格式。
@@ -36,6 +38,8 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+    #[serde(default, alias = "display_name", alias = "displayName")]
+    name: Option<String>,
 }
 
 /// `models[]` 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`；
@@ -59,6 +63,9 @@ const FETCH_TIMEOUT_SECS: u64 = 15;
 const MAX_REQUEST_HEADERS: usize = 64;
 const MAX_HEADER_NAME_BYTES: usize = 256;
 const MAX_HEADER_VALUE_BYTES: usize = 16 * 1024;
+const MAX_MODELS_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_ERROR_RESPONSE_BYTES: usize = 64 * 1024;
+const MAX_FETCHED_MODELS: usize = 10_000;
 
 /// 404/405 响应体截断长度：避免把几十 KB HTML 404 页整页保留到错误串里。
 const ERROR_BODY_MAX_CHARS: usize = 512;
@@ -118,42 +125,17 @@ pub async fn fetch_models(
         let status = response.status();
 
         if status.is_success() {
-            let resp: ModelsResponse = response
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse response: {e}"))?;
-
-            let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
-                data.into_iter()
-                    .map(|m| FetchedModel {
-                        id: m.id,
-                        owned_by: m.owned_by,
-                    })
-                    .collect()
-            } else {
-                catalog_model_ids(resp.models)
-                    .into_iter()
-                    .map(|id| FetchedModel { id, owned_by: None })
-                    .collect()
-            };
-
-            models.sort_by(|a, b| a.id.cmp(&b.id));
-            return Ok(models);
+            let body = read_response_body_limited(response, MAX_MODELS_RESPONSE_BYTES).await?;
+            return parse_models_response(&body);
         }
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
-            let body = redact_model_fetch_error_body(
-                response.text().await.unwrap_or_default(),
-                &known_secrets,
-            );
+            let body = read_error_body(response, &known_secrets).await;
             last_err = Some(format!("HTTP {status}: {body}"));
             continue;
         }
 
-        let body = redact_model_fetch_error_body(
-            response.text().await.unwrap_or_default(),
-            &known_secrets,
-        );
+        let body = read_error_body(response, &known_secrets).await;
         return Err(format!("HTTP {status}: {body}"));
     }
 
@@ -161,6 +143,84 @@ pub async fn fetch_models(
         "All candidates failed: {}",
         last_err.unwrap_or_else(|| "no candidates".to_string())
     ))
+}
+
+fn parse_models_response(body: &[u8]) -> Result<Vec<FetchedModel>, String> {
+    let resp: ModelsResponse =
+        serde_json::from_slice(body).map_err(|e| format!("Failed to parse response: {e}"))?;
+    let entry_count = if let Some(data) = &resp.data {
+        data.len()
+    } else {
+        resp.models
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len)
+    };
+    if entry_count > MAX_FETCHED_MODELS {
+        return Err(format!(
+            "Models response contains more than {MAX_FETCHED_MODELS} entries"
+        ));
+    }
+
+    let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
+        data.into_iter()
+            .map(|m| FetchedModel {
+                id: m.id,
+                owned_by: m.owned_by,
+                name: m.name,
+            })
+            .collect()
+    } else {
+        catalog_model_ids(resp.models)
+            .into_iter()
+            .map(|id| FetchedModel {
+                id,
+                owned_by: None,
+                name: None,
+            })
+            .collect()
+    };
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(models)
+}
+
+async fn read_response_body_limited(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(format!(
+            "Response body exceeds the {max_bytes}-byte safety limit"
+        ));
+    }
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("Failed to read response: {error}"))?
+    {
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!(
+                "Response body exceeds the {max_bytes}-byte safety limit"
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+async fn read_error_body(response: reqwest::Response, known_secrets: &[String]) -> String {
+    match read_response_body_limited(response, MAX_ERROR_RESPONSE_BYTES).await {
+        Ok(body) => redact_model_fetch_error_body(
+            String::from_utf8_lossy(&body).into_owned(),
+            known_secrets,
+        ),
+        Err(error) => error,
+    }
 }
 
 fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> String {
@@ -183,10 +243,11 @@ fn build_model_fetch_headers(
         ));
     }
 
+    let is_messages = matches!(api_format, Some("anthropic-messages" | "messages"));
     let mut headers = HeaderMap::new();
     if !api_key.is_empty() {
         let (name, value) = match api_format {
-            Some("anthropic-messages") => (
+            Some("anthropic-messages" | "messages") => (
                 HeaderName::from_static("x-api-key"),
                 HeaderValue::from_str(api_key)
                     .map_err(|error| format!("Invalid API Key header value: {error}"))?,
@@ -220,12 +281,18 @@ fn build_model_fetch_headers(
             }
             let name = HeaderName::from_bytes(name.as_bytes())
                 .map_err(|error| format!("Invalid model-fetch header name {name}: {error}"))?;
-            let value = HeaderValue::from_str(raw_value)
+            let value = HeaderValue::from_str(&raw_value.replace("${apiKey}", api_key))
                 .map_err(|error| format!("Invalid model-fetch header value for {name}: {error}"))?;
             headers.insert(name, value);
         }
     }
 
+    if is_messages && !headers.contains_key("anthropic-version") {
+        headers.insert(
+            HeaderName::from_static("anthropic-version"),
+            HeaderValue::from_static("2023-06-01"),
+        );
+    }
     Ok(headers)
 }
 
@@ -263,8 +330,10 @@ pub fn build_models_url_candidates(
             candidates.push(format!("{}/v1/models", &trimmed[..idx]));
         } else if let Some(idx) = trimmed.rfind('/') {
             let root = &trimmed[..idx];
-            if root.contains("://") && root.len() > root.find("://").unwrap() + 3 {
-                candidates.push(format!("{root}/v1/models"));
+            if let Some(scheme_idx) = root.find("://") {
+                if root.len() > scheme_idx + 3 {
+                    candidates.push(format!("{root}/v1/models"));
+                }
             }
         }
         if candidates.is_empty() {
@@ -402,6 +471,22 @@ mod tests {
             &secrets,
         );
         assert_eq!(body, "invalid [REDACTED] / [REDACTED]");
+    }
+
+    #[test]
+    fn messages_protocol_uses_x_api_key_for_model_fetch() {
+        let headers = build_model_fetch_headers("secret", Some("messages"), None, None).unwrap();
+        assert_eq!(headers.get("x-api-key").unwrap(), "secret");
+        assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
+        assert!(headers.get(AUTHORIZATION).is_none());
+    }
+
+    #[test]
+    fn explicit_auth_header_is_preserved_and_expands_api_key() {
+        let custom = BTreeMap::from([("Authorization".to_string(), "Token ${apiKey}".to_string())]);
+        let headers =
+            build_model_fetch_headers("secret", Some("responses"), None, Some(&custom)).unwrap();
+        assert_eq!(headers.get(AUTHORIZATION).unwrap(), "Token secret");
     }
 
     #[test]
@@ -702,5 +787,125 @@ mod tests {
         let resp: ModelsResponse =
             serde_json::from_str(r#"{"models":[{"slug":"glm","id":123}]}"#).unwrap();
         assert_eq!(catalog_model_ids(resp.models), vec!["glm".to_string()]);
+    }
+
+    #[test]
+    fn parsed_models_tolerate_catalog_shapes_without_losing_data_metadata() {
+        for catalog in [
+            r#"["a","b"]"#,
+            r#"{"count":1}"#,
+            "2",
+            r#"[{"id":123}]"#,
+            "null",
+        ] {
+            let body = format!(
+                r#"{{"data":[{{"id":"model-a","name":"Model A","owned_by":"provider"}}],"models":{catalog}}}"#
+            );
+            let models = parse_models_response(body.as_bytes()).unwrap();
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].id, "model-a");
+            assert_eq!(models[0].name.as_deref(), Some("Model A"));
+            assert_eq!(models[0].owned_by.as_deref(), Some("provider"));
+
+            let body = format!(r#"{{"models":{catalog}}}"#);
+            assert!(parse_models_response(body.as_bytes()).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn parsed_catalog_models_fall_back_to_ids_and_count_invalid_entries() {
+        let models = parse_models_response(
+            br#"{"models":[{"slug":"preferred","id":"ignored"},{"slug":"","id":"fallback"},{"slug":3,"id":"numeric-slug"},{"id":123},null]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fallback", "numeric-slug", "preferred"]
+        );
+        assert!(models
+            .iter()
+            .all(|model| model.name.is_none() && model.owned_by.is_none()));
+
+        let body =
+            serde_json::json!({"models": vec![serde_json::Value::Null; MAX_FETCHED_MODELS + 1]});
+        assert!(parse_models_response(&serde_json::to_vec(&body).unwrap())
+            .unwrap_err()
+            .contains("more than 10000 entries"));
+    }
+
+    #[test]
+    fn parsed_models_keep_display_names_and_sort_by_id() {
+        let body = br#"{"data":[
+            {"id":"c","name":"Named model","owned_by":"provider"},
+            {"id":"b","display_name":"Snake case name"},
+            {"id":"a","displayName":"Camel case name"}
+        ]}"#;
+        let models = parse_models_response(body).unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
+        assert_eq!(models[0].name.as_deref(), Some("Camel case name"));
+        assert_eq!(models[1].name.as_deref(), Some("Snake case name"));
+        assert_eq!(models[2].name.as_deref(), Some("Named model"));
+        assert_eq!(models[2].owned_by.as_deref(), Some("provider"));
+    }
+
+    #[test]
+    fn parsed_zhipu_models_use_slugs_without_inventing_metadata() {
+        let models =
+            parse_models_response(br#"{"models":[{"slug":"glm-z"},{"slug":"glm-a"}]}"#).unwrap();
+        assert_eq!(models[0].id, "glm-a");
+        assert_eq!(models[1].id, "glm-z");
+        assert!(models
+            .iter()
+            .all(|model| model.name.is_none() && model.owned_by.is_none()));
+    }
+
+    #[test]
+    fn parsed_models_preserve_data_precedence_and_missing_list_behavior() {
+        let models = parse_models_response(
+            br#"{"data":[{"id":"data-model"}],"models":[{"slug":"slug-model"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "data-model");
+        for body in [r#"{"data":[],"models":[{"slug":"slug-model"}]}"#, r#"{}"#] {
+            assert!(parse_models_response(body.as_bytes()).unwrap().is_empty());
+        }
+        let models =
+            parse_models_response(br#"{"data":null,"models":[{"slug":"slug-model"}]}"#).unwrap();
+        assert_eq!(models[0].id, "slug-model");
+    }
+
+    #[test]
+    fn parsed_models_enforce_the_entry_limit_for_both_formats() {
+        for zhipu in [false, true] {
+            let entry = if zhipu {
+                serde_json::json!({"slug": "model"})
+            } else {
+                serde_json::json!({"id": "model"})
+            };
+            for count in [MAX_FETCHED_MODELS, MAX_FETCHED_MODELS + 1] {
+                let entries = vec![entry.clone(); count];
+                let body = if zhipu {
+                    serde_json::json!({"models": entries})
+                } else {
+                    serde_json::json!({"data": entries})
+                };
+                let result = parse_models_response(&serde_json::to_vec(&body).unwrap());
+                if count == MAX_FETCHED_MODELS {
+                    assert_eq!(result.unwrap().len(), count);
+                } else {
+                    assert!(result.unwrap_err().contains("more than 10000 entries"));
+                }
+            }
+        }
     }
 }

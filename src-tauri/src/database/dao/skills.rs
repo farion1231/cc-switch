@@ -23,7 +23,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
+                        enabled_opencode, enabled_copilot_byok, enabled_copilot_cli, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -45,13 +45,15 @@ impl Database {
                         gemini: row.get(10)?,
                         grokbuild: row.get(11)?,
                         opencode: row.get(12)?,
-                        hermes: row.get(13)?,
+                        copilot_byok: row.get(13)?,
+                        copilot_cli: row.get(14)?,
+                        hermes: row.get(15)?,
                         pi: false,
-                        mcode: row.get(17)?,
+                        mcode: row.get(19)?,
                     },
-                    installed_at: row.get(14)?,
-                    content_hash: row.get(15)?,
-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    installed_at: row.get(16)?,
+                    content_hash: row.get(17)?,
+                    updated_at: row.get::<_, i64>(18).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -71,7 +73,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
+                        enabled_opencode, enabled_copilot_byok, enabled_copilot_cli, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -92,13 +94,15 @@ impl Database {
                     gemini: row.get(10)?,
                     grokbuild: row.get(11)?,
                     opencode: row.get(12)?,
-                    hermes: row.get(13)?,
+                    copilot_byok: row.get(13)?,
+                    copilot_cli: row.get(14)?,
+                    hermes: row.get(15)?,
                     pi: false,
-                    mcode: row.get(17)?,
+                    mcode: row.get(19)?,
                 },
-                installed_at: row.get(14)?,
-                content_hash: row.get(15)?,
-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                installed_at: row.get(16)?,
+                content_hash: row.get(17)?,
+                updated_at: row.get::<_, i64>(18).unwrap_or(0),
             })
         });
 
@@ -115,9 +119,9 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
+              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_copilot_byok, enabled_copilot_cli, enabled_hermes,
               installed_at, content_hash, updated_at, enabled_mcode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 skill.id,
                 skill.name,
@@ -132,6 +136,8 @@ impl Database {
                 skill.apps.gemini,
                 skill.apps.grokbuild,
                 skill.apps.opencode,
+                skill.apps.copilot_byok,
+                skill.apps.copilot_cli,
                 skill.apps.hermes,
                 skill.installed_at,
                 skill.content_hash,
@@ -205,8 +211,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8 WHERE id = ?7",
-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode],
+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_copilot_byok = ?6, enabled_copilot_cli = ?7, enabled_hermes = ?8, enabled_mcode = ?9 WHERE id = ?10",
+                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.copilot_byok, apps.copilot_cli, apps.hermes, apps.mcode, id],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)
@@ -327,6 +333,49 @@ mod tests {
             installed_at: 1,
             content_hash: Some(format!("{name}-hash")),
             updated_at: 2,
+        }
+    }
+
+    #[test]
+    fn minimax_and_copilot_flags_round_trip_independently() {
+        let db = Database::memory().expect("memory db");
+        for mask in 0..16 {
+            let apps = SkillApps {
+                mcode: mask & 1 != 0,
+                copilot_byok: mask & 2 != 0,
+                copilot_cli: mask & 4 != 0,
+                hermes: mask & 8 != 0,
+                ..SkillApps::default()
+            };
+            let original = skill("owner/repo:shared", "shared", apps);
+            db.save_skill(&original).expect("save skill");
+            let stored = db
+                .get_installed_skill(&original.id)
+                .expect("read skill")
+                .expect("skill exists");
+            assert_eq!(stored.apps, original.apps);
+            assert_eq!(stored.content_hash, original.content_hash);
+            assert_eq!(stored.installed_at, original.installed_at);
+            assert_eq!(stored.updated_at, original.updated_at);
+            assert_eq!(
+                db.get_all_installed_skills().expect("list skills")[&original.id].apps,
+                original.apps
+            );
+
+            let mut toggled = original.apps.clone();
+            toggled.mcode = !toggled.mcode;
+            toggled.copilot_byok = !toggled.copilot_byok;
+            toggled.copilot_cli = !toggled.copilot_cli;
+            toggled.hermes = !toggled.hermes;
+            assert!(db
+                .update_skill_apps(&original.id, &toggled)
+                .expect("update flags"));
+            let updated = db
+                .get_installed_skill(&original.id)
+                .expect("read updated skill")
+                .expect("skill exists");
+            assert_eq!(updated.apps, toggled);
+            assert_eq!(updated.content_hash, original.content_hash);
         }
     }
 

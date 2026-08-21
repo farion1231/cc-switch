@@ -68,6 +68,8 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_copilot_byok BOOLEAN NOT NULL DEFAULT 0,
+            enabled_copilot_cli BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
@@ -98,6 +100,8 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_copilot_byok BOOLEAN NOT NULL DEFAULT 0,
+            enabled_copilot_cli BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -563,6 +567,20 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!(
+                            "迁移数据库从 v19 到 v20（补齐会话游标并添加 Copilot CLI 支持）"
+                        );
+                        Self::migrate_v19_to_v20(conn)?;
+                        Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!(
+                            "迁移数据库从 v20 到 v21（兼容 MiniMax Code 与 Copilot 预览版）"
+                        );
+                        Self::migrate_v20_to_v21(conn)?;
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1610,6 +1628,74 @@ impl Database {
                 "last_tail_fingerprint",
                 "INTEGER",
             )?;
+        }
+        Ok(())
+    }
+
+    /// Persist VS Code Copilot enablement for unified Skills and MCP.
+    fn ensure_copilot_byok_columns(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_copilot_byok",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_copilot_byok",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// v19 -> v20: reconcile preview databases and persist Copilot CLI enablement.
+    ///
+    /// Preview builds used schema v19 for the two Copilot enablement columns before
+    /// upstream assigned v18 to the session-log byte cursor. Re-run both earlier
+    /// idempotent migrations here so those preview databases also receive the
+    /// upstream columns without losing their existing Copilot state.
+    fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
+        Self::migrate_v17_to_v18(conn)?;
+        Self::ensure_copilot_byok_columns(conn)?;
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_copilot_cli",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_copilot_cli",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// v20 -> v21: reconcile upstream MiniMax Code and earlier Copilot databases.
+    ///
+    /// Upstream v19 added MiniMax Code, while Copilot previews already used v19/v20.
+    /// Add missing columns idempotently so either upgrade path preserves its flags.
+    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+        Self::migrate_v19_to_v20(conn)?;
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_mcode",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
         }
         Ok(())
     }
@@ -3903,6 +3989,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         assert!(Database::has_column(
             &conn,
             "session_log_sync",
@@ -3921,6 +4008,155 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_adds_minimax_and_both_copilot_enablement_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (id TEXT PRIMARY KEY);
+             CREATE TABLE skills (id TEXT PRIMARY KEY);
+             INSERT INTO mcp_servers (id) VALUES ('mcp-1');
+             INSERT INTO skills (id) VALUES ('skill-1');",
+        )?;
+        Database::set_user_version(&conn, 18)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for column in [
+            "enabled_mcode",
+            "enabled_copilot_byok",
+            "enabled_copilot_cli",
+        ] {
+            assert!(Database::has_column(&conn, "mcp_servers", column)?);
+            assert!(Database::has_column(&conn, "skills", column)?);
+        }
+        let mcp_enabled: (i64, i64) = conn.query_row(
+            "SELECT enabled_copilot_byok, enabled_copilot_cli
+             FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let skill_enabled: (i64, i64) = conn.query_row(
+            "SELECT enabled_copilot_byok, enabled_copilot_cli
+             FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(mcp_enabled, (0, 0));
+        assert_eq!(skill_enabled, (0, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_upstream_v19_preserves_minimax_state() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_mcode BOOLEAN NOT NULL DEFAULT 0);
+             CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_mcode BOOLEAN NOT NULL DEFAULT 0);
+             INSERT INTO mcp_servers VALUES ('mcp-1', 1);
+             INSERT INTO skills VALUES ('skill-1', 1);",
+        )?;
+        Database::set_user_version(&conn, 19)?;
+        for _ in 0..2 {
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            for table in ["mcp_servers", "skills"] {
+                let flags: (bool, bool, bool) = conn.query_row(
+                    &format!("SELECT enabled_mcode, enabled_copilot_byok, enabled_copilot_cli FROM {table}"),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(flags, (true, false, false));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_copilot_v20_preserves_copilot_state_and_adds_minimax() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_copilot_byok BOOLEAN NOT NULL DEFAULT 0, enabled_copilot_cli BOOLEAN NOT NULL DEFAULT 0);
+             CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_copilot_byok BOOLEAN NOT NULL DEFAULT 0, enabled_copilot_cli BOOLEAN NOT NULL DEFAULT 0);
+             INSERT INTO mcp_servers VALUES ('mcp-1', 1, 0);
+             INSERT INTO skills VALUES ('skill-1', 0, 1);",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+        for _ in 0..2 {
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            for (table, expected) in [
+                ("mcp_servers", (false, true, false)),
+                ("skills", (false, false, true)),
+            ] {
+                let flags: (bool, bool, bool) = conn.query_row(
+                    &format!("SELECT enabled_mcode, enabled_copilot_byok, enabled_copilot_cli FROM {table}"),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(flags, expected);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_preview_v19_repairs_upstream_cursor_without_losing_copilot_state(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL
+             );
+             INSERT INTO session_log_sync VALUES ('/tmp/preview.jsonl', 5, 3, 1);
+             CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_copilot_byok BOOLEAN NOT NULL DEFAULT 0,
+                enabled_copilot_cli BOOLEAN NOT NULL DEFAULT 0
+             );
+             CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_copilot_byok BOOLEAN NOT NULL DEFAULT 0,
+                enabled_copilot_cli BOOLEAN NOT NULL DEFAULT 0
+             );
+             INSERT INTO mcp_servers VALUES ('mcp-1', 1, 1);
+             INSERT INTO skills VALUES ('skill-1', 1, 1);",
+        )?;
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "session_log_sync",
+            "last_byte_offset"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "session_log_sync",
+            "last_tail_fingerprint"
+        )?);
+        let mcp_enabled: (i64, i64) = conn.query_row(
+            "SELECT enabled_copilot_byok, enabled_copilot_cli
+             FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let skill_enabled: (i64, i64) = conn.query_row(
+            "SELECT enabled_copilot_byok, enabled_copilot_cli
+             FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(mcp_enabled, (1, 1));
+        assert_eq!(skill_enabled, (1, 1));
         Ok(())
     }
 }
