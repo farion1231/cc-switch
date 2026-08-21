@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_copilot_byok, enabled_copilot_cli, enabled_hermes FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -24,7 +24,9 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let enabled_gemini: bool = row.get(9)?;
     let enabled_grokbuild: bool = row.get(10)?;
     let enabled_opencode: bool = row.get(11)?;
-    let enabled_hermes: bool = row.get(12)?;
+    let enabled_copilot_byok: bool = row.get(12)?;
+    let enabled_copilot_cli: bool = row.get(13)?;
+    let enabled_hermes: bool = row.get(14)?;
 
     let server = serde_json::from_str(&server_config_str).unwrap_or_default();
     let tags = serde_json::from_str(&tags_str).unwrap_or_default();
@@ -41,6 +43,8 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 gemini: enabled_gemini,
                 grokbuild: enabled_grokbuild,
                 opencode: enabled_opencode,
+                copilot_byok: enabled_copilot_byok,
+                copilot_cli: enabled_copilot_cli,
                 hermes: enabled_hermes,
             },
             description,
@@ -89,6 +93,8 @@ impl Database {
             AppType::Gemini => Some("enabled_gemini"),
             AppType::GrokBuild => Some("enabled_grokbuild"),
             AppType::OpenCode => Some("enabled_opencode"),
+            AppType::CopilotByok => Some("enabled_copilot_byok"),
+            AppType::CopilotCli => Some("enabled_copilot_cli"),
             AppType::Hermes => Some("enabled_hermes"),
             // These applications intentionally have no MCP flag in the SSOT.
             AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi => None,
@@ -120,8 +126,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_copilot_byok, enabled_copilot_cli, enabled_hermes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 server.id,
                 server.name,
@@ -138,6 +144,8 @@ impl Database {
                 server.apps.gemini,
                 server.apps.grokbuild,
                 server.apps.opencode,
+                server.apps.copilot_byok,
+                server.apps.copilot_cli,
                 server.apps.hermes,
             ],
         )

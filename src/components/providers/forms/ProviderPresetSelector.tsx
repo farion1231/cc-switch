@@ -408,7 +408,7 @@ export function ProviderPresetSelector({
           <span className="truncate">{t("providerPreset.custom")}</span>
         </button>
 
-        {visiblePresetEntries.length === 0 && (
+        {searchQuery.trim().length > 0 && visiblePresetEntries.length === 0 && (
           <div className="col-span-full rounded-md border border-dashed border-border-default px-3 py-2 text-xs text-muted-foreground">
             {t("providerPreset.noSearchResults", {
               defaultValue: "No matching presets.",

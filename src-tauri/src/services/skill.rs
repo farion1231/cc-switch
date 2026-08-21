@@ -595,6 +595,8 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::CopilotByok => {}
+            AppType::CopilotCli => {}
             AppType::OpenClaw => {
                 if let Some(custom) = crate::settings::get_openclaw_override_dir() {
                     return Ok(custom.join("skills"));
@@ -622,6 +624,8 @@ impl SkillService {
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::GrokBuild => home.join(".grok").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
+            AppType::CopilotByok => home.join(".copilot").join("skills"),
+            AppType::CopilotCli => crate::copilot_byok::copilot_cli_home()?.join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
@@ -678,6 +682,27 @@ impl SkillService {
         let app_dir = Self::get_app_skills_dir(app)?;
         Self::ensure_distinct_skill_roots(ssot_dir, &app_dir, app)?;
         Ok(app_dir)
+    }
+
+    /// VS Code Copilot and Copilot CLI both use the official user-level
+    /// `~/.copilot/skills` directory unless `COPILOT_HOME` moves the CLI. Their
+    /// UI flags remain independent, but a shared physical directory must use
+    /// union semantics so syncing or disabling one client cannot remove a
+    /// Skill still enabled for the other.
+    fn skill_enabled_for_app_dir(apps: &SkillApps, app: &AppType) -> Result<bool> {
+        if !matches!(app, AppType::CopilotByok | AppType::CopilotCli) {
+            return Ok(apps.is_enabled_for(app));
+        }
+
+        let target_dir = Self::get_app_skills_dir(app)?;
+        for candidate in [AppType::CopilotByok, AppType::CopilotCli] {
+            if apps.is_enabled_for(&candidate)
+                && Self::paths_alias(&target_dir, &Self::get_app_skills_dir(&candidate)?)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
@@ -1845,8 +1870,9 @@ impl SkillService {
         // 更新状态
         skill.apps.set_enabled_for(app, enabled);
 
-        // 同步文件
-        if enabled {
+        // 同步文件。两个 Copilot 客户端默认共享官方全局 Skills 目录，
+        // 因此物理目录按两个独立启用标记的并集维护。
+        if Self::skill_enabled_for_app_dir(&skill.apps, app)? {
             Self::sync_to_app_dir(&skill.directory, app)?;
         } else {
             Self::remove_from_app(&skill.directory, app)?;
@@ -2487,7 +2513,7 @@ impl SkillService {
                 }
 
                 if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
-                    if !skill.apps.is_enabled_for(app) {
+                    if !Self::skill_enabled_for_app_dir(&skill.apps, app)? {
                         Self::remove_path(&path)?;
                     }
                     continue;
@@ -2500,7 +2526,7 @@ impl SkillService {
         }
 
         for skill in skills.values() {
-            if skill.apps.is_enabled_for(app) {
+            if Self::skill_enabled_for_app_dir(&skill.apps, app)? {
                 // 逐条容错而非 `?` 传播：本函数在切换供应商时被调用，一条脏
                 // directory（存量点开头目录、或同步导入灌进来的行）不得让整个
                 // 应用的 skill 同步全部失效。
@@ -5224,19 +5250,30 @@ mod tests {
 
     /// CC_SWITCH_TEST_HOME 隔离守卫（serial 测试间互斥由 #[serial] 保证，
     /// 守卫只负责在测试结束后恢复原值）。
-    struct TestHomeGuard(Option<std::ffi::OsString>);
+    struct TestHomeGuard {
+        test_home: Option<std::ffi::OsString>,
+        copilot_home: Option<std::ffi::OsString>,
+    }
     impl TestHomeGuard {
         fn set(home: &Path) -> Self {
-            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            let guard = Self {
+                test_home: std::env::var_os("CC_SWITCH_TEST_HOME"),
+                copilot_home: std::env::var_os("COPILOT_HOME"),
+            };
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            std::env::remove_var("COPILOT_HOME");
             guard
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
-            match self.0.take() {
+            match self.test_home.take() {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            match self.copilot_home.take() {
+                Some(value) => std::env::set_var("COPILOT_HOME", value),
+                None => std::env::remove_var("COPILOT_HOME"),
             }
         }
     }
@@ -5271,6 +5308,49 @@ mod tests {
             content_hash: None,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn shared_copilot_skill_root_uses_union_of_independent_app_flags() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+        skill.apps.copilot_byok = true;
+        skill.apps.copilot_cli = true;
+        db.save_skill(&skill).expect("save skill");
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("test-skill"),
+            "managed",
+        );
+
+        let vscode_root = SkillService::get_app_skills_dir(&AppType::CopilotByok)
+            .expect("VS Code Copilot skills root");
+        let cli_root = SkillService::get_app_skills_dir(&AppType::CopilotCli)
+            .expect("Copilot CLI skills root");
+        assert_eq!(vscode_root, cli_root);
+
+        SkillService::sync_to_app(&db, &AppType::CopilotByok).expect("materialize shared skill");
+        let deployed = vscode_root.join("test-skill");
+        assert!(deployed.exists());
+
+        SkillService::toggle_app(&db, &skill.id, &AppType::CopilotByok, false)
+            .expect("disable VS Code flag");
+        assert!(
+            deployed.exists(),
+            "the CLI flag must preserve the shared physical Skill"
+        );
+        let after_vscode = db
+            .get_installed_skill(&skill.id)
+            .expect("read skill")
+            .expect("skill remains installed");
+        assert!(!after_vscode.apps.copilot_byok);
+        assert!(after_vscode.apps.copilot_cli);
+
+        SkillService::toggle_app(&db, &skill.id, &AppType::CopilotCli, false)
+            .expect("disable CLI flag");
+        assert!(!deployed.exists());
     }
 
     #[test]

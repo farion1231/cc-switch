@@ -239,6 +239,8 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             gemini: false,
                             grokbuild: false,
                             opencode: false,
+                            copilot_byok: false,
+                            copilot_cli: false,
                             hermes: false,
                         },
                         description: None,
