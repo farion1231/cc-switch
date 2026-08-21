@@ -429,6 +429,78 @@ impl Database {
         Ok(())
     }
 
+    /// Update only a non-current provider's auth field when it still matches the
+    /// generation observed by the caller. The connection lock keeps the current
+    /// check, comparison, and write in one critical section.
+    pub(crate) fn update_noncurrent_provider_auth_if_unchanged(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        expected_auth: &serde_json::Value,
+        replacement_auth: &serde_json::Value,
+    ) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let row = conn
+            .query_row(
+                "SELECT settings_config, is_current FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![provider_id, app_type],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let Some((settings_text, is_current)) = row else {
+            return Ok(false);
+        };
+        if is_current {
+            return Ok(false);
+        }
+
+        let mut settings: serde_json::Value = serde_json::from_str(&settings_text)
+            .map_err(|e| AppError::Database(format!("Failed to parse settings_config: {e}")))?;
+        let current_auth = settings
+            .get("auth")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        if current_auth != *expected_auth {
+            return Ok(false);
+        }
+        let Some(settings) = settings.as_object_mut() else {
+            return Err(AppError::Database(
+                "Provider settings_config must be a JSON object".to_string(),
+            ));
+        };
+        settings.insert("auth".to_string(), replacement_auth.clone());
+        let updated = conn
+            .execute(
+                "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3 AND is_current = 0",
+                params![
+                    serde_json::to_string(&settings).map_err(|e| AppError::Database(format!(
+                        "Failed to serialize settings_config: {e}"
+                    )))?,
+                    provider_id,
+                    app_type,
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(updated == 1)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_provider_current_flag_for_test(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        is_current: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET is_current = ?1 WHERE id = ?2 AND app_type = ?3",
+            params![is_current, provider_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn add_custom_endpoint(
         &self,
         app_type: &str,
@@ -923,5 +995,61 @@ mod ensure_official_seed_tests {
         let result =
             db.ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::Claude);
         assert!(result.is_err(), "(id, app_type) mismatch should be Err");
+    }
+
+    #[test]
+    fn noncurrent_auth_update_is_compare_and_swap_and_rejects_current_rows() {
+        let db = Database::memory().expect("memory db");
+        let mut provider = crate::provider::Provider::with_id(
+            CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            serde_json::json!({
+                "auth": { "generation": "launch" },
+                "config": "model = \"gpt-5\"\n"
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        db.save_provider(AppType::Codex.as_str(), &provider)
+            .expect("save provider");
+
+        assert!(db
+            .update_noncurrent_provider_auth_if_unchanged(
+                AppType::Codex.as_str(),
+                &provider.id,
+                &serde_json::json!({ "generation": "launch" }),
+                &serde_json::json!({ "generation": "terminal" }),
+            )
+            .expect("CAS update"));
+        let stored = db
+            .get_provider_by_id(&provider.id, AppType::Codex.as_str())
+            .expect("read provider")
+            .expect("provider exists");
+        assert_eq!(
+            stored.settings_config,
+            serde_json::json!({
+                "auth": { "generation": "terminal" },
+                "config": "model = \"gpt-5\"\n"
+            })
+        );
+
+        assert!(!db
+            .update_noncurrent_provider_auth_if_unchanged(
+                AppType::Codex.as_str(),
+                &provider.id,
+                &serde_json::json!({ "generation": "launch" }),
+                &serde_json::json!({ "generation": "stale" }),
+            )
+            .expect("stale CAS"));
+        db.set_provider_current_flag_for_test(AppType::Codex.as_str(), &provider.id, true)
+            .expect("mark current");
+        assert!(!db
+            .update_noncurrent_provider_auth_if_unchanged(
+                AppType::Codex.as_str(),
+                &provider.id,
+                &serde_json::json!({ "generation": "terminal" }),
+                &serde_json::json!({ "generation": "must-not-write" }),
+            )
+            .expect("current row guard"));
     }
 }

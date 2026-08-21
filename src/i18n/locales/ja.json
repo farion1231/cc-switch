@@ -152,6 +152,7 @@
     "openTerminal": "ターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
+    "terminalRoutingUnsupported": "このプロバイダーにはローカルルーティングが必要なため、現在のバージョンでは隔離ターミナルから起動できません",
     "name": "プロバイダー名",
     "namePlaceholder": "例: Claude Official",
     "websiteUrl": "Web サイト URL",

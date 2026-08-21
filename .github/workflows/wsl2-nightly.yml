@@ -60,23 +60,79 @@ jobs:
 
       - name: Compile backend tests with native temp
         # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
-        run: cargo test --tests --manifest-path src-tauri/Cargo.toml --no-run
+        shell: pwsh
+        run: |
+          $cargoOutput = Join-Path $env:RUNNER_TEMP "cc-switch-cargo-tests.jsonl"
+          cargo test --tests --manifest-path src-tauri/Cargo.toml --no-run --message-format=json > $cargoOutput
+          $cargoExitCode = $LASTEXITCODE
+          if ($cargoExitCode -ne 0) {
+            Get-Content -LiteralPath $cargoOutput -Tail 100
+            exit $cargoExitCode
+          }
+
+          $testBinaries = [System.Collections.Generic.List[string]]::new()
+          $libTestBinary = $null
+          $manifestPath = (Resolve-Path -LiteralPath "src-tauri/Cargo.toml").Path
+          foreach ($line in Get-Content -LiteralPath $cargoOutput) {
+            if ([string]::IsNullOrWhiteSpace($line)) {
+              continue
+            }
+            try {
+              $message = $line | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+              continue
+            }
+            if (
+              $message.reason -ne "compiler-artifact" -or
+              $message.profile.test -ne $true -or
+              -not [string]::Equals(
+                [string]$message.manifest_path,
+                $manifestPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+              ) -or
+              [string]::IsNullOrWhiteSpace([string]$message.executable)
+            ) {
+              continue
+            }
+
+            $binary = [string]$message.executable
+            if ((Test-Path -LiteralPath $binary -PathType Leaf) -and -not $testBinaries.Contains($binary)) {
+              [void]$testBinaries.Add($binary)
+            }
+            if ($message.target.name -eq "cc_switch_lib") {
+              $libTestBinary = $binary
+            }
+          }
+
+          if ($testBinaries.Count -eq 0 -or [string]::IsNullOrWhiteSpace($libTestBinary)) {
+            throw "Cargo did not produce the expected test executables"
+          }
+          $binaryList = Join-Path $env:RUNNER_TEMP "cc-switch-test-binaries.txt"
+          $testBinaries | Set-Content -LiteralPath $binaryList -Encoding utf8
+          "CC_SWITCH_TEST_BINARIES_FILE=$binaryList" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CC_SWITCH_TEST_BINARY=$libTestBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $testBinary = $env:CC_SWITCH_TEST_BINARY
+          if ([string]::IsNullOrWhiteSpace($testBinary) -or -not (Test-Path -LiteralPath $testBinary -PathType Leaf)) {
+            throw "Precompiled test executable is unavailable: $testBinary"
+          }
+          Set-Location -LiteralPath (Resolve-Path -LiteralPath "src-tauri")
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = cargo test --tests --manifest-path src-tauri/Cargo.toml -- --ignored --list
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+          $testList = & $testBinary --ignored --list
+          $testExitCode = $LASTEXITCODE
+          if ($testExitCode -ne 0) {
+            exit $testExitCode
           }
           $expected = "${testName}: test"
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
-          cargo test --tests --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
+          & $testBinary $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -86,4 +142,18 @@ jobs:
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          cargo test --tests --manifest-path src-tauri/Cargo.toml -- --test-threads=1
+          $binaryList = $env:CC_SWITCH_TEST_BINARIES_FILE
+          if ([string]::IsNullOrWhiteSpace($binaryList) -or -not (Test-Path -LiteralPath $binaryList -PathType Leaf)) {
+            throw "Precompiled test executable list is unavailable: $binaryList"
+          }
+          Set-Location -LiteralPath (Resolve-Path -LiteralPath "src-tauri")
+          foreach ($testBinary in Get-Content -LiteralPath $binaryList) {
+            if ([string]::IsNullOrWhiteSpace($testBinary)) {
+              continue
+            }
+            Write-Host "Running $testBinary"
+            & $testBinary --test-threads=1
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }

@@ -193,7 +193,7 @@ enum RefreshTokenAdoptionMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RefreshTokenAdoptionOutcome {
+pub(crate) enum RefreshTokenAdoptionOutcome {
     /// The live and manager token material already describe the same
     /// generation. `state_changed` only reflects timestamp bookkeeping.
     Synchronized { state_changed: bool },
@@ -915,10 +915,29 @@ impl CodexOAuthManager {
         id_token: Option<String>,
         last_refresh_ms: Option<i64>,
     ) -> Result<bool, CodexOAuthError> {
+        self.adopt_account_refresh_token_with_outcome(
+            account_id,
+            refresh_token,
+            id_token,
+            last_refresh_ms,
+        )
+        .await
+        .map(RefreshTokenAdoptionOutcome::state_changed)
+    }
+
+    pub(crate) async fn adopt_account_refresh_token_with_outcome(
+        &self,
+        account_id: &str,
+        refresh_token: String,
+        id_token: Option<String>,
+        last_refresh_ms: Option<i64>,
+    ) -> Result<RefreshTokenAdoptionOutcome, CodexOAuthError> {
         let _lifecycle = self.lifecycle_lock.read().await;
         let refresh_token = refresh_token.trim().to_string();
         if refresh_token.is_empty() {
-            return Ok(false);
+            return Ok(RefreshTokenAdoptionOutcome::Synchronized {
+                state_changed: false,
+            });
         }
         // 与该账号的刷新串行化：若一个 refresh 正持旧 refresh_token 在飞，避免它返回后
         // 覆盖我们刚采纳的 CLI 轮换值。
@@ -932,7 +951,6 @@ impl CodexOAuthManager {
             RefreshTokenAdoptionMode::TimestampChecked,
         )
         .await
-        .map(RefreshTokenAdoptionOutcome::state_changed)
     }
 
     fn ambiguous_live_refresh_error(account_id: &str) -> CodexOAuthError {
