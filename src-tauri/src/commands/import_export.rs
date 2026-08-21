@@ -54,6 +54,7 @@ pub async fn import_config_from_file(
     #[allow(non_snake_case)] filePath: String,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
+    crate::settings::ensure_all_resource_management_enabled().map_err(|e| e.to_string())?;
     let app_state_for_sync = state.inner().clone();
     let db = app_state_for_sync.db.clone();
     run_with_database_restore_lock(move || {
@@ -172,6 +173,7 @@ pub async fn restore_db_backup(
     state: State<'_, AppState>,
     filename: String,
 ) -> Result<String, String> {
+    crate::settings::ensure_all_resource_management_enabled().map_err(|e| e.to_string())?;
     let app_state_for_sync = state.inner().clone();
     let db = app_state_for_sync.db.clone();
     run_with_database_restore_lock(move || {

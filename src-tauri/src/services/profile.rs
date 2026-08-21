@@ -21,6 +21,7 @@ use crate::app_config::AppType;
 use crate::database::Profile;
 use crate::error::AppError;
 use crate::services::{McpService, PromptService, ProviderService, SkillService};
+use crate::settings::ManagementScope;
 use crate::store::AppState;
 
 /// Profile 操作的应用分组：项目实体全应用共享，但快照/应用/当前指针按组进行。
@@ -136,17 +137,26 @@ impl ProfilePayload {
     /// 用另一份快照覆盖本载荷中某分组的槽位，其余分组原样保留
     /// （"以当前状态更新"只更新发起页所属分组，避免把别的应用
     /// 正处于其他项目的状态串进来）
-    pub fn merge_scope_from(&mut self, other: &ProfilePayload, scope: ProfileScope) {
+    pub fn merge_scope_from(
+        &mut self,
+        other: &ProfilePayload,
+        scope: ProfileScope,
+        management_scope: ManagementScope,
+    ) {
         for app in scope.apps() {
             if let (Some(dst), Some(src)) = (self.providers.get_mut(app), other.providers.get(app))
             {
                 *dst = src.clone();
             }
-            if let (Some(dst), Some(src)) = (self.mcp.get_mut(app), other.mcp.get(app)) {
-                *dst = src.clone();
+            if management_scope.mcp {
+                if let (Some(dst), Some(src)) = (self.mcp.get_mut(app), other.mcp.get(app)) {
+                    *dst = src.clone();
+                }
             }
-            if let (Some(dst), Some(src)) = (self.skills.get_mut(app), other.skills.get(app)) {
-                *dst = src.clone();
+            if management_scope.skills {
+                if let (Some(dst), Some(src)) = (self.skills.get_mut(app), other.skills.get(app)) {
+                    *dst = src.clone();
+                }
             }
             if let (Some(dst), Some(src)) = (self.prompts.get_mut(app), other.prompts.get(app)) {
                 *dst = src.clone();
@@ -198,15 +208,35 @@ impl ProfileService {
         state: &AppState,
         scope: ProfileScope,
     ) -> Result<ProfilePayload, AppError> {
+        Self::snapshot_current_with_management_scope(
+            state,
+            scope,
+            crate::settings::get_settings().management_scope,
+        )
+    }
+
+    fn snapshot_current_with_management_scope(
+        state: &AppState,
+        scope: ProfileScope,
+        management_scope: ManagementScope,
+    ) -> Result<ProfilePayload, AppError> {
         let mut payload = ProfilePayload::default();
-        let mcp_servers = state.db.get_all_mcp_servers()?;
-        let skills = state.db.get_all_installed_skills()?;
+        let mcp_servers = if management_scope.mcp {
+            Some(state.db.get_all_mcp_servers()?)
+        } else {
+            None
+        };
+        let skills = if management_scope.skills {
+            Some(state.db.get_all_installed_skills()?)
+        } else {
+            None
+        };
 
         for app in scope.apps().iter() {
             if let Some(slot) = payload.providers.get_mut(app) {
                 *slot = crate::settings::get_effective_current_provider(&state.db, app)?;
             }
-            if let Some(slot) = payload.mcp.get_mut(app) {
+            if let (Some(slot), Some(mcp_servers)) = (payload.mcp.get_mut(app), &mcp_servers) {
                 *slot = Some(
                     mcp_servers
                         .values()
@@ -215,7 +245,7 @@ impl ProfileService {
                         .collect(),
                 );
             }
-            if let Some(slot) = payload.skills.get_mut(app) {
+            if let (Some(slot), Some(skills)) = (payload.skills.get_mut(app), &skills) {
                 *slot = Some(
                     skills
                         .values()
@@ -291,7 +321,10 @@ impl ProfileService {
             })?;
             let mut payload: ProfilePayload = serde_json::from_str(&profile.payload)
                 .map_err(|e| AppError::Config(format!("解析 profile payload 失败: {e}")))?;
-            payload.merge_scope_from(&Self::snapshot_current(state, scope)?, scope);
+            let management_scope = crate::settings::get_settings().management_scope;
+            let fresh =
+                Self::snapshot_current_with_management_scope(state, scope, management_scope)?;
+            payload.merge_scope_from(&fresh, scope, management_scope);
             profile.payload = serde_json::to_string(&payload)
                 .map_err(|e| AppError::Config(format!("序列化 profile payload 失败: {e}")))?;
         }
@@ -392,43 +425,47 @@ impl ProfileService {
             }
 
             // 3. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
-            if let Some(Some(target_ids)) = payload.mcp.get(app) {
-                let servers = state.db.get_all_mcp_servers()?;
-                let current: Vec<(String, bool)> = servers
-                    .values()
-                    .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
-                    .collect();
-                let (toggles, dangling) = plan_toggles(&current, target_ids);
-                for id in dangling {
-                    warnings.push(format!("[{app_str}] MCP '{id}' no longer exists, skipped"));
-                }
-                for (id, enabled) in toggles {
-                    if let Err(e) = McpService::toggle_app(state, &id, app.clone(), enabled) {
-                        warnings.push(format!(
-                            "[{app_str}] toggle MCP '{id}' -> {enabled} failed: {e}"
-                        ));
+            if crate::settings::mcp_management_enabled() {
+                if let Some(Some(target_ids)) = payload.mcp.get(app) {
+                    let servers = state.db.get_all_mcp_servers()?;
+                    let current: Vec<(String, bool)> = servers
+                        .values()
+                        .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
+                        .collect();
+                    let (toggles, dangling) = plan_toggles(&current, target_ids);
+                    for id in dangling {
+                        warnings.push(format!("[{app_str}] MCP '{id}' no longer exists, skipped"));
+                    }
+                    for (id, enabled) in toggles {
+                        if let Err(e) = McpService::toggle_app(state, &id, app.clone(), enabled) {
+                            warnings.push(format!(
+                                "[{app_str}] toggle MCP '{id}' -> {enabled} failed: {e}"
+                            ));
+                        }
                     }
                 }
             }
 
             // 4. Skills diff（SkillService 返回 anyhow::Result，收进 warning）
-            if let Some(Some(target_ids)) = payload.skills.get(app) {
-                let skills = state.db.get_all_installed_skills()?;
-                let current: Vec<(String, bool)> = skills
-                    .values()
-                    .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
-                    .collect();
-                let (toggles, dangling) = plan_toggles(&current, target_ids);
-                for id in dangling {
-                    warnings.push(format!(
-                        "[{app_str}] skill '{id}' no longer exists, skipped"
-                    ));
-                }
-                for (id, enabled) in toggles {
-                    if let Err(e) = SkillService::toggle_app(&state.db, &id, app, enabled) {
+            if crate::settings::skills_management_enabled() {
+                if let Some(Some(target_ids)) = payload.skills.get(app) {
+                    let skills = state.db.get_all_installed_skills()?;
+                    let current: Vec<(String, bool)> = skills
+                        .values()
+                        .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
+                        .collect();
+                    let (toggles, dangling) = plan_toggles(&current, target_ids);
+                    for id in dangling {
                         warnings.push(format!(
-                            "[{app_str}] toggle skill '{id}' -> {enabled} failed: {e}"
+                            "[{app_str}] skill '{id}' no longer exists, skipped"
                         ));
+                    }
+                    for (id, enabled) in toggles {
+                        if let Err(e) = SkillService::toggle_app(&state.db, &id, app, enabled) {
+                            warnings.push(format!(
+                                "[{app_str}] toggle skill '{id}' -> {enabled} failed: {e}"
+                            ));
+                        }
                     }
                 }
             }
@@ -555,7 +592,7 @@ mod tests {
             },
             ..Default::default()
         };
-        payload.merge_scope_from(&fresh, ProfileScope::Claude);
+        payload.merge_scope_from(&fresh, ProfileScope::Claude, ManagementScope::default());
 
         assert_eq!(payload.providers.claude, Some("p2".to_string()));
         assert_eq!(
@@ -587,6 +624,70 @@ mod tests {
         desktop_only.providers.claude_desktop = Some("d1".into());
         assert!(desktop_only.scope_captured(ProfileScope::ClaudeDesktop));
         assert!(!desktop_only.scope_captured(ProfileScope::Claude));
+    }
+
+    #[test]
+    fn test_merge_scope_preserves_unmanaged_resource_slots() {
+        let mut payload = ProfilePayload {
+            mcp: PerApp {
+                claude: Some(ids(&["m1"])),
+                ..Default::default()
+            },
+            skills: PerApp {
+                claude: Some(ids(&["s1"])),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let fresh = ProfilePayload {
+            providers: PerApp {
+                claude: Some("p2".into()),
+                ..Default::default()
+            },
+            mcp: PerApp {
+                claude: Some(ids(&["m2"])),
+                ..Default::default()
+            },
+            skills: PerApp {
+                claude: Some(ids(&["s2"])),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        payload.merge_scope_from(
+            &fresh,
+            ProfileScope::Claude,
+            ManagementScope {
+                mcp: false,
+                skills: false,
+                sessions: true,
+            },
+        );
+
+        assert_eq!(payload.providers.claude, Some("p2".to_string()));
+        assert_eq!(payload.mcp.claude, Some(ids(&["m1"])));
+        assert_eq!(payload.skills.claude, Some(ids(&["s1"])));
+    }
+
+    #[test]
+    fn test_snapshot_omits_unmanaged_resource_slots() {
+        let db = std::sync::Arc::new(crate::database::Database::memory().expect("memory db"));
+        let state = AppState::new(db);
+
+        let payload = ProfileService::snapshot_current_with_management_scope(
+            &state,
+            ProfileScope::Claude,
+            ManagementScope {
+                mcp: false,
+                skills: false,
+                sessions: true,
+            },
+        )
+        .expect("snapshot providers only");
+
+        assert_eq!(payload.mcp.claude, None);
+        assert_eq!(payload.skills.claude, None);
     }
 
     #[test]
