@@ -52,10 +52,10 @@ export function ModelStatsTable({
               {t("usage.tokens", "Tokens")}
             </TableHead>
             <TableHead className="text-right">
-              {t("usage.totalCost", "总成本")}
+              {t("usage.totalCost", "本地定价估算")}
             </TableHead>
             <TableHead className="text-right">
-              {t("usage.avgCost", "平均成本")}
+              {t("usage.avgCost", "平均本地定价估算")}
             </TableHead>
           </TableRow>
         </TableHeader>

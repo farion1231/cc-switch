@@ -81,6 +81,10 @@ pub struct DailyStats {
 pub struct ProviderStats {
     pub provider_id: String,
     pub provider_name: String,
+    /// Immutable endpoint snapshot used by this bucket. Empty id means the
+    /// source (for example a Codex JSONL import) could not prove an endpoint.
+    pub endpoint_id: String,
+    pub endpoint_display: String,
     pub request_count: u64,
     pub total_tokens: u64,
     pub total_cost: String,
@@ -105,10 +109,19 @@ pub struct ModelStats {
 pub struct LogFilters {
     pub app_type: Option<String>,
     pub provider_name: Option<String>,
+    pub endpoint_id: Option<String>,
     pub model: Option<String>,
     pub status_code: Option<u16>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
+}
+
+/// Endpoint identities available for the current request-log scope.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageEndpointOption {
+    pub endpoint_id: String,
+    pub endpoint_display: String,
 }
 
 /// 分页请求日志响应
@@ -129,6 +142,9 @@ pub struct RequestLogDetail {
     pub provider_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint_id: Option<String>,
+    pub endpoint_display: String,
     pub app_type: String,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -160,10 +176,10 @@ pub struct RequestLogDetail {
     pub pricing_model: Option<String>,
 }
 
-/// 把 26 列的查询结果映射为 `RequestLogDetail`。
+/// 把 28 列的查询结果映射为 `RequestLogDetail`。
 ///
 /// 调用方的 SELECT **必须**按以下顺序返回 26 列：
-/// `request_id, provider_id, provider_name, app_type, model, request_model,
+/// `request_id, provider_id, provider_name, endpoint_id, endpoint_display, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
@@ -176,31 +192,33 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         request_id: row.get(0)?,
         provider_id: row.get(1)?,
         provider_name: row.get(2)?,
-        app_type: row.get(3)?,
-        model: row.get(4)?,
-        request_model: row.get(5)?,
+        endpoint_id: row.get(3)?,
+        endpoint_display: row.get(4)?,
+        app_type: row.get(5)?,
+        model: row.get(6)?,
+        request_model: row.get(7)?,
         cost_multiplier: row
-            .get::<_, Option<String>>(6)?
+            .get::<_, Option<String>>(8)?
             .unwrap_or_else(|| "1".to_string()),
-        input_tokens: row.get::<_, i64>(7)? as u32,
-        output_tokens: row.get::<_, i64>(8)? as u32,
-        cache_read_tokens: row.get::<_, i64>(9)? as u32,
-        cache_creation_tokens: row.get::<_, i64>(10)? as u32,
-        input_cost_usd: row.get(11)?,
-        output_cost_usd: row.get(12)?,
-        cache_read_cost_usd: row.get(13)?,
-        cache_creation_cost_usd: row.get(14)?,
-        total_cost_usd: row.get(15)?,
-        is_streaming: row.get::<_, i64>(16)? != 0,
-        latency_ms: row.get::<_, i64>(17)? as u64,
-        first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
-        duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
-        status_code: row.get::<_, i64>(20)? as u16,
-        error_message: row.get(21)?,
-        created_at: row.get(22)?,
-        data_source: row.get(23)?,
-        pricing_model: row.get(24)?,
-        input_token_semantics: row.get::<_, i64>(25)?,
+        input_tokens: row.get::<_, i64>(9)? as u32,
+        output_tokens: row.get::<_, i64>(10)? as u32,
+        cache_read_tokens: row.get::<_, i64>(11)? as u32,
+        cache_creation_tokens: row.get::<_, i64>(12)? as u32,
+        input_cost_usd: row.get(13)?,
+        output_cost_usd: row.get(14)?,
+        cache_read_cost_usd: row.get(15)?,
+        cache_creation_cost_usd: row.get(16)?,
+        total_cost_usd: row.get(17)?,
+        is_streaming: row.get::<_, i64>(18)? != 0,
+        latency_ms: row.get::<_, i64>(19)? as u64,
+        first_token_ms: row.get::<_, Option<i64>>(20)?.map(|v| v as u64),
+        duration_ms: row.get::<_, Option<i64>>(21)?.map(|v| v as u64),
+        status_code: row.get::<_, i64>(22)? as u16,
+        error_message: row.get(23)?,
+        created_at: row.get(24)?,
+        data_source: row.get(25)?,
+        pricing_model: row.get(26)?,
+        input_token_semantics: row.get::<_, i64>(27)?,
     })
 }
 
@@ -1334,7 +1352,7 @@ impl Database {
         let fresh_input_rollup = fresh_input_sql("r");
         let sql = format!(
             "SELECT
-                provider_id, app_type, provider_name,
+                provider_id, app_type, provider_name, endpoint_id, endpoint_display,
                 SUM(request_count) as request_count,
                 SUM(total_tokens) as total_tokens,
                 SUM(total_cost) as total_cost,
@@ -1345,6 +1363,8 @@ impl Database {
             FROM (
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
+                    COALESCE(l.endpoint_id, '') as endpoint_id,
+                    COALESCE(e.display_url, 'Unknown Endpoint') as endpoint_display,
                     COUNT(*) as request_count,
                     COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
@@ -1352,11 +1372,14 @@ impl Database {
                     COALESCE(SUM(l.latency_ms), 0) as latency_sum
                 FROM proxy_request_logs l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+                LEFT JOIN usage_endpoints e ON l.endpoint_id = e.id
                 {detail_where}
-                GROUP BY l.provider_id, l.app_type
+                GROUP BY l.provider_id, l.app_type, COALESCE(l.endpoint_id, ''), COALESCE(e.display_url, 'Unknown Endpoint')
                 UNION ALL
                 SELECT r.provider_id, r.app_type,
                     {rollup_pname} as provider_name,
+                    r.endpoint_id,
+                    COALESCE(e2.display_url, 'Unknown Endpoint') as endpoint_display,
                     COALESCE(SUM(r.request_count), 0),
                     COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
@@ -1364,10 +1387,11 @@ impl Database {
                     COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
                 FROM usage_daily_rollups r
                 LEFT JOIN providers p2 ON r.provider_id = p2.id AND r.app_type = p2.app_type
+                LEFT JOIN usage_endpoints e2 ON r.endpoint_id = e2.id
                 {rollup_where}
-                GROUP BY r.provider_id, r.app_type
+                GROUP BY r.provider_id, r.app_type, r.endpoint_id, COALESCE(e2.display_url, 'Unknown Endpoint')
             )
-            GROUP BY provider_id, app_type
+            GROUP BY provider_id, app_type, endpoint_id, endpoint_display
             ORDER BY total_cost DESC"
         );
 
@@ -1376,8 +1400,8 @@ impl Database {
         params.extend(rollup_params);
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let row_mapper = |row: &rusqlite::Row| {
-            let request_count: i64 = row.get(3)?;
-            let success_count: i64 = row.get(6)?;
+            let request_count: i64 = row.get(5)?;
+            let success_count: i64 = row.get(8)?;
             let success_rate = if request_count > 0 {
                 (success_count as f32 / request_count as f32) * 100.0
             } else {
@@ -1387,11 +1411,13 @@ impl Database {
             Ok(ProviderStats {
                 provider_id: row.get(0)?,
                 provider_name: row.get(2)?,
+                endpoint_id: row.get(3)?,
+                endpoint_display: row.get(4)?,
                 request_count: request_count as u64,
-                total_tokens: row.get::<_, i64>(4)? as u64,
-                total_cost: format!("{:.6}", row.get::<_, f64>(5)?),
+                total_tokens: row.get::<_, i64>(6)? as u64,
+                total_cost: format!("{:.6}", row.get::<_, f64>(7)?),
                 success_rate,
-                avg_latency_ms: row.get::<_, f64>(7)? as u64,
+                avg_latency_ms: row.get::<_, f64>(9)? as u64,
             })
         };
 
@@ -1580,6 +1606,10 @@ impl Database {
             filters.provider_name.as_deref(),
             filters.model.as_deref(),
         );
+        if let Some(endpoint_id) = &filters.endpoint_id {
+            conditions.push("COALESCE(l.endpoint_id, '') = ?".to_string());
+            params.push(Box::new(endpoint_id.clone()));
+        }
         if let Some(status) = filters.status_code {
             conditions.push("l.status_code = ?".to_string());
             params.push(Box::new(status as i64));
@@ -1617,7 +1647,9 @@ impl Database {
 
         let logs_pname = provider_name_coalesce("l", "p");
         let sql = format!(
-            "SELECT l.request_id, l.provider_id, {logs_pname} as provider_name, l.app_type, l.model,
+            "SELECT l.request_id, l.provider_id, {logs_pname} as provider_name,
+                    l.endpoint_id, COALESCE(e.display_url, 'Unknown Endpoint') as endpoint_display,
+                    l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
@@ -1626,6 +1658,7 @@ impl Database {
                     l.input_token_semantics
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             LEFT JOIN usage_endpoints e ON l.endpoint_id = e.id
              {where_clause}
              ORDER BY l.created_at DESC
              LIMIT ? OFFSET ?"
@@ -1652,6 +1685,65 @@ impl Database {
         })
     }
 
+    /// 获取当前日志筛选范围内的去重 endpoint 选项。
+    ///
+    /// endpoint_id 故意不参与条件构造，这样 UI 在已选择某个 endpoint
+    /// 后仍能切换到同一范围内的其它地址；无法证明地址的会话行以空 id
+    /// 和 Unknown Endpoint 展示。
+    pub fn get_usage_endpoint_options(
+        &self,
+        filters: &LogFilters,
+    ) -> Result<Vec<UsageEndpointOption>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut conditions = vec![effective_usage_log_filter("l")];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(app_type) = &filters.app_type {
+            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+            params.push(Box::new(app_type.clone()));
+        }
+        push_provider_model_filters(
+            &mut conditions,
+            &mut params,
+            "l",
+            "p",
+            filters.provider_name.as_deref(),
+            filters.model.as_deref(),
+        );
+        if let Some(start) = filters.start_date {
+            conditions.push("l.created_at >= ?".to_string());
+            params.push(Box::new(start));
+        }
+        if let Some(end) = filters.end_date {
+            conditions.push("l.created_at <= ?".to_string());
+            params.push(Box::new(end));
+        }
+
+        let sql = format!(
+            "SELECT DISTINCT COALESCE(l.endpoint_id, '') AS endpoint_id,
+                    COALESCE(e.display_url, 'Unknown Endpoint') AS endpoint_display
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             LEFT JOIN usage_endpoints e ON l.endpoint_id = e.id
+             WHERE {}
+             ORDER BY CASE WHEN l.endpoint_id IS NULL THEN 1 ELSE 0 END,
+                      endpoint_display COLLATE NOCASE",
+            conditions.join(" AND ")
+        );
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|param| param.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(UsageEndpointOption {
+                endpoint_id: row.get(0)?,
+                endpoint_display: row.get(1)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Database(format!("查询 usage endpoint 选项失败: {error}")))
+    }
+
     /// 获取单个请求详情
     pub fn get_request_detail(
         &self,
@@ -1661,7 +1753,9 @@ impl Database {
 
         let detail_pname = provider_name_coalesce("l", "p");
         let detail_sql = format!(
-            "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name, l.app_type, l.model,
+            "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name,
+                    l.endpoint_id, COALESCE(e.display_url, 'Unknown Endpoint') as endpoint_display,
+                    l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
@@ -1670,6 +1764,7 @@ impl Database {
                     l.input_token_semantics
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             LEFT JOIN usage_endpoints e ON l.endpoint_id = e.id
              WHERE l.request_id = ?"
         );
         let result = conn.query_row(&detail_sql, [request_id], row_to_request_log_detail);
@@ -1817,7 +1912,8 @@ impl Database {
         only_model_id: Option<&str>,
     ) -> Result<u64, AppError> {
         const BASE_SQL: &str =
-            "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
+            "SELECT request_id, provider_id, NULL AS provider_name,
+                        endpoint_id, 'Unknown Endpoint' AS endpoint_display, app_type, model, request_model,
                         cost_multiplier,
                         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                         input_cost_usd, output_cost_usd, cache_read_cost_usd,
@@ -3843,6 +3939,154 @@ mod tests {
         assert_eq!(stats[0].provider_id, "p1");
         assert_eq!(stats[0].request_count, 1);
         assert_eq!(stats[0].total_tokens, 275);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_keeps_same_provider_endpoints_separate() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_endpoints (id, app_type, provider_id, url_fingerprint, display_url, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params!["endpoint-a", "codex", "p1", "fingerprint-a", "http://127.0.0.1:4101", 1],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_endpoints (id, app_type, provider_id, url_fingerprint, display_url, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params!["endpoint-b", "codex", "p1", "fingerprint-b", "http://127.0.0.1:4102", 1],
+            )?;
+            for (request_id, endpoint_id) in
+                [("request-a", "endpoint-a"), ("request-b", "endpoint-b")]
+            {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, endpoint_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, status_code, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        request_id,
+                        "p1",
+                        endpoint_id,
+                        "codex",
+                        "gpt-5",
+                        100,
+                        50,
+                        "0.01",
+                        100,
+                        200,
+                        1
+                    ],
+                )?;
+            }
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("codex"), None, None)?;
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].provider_id, "p1");
+        assert_eq!(stats[0].request_count, 1);
+        assert_eq!(stats[1].request_count, 1);
+        assert_ne!(stats[0].endpoint_id, stats[1].endpoint_id);
+        assert!(stats
+            .iter()
+            .any(|stat| stat.endpoint_display == "http://127.0.0.1:4101"));
+        assert!(stats
+            .iter()
+            .any(|stat| stat.endpoint_display == "http://127.0.0.1:4102"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_usage_endpoint_options_respects_scope_and_includes_unknown() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_endpoints (id, app_type, provider_id, url_fingerprint, display_url, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params!["scope-endpoint", "codex", "p1", "scope-fingerprint", "https://gateway.example", 1],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, endpoint_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "known",
+                    "p1",
+                    "scope-endpoint",
+                    "codex",
+                    "gpt-5",
+                    1,
+                    1,
+                    "0",
+                    1,
+                    200,
+                    100
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, endpoint_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "unknown",
+                    "p1",
+                    Option::<String>::None,
+                    "codex",
+                    "gpt-5",
+                    1,
+                    1,
+                    "0",
+                    1,
+                    200,
+                    100
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, endpoint_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "other-app",
+                    "p1",
+                    "scope-endpoint",
+                    "claude",
+                    "gpt-5",
+                    1,
+                    1,
+                    "0",
+                    1,
+                    200,
+                    100
+                ],
+            )?;
+        }
+
+        let options = db.get_usage_endpoint_options(&LogFilters {
+            app_type: Some("codex".to_string()),
+            model: Some("gpt-5".to_string()),
+            ..LogFilters::default()
+        })?;
+        assert_eq!(options.len(), 2);
+        assert!(options
+            .iter()
+            .any(|option| option.endpoint_id == "scope-endpoint"));
+        assert!(options
+            .iter()
+            .any(|option| option.endpoint_id.is_empty()
+                && option.endpoint_display == "Unknown Endpoint"));
 
         Ok(())
     }

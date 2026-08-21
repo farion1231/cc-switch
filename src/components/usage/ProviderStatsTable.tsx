@@ -45,6 +45,7 @@ export function ProviderStatsTable({
         <TableHeader>
           <TableRow>
             <TableHead>{t("usage.provider", "Provider")}</TableHead>
+            <TableHead>{t("usage.endpoint", "Endpoint")}</TableHead>
             <TableHead className="text-right">
               {t("usage.requests", "请求数")}
             </TableHead>
@@ -52,7 +53,7 @@ export function ProviderStatsTable({
               {t("usage.tokens", "Tokens")}
             </TableHead>
             <TableHead className="text-right">
-              {t("usage.cost", "成本")}
+              {t("usage.cost", "本地定价估算")}
             </TableHead>
             <TableHead className="text-right">
               {t("usage.successRate", "成功率")}
@@ -66,7 +67,7 @@ export function ProviderStatsTable({
           {stats?.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={6}
+                colSpan={7}
                 className="text-center text-muted-foreground"
               >
                 {t("usage.noData", "暂无数据")}
@@ -74,9 +75,12 @@ export function ProviderStatsTable({
             </TableRow>
           ) : (
             stats?.map((stat) => (
-              <TableRow key={stat.providerId}>
+              <TableRow key={`${stat.providerId}:${stat.endpointId}`}>
                 <TableCell className="font-medium">
                   {stat.providerName}
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  {stat.endpointDisplay}
                 </TableCell>
                 <TableCell className="text-right">
                   {stat.requestCount.toLocaleString()}

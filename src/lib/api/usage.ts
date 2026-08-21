@@ -12,6 +12,7 @@ import type {
   ModelsDevSyncState,
   ProviderLimitStatus,
   PaginatedLogs,
+  UsageEndpointOption,
   SessionSyncResult,
   DataSourceSummary,
 } from "@/types/usage";
@@ -138,6 +139,12 @@ export const usageApi = {
       page,
       pageSize,
     });
+  },
+
+  getUsageEndpointOptions: async (
+    filters: LogFilters,
+  ): Promise<UsageEndpointOption[]> => {
+    return invoke("get_usage_endpoint_options", { filters });
   },
 
   getRequestDetail: async (requestId: string): Promise<RequestLog | null> => {

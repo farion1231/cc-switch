@@ -325,7 +325,7 @@ export function UsageTrendChart({
               yAxisId="cost"
               type="monotone"
               dataKey="cost"
-              name={t("usage.cost", "成本")}
+              name={t("usage.cost", "本地定价估算")}
               stroke="#f43f5e"
               fill="none"
               strokeWidth={2}
