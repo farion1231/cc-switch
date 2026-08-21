@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::{
-    atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
+    atomic_write, delete_file, ensure_dir_exists, get_home_dir, path_is_within, read_json_file,
     sanitize_provider_name, write_json_file, write_text_file,
 };
 use crate::error::AppError;
@@ -777,7 +777,7 @@ pub fn write_codex_live_atomic(
     let config_path = get_codex_config_path();
 
     if let Some(parent) = auth_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        ensure_dir_exists(parent)?;
     }
 
     // 读取旧内容用于回滚
