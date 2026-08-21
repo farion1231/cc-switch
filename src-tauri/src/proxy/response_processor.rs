@@ -902,21 +902,144 @@ fn is_productive_sse_data(data: &str) -> bool {
         // Preserve the historical behavior for non-JSON SSE protocols.
         return true;
     };
-    let Some(event_type) = event.get("type").and_then(Value::as_str) else {
-        // OpenAI Chat Completions and several compatible protocols do not use
-        // Responses-style event names. Keep their existing timing semantics.
-        return true;
-    };
-    if !event_type.starts_with("response.") {
-        return true;
+
+    if let Some(event_type) = event.get("type").and_then(Value::as_str) {
+        if event_type.starts_with("response.") {
+            return responses_event_is_productive(&event, event_type);
+        }
+        if matches!(
+            event_type,
+            "message_start"
+                | "message_delta"
+                | "message_stop"
+                | "content_block_start"
+                | "content_block_delta"
+                | "content_block_stop"
+                | "ping"
+        ) {
+            return anthropic_event_is_productive(&event, event_type);
+        }
     }
+
+    if event.get("choices").is_some() {
+        return openai_chat_event_is_productive(&event);
+    }
+    if event.get("candidates").is_some() {
+        return gemini_event_is_productive(&event);
+    }
+
+    // Unknown compatible JSON protocols retain the previous first-event
+    // behavior instead of being silently excluded from TTFT statistics.
+    true
+}
+
+fn responses_event_is_productive(event: &Value, event_type: &str) -> bool {
     if !event_type.ends_with(".delta") {
         return false;
     }
     match event.get("delta") {
         Some(Value::String(delta)) => !delta.is_empty(),
         Some(Value::Null) | None => false,
-        Some(_) => true,
+        Some(delta) => json_value_has_content(delta),
+    }
+}
+
+fn anthropic_event_is_productive(event: &Value, event_type: &str) -> bool {
+    match event_type {
+        "content_block_delta" => event.get("delta").is_some_and(|delta| {
+            ["text", "thinking", "partial_json"]
+                .into_iter()
+                .any(|key| value_has_nonempty_string(delta.get(key)))
+        }),
+        // Standard Anthropic streams send empty block starts. A few compatible
+        // gateways inline complete text, reasoning, or tool input here and emit
+        // no following delta, so count only starts that carry real output.
+        "content_block_start" => event.get("content_block").is_some_and(|block| {
+            ["text", "thinking", "data"]
+                .into_iter()
+                .any(|key| value_has_nonempty_string(block.get(key)))
+                || block.get("input").is_some_and(json_value_has_content)
+        }),
+        _ => false,
+    }
+}
+
+fn openai_chat_event_is_productive(event: &Value) -> bool {
+    event
+        .get("choices")
+        .and_then(Value::as_array)
+        .is_some_and(|choices| {
+            choices.iter().any(|choice| {
+                let Some(delta) = choice.get("delta") else {
+                    return false;
+                };
+                ["content", "reasoning", "reasoning_content", "refusal"]
+                    .into_iter()
+                    .any(|key| delta.get(key).is_some_and(json_value_has_content))
+                    || delta
+                        .get("function_call")
+                        .is_some_and(openai_function_delta_has_content)
+                    || delta
+                        .get("tool_calls")
+                        .and_then(Value::as_array)
+                        .is_some_and(|tool_calls| {
+                            tool_calls.iter().any(|tool_call| {
+                                tool_call
+                                    .get("function")
+                                    .is_some_and(openai_function_delta_has_content)
+                            })
+                        })
+                    || delta.get("audio").is_some_and(json_value_has_content)
+            })
+        })
+}
+
+fn openai_function_delta_has_content(function: &Value) -> bool {
+    ["name", "arguments"]
+        .into_iter()
+        .any(|key| value_has_nonempty_string(function.get(key)))
+}
+
+fn gemini_event_is_productive(event: &Value) -> bool {
+    event
+        .get("candidates")
+        .and_then(Value::as_array)
+        .is_some_and(|candidates| {
+            candidates.iter().any(|candidate| {
+                candidate
+                    .get("content")
+                    .and_then(|content| content.get("parts"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            value_has_nonempty_string(part.get("text"))
+                                || part.get("functionCall").is_some_and(json_value_has_content)
+                                || part.get("inlineData").is_some_and(json_value_has_content)
+                                || part
+                                    .get("executableCode")
+                                    .is_some_and(json_value_has_content)
+                                || part
+                                    .get("codeExecutionResult")
+                                    .is_some_and(json_value_has_content)
+                        })
+                    })
+            })
+        })
+}
+
+fn value_has_nonempty_string(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.is_empty())
+}
+
+fn json_value_has_content(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(_) | Value::Number(_) => true,
+        Value::String(text) => !text.is_empty(),
+        Value::Array(values) => values.iter().any(json_value_has_content),
+        Value::Object(values) => !values.is_empty() && values.values().any(json_value_has_content),
     }
 }
 
@@ -1128,6 +1251,90 @@ mod tests {
             first_token_ms >= 40,
             "lifecycle metadata started the first-token timer at {first_token_ms}ms"
         );
+    }
+
+    #[tokio::test]
+    async fn claude_lifecycle_events_do_not_start_first_token_timer() {
+        let start_time = std::time::Instant::now();
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let captured_for_callback = captured.clone();
+        let collector = SseUsageCollector::new(start_time, None, move |_, first_token_ms| {
+            *captured_for_callback.lock().unwrap() = first_token_ms;
+        });
+        let upstream = async_stream::stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10}}}\n\n",
+            ));
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+            ));
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+            ));
+        };
+        let output = create_logged_passthrough_stream(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        tokio::pin!(output);
+        while let Some(chunk) = output.next().await {
+            chunk.unwrap();
+        }
+
+        let first_token_ms = captured.lock().unwrap().expect("productive event timing");
+        assert!(
+            first_token_ms >= 40,
+            "Claude lifecycle metadata started the first-token timer at {first_token_ms}ms"
+        );
+    }
+
+    #[test]
+    fn productive_sse_classifier_ignores_supported_protocol_metadata() {
+        let metadata = [
+            serde_json::json!({"type": "response.created"}),
+            serde_json::json!({"type": "response.in_progress"}),
+            serde_json::json!({"type": "message_start", "message": {"usage": {"input_tokens": 10}}}),
+            serde_json::json!({"type": "content_block_start", "content_block": {"type": "text", "text": ""}}),
+            serde_json::json!({"type": "content_block_delta", "delta": {"type": "signature_delta", "signature": "sig"}}),
+            serde_json::json!({"choices": [{"delta": {"role": "assistant"}}]}),
+            serde_json::json!({"choices": [], "usage": {"completion_tokens": 4}}),
+            serde_json::json!({"candidates": [], "usageMetadata": {"candidatesTokenCount": 4}}),
+        ];
+
+        for event in metadata {
+            let encoded = serde_json::to_string(&event).unwrap();
+            assert!(!is_productive_sse_data(&encoded), "metadata: {encoded}");
+        }
+    }
+
+    #[test]
+    fn productive_sse_classifier_accepts_supported_protocol_output() {
+        let output = [
+            serde_json::json!({"type": "response.output_text.delta", "delta": "hello"}),
+            serde_json::json!({"type": "response.function_call_arguments.delta", "delta": "{"}),
+            serde_json::json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hello"}}),
+            serde_json::json!({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{"}}),
+            serde_json::json!({"type": "content_block_start", "content_block": {"type": "tool_use", "input": {"city": "Tokyo"}}}),
+            serde_json::json!({"choices": [{"delta": {"content": "hello"}}]}),
+            serde_json::json!({"choices": [{"delta": {"tool_calls": [{"function": {"arguments": "{"}}]}}]}),
+            serde_json::json!({"candidates": [{"content": {"parts": [{"text": "hello"}]}}]}),
+            serde_json::json!({"candidates": [{"content": {"parts": [{"functionCall": {"name": "lookup", "args": {"city": "Tokyo"}}}]}}]}),
+        ];
+
+        for event in output {
+            let encoded = serde_json::to_string(&event).unwrap();
+            assert!(is_productive_sse_data(&encoded), "output: {encoded}");
+        }
     }
 
     #[tokio::test]
