@@ -213,7 +213,9 @@ export function SettingsPage({
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden px-6">
+    // Keep horizontal padding on the scroll container so glass-card shadows
+    // paint into the padding and are not clipped by overflow-y/x.
+    <div className="flex flex-col h-full overflow-hidden">
       {isBusy ? (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -224,25 +226,27 @@ export function SettingsPage({
           onValueChange={setActiveTab}
           className="flex flex-col h-full"
         >
-          <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-lg">
-            <TabsTrigger value="general">
-              {t("settings.tabGeneral")}
-            </TabsTrigger>
-            <TabsTrigger value="proxy">{t("settings.tabProxy")}</TabsTrigger>
-            <TabsTrigger value="auth">
-              {t("settings.tabAuth", { defaultValue: "认证" })}
-            </TabsTrigger>
-            <TabsTrigger value="advanced">
-              {t("settings.tabAdvanced")}
-            </TabsTrigger>
-            <TabsTrigger value="usage">{t("usage.title")}</TabsTrigger>
-            <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
-          </TabsList>
+          <div className="px-6">
+            <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-lg">
+              <TabsTrigger value="general">
+                {t("settings.tabGeneral")}
+              </TabsTrigger>
+              <TabsTrigger value="proxy">{t("settings.tabProxy")}</TabsTrigger>
+              <TabsTrigger value="auth">
+                {t("settings.tabAuth", { defaultValue: "认证" })}
+              </TabsTrigger>
+              <TabsTrigger value="advanced">
+                {t("settings.tabAdvanced")}
+              </TabsTrigger>
+              <TabsTrigger value="usage">{t("usage.title")}</TabsTrigger>
+              <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
+            </TabsList>
+          </div>
 
           <div className="flex-1 min-h-0 flex flex-col">
             <div
               ref={tabScrollContainerRef}
-              className="flex-1 overflow-y-auto overflow-x-hidden pr-2"
+              className="flex-1 overflow-y-auto overflow-x-hidden px-6 pt-2 pb-4"
             >
               <TabsContent value="general" className="space-y-6 mt-0">
                 {settings ? (
@@ -522,10 +526,10 @@ export function SettingsPage({
 
             {activeTab === "advanced" && settings && (
               <div
-                className="flex-shrink-0 pt-4 border-t border-border-default"
+                className="flex-shrink-0 px-6 pt-4 border-t border-border-default"
                 style={{ backgroundColor: "hsl(var(--background))" }}
               >
-                <div className="px-6 flex items-center justify-end gap-3">
+                <div className="flex items-center justify-end gap-3">
                   <Button onClick={handleSave} disabled={isSaving}>
                     {isSaving ? (
                       <span className="inline-flex items-center gap-2">
