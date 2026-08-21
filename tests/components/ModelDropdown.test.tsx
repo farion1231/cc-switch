@@ -36,4 +36,18 @@ describe("ModelDropdown", () => {
     fireEvent.click(screen.getByRole("option", { name: "gpt-5" }));
     expect(onSelect).toHaveBeenCalledWith("gpt-5");
   });
+
+  it("disables the trigger when model selection is unavailable", () => {
+    render(
+      <ModelDropdown
+        models={[{ id: "gpt-5", ownedBy: "openai" }]}
+        onSelect={vi.fn()}
+        disabled
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Select model" }),
+    ).toBeDisabled();
+  });
 });

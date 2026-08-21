@@ -3961,7 +3961,7 @@ impl ProviderService {
         preflighted_provider: Option<&Provider>,
     ) -> Result<(), AppError> {
         if let Some(effective_provider) = preflighted_provider {
-            live::write_live_snapshot(app_type, effective_provider)
+            live::write_live_snapshot(state.db.as_ref(), app_type, effective_provider)
         } else {
             write_live_with_common_config_for_state(state, app_type, provider)
         }
@@ -5210,6 +5210,7 @@ impl ProviderService {
         {
             let db_auth = provider.settings_config.get("auth");
             match crate::codex_config::clear_stale_codex_live_auth_after_official_switch(
+                &provider.settings_config,
                 db_auth.unwrap_or(&serde_json::Value::Null),
             ) {
                 Ok(true) => log::info!(

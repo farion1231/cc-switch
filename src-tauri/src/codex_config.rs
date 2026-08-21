@@ -5,8 +5,13 @@ use crate::config::{
     atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
     sanitize_provider_name, write_json_file, write_text_file,
 };
+use crate::database::Database;
 use crate::error::AppError;
-use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
+use crate::model_capabilities::{
+    image_input_capability_from_modalities, image_input_capability_from_settings,
+    ImageInputCapability,
+};
+use crate::provider::Provider;
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -21,6 +26,20 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// cleaned up without mistaking a user's own local provider for takeover.
 pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+pub(crate) const CODEX_OFFICIAL_MODELS_MERGED_KEY: &str = "cc_switch_merged";
+const CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME: &str = "cc-switch-official-models-cache.json";
+const CODEX_OFFICIAL_BASELINE_STATE_KEY: &str = "cc_switch_state";
+const CODEX_OFFICIAL_BASELINE_AWAITING_REFRESH: &str = "awaiting_official_refresh";
+const CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY: &str = "cc_switch_captured_at";
+const CODEX_OFFICIAL_BASELINE_TTL_SECONDS: i64 = 300;
+const CODEX_OFFICIAL_BASELINE_CLOCK_SKEW_SECONDS: i64 = 60;
+/// 官方 Codex 供应商 settings_config 里存放「自定义模型」的 key。
+/// 每条包含：model（对外展示给 Codex 的 ID）、providerId（绑定的 cc-switch
+/// 供应商）、upstreamModel（可选，发往上游的真实模型名）等。
+pub(crate) const CODEX_CUSTOM_MODELS_KEY: &str = "codexCustomModels";
+/// 官方 Codex 供应商「启用官方登录」开关。关闭时进入聚合模式：
+/// 不要求 ChatGPT 登录，模型列表来自下方配置的多个供应商，按模型路由。
+pub(crate) const CODEX_OFFICIAL_LOGIN_KEY: &str = "enableOfficialLogin";
 const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 #[cfg(target_os = "windows")]
@@ -320,6 +339,24 @@ pub enum CodexCatalogToolProfile {
     Anthropic,
 }
 
+pub type CodexCustomCatalogProviderResolver<'a> = dyn Fn(&str) -> Option<Provider> + 'a;
+
+pub(crate) fn resolve_codex_custom_catalog_provider_from_db(
+    db: &Database,
+    provider_id: &str,
+) -> Option<Provider> {
+    match db.get_provider_by_id(provider_id, "codex") {
+        Ok(Some(provider)) => Some(provider),
+        Ok(None) => None,
+        Err(error) => {
+            log::warn!(
+                "[codex] 读取自定义模型绑定供应商 `{provider_id}` 失败，将忽略对应目录条目: {error}"
+            );
+            None
+        }
+    }
+}
+
 impl CodexCatalogToolProfile {
     /// Pick the catalog tool profile from a provider's `apiFormat` meta value.
     ///
@@ -362,6 +399,38 @@ pub fn get_codex_config_dir() -> PathBuf {
 /// 获取 Codex auth.json 路径
 pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexAuthCredentials {
+    pub access_token: String,
+    pub account_id: Option<String>,
+}
+
+fn codex_auth_credentials_from_value(value: &Value) -> Option<CodexAuthCredentials> {
+    let tokens = value.get("tokens")?;
+    let access_token = tokens
+        .get("access_token")?
+        .as_str()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?
+        .to_string();
+    let account_id = tokens
+        .get("account_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    Some(CodexAuthCredentials {
+        access_token,
+        account_id,
+    })
+}
+
+/// 读取 `auth.json` 里的 ChatGPT access token 与账号 ID，用于拉取官方 Codex 模型列表。
+pub(crate) fn read_codex_auth_credentials() -> Option<CodexAuthCredentials> {
+    let value: Value = read_json_file(&get_codex_auth_path()).ok()?;
+    codex_auth_credentials_from_value(&value)
 }
 
 fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
@@ -1019,6 +1088,11 @@ pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
 /// third-party API key, so Codex shows its login screen instead of sending
 /// the wrong key to the official endpoint (401 with no way to re-login).
 ///
+/// 关闭官方登录（聚合模式）时跳过：该模式下 Codex 根本不走 ChatGPT 登录，
+/// 模型全部由本地代理按模型路由到各个供应商，删除 auth.json 只会让 Codex
+/// 误以为未登录而弹出登录页。保留现有文件（哪怕只是第三方 key）也不影响
+/// 路由，代理会为每个请求使用绑定供应商自己的凭据。
+///
 /// Deleting the file — not writing `{}` — is deliberate: Codex resolves an
 /// empty object to ChatGPT mode without tokens and errors at bootstrap,
 /// while a missing file yields NotAuthenticated and the login screen,
@@ -1034,8 +1108,12 @@ pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
 ///
 /// Returns Ok(true) when the file was deleted.
 pub fn clear_stale_codex_live_auth_after_official_switch(
+    settings: &Value,
     db_auth: &Value,
 ) -> Result<bool, AppError> {
+    if !codex_official_login_enabled(settings) {
+        return Ok(false);
+    }
     if codex_auth_has_login_material(db_auth) {
         // A material-carrying official provider gets a full auth write;
         // nothing stale can remain.
@@ -1090,7 +1168,14 @@ fn codex_catalog_input_modalities(
     model: &str,
     declared_modalities: Option<&[String]>,
 ) -> Vec<String> {
-    let modalities = match image_input_capability_from_modalities(model, declared_modalities) {
+    codex_catalog_input_modalities_from_capability(image_input_capability_from_modalities(
+        model,
+        declared_modalities,
+    ))
+}
+
+fn codex_catalog_input_modalities_from_capability(capability: ImageInputCapability) -> Vec<String> {
+    let modalities = match capability {
         ImageInputCapability::Unsupported => &["text"][..],
         ImageInputCapability::Supported | ImageInputCapability::Unknown => &["text", "image"][..],
     };
@@ -1400,6 +1485,872 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
     specs
 }
 
+/// 一条 Codex 自定义模型（官方登录场景下对外展示的“额外模型”）。
+/// 存放在官方 Codex 供应商的 `settings_config.codexCustomModels`。
+#[derive(Debug, Clone)]
+pub(crate) struct CodexCustomModelEntry {
+    /// 展示给 Codex 的对外模型 ID（目录 slug / 请求 body.model）
+    pub model: String,
+    /// 绑定的 cc-switch Codex 供应商 ID
+    pub provider_id: String,
+    /// 实际发往上游的模型名（缺省用目标供应商配置的 model）
+    pub upstream_model: Option<String>,
+    pub display_name: Option<String>,
+    pub context_window: Option<u64>,
+    pub supports_parallel_tool_calls: Option<bool>,
+    pub input_modalities: Option<Vec<String>>,
+    pub base_instructions: Option<String>,
+    pub reasoning_levels: Option<Vec<String>>,
+    pub default_reasoning_level: Option<String>,
+}
+
+/// 解析 `settings_config[CODEX_CUSTOM_MODELS_KEY]`，容忍 snake_case 双格式。
+pub(crate) fn codex_custom_model_entries(settings: &Value) -> Vec<CodexCustomModelEntry> {
+    let Some(items) = settings
+        .get(CODEX_CUSTOM_MODELS_KEY)
+        .and_then(|items| items.as_array())
+    else {
+        return Vec::new();
+    };
+
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+    for item in items {
+        let Some(model) = item
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            log::warn!("[codex] 忽略缺失/空 model 的自定义模型条目: {item}");
+            continue;
+        };
+        let Some(provider_id) = item
+            .get("providerId")
+            .or_else(|| item.get("provider_id"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            log::warn!("[codex] 忽略缺失 providerId 的自定义模型条目: {item}");
+            continue;
+        };
+        // 去重 key 与路由匹配一致：剥离 `[1M]` 上下文后缀后再判重，避免
+        // `foo` 与 `foo[1M]` 并存导致带后缀请求被路由到错误的供应商。
+        let dedup_key =
+            crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model).to_string();
+        if !seen.insert(dedup_key) {
+            log::warn!("[codex] 忽略重复的自定义模型插槽 `{model}`（首个条目生效）");
+            continue;
+        }
+        entries.push(CodexCustomModelEntry {
+            model: model.to_string(),
+            provider_id: provider_id.to_string(),
+            upstream_model: item
+                .get("upstreamModel")
+                .or_else(|| item.get("upstream_model"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(str::to_string),
+            display_name: item
+                .get("displayName")
+                .or_else(|| item.get("display_name"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string),
+            context_window: parse_codex_positive_u64(
+                item.get("contextWindow")
+                    .or_else(|| item.get("context_window")),
+            ),
+            supports_parallel_tool_calls: item
+                .get("supportsParallelToolCalls")
+                .or_else(|| item.get("supports_parallel_tool_calls"))
+                .and_then(|value| value.as_bool()),
+            input_modalities: item
+                .get("inputModalities")
+                .or_else(|| item.get("input_modalities"))
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|items| !items.is_empty()),
+            base_instructions: item
+                .get("baseInstructions")
+                .or_else(|| item.get("base_instructions"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string),
+            reasoning_levels: item
+                .get("reasoningLevels")
+                .or_else(|| item.get("reasoning_levels"))
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|level| !level.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|levels| !levels.is_empty()),
+            default_reasoning_level: item
+                .get("defaultReasoningLevel")
+                .or_else(|| item.get("default_reasoning_level"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|level| !level.is_empty())
+                .map(str::to_string),
+        });
+    }
+    entries
+}
+
+pub(crate) fn codex_custom_models_nonempty(settings: &Value) -> bool {
+    !codex_custom_model_entries(settings).is_empty()
+}
+
+pub(crate) fn merge_codex_custom_catalog_entries(
+    models: &mut Vec<Value>,
+    settings: &Value,
+    custom_entries: Vec<Value>,
+) -> bool {
+    let custom_slots: HashSet<String> = codex_custom_model_entries(settings)
+        .into_iter()
+        .map(|entry| {
+            crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(&entry.model).to_string()
+        })
+        .collect();
+
+    // A configured custom slot owns the public model name even when its bound
+    // provider is unavailable. Otherwise a colliding official row would remain
+    // visible even though request routing cannot serve it.
+    let mut pending: Vec<(String, Value)> = custom_entries
+        .into_iter()
+        .filter_map(|entry| {
+            let slug = entry.get("slug").and_then(Value::as_str)?;
+            let normalized =
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(slug).to_string();
+            Some((normalized, entry))
+        })
+        .collect();
+
+    let mut changed = false;
+    models.retain_mut(|model| {
+        let Some(slug) = model.get("slug").and_then(Value::as_str) else {
+            return true;
+        };
+        let normalized = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(slug);
+        if let Some(index) = pending
+            .iter()
+            .position(|(custom_slug, _)| custom_slug == normalized)
+        {
+            let replacement = pending.remove(index).1;
+            changed |= *model != replacement;
+            *model = replacement;
+            true
+        } else {
+            let keep = !custom_slots.contains(normalized);
+            changed |= !keep;
+            keep
+        }
+    });
+    changed |= !pending.is_empty();
+    models.extend(pending.into_iter().map(|(_, entry)| entry));
+    changed
+}
+
+/// 官方 Codex 供应商是否启用官方登录（缺省开启，保持既有行为）。
+pub(crate) fn codex_official_login_enabled(settings: &Value) -> bool {
+    settings
+        .get(CODEX_OFFICIAL_LOGIN_KEY)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+/// 官方 Codex 供应商（未启用官方登录）接管时刷新 `models_cache.json`。
+///
+/// Codex 桌面端（app-server）的模型列表流程不走本地代理的 `/v1/models`：
+/// 它先读 `~/.codex/models_cache.json`（300 秒 TTL），失效后才尝试从
+/// `chatgpt.com/backend-api` 远程拉取（未登录时 401，最终回退到内置静态
+/// 模型列表）。因此聚合模式下必须主动把自定义模型写入这份缓存，并刷新
+/// `fetched_at`，否则桌面端永远只显示官方内置模型。
+///
+/// 聚合模式（官方登录关闭）只包含映射到供应商的自定义模型：官方模型请求
+/// 会被本地代理拒绝（`RequestContext`），把它们留在缓存里只会显示成可选
+/// 却实际不可用。因此不再克隆旧缓存里的官方/残留条目，仅从当前
+/// `codexCustomModels` 映射重建。
+fn write_codex_models_cache_for_aggregate_at(
+    codex_dir: PathBuf,
+    settings: &Value,
+    config_text: &str,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
+) -> Result<(), AppError> {
+    if codex_official_login_enabled(settings) {
+        return Ok(());
+    }
+
+    let mut models: Vec<Value> = Vec::new();
+    let custom_entries = codex_custom_catalog_entries(
+        settings,
+        config_text,
+        CodexCatalogToolProfile::NativeResponses,
+        custom_provider_resolver,
+    )?;
+    merge_codex_custom_catalog_entries(&mut models, settings, custom_entries);
+
+    write_models_cache_json(&codex_dir, models)?;
+    log::info!("[codex] models_cache.json refreshed for aggregate mode");
+    Ok(())
+}
+
+/// 官方登录 + 自定义模型时刷新 `models_cache.json`。
+///
+/// 桌面端读这份缓存展示模型列表，跳过写入会让自定义模型在官方登录模式下
+/// 不可见。合并保留缓存中已有的官方模型条目（官方登录下可路由），再追加/
+/// 覆盖当前配置的自定义条目（同名时自定义优先）。
+///
+/// 仅在现有缓存里有可靠官方基线时写入：缓存缺失/为空/还是聚合模式写的
+/// （cc-switch 生成的 etag）时删除 live 缓存，让 Codex 桌面端立即拉官方模型。
+/// 否则把一个没有官方模型的缓存标成 fresh（300s TTL），会阻断桌面端恢复
+/// 真实官方目录，自定义模型也会一直排挤掉官方模型。
+fn write_codex_models_cache_for_official_login_at(
+    codex_dir: PathBuf,
+    settings: &Value,
+    config_text: &str,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
+) -> Result<(), AppError> {
+    let live_cache: Value = fs::read_to_string(codex_dir.join("models_cache.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({ "models": [] }));
+
+    let Some(cache) = prepare_codex_official_models_baseline(&codex_dir, &live_cache)? else {
+        log::info!("[codex] official-login aggregation: 等待 Codex 重新拉取官方基线");
+        return Ok(());
+    };
+
+    let mut models: Vec<Value> = cache
+        .get("models")
+        .and_then(|models| models.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let custom_entries = codex_custom_catalog_entries(
+        settings,
+        config_text,
+        CodexCatalogToolProfile::NativeResponses,
+        custom_provider_resolver,
+    )?;
+    if merge_codex_custom_catalog_entries(&mut models, settings, custom_entries) {
+        write_models_cache_json(&codex_dir, models)?;
+        log::info!("[codex] models_cache.json refreshed for official-login aggregation");
+    } else if !codex_cache_is_reliable_official_baseline(&live_cache) {
+        crate::config::write_json_file(&codex_dir.join("models_cache.json"), &cache)?;
+        log::info!("[codex] official-login aggregation restored the clean official cache");
+    }
+    Ok(())
+}
+
+/// 该缓存是否为 cc-switch 自己生成的（聚合模式/无官方基线时写入），而非
+/// Codex 桌面端从官方后端拉取后落盘的。区分两种来源用于判断官方基线可靠性。
+fn codex_cache_has_cc_switch_etag(cache: &Value) -> bool {
+    cache
+        .get("etag")
+        .and_then(|value| value.as_str())
+        .is_some_and(|etag| etag.starts_with("W/\"cc-switch-"))
+}
+
+fn codex_cache_is_reliable_official_baseline(cache: &Value) -> bool {
+    cache
+        .get("models")
+        .and_then(|models| models.as_array())
+        .is_some_and(|models| !models.is_empty())
+        && !codex_cache_has_cc_switch_etag(cache)
+        && !cache
+            .get(CODEX_OFFICIAL_MODELS_MERGED_KEY)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+/// Whether the live cache contains cc-switch-owned state that must be restored
+/// or cleared when Codex takeover ends.
+///
+/// Starting takeover is not sufficient evidence: the process can stop before
+/// publishing a replacement cache, in which case the existing official cache
+/// must remain untouched.
+fn codex_model_label_key(label: &str) -> String {
+    label
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|ch| ch.is_alphanumeric())
+        .collect()
+}
+
+fn codex_cache_has_legacy_custom_models(cache: &Value, provider_settings: Option<&Value>) -> bool {
+    let Some(models) = cache.get("models").and_then(Value::as_array) else {
+        return false;
+    };
+    if models.iter().any(|model| {
+        model
+            .get("priority")
+            .and_then(Value::as_u64)
+            .is_some_and(|priority| priority >= 1000)
+    }) {
+        return true;
+    }
+
+    let Some(settings) = provider_settings else {
+        return false;
+    };
+    codex_custom_model_entries(settings).iter().any(|entry| {
+        let Some(display_name) = entry.display_name.as_deref() else {
+            return false;
+        };
+        if codex_model_label_key(display_name) == codex_model_label_key(&entry.model) {
+            return false;
+        }
+        models.iter().any(|model| {
+            model.get("slug").and_then(Value::as_str) == Some(entry.model.as_str())
+                && model.get("display_name").and_then(Value::as_str) == Some(display_name)
+        })
+    })
+}
+
+pub(crate) fn codex_models_cache_needs_takeover_cleanup(
+    codex_dir: &Path,
+    provider_settings: Option<&Value>,
+) -> bool {
+    let baseline_exists = codex_dir
+        .join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME)
+        .exists();
+    let live_cache = fs::read_to_string(codex_dir.join("models_cache.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+
+    match live_cache {
+        Some(cache) => {
+            codex_cache_has_cc_switch_etag(&cache)
+                || cache
+                    .get(CODEX_OFFICIAL_MODELS_MERGED_KEY)
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                || codex_cache_has_legacy_custom_models(&cache, provider_settings)
+                || (baseline_exists && !codex_cache_is_reliable_official_baseline(&cache))
+        }
+        None => baseline_exists,
+    }
+}
+
+#[derive(Debug)]
+enum CodexOfficialBaseline {
+    Ready(Value),
+    AwaitingRefresh,
+}
+
+fn prepare_codex_official_models_baseline(
+    codex_dir: &Path,
+    live_cache: &Value,
+) -> Result<Option<Value>, AppError> {
+    match load_or_capture_codex_official_models_baseline(codex_dir, live_cache)? {
+        CodexOfficialBaseline::Ready(cache) => Ok(Some(cache)),
+        CodexOfficialBaseline::AwaitingRefresh => {
+            let live_path = codex_dir.join("models_cache.json");
+            if live_path.exists() {
+                fs::remove_file(&live_path).map_err(|e| AppError::io(&live_path, e))?;
+            }
+            Ok(None)
+        }
+    }
+}
+
+pub(crate) fn restore_or_clear_codex_official_models_cache(
+    codex_dir: &Path,
+) -> Result<(), AppError> {
+    let live_path = codex_dir.join("models_cache.json");
+    let live_cache: Value = fs::read_to_string(&live_path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({ "models": [] }));
+
+    if let Some(baseline) = prepare_codex_official_models_baseline(codex_dir, &live_cache)? {
+        if !codex_cache_is_reliable_official_baseline(&live_cache) {
+            crate::config::write_json_file(&live_path, &baseline)?;
+        }
+    }
+    Ok(())
+}
+
+fn codex_official_cache_fingerprint(cache: &Value) -> Value {
+    json!({
+        "etag": cache.get("etag").cloned().unwrap_or(Value::Null),
+        "fetched_at": cache.get("fetched_at").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn codex_official_baseline_payload(cache: &Value) -> Value {
+    let mut payload = cache.clone();
+    if let Some(object) = payload.as_object_mut() {
+        object.remove(CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY);
+    }
+    payload
+}
+
+fn codex_official_baseline_with_capture_time(
+    cache: &Value,
+    captured_at: chrono::DateTime<chrono::Utc>,
+) -> Value {
+    let mut saved = codex_official_baseline_payload(cache);
+    if let Some(object) = saved.as_object_mut() {
+        object.insert(
+            CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY.to_string(),
+            Value::String(captured_at.to_rfc3339()),
+        );
+    }
+    saved
+}
+
+pub(crate) fn capture_forwarded_codex_official_models_baseline(
+    catalog: &Value,
+    client_version: &str,
+    etag: Option<&str>,
+) -> Result<bool, AppError> {
+    capture_forwarded_codex_official_models_baseline_at(
+        &get_codex_config_dir(),
+        catalog,
+        client_version,
+        etag,
+    )
+}
+
+fn capture_forwarded_codex_official_models_baseline_at(
+    codex_dir: &Path,
+    catalog: &Value,
+    client_version: &str,
+    etag: Option<&str>,
+) -> Result<bool, AppError> {
+    let client_version = client_version.trim();
+    if codex_cache_has_cc_switch_etag(catalog)
+        || catalog
+            .get(CODEX_OFFICIAL_MODELS_MERGED_KEY)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+    let models = catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .or_else(|| catalog.get("data").and_then(Value::as_array))
+        .filter(|models| !models.is_empty())
+        .cloned();
+    let (Some(models), Some(mut baseline)) = (models, catalog.as_object().cloned()) else {
+        return Ok(false);
+    };
+    if client_version.is_empty() {
+        return Ok(false);
+    }
+
+    let now = chrono::Utc::now();
+    baseline.insert("models".to_string(), Value::Array(models));
+    baseline.remove("data");
+    baseline.remove(CODEX_OFFICIAL_MODELS_MERGED_KEY);
+    baseline.remove(CODEX_OFFICIAL_BASELINE_STATE_KEY);
+    baseline.remove("rejected_fingerprint");
+    baseline.insert(
+        "fetched_at".to_string(),
+        Value::String(
+            now.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+                .to_string(),
+        ),
+    );
+    baseline.insert(
+        "client_version".to_string(),
+        Value::String(client_version.to_string()),
+    );
+    if let Some(etag) = etag.map(str::trim).filter(|etag| !etag.is_empty()) {
+        baseline.insert("etag".to_string(), Value::String(etag.to_string()));
+    }
+
+    let baseline = Value::Object(baseline);
+    if !codex_cache_is_reliable_official_baseline(&baseline) {
+        return Ok(false);
+    }
+    let captured = codex_official_baseline_with_capture_time(&baseline, now);
+    crate::config::write_json_file(
+        &codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME),
+        &captured,
+    )?;
+    Ok(true)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexOfficialBaselineCaptureState {
+    Missing,
+    Fresh,
+    Expired,
+    Invalid,
+}
+
+fn codex_official_baseline_capture_state(
+    cache: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> CodexOfficialBaselineCaptureState {
+    let Some(raw) = cache.get(CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY) else {
+        return CodexOfficialBaselineCaptureState::Missing;
+    };
+    let Some(raw) = raw.as_str() else {
+        return CodexOfficialBaselineCaptureState::Invalid;
+    };
+    let Ok(captured_at) = chrono::DateTime::parse_from_rfc3339(raw) else {
+        return CodexOfficialBaselineCaptureState::Invalid;
+    };
+    let age = now
+        .signed_duration_since(captured_at.with_timezone(&chrono::Utc))
+        .num_seconds();
+    if age < -CODEX_OFFICIAL_BASELINE_CLOCK_SKEW_SECONDS {
+        CodexOfficialBaselineCaptureState::Invalid
+    } else if age >= CODEX_OFFICIAL_BASELINE_TTL_SECONDS {
+        CodexOfficialBaselineCaptureState::Expired
+    } else {
+        CodexOfficialBaselineCaptureState::Fresh
+    }
+}
+
+fn codex_awaiting_official_refresh(cache: &Value) -> Value {
+    json!({
+        CODEX_OFFICIAL_BASELINE_STATE_KEY: CODEX_OFFICIAL_BASELINE_AWAITING_REFRESH,
+        "rejected_fingerprint": codex_official_cache_fingerprint(cache),
+    })
+}
+
+fn load_or_capture_codex_official_models_baseline(
+    codex_dir: &Path,
+    live_cache: &Value,
+) -> Result<CodexOfficialBaseline, AppError> {
+    let baseline_path = codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME);
+    let saved: Option<Value> = fs::read_to_string(&baseline_path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok());
+
+    let now = chrono::Utc::now();
+    if let Some(saved) = saved.as_ref() {
+        if codex_cache_is_reliable_official_baseline(saved) {
+            let live_is_official = codex_cache_is_reliable_official_baseline(live_cache);
+            let live_is_new_snapshot = live_is_official
+                && codex_official_cache_fingerprint(saved)
+                    != codex_official_cache_fingerprint(live_cache);
+            if live_is_new_snapshot {
+                let captured = codex_official_baseline_with_capture_time(live_cache, now);
+                crate::config::write_json_file(&baseline_path, &captured)?;
+                return Ok(CodexOfficialBaseline::Ready(live_cache.clone()));
+            }
+            match codex_official_baseline_capture_state(saved, now) {
+                CodexOfficialBaselineCaptureState::Expired
+                | CodexOfficialBaselineCaptureState::Invalid => {
+                    let awaiting = codex_awaiting_official_refresh(saved);
+                    crate::config::write_json_file(&baseline_path, &awaiting)?;
+                    return Ok(CodexOfficialBaseline::AwaitingRefresh);
+                }
+                CodexOfficialBaselineCaptureState::Missing => {
+                    let captured = codex_official_baseline_with_capture_time(saved, now);
+                    crate::config::write_json_file(&baseline_path, &captured)?;
+                }
+                CodexOfficialBaselineCaptureState::Fresh => {}
+            }
+            return Ok(CodexOfficialBaseline::Ready(
+                codex_official_baseline_payload(saved),
+            ));
+        }
+
+        if saved
+            .get(CODEX_OFFICIAL_BASELINE_STATE_KEY)
+            .and_then(Value::as_str)
+            == Some(CODEX_OFFICIAL_BASELINE_AWAITING_REFRESH)
+        {
+            if codex_cache_is_reliable_official_baseline(live_cache)
+                && saved.get("rejected_fingerprint")
+                    != Some(&codex_official_cache_fingerprint(live_cache))
+            {
+                let captured = codex_official_baseline_with_capture_time(live_cache, now);
+                crate::config::write_json_file(&baseline_path, &captured)?;
+                return Ok(CodexOfficialBaseline::Ready(live_cache.clone()));
+            }
+            return Ok(CodexOfficialBaseline::AwaitingRefresh);
+        }
+    }
+
+    if codex_cache_is_reliable_official_baseline(live_cache) {
+        let awaiting = codex_awaiting_official_refresh(live_cache);
+        crate::config::write_json_file(&baseline_path, &awaiting)?;
+    }
+    Ok(CodexOfficialBaseline::AwaitingRefresh)
+}
+
+/// 写 `models_cache.json`：优先使用当前 Codex CLI 版本，探测失败时才复用
+/// 既有 `client_version`（Codex 按该版本号校验缓存有效性）；无可验证版本时
+/// 拒绝写入。仅刷新 `fetched_at` 与 `etag`，使缓存落在 300 秒 TTL 窗口内。
+fn write_models_cache_json(codex_dir: &Path, models: Vec<Value>) -> Result<(), AppError> {
+    let detected_client_version = detect_codex_cli_client_version();
+    write_models_cache_json_with_client_version(
+        codex_dir,
+        models,
+        detected_client_version.as_deref(),
+    )
+}
+
+fn parse_codex_cli_client_version(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|token| {
+        let version = token.trim_start_matches('v').split(['-', '+']).next()?;
+        let mut parts = version.split('.');
+        let major = parts.next()?;
+        let minor = parts.next()?;
+        let patch = parts.next()?;
+        if parts.next().is_some()
+            || [major, minor, patch]
+                .iter()
+                .any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()))
+        {
+            return None;
+        }
+        Some(format!("{major}.{minor}.{patch}"))
+    })
+}
+
+fn codex_version_command(candidate: &Path) -> Command {
+    let mut command = Command::new(candidate);
+    command.arg("--version").stdin(Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
+}
+
+fn detect_codex_cli_client_version() -> Option<String> {
+    for candidate in codex_cli_candidates() {
+        let candidate_label = candidate.to_string_lossy();
+        let output = match codex_version_command(&candidate).output() {
+            Ok(output) => output,
+            Err(error) => {
+                log::debug!("failed to run `{candidate_label} --version`: {error}");
+                continue;
+            }
+        };
+        if !output.status.success() {
+            log::debug!(
+                "`{candidate_label} --version` exited with {}",
+                output.status
+            );
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(version) = parse_codex_cli_client_version(&stdout) {
+            return Some(version);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(version) = parse_codex_cli_client_version(&stderr) {
+            return Some(version);
+        }
+        log::debug!("failed to parse Codex version from `{candidate_label} --version`");
+    }
+    None
+}
+
+/// Resolve the client version used by Codex to validate `models_cache.json`.
+/// Prefer a live CLI/Desktop binary; an existing cache is only a fallback for
+/// installations whose executable cannot be launched from CC Switch.
+pub(crate) fn resolve_codex_client_version() -> Option<String> {
+    detect_codex_cli_client_version().or_else(|| {
+        fs::read_to_string(get_codex_config_dir().join("models_cache.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|cache| {
+                cache
+                    .get("client_version")
+                    .and_then(Value::as_str)
+                    .and_then(parse_codex_cli_client_version)
+            })
+    })
+}
+
+fn write_models_cache_json_with_client_version(
+    codex_dir: &Path,
+    models: Vec<Value>,
+    detected_client_version: Option<&str>,
+) -> Result<(), AppError> {
+    let path = codex_dir.join("models_cache.json");
+    let existing: Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({ "models": [] }));
+    let client_version = detected_client_version
+        .and_then(parse_codex_cli_client_version)
+        .or_else(|| {
+            existing
+                .get("client_version")
+                .and_then(Value::as_str)
+                .and_then(parse_codex_cli_client_version)
+        })
+        .ok_or_else(|| {
+            AppError::Message(
+                "Cannot write Codex models cache without a verified Codex client version"
+                    .to_string(),
+            )
+        })?;
+    let _ = load_or_capture_codex_official_models_baseline(codex_dir, &existing)?;
+
+    let now = chrono::Utc::now();
+    let fetched_at = now
+        .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+        .to_string();
+    let etag = format!("W/\"cc-switch-{}\"", now.timestamp());
+
+    let updated = json!({
+        "fetched_at": fetched_at,
+        "etag": etag,
+        "client_version": client_version,
+        "models": models,
+    });
+
+    crate::config::write_json_file(&path, &updated)?;
+    Ok(())
+}
+
+/// 切换/接管任意 Codex 供应商后重建 `models_cache.json`（桌面端模型列表的
+/// 来源），使列表始终反映当前供应商而不是残留的旧条目。
+///
+/// - 官方供应商 + 启用官方登录：无自定义模型时恢复 clean sidecar，或删除
+///   cc-switch 残留以触发 ChatGPT 后端拉取；有自定义模型时合并官方模型 + 自定义条目
+///   （见 [`write_codex_models_cache_for_official_login_at`]）；
+/// - 官方供应商 + 关闭官方登录（聚合模式）：仅用当前 `codexCustomModels`
+///   映射重建，清掉残留的官方/旧条目（见 [`write_codex_models_cache_for_aggregate_at`]）；
+/// - 其他供应商：直接用当前供应商自己的模型目录重建，清掉残留的官方/旧条目。
+pub fn write_codex_models_cache_for_provider(
+    provider: &Provider,
+    config_text: &str,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
+) -> Result<(), AppError> {
+    write_codex_models_cache_for_provider_at(
+        get_codex_config_dir(),
+        provider,
+        config_text,
+        custom_provider_resolver,
+    )
+}
+
+fn write_codex_models_cache_for_provider_at(
+    codex_dir: PathBuf,
+    provider: &Provider,
+    config_text: &str,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
+) -> Result<(), AppError> {
+    let settings = &provider.settings_config;
+
+    if crate::proxy::providers::is_codex_official_provider(provider) {
+        if codex_official_login_enabled(settings) {
+            // 官方登录 + 自定义模型：桌面端读 models_cache.json，需合并写入
+            // 官方与自定义模型，否则自定义模型不可见。
+            if codex_custom_models_nonempty(settings) {
+                return write_codex_models_cache_for_official_login_at(
+                    codex_dir,
+                    settings,
+                    config_text,
+                    custom_provider_resolver,
+                );
+            }
+            return restore_or_clear_codex_official_models_cache(&codex_dir);
+        }
+        return write_codex_models_cache_for_aggregate_at(
+            codex_dir,
+            settings,
+            config_text,
+            custom_provider_resolver,
+        );
+    }
+
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+    let catalog = codex_model_catalog_from_settings(settings, config_text, profile, None)?;
+    match catalog {
+        Some(catalog) => {
+            let models: Vec<Value> = catalog
+                .get("models")
+                .and_then(|models| models.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let model_count = models.len();
+            write_models_cache_json(&codex_dir, models)?;
+            log::info!(
+                "[codex] models_cache.json rebuilt for provider `{}`: {} models",
+                provider.name,
+                model_count
+            );
+        }
+        None => {
+            // 无 modelCatalog（只有顶层 model，如仓库自带的自定义供应商模板）：
+            // 从配置的 model 派生单条缓存，桌面端至少能发现默认模型；连 model
+            // 都没有则跳过，避免把空列表标成 fresh 阻断桌面端发现模型。
+            let Some(model) = codex_top_level_model(config_text) else {
+                return Ok(());
+            };
+            let Some(entry) = codex_single_model_cache_entry(&model, profile, config_text) else {
+                return Ok(());
+            };
+            write_models_cache_json(&codex_dir, vec![entry])?;
+            log::info!(
+                "[codex] models_cache.json rebuilt for provider `{}`: 1 model from config",
+                provider.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// 无 `modelCatalog` 时从配置顶层 `model` 派生单条缓存条目。
+fn codex_single_model_cache_entry(
+    model: &str,
+    profile: CodexCatalogToolProfile,
+    config_text: &str,
+) -> Option<Value> {
+    let template = match profile {
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
+            load_codex_native_responses_template()
+        }
+        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template().ok()?,
+    };
+    let spec = CodexCatalogModelSpec {
+        model: model.to_string(),
+        display_name: None,
+        context_window: None,
+        supports_parallel_tool_calls: None,
+        input_modalities: None,
+        base_instructions: None,
+        reasoning_levels: None,
+        default_reasoning_level: None,
+    };
+    let default_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    Some(codex_catalog_model_entry(
+        &template,
+        &spec,
+        0,
+        profile,
+        default_context_window,
+    ))
+}
+
+/// 加载 Codex 内置的完整官方模型目录（`models_cache.json`，Codex 连接
+/// OpenAI 后自行写入），用于在保留官方模型选择的同时合并自定义模型条目。
+/// 缓存缺失时回退到内置 gpt-5.5 模板（降级：只展示这一个官方模型）。
 fn find_codex_model_template(catalog: &Value) -> Option<Value> {
     catalog
         .get("models")
@@ -1578,6 +2529,17 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
         push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
     }
 
+    // 桌面自带 codex 二进制的候选始终记录（与 PATH 候选一致，不要求此刻存在）：
+    // 消费方对无法启动的候选会跳过，存在性在运行时判断。若按存在性过滤，
+    // 干净环境/CI 上就会漏掉这条路径，检测不到桌面版自带的 Codex。
+    #[cfg(target_os = "macos")]
+    for candidate in [
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/Applications/ChatGPT Classic.app/Contents/Resources/codex",
+    ] {
+        push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
+    }
+
     push_env_codex_cli_candidates(&mut candidates, &mut seen);
     push_home_codex_cli_candidates(&mut candidates, &mut seen, &get_home_dir());
 
@@ -1712,22 +2674,28 @@ fn codex_official_vendor_catalog_models(
     None
 }
 
-/// Build one catalog entry from an official vendor catalog: match the user's
-/// model id against the vendor entries by slug; an unknown id clones the
-/// vendor's first (flagship) entry so it keeps the gateway's capability
-/// profile without impersonating the flagship. The official entry is
-/// authoritative — no tool-profile stripping — but explicit per-row user
-/// overrides still win.
+/// Build one catalog entry from an official vendor catalog. `template_model`
+/// selects the vendor row whose capabilities should be cloned; normal provider
+/// catalogs omit it and match `spec.model`, while aggregate aliases pass their
+/// actual upstream model. An unknown id clones the vendor's first (flagship)
+/// entry. The public identity always comes from `spec`, and explicit per-row
+/// user overrides still win.
 fn codex_vendor_catalog_model_entry(
     vendor_models: &[Value],
     spec: &CodexCatalogModelSpec,
     priority: usize,
+    template_model: Option<&str>,
 ) -> Value {
+    let preserve_public_identity = template_model.is_some();
+    let template_model = template_model
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(&spec.model);
     let matched = vendor_models.iter().find(|entry| {
         entry
             .get("slug")
             .and_then(|slug| slug.as_str())
-            .is_some_and(|slug| slug.eq_ignore_ascii_case(&spec.model))
+            .is_some_and(|slug| slug.eq_ignore_ascii_case(template_model))
     });
     let mut entry = match matched {
         Some(found) => found.clone(),
@@ -1743,7 +2711,7 @@ fn codex_vendor_catalog_model_entry(
         return json!({});
     };
 
-    if matched.is_none() {
+    if matched.is_none() || preserve_public_identity {
         let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
         entry_obj.insert("slug".to_string(), json!(spec.model));
         entry_obj.insert("display_name".to_string(), json!(display_name));
@@ -1881,11 +2849,158 @@ fn codex_model_catalog_from_specs(
     json!({ "models": entries })
 }
 
+/// 为 Codex 自定义模型构建原生 Responses 目录条目（官方供应商场景）。
+pub(crate) fn codex_custom_catalog_entries(
+    settings: &Value,
+    config_text: &str,
+    fallback_profile: CodexCatalogToolProfile,
+    resolve_provider: Option<&CodexCustomCatalogProviderResolver<'_>>,
+) -> Result<Vec<Value>, AppError> {
+    let entries = codex_custom_model_entries(settings);
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+    let native_template = load_codex_native_responses_template();
+    let mut proxy_chat_template = None;
+    let mut catalog_entries = Vec::with_capacity(entries.len());
+
+    for (index, entry) in entries.iter().enumerate() {
+        if !codex_official_login_enabled(settings)
+            && entry.provider_id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
+        {
+            log::warn!(
+                "[codex] 忽略自定义模型 `{}`：聚合模式不能绑定官方供应商",
+                entry.model
+            );
+            continue;
+        }
+        let bound_provider = match resolve_provider {
+            Some(resolve) => {
+                let Some(provider) = resolve(&entry.provider_id) else {
+                    log::warn!(
+                        "[codex] 忽略自定义模型 `{}`：绑定供应商 `{}` 不存在",
+                        entry.model,
+                        entry.provider_id
+                    );
+                    continue;
+                };
+                Some(provider)
+            }
+            None => None,
+        };
+        let profile = bound_provider
+            .as_ref()
+            .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
+            .unwrap_or(fallback_profile);
+        let bound_config_text = bound_provider.as_ref().and_then(|provider| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(Value::as_str)
+        });
+        let default_context_window = match bound_provider.as_ref() {
+            Some(_) => bound_config_text
+                .and_then(|text| extract_codex_top_level_u64(text, "model_context_window"))
+                .unwrap_or(128_000),
+            None => {
+                extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000)
+            }
+        };
+        let provider_default_model = bound_provider
+            .as_ref()
+            .and_then(crate::proxy::providers::codex_provider_upstream_model);
+        let capability_model = entry
+            .upstream_model
+            .as_deref()
+            .or(provider_default_model.as_deref());
+        let spec = CodexCatalogModelSpec {
+            model: entry.model.clone(),
+            display_name: entry.display_name.clone(),
+            context_window: entry.context_window,
+            supports_parallel_tool_calls: entry.supports_parallel_tool_calls,
+            input_modalities: entry.input_modalities.clone().or_else(|| {
+                capability_model.map(|model| {
+                    bound_provider.as_ref().map_or_else(
+                        || codex_catalog_input_modalities(model, None),
+                        |provider| {
+                            codex_catalog_input_modalities_from_capability(
+                                image_input_capability_from_settings(
+                                    &provider.settings_config,
+                                    model,
+                                    true,
+                                ),
+                            )
+                        },
+                    )
+                })
+            }),
+            base_instructions: entry.base_instructions.clone(),
+            reasoning_levels: entry.reasoning_levels.clone(),
+            default_reasoning_level: entry.default_reasoning_level.clone(),
+        };
+        if let Some(vendor_models) =
+            bound_config_text.and_then(|text| codex_official_vendor_catalog_models(text, profile))
+        {
+            catalog_entries.push(codex_vendor_catalog_model_entry(
+                &vendor_models,
+                &spec,
+                index,
+                capability_model,
+            ));
+            continue;
+        }
+
+        let template = match profile {
+            CodexCatalogToolProfile::ProxyChat => {
+                if proxy_chat_template.is_none() {
+                    proxy_chat_template = Some(load_codex_model_catalog_template()?);
+                }
+                proxy_chat_template
+                    .as_ref()
+                    .expect("ProxyChat template initialized")
+            }
+            CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
+                &native_template
+            }
+        };
+        catalog_entries.push(codex_catalog_model_entry(
+            template,
+            &spec,
+            index,
+            profile,
+            default_context_window,
+        ));
+    }
+
+    Ok(catalog_entries)
+}
+
 fn codex_model_catalog_from_settings(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<Option<Value>, AppError> {
+    // 官方 Codex 供应商带自定义模型。
+    if codex_custom_models_nonempty(settings) {
+        // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型（多供应商切换）。
+        if !codex_official_login_enabled(settings) {
+            return Ok(Some(json!({
+                "models": codex_custom_catalog_entries(
+                    settings,
+                    config_text,
+                    CodexCatalogToolProfile::NativeResponses,
+                    custom_provider_resolver,
+                )?
+            })));
+        }
+        // 官方登录模式：不写 model_catalog_json，让 Codex 直接走 /v1/models，
+        // 由本地代理把官方模型与自定义模型合并返回。合并目录文件依赖
+        // models_cache.json 拿官方模型，而登录模式下该缓存不可靠，容易写出
+        // 只有自定义模型、缺官方模型的错误目录。
+        return Ok(None);
+    }
+
     let specs = codex_catalog_model_specs(settings);
     if specs.is_empty() {
         return Ok(None);
@@ -1900,7 +3015,9 @@ fn codex_model_catalog_from_settings(
         let entries: Vec<Value> = specs
             .iter()
             .enumerate()
-            .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
+            .map(|(index, spec)| {
+                codex_vendor_catalog_model_entry(&vendor_models, spec, index, None)
+            })
             .collect();
         return Ok(Some(json!({ "models": entries })));
     }
@@ -2007,10 +3124,13 @@ pub fn prepare_codex_config_text_with_model_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<String, AppError> {
     let catalog_path = get_codex_model_catalog_path();
 
-    if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
+    if let Some(catalog) =
+        codex_model_catalog_from_settings(settings, config_text, profile, custom_provider_resolver)?
+    {
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         // Disable web_search only for native gateways on the reject blacklist
         // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
@@ -2287,9 +3407,15 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<String, AppError> {
-    if settings.get("modelCatalog").is_some() {
-        prepare_codex_config_text_with_model_catalog(settings, config_text, profile)
+    if settings.get("modelCatalog").is_some() || codex_custom_models_nonempty(settings) {
+        prepare_codex_config_text_with_model_catalog(
+            settings,
+            config_text,
+            profile,
+            custom_provider_resolver,
+        )
     } else {
         Ok(config_text.to_string())
     }
@@ -2301,9 +3427,17 @@ pub fn write_codex_provider_live_with_catalog(
     auth: &Value,
     config_text: Option<&str>,
     profile: CodexCatalogToolProfile,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<(), AppError> {
     let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
+        .map(|text| {
+            prepare_codex_config_text_with_model_catalog(
+                settings,
+                text,
+                profile,
+                custom_provider_resolver,
+            )
+        })
         .transpose()?;
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
@@ -2467,10 +3601,11 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 fn codex_official_provider_table(
     base_url: Option<&str>,
     supports_websockets: bool,
+    requires_openai_auth: bool,
 ) -> toml_edit::Table {
     let mut table = toml_edit::Table::new();
     table["name"] = toml_edit::value("OpenAI");
-    table["requires_openai_auth"] = toml_edit::value(true);
+    table["requires_openai_auth"] = toml_edit::value(requires_openai_auth);
     table["supports_websockets"] = toml_edit::value(supports_websockets);
     table["wire_api"] = toml_edit::value("responses");
     if let Some(base_url) = base_url {
@@ -2480,7 +3615,7 @@ fn codex_official_provider_table(
 }
 
 fn codex_unified_official_provider_table() -> toml_edit::Table {
-    codex_official_provider_table(None, true)
+    codex_official_provider_table(None, true, true)
 }
 
 fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Table) {
@@ -2511,9 +3646,21 @@ fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Tab
 /// The resulting custom provider explicitly opts into OpenAI authentication,
 /// so Codex forwards its existing ChatGPT login to the local `/responses`
 /// endpoint.  No API key or bearer placeholder is written to `auth.json`.
+#[cfg(test)]
 pub fn apply_codex_official_proxy_route(
     config_text: &str,
     proxy_base_url: &str,
+) -> Result<String, AppError> {
+    apply_codex_official_proxy_route_with_auth(config_text, proxy_base_url, true)
+}
+
+/// 同 [`apply_codex_official_proxy_route`]，但允许关闭 `requires_openai_auth`：
+/// 未启用官方登录（聚合模式）时 Codex 不会要求 OpenAI 登录，模型全部来自
+/// 本地代理按模型路由到各个供应商。
+pub fn apply_codex_official_proxy_route_with_auth(
+    config_text: &str,
+    proxy_base_url: &str,
+    requires_openai_auth: bool,
 ) -> Result<String, AppError> {
     let mut doc = config_text
         .parse::<DocumentMut>()
@@ -2542,7 +3689,14 @@ pub fn apply_codex_official_proxy_route(
     remove_codex_proxy_placeholders_from_providers(&mut providers);
 
     // The local proxy currently exposes HTTP/SSE, not Codex websocket routes.
-    let table = codex_official_provider_table(Some(proxy_base_url), false);
+    let mut table =
+        codex_official_provider_table(Some(proxy_base_url), false, requires_openai_auth);
+    if !requires_openai_auth {
+        // 聚合模式（关闭官方登录）：不给 Codex 任何凭据它会直接弹登录页。
+        // 占位 token 只用于满足客户端的认证检查，实际请求由本地代理按模型
+        // 路由，并把鉴权替换为绑定供应商自己的凭据（不会把占位符发到上游）。
+        table["experimental_bearer_token"] = toml_edit::value(CODEX_PROXY_AUTH_PLACEHOLDER);
+    }
 
     providers.insert(
         CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
@@ -4219,6 +5373,7 @@ base_url = "https://production.api/v1"
             &settings,
             "",
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4307,6 +5462,7 @@ base_url = "https://production.api/v1"
             &settings,
             DEEPSEEK_NATIVE_CONFIG,
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("vendor catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4355,6 +5511,7 @@ base_url = "https://production.api/v1"
             &settings,
             "",
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("native catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4505,6 +5662,7 @@ base_url = "https://production.api/v1"
             &settings,
             "",
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("native catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4548,6 +5706,7 @@ wire_api = "responses"
             &settings,
             DEEPSEEK_NATIVE_CONFIG,
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("vendor catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4637,6 +5796,7 @@ wire_api = "responses"
             &settings,
             DEEPSEEK_NATIVE_CONFIG,
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("vendor catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4848,6 +6008,7 @@ web_search = "disabled"
             &settings,
             config,
             CodexCatalogToolProfile::Anthropic,
+            None,
         )
         .unwrap();
         let parsed: toml::Value = toml::from_str(&anthropic).unwrap();
@@ -4862,6 +6023,7 @@ web_search = "disabled"
             &settings,
             config,
             CodexCatalogToolProfile::ProxyChat,
+            None,
         )
         .unwrap();
         let parsed: toml::Value = toml::from_str(&proxy).unwrap();
@@ -5458,3 +6620,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         );
     }
 }
+
+#[cfg(test)]
+#[path = "codex_config/aggregation_tests.rs"]
+mod aggregation_tests;
