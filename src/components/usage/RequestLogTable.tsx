@@ -82,6 +82,8 @@ export function appDisplayName(appType: string): string {
  * 列里只留最短能认出的名字，把宽度让给供应商列。全名在悬停提示里。
  */
 const APP_SHORT_NAME: Record<AppId, string> = {
+  "copilot-byok": "VS Code",
+  "copilot-cli": "Copilot",
   claude: "Claude",
   "claude-desktop": "Desktop",
   codex: "Codex",
@@ -185,8 +187,14 @@ export function RequestLogTable({
             })
           : undefined;
     const multiplier = parseFiniteNumber(log.costMultiplier);
-    const modelTitle =
-      log.requestModel && log.requestModel !== log.model
+    const isVscodeSession =
+      log.appType === "copilot-byok" || log.dataSource === "vscode_session";
+    const modelName = isVscodeSession
+      ? log.modelDisplayName?.trim() || log.model
+      : log.model;
+    const modelTitle = isVscodeSession
+      ? modelName
+      : log.requestModel && log.requestModel !== log.model
         ? `${log.requestModel} → ${log.model}`
         : log.model;
     const hasCache = log.cacheReadTokens > 0;
@@ -253,7 +261,7 @@ export function RequestLogTable({
         </td>
         <td className={cn(usageTable.td, usageTable.mono, "w-[22%] max-w-0")}>
           <span className="block truncate" title={modelTitle}>
-            {log.model}
+            {modelName}
           </span>
         </td>
         <td

@@ -29,7 +29,7 @@ use serde_json::Value;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::provider::{Provider, ProviderMeta, UsageResult};
+use crate::provider::{Provider, ProviderMeta, UsageResult, UsageScript};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -5082,6 +5082,10 @@ wire_api = "responses"
 }
 
 impl ProviderService {
+    pub(crate) fn validate_usage_script_config(script: &UsageScript) -> Result<(), AppError> {
+        validate_usage_script(script)
+    }
+
     pub(crate) fn managed_codex_oauth_account_id(provider: &Provider) -> Option<String> {
         provider
             .meta
@@ -6691,6 +6695,7 @@ impl ProviderService {
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::GrokBuild => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
+            AppType::CopilotByok | AppType::CopilotCli => Ok(String::new()),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi | AppType::Mcode => Ok(String::new()),
@@ -6709,6 +6714,7 @@ impl ProviderService {
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::GrokBuild => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+            AppType::CopilotByok | AppType::CopilotCli => Ok(String::new()),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi | AppType::Mcode => Ok(String::new()),
@@ -7451,6 +7457,16 @@ impl ProviderService {
                     }
                 }
             }
+            AppType::CopilotByok | AppType::CopilotCli => {
+                let mut group: crate::copilot_byok::CopilotByokGroup =
+                    serde_json::from_value(provider.settings_config.clone()).map_err(|error| {
+                        AppError::InvalidInput(format!(
+                            "Invalid VS Code Copilot provider configuration: {error}"
+                        ))
+                    })?;
+                group.normalize();
+                group.validate()?;
+            }
             AppType::OpenClaw => {
                 // OpenClaw uses config structure: { baseUrl, apiKey, api, models }
                 // Basic validation - must be an object
@@ -7674,6 +7690,21 @@ impl ProviderService {
                     .unwrap_or("")
                     .to_string();
 
+                Ok((api_key, base_url))
+            }
+            AppType::CopilotByok | AppType::CopilotCli => {
+                let api_key = provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let base_url = provider
+                    .settings_config
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
                 Ok((api_key, base_url))
             }
             AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {

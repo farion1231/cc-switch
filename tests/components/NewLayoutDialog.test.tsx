@@ -103,7 +103,9 @@ describe("NewLayoutDialog", () => {
   it("stays closed when no app has providers", async () => {
     mocks.getAll.mockResolvedValue({});
     renderDialog();
-    await waitFor(() => expect(mocks.getAll).toHaveBeenCalledTimes(10));
+    await waitFor(() => expect(mocks.getAll).toHaveBeenCalledTimes(12));
+    expect(mocks.getAll).toHaveBeenCalledWith("copilot-byok");
+    expect(mocks.getAll).toHaveBeenCalledWith("copilot-cli");
     expect(screen.queryByText("newLayoutNotice.title")).not.toBeInTheDocument();
   });
 

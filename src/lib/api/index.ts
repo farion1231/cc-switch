@@ -14,6 +14,7 @@ export { proxyApi } from "./proxy";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
 export { workspaceApi } from "./workspace";
+export { copilotByokApi, copilotCliApi } from "./copilotByok";
 export * as authApi from "./auth";
 export * as copilotApi from "./copilot";
 export type { ProviderSwitchEvent } from "./providers";
@@ -24,6 +25,22 @@ export type {
   CopilotAuthStatus,
   GitHubAccount,
 } from "./copilot";
+export type {
+  CopilotByokApiType,
+  CopilotByokEditTool,
+  CopilotByokGroup,
+  CopilotByokImportResult,
+  CopilotCliState,
+  CopilotCliEnvironmentValue,
+  CopilotCliEnvironmentChange,
+  CopilotCliEnvironmentPreview,
+  CopilotByokModel,
+  CopilotByokReasoningEffortFormat,
+  CopilotByokState,
+  CopilotByokSyncResult,
+  CopilotByokTargetState,
+  VsCodeEdition,
+} from "./copilotByok";
 export type {
   ManagedAuthProvider,
   ManagedAuthAccount,

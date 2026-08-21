@@ -652,6 +652,21 @@ impl ProxyService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn vscode_copilot_rejects_proxy_takeover_before_starting_server() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db);
+
+        for stack_mode in [false, true] {
+            let error = crate::mode::controller::enter(&state, &AppType::CopilotByok, stack_mode)
+                .await
+                .expect_err("Copilot takeover must be rejected");
+
+            assert!(error.contains("不支持本地路由"));
+            assert!(!state.proxy_service.is_running().await);
+        }
+    }
+
     async fn seed_distinct_app_proxy_configs(db: &Database) -> Vec<Value> {
         let mut configs = Vec::new();
         for (app, retries) in [("claude", 6), ("codex", 0), ("gemini", 2), ("grokbuild", 3)] {

@@ -5,6 +5,7 @@ import { toast } from "@/lib/toast";
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
+  name?: string | null;
 }
 
 export interface ModelFetchOptions {

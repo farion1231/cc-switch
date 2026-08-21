@@ -88,6 +88,8 @@ const IMPORT_SOURCE_FILES: Record<
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
+  "copilot-byok": { file: "VS Code/User/mcp.json" },
+  "copilot-cli": { file: "~/.copilot/mcp-config.json" },
 };
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */

@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
+  updateSettings: vi.fn(),
+  autoSaveSettings: vi.fn(async () => null),
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
@@ -33,8 +35,8 @@ vi.mock("@/lib/api/providers", () => ({
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({
     settings: { visibleApps: undefined },
-    updateSettings: vi.fn(),
-    autoSaveSettings: vi.fn(async () => null),
+    updateSettings: mocks.updateSettings,
+    autoSaveSettings: mocks.autoSaveSettings,
   }),
 }));
 vi.mock("sonner", () => ({ toast: mocks }));
@@ -68,6 +70,7 @@ function report(
 const upgraded = new Set<string>();
 const outdated = new Set<string>();
 const missing = new Set<string>();
+let AppsPage: (typeof import("@/components/apps/AppsPage"))["AppsPage"];
 
 function card(name: string) {
   return within(
@@ -100,8 +103,6 @@ function mountApps(AppsPage: () => JSX.Element) {
 }
 
 async function renderApps() {
-  // 安装 / 升级的状态放在模块级 store 里，跨挂载保留。
-  const { AppsPage } = await import("@/components/apps/AppsPage");
   const view = mountApps(AppsPage);
   await waitFor(() =>
     expect(
@@ -115,7 +116,28 @@ const updateAllButton = () =>
   screen.getByRole("button", { name: /settings\.updateAllTools/ });
 
 describe("AppsPage concurrent CLI upgrades", () => {
-  beforeEach(() => {
+  it("persists independent Copilot visibility using canonical app IDs", async () => {
+    await renderApps();
+    const toggles = screen.getAllByRole("switch", {
+      name: "appsPage.showInSidebar",
+    });
+    // Claude Code, Claude Desktop, VS Code Copilot, Copilot CLI.
+    await userEvent.click(toggles[2]);
+    expect(mocks.autoSaveSettings).toHaveBeenCalledWith({
+      visibleApps: expect.objectContaining({
+        "copilot-byok": false,
+        "copilot-cli": true,
+      }),
+    });
+    await userEvent.click(toggles[3]);
+    expect(mocks.autoSaveSettings).toHaveBeenCalledWith({
+      visibleApps: expect.objectContaining({
+        "copilot-byok": true,
+        "copilot-cli": false,
+      }),
+    });
+  });
+  beforeEach(async () => {
     vi.resetModules();
     upgraded.clear();
     outdated.clear();
@@ -154,6 +176,9 @@ describe("AppsPage concurrent CLI upgrades", () => {
         upgraded.add(tool);
         missing.delete(tool);
       });
+    // Reset the module-level lifecycle store for each test without timing its
+    // cold module transforms as part of the user interaction flow.
+    ({ AppsPage } = await import("@/components/apps/AppsPage"));
   });
 
   it("lets different tools preflight and submit together while blocking duplicate clicks", async () => {

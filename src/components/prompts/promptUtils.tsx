@@ -21,6 +21,8 @@ const PROMPT_FILE_NAME: Partial<Record<AppId, string>> = {
   hermes: "SOUL.md",
   pi: "AGENTS.md",
   mcode: "AGENTS.md",
+  "copilot-byok": "copilot-instructions.md",
+  "copilot-cli": "copilot-instructions.md",
 };
 
 export function promptFileName(app: AppId): string {

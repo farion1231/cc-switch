@@ -2,6 +2,7 @@ import { Monitor, Terminal } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
+import copilotByokIcon from "@/assets/icons/vscode-copilot-byok.png";
 
 /** 应用名：品牌名不翻译，四种语言都写原文。 */
 export const APP_DISPLAY_NAME: Record<AppId, string> = {
@@ -15,6 +16,8 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  "copilot-byok": "VS Code Copilot",
+  "copilot-cli": "Copilot CLI",
 };
 
 const APP_ICON_NAME: Record<AppId, string> = {
@@ -28,6 +31,8 @@ const APP_ICON_NAME: Record<AppId, string> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "minimax",
+  "copilot-byok": "githubcopilot",
+  "copilot-cli": "githubcopilot",
 };
 
 // Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面
@@ -62,12 +67,21 @@ export function AppGlyph({
       )}
       style={{ width: size + 2, height: size + 2 }}
     >
-      <ProviderIcon
-        icon={APP_ICON_NAME[app]}
-        name=""
-        size={size}
-        showFallback={false}
-      />
+      {app === "copilot-byok" ? (
+        <img
+          src={copilotByokIcon}
+          alt=""
+          style={{ width: size, height: size }}
+          className="rounded object-cover"
+        />
+      ) : (
+        <ProviderIcon
+          icon={APP_ICON_NAME[app]}
+          name=""
+          size={size}
+          showFallback={false}
+        />
+      )}
       {BadgeIcon && (
         <span
           className={cn(

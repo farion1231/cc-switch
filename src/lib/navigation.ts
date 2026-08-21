@@ -12,6 +12,7 @@ export type AppPage =
   | "providers"
   | "workspace"
   | "openclawConfig"
+  | "copilotTargets"
   | "hermesMemory";
 
 export type GlobalPage =
@@ -47,6 +48,7 @@ const APP_PAGES: AppPage[] = [
   "providers",
   "workspace",
   "openclawConfig",
+  "copilotTargets",
   "hermesMemory",
 ];
 
@@ -98,6 +100,8 @@ export function appPageBelongsTo(page: AppPage, app: AppId): boolean {
       return app === "openclaw";
     case "hermesMemory":
       return app === "hermes";
+    case "copilotTargets":
+      return app === "copilot-byok";
   }
 }
 

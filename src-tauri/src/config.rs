@@ -411,6 +411,11 @@ fn sort_json_keys(value: &Value) -> Value {
 }
 
 /// 写入 JSON 配置文件并返回实际写入的字节。
+pub(crate) fn serialize_json_file_contents<T: Serialize>(data: &T) -> Result<Vec<u8>, AppError> {
+    sorted_json_bytes(data)
+}
+
+/// 写入 JSON 配置文件并返回实际写入的字节。
 pub fn write_json_file_with_contents<T: Serialize>(
     path: &Path,
     data: &T,

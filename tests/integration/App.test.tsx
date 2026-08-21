@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import App from "@/App";
 import { http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
 import {
@@ -154,6 +155,36 @@ vi.mock("@/components/settings/SettingsPage", () => ({
   SettingsPage: () => <div data-testid="settings-page" />,
 }));
 
+vi.mock("@/components/settings/CopilotByokSettings", async () => {
+  const { forwardRef, useImperativeHandle, useState } = await import("react");
+  return {
+    CopilotByokSettings: forwardRef(({ mode }: { mode: string }, ref) => {
+      const [adding, setAdding] = useState(false);
+      useImperativeHandle(ref, () => ({ openAdd: () => setAdding(true) }));
+      return (
+        <div data-testid={`copilot-byok-${mode}`}>
+          {adding && <span data-testid="copilot-add" />}
+        </div>
+      );
+    }),
+  };
+});
+
+vi.mock("@/components/settings/CopilotCliSettings", async () => {
+  const { forwardRef, useImperativeHandle, useState } = await import("react");
+  return {
+    CopilotCliSettings: forwardRef((_props, ref) => {
+      const [adding, setAdding] = useState(false);
+      useImperativeHandle(ref, () => ({ openAdd: () => setAdding(true) }));
+      return (
+        <div data-testid="copilot-cli-catalog">
+          {adding && <span data-testid="copilot-add" />}
+        </div>
+      );
+    }),
+  };
+});
+
 vi.mock("@/components/skills/UnifiedSkillsPanel", () => ({
   // v7：Skills 的页头（添加 / 检查更新 / 存储与同步）在面板自己里面
   default: ({ initialView }: { initialView?: string }) => {
@@ -203,7 +234,6 @@ describe("App integration with MSW", () => {
   });
 
   it("covers basic provider flows via real hooks", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -260,7 +290,6 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("resets provider view scroll when switching apps", async () => {
-    const { default: App } = await import("@/App");
     const { container } = renderApp(App);
 
     await waitFor(() =>
@@ -296,8 +325,124 @@ describe("App integration with MSW", () => {
     expect(providerScrollContainer()!.scrollLeft).toBe(0);
   }, 10_000);
 
+  it.each(["copilot-byok", "copilot-cli"] as const)(
+    "opens the dedicated %s catalog and add form without generic provider requests",
+    async (app) => {
+      localStorage.setItem("cc-switch-last-app", app);
+      const getAll = vi.spyOn(providersApi, "getAll");
+      try {
+        renderApp(App);
+        expect(await screen.findByTestId(`${app}-catalog`)).toBeInTheDocument();
+        expect(screen.queryByTestId("provider-list")).not.toBeInTheDocument();
+        fireEvent.click(
+          screen.getByRole("button", {
+            name: "provider.addProvider",
+            hidden: true,
+          }),
+        );
+        expect(screen.getByTestId("copilot-add")).toBeInTheDocument();
+        expect(
+          screen.queryByTestId("add-provider-dialog"),
+        ).not.toBeInTheDocument();
+        expect(getAll).not.toHaveBeenCalledWith("copilot-byok");
+        expect(getAll).not.toHaveBeenCalledWith("copilot-cli");
+      } finally {
+        getAll.mockRestore();
+      }
+    },
+  );
+
+  it("retains the VS Code target page inside the app navigation", async () => {
+    localStorage.setItem("cc-switch-last-app", "copilot-byok");
+    renderApp(App);
+    await screen.findByTestId("copilot-byok-catalog");
+    fireEvent.click(
+      screen.getByRole("tab", { name: "copilotByok.targets", hidden: true }),
+    );
+    expect(screen.getByTestId("copilot-byok-targets")).toBeInTheDocument();
+    fireEvent.click(sidebarApp("Copilot CLI"));
+    expect(screen.getByTestId("copilot-cli-catalog")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("copilot-byok-targets"),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(["copilot-byok", "copilot-cli"] as const)(
+    "confirms unsaved changes before a tray add request for %s",
+    async (app) => {
+      let pending: { app: string; intent: "add" } | null = null;
+      server.use(
+        http.post("http://tauri.local/take_tray_navigation", () => {
+          const navigation = pending;
+          pending = null;
+          return HttpResponse.json(navigation);
+        }),
+      );
+      renderApp(App);
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "claude-1",
+        ),
+      );
+      fireEvent.click(screen.getByText("edit"));
+      fireEvent.input(screen.getByLabelText("edit-field"), {
+        target: { value: "draft" },
+      });
+
+      pending = { app, intent: "add" };
+      emitTauriEvent("tray-navigate", null);
+      expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
+        "common.unsavedLeaveMessage",
+      );
+      expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+      expect(screen.queryByTestId(`${app}-catalog`)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText("cancel-delete"));
+      expect(screen.getByLabelText("edit-field")).toHaveValue("draft");
+
+      pending = { app, intent: "add" };
+      emitTauriEvent("tray-navigate", null);
+      await screen.findByTestId("confirm-message");
+      fireEvent.click(screen.getByText("confirm-delete"));
+      expect(await screen.findByTestId(`${app}-catalog`)).toBeInTheDocument();
+      expect(await screen.findByTestId("copilot-add")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("add-provider-dialog"),
+      ).not.toBeInTheDocument();
+    },
+    10_000,
+  );
+
+  it.each(["copilot-byok", "copilot-cli"] as const)(
+    "opens a regular provider form when the tray leaves %s",
+    async (app) => {
+      let pending: { app: string; intent: "add" } | null = null;
+      server.use(
+        http.post("http://tauri.local/take_tray_navigation", () => {
+          const navigation = pending;
+          pending = null;
+          return HttpResponse.json(navigation);
+        }),
+      );
+      localStorage.setItem("cc-switch-last-app", app);
+      renderApp(App);
+      await screen.findByTestId(`${app}-catalog`);
+
+      pending = { app: "codex", intent: "add" };
+      emitTauriEvent("tray-navigate", null);
+      expect(
+        await screen.findByTestId("add-provider-dialog"),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "codex-1",
+        ),
+      );
+      expect(screen.queryByTestId("copilot-add")).not.toBeInTheDocument();
+    },
+    10_000,
+  );
+
   it("closes provider panels when navigating away from the app page", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -341,7 +486,6 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("asks before leaving an editor page with unsaved changes", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -388,7 +532,6 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -448,7 +591,6 @@ describe("App integration with MSW", () => {
     setCurrentProviderId("openclaw", "deepseek");
     setLiveProviderIds("openclaw", ["deepseek-copy"]);
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(sidebarApp("OpenClaw"));
@@ -494,7 +636,6 @@ describe("App integration with MSW", () => {
       const add = vi.spyOn(providersApi, "add");
       const sort = vi.spyOn(providersApi, "updateSortOrder");
       try {
-        const { default: App } = await import("@/App");
         renderApp(App);
         await waitFor(() =>
           expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -534,7 +675,6 @@ describe("App integration with MSW", () => {
     });
     setCurrentProviderId("opencode", "custom");
     setLiveProviderIds("opencode", ["custom-copy"]);
-    const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -573,7 +713,6 @@ describe("App integration with MSW", () => {
       setLiveProviderIds("opencode", ["native"]);
       const add = vi.spyOn(providersApi, "add");
       try {
-        const { default: App } = await import("@/App");
         renderApp(App);
         await waitFor(() =>
           expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -609,7 +748,6 @@ describe("App integration with MSW", () => {
     });
     setCurrentProviderId("opencode", "native");
     setLiveProviderIds("opencode", ["native-copy"]);
-    const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -641,7 +779,6 @@ describe("App integration with MSW", () => {
     });
     setCurrentProviderId("mcode", "kimi");
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -689,7 +826,6 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -742,7 +878,6 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -783,7 +918,6 @@ describe("App integration with MSW", () => {
       .spyOn(providersApi, "getOpenClawLiveProviderIds")
       .mockRejectedValueOnce(new Error("broken config"));
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(sidebarApp("OpenClaw"));
@@ -811,7 +945,6 @@ describe("App integration with MSW", () => {
 
   it("renders the Skills page with its own header", async () => {
     localStorage.setItem("cc-switch-last-view", "skills");
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     expect(await screen.findByTestId("unified-skills-panel")).toHaveTextContent(
@@ -820,7 +953,6 @@ describe("App integration with MSW", () => {
   });
 
   it("navigates OpenClaw and Hermes pages with underline tabs", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(sidebarApp("OpenClaw"));
@@ -899,7 +1031,6 @@ describe("App integration with MSW", () => {
 
   it("opens the old skillsDiscovery view as the Discover segment", async () => {
     localStorage.setItem("cc-switch-last-view", "skillsDiscovery");
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     expect(await screen.findByTestId("unified-skills-panel")).toHaveTextContent(

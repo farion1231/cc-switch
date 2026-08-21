@@ -75,11 +75,16 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop" }
+  | { kind: "copilot"; app: "copilot-byok" | "copilot-cli" };
 
 const ROWS: Row[] = [
   { kind: "tool", tool: "claude" },
   { kind: "desktop" },
+  { kind: "copilot", app: "copilot-byok" },
+  { kind: "copilot", app: "copilot-cli" },
   ...TOOL_NAMES.filter((tool) => tool !== "claude").map(
     (tool): Row => ({ kind: "tool", tool }),
   ),
@@ -292,6 +297,13 @@ export function AppsPage() {
                     </span>
                   }
                   visibility={visibilitySwitch("claude-desktop")}
+                />
+              ) : row.kind === "copilot" ? (
+                <AppRow
+                  key={row.app}
+                  app={row.app}
+                  name={APP_DISPLAY_NAME[row.app]}
+                  visibility={visibilitySwitch(row.app)}
                 />
               ) : (
                 <ToolRow

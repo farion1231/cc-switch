@@ -15,6 +15,8 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Grok Build (Session)": "grokbuild",
   "MiniMax Code (Session)": "mcode",
   "Pi (Session)": "pi",
+  "VS Code Copilot (Session)": "copilot-byok",
+  "Copilot CLI (Session)": "copilot-cli",
 };
 
 export interface UsageProviderLabel {

@@ -27,6 +27,20 @@ describe("getUsageProviderLabel", () => {
     });
   });
 
+  it.each([
+    ["VS Code Copilot (Session)", "VS Code Copilot"],
+    ["Copilot CLI (Session)", "Copilot CLI"],
+  ])(
+    "translates the %s placeholder without changing its filter value",
+    (name, app) => {
+      expect(getUsageProviderLabel(name, t)).toEqual({
+        label: `usage.sessionProvider.label:${app}`,
+        shortLabel: "usage.sessionProvider.short",
+        hint: "usage.sessionProvider.hint",
+      });
+    },
+  );
+
   it("falls back to unknown provider for empty names", () => {
     expect(getUsageProviderLabel("", t).label).toBe("usage.unknownProvider");
     expect(getUsageProviderLabel(undefined, t).label).toBe(

@@ -32,14 +32,16 @@ const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
+const COPILOT_CLI_TRAY_PREFIX: &str = "copilotcli_";
 
 /// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
-pub const TRAY_APPS: [AppType; 5] = [
+pub const TRAY_APPS: [AppType; 6] = [
     AppType::Claude,
     AppType::ClaudeDesktop,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
+    AppType::CopilotCli,
 ];
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
@@ -55,6 +57,8 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Hermes => "Hermes",
         AppType::Pi => "Pi",
         AppType::Mcode => "MiniMax Code",
+        AppType::CopilotByok => "VS Code Copilot",
+        AppType::CopilotCli => "Copilot CLI",
     }
 }
 
@@ -867,6 +871,7 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
     }
     (provider.has_usage_script_enabled()
         && (provider.category.as_deref() != Some("official")
+            || app_type == &AppType::CopilotCli
             || provider_uses_official_subscription(provider)))
     .then_some(TrayUsageSource::Script)
 }
@@ -1025,6 +1030,10 @@ enum TrayMode {
     Stack,
     /// Claude Desktop 没有模式 tab。
     Desktop,
+    CopilotCli {
+        environment_conflict: bool,
+        official_confirmation: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1076,7 +1085,7 @@ impl AppSnapshot {
         match self.mode {
             TrayMode::Route | TrayMode::Failover | TrayMode::Stack => true,
             TrayMode::Desktop => self.current().is_some_and(|p| p.needs_routing),
-            TrayMode::Direct => false,
+            TrayMode::Direct | TrayMode::CopilotCli { .. } => false,
         }
     }
 }
@@ -1163,6 +1172,75 @@ fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
     }
 }
 
+fn collect_copilot_cli_snapshot(
+    app_state: &AppState,
+    texts: &TrayTexts,
+) -> Result<AppSnapshot, AppError> {
+    let state = match crate::copilot_byok::get_cli_state(&app_state.db) {
+        Ok(state) => state,
+        Err(error) => {
+            log::warn!("[Tray] 读取 Copilot CLI 状态失败: {error}");
+            return Ok(AppSnapshot {
+                app: AppType::CopilotCli,
+                mode: TrayMode::CopilotCli {
+                    environment_conflict: true,
+                    official_confirmation: true,
+                },
+                providers: Vec::new(),
+                current_id: None,
+                queue: Vec::new(),
+                stack_members: Vec::new(),
+                quota: None,
+                service_down: false,
+                needs_attention: true,
+                profiles: None,
+            });
+        }
+    };
+    let app = AppType::CopilotCli;
+    let rows = app_state
+        .db
+        .get_all_providers(crate::copilot_byok::provider_database_app_type(&app))?;
+    let current_id = state
+        .groups
+        .iter()
+        .find(|group| copilot_cli_group_is_current(&state.cli, group))
+        .map(|group| group.id.clone());
+    let providers = state
+        .groups
+        .iter()
+        .map(|group| ProviderEntry {
+            id: group.id.clone(),
+            name: group.name.clone(),
+            hint: rows.get(&group.id).and_then(provider_hint),
+            needs_routing: false,
+            official: group.category.as_deref() == Some("official"),
+            blocked_from_routing: false,
+        })
+        .collect();
+    let quota = current_id
+        .as_deref()
+        .and_then(|id| usage_view(&app_state.usage_cache, texts, &app, rows.get(id)?, id));
+    let environment_conflict = state.cli.enabled && !state.cli.environment_conflicts.is_empty();
+    Ok(AppSnapshot {
+        app,
+        mode: TrayMode::CopilotCli {
+            environment_conflict,
+            official_confirmation: state.cli.official_activation_requires_confirmation,
+        },
+        providers,
+        current_id,
+        queue: Vec::new(),
+        stack_members: Vec::new(),
+        quota,
+        service_down: false,
+        needs_attention: environment_conflict
+            || state.cli.official_activation_requires_confirmation
+            || !state.cli.environment_matches,
+        profiles: None,
+    })
+}
+
 fn collect_app_snapshot(
     app_state: &AppState,
     texts: &TrayTexts,
@@ -1171,6 +1249,9 @@ fn collect_app_snapshot(
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
+    if *app == AppType::CopilotCli {
+        return collect_copilot_cli_snapshot(app_state, texts);
+    }
     let rows = app_state.db.get_all_providers(app.as_str())?;
     let providers: Vec<ProviderEntry> = sort_providers(&rows)
         .into_iter()
@@ -1365,7 +1446,7 @@ fn collect_problems(
 /// 受影响的应用行尾写「需要处理」（这时不写额度，保持短）。
 fn mark_attention(snapshots: &mut [AppSnapshot], problems: &[TrayProblem]) {
     for snapshot in snapshots.iter_mut() {
-        snapshot.needs_attention = snapshot.service_down
+        snapshot.needs_attention = snapshot.needs_attention || snapshot.service_down
             || problems.iter().any(|problem| {
                 matches!(problem, TrayProblem::AttachFailed { app, .. } if *app == snapshot.app)
             });
@@ -1647,6 +1728,27 @@ fn provider_rows(texts: &TrayTexts, snapshot: &AppSnapshot) -> Vec<TrayEntry> {
     let current = snapshot.current_id.as_deref();
     let is_current = |p: &ProviderEntry| current == Some(p.id.as_str());
     match snapshot.mode {
+        TrayMode::CopilotCli {
+            environment_conflict,
+            official_confirmation,
+        } => {
+            let listed: Vec<&ProviderEntry> = snapshot.providers.iter().collect();
+            let names = display_names(&listed);
+            listed
+                .iter()
+                .zip(names)
+                .map(|(provider, name)| {
+                    let enabled =
+                        !(environment_conflict || provider.official && official_confirmation);
+                    TrayEntry::check(
+                        format!("{COPILOT_CLI_TRAY_PREFIX}{}", provider.id),
+                        name,
+                        enabled,
+                        is_current(provider),
+                    )
+                })
+                .collect()
+        }
         TrayMode::Direct => {
             let listed: Vec<&ProviderEntry> = snapshot.providers.iter().collect();
             let names = display_names(&listed);
@@ -1771,7 +1873,7 @@ fn app_children(
             ),
             None => texts.header_stack.to_string(),
         }),
-        TrayMode::Desktop => None,
+        TrayMode::Desktop | TrayMode::CopilotCli { .. } => None,
     };
     if let Some(header) = header {
         children.push(TrayEntry::label(format!("info:{app}:header"), header));
@@ -2568,6 +2670,81 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
     true
 }
 
+fn copilot_cli_tray_provider_id(event_id: &str) -> Option<&str> {
+    event_id.strip_prefix(COPILOT_CLI_TRAY_PREFIX)
+}
+
+pub fn handle_copilot_cli_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
+    let Some(provider_id) = copilot_cli_tray_provider_id(event_id) else {
+        return false;
+    };
+    let provider_id = provider_id.to_string();
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(app_state) = app_handle.try_state::<AppState>() else {
+            return;
+        };
+        match crate::copilot_byok::set_cli_provider(
+            app_state.db.as_ref(),
+            &provider_id,
+            None,
+            false,
+        ) {
+            Ok(next) => {
+                clear_app_problems(&AppType::CopilotCli);
+                if let Some(group) = next.groups.iter().find(|group| group.id == provider_id) {
+                    record_feedback(
+                        &app_handle,
+                        TrayFeedback::Switched {
+                            app: AppType::CopilotCli,
+                            name: group.name.clone(),
+                        },
+                    );
+                }
+                refresh_tray_menu(&app_handle);
+                if let Err(error) = app_handle.emit("copilot-cli-state-changed", &next) {
+                    log::error!("发射 Copilot CLI 状态事件失败: {error}");
+                }
+                if let Err(error) = app_handle.emit(
+                    "provider-switched",
+                    serde_json::json!({
+                        "appType": "copilot-cli",
+                        "providerId": provider_id,
+                        "proxyEnabled": false,
+                        "autoFailoverEnabled": false
+                    }),
+                ) {
+                    log::error!("发射 Copilot CLI 供应商切换事件失败: {error}");
+                }
+            }
+            Err(error) => {
+                log::error!("切换 Copilot CLI 供应商 {provider_id} 失败: {error}");
+                record_switch_failure(&AppType::CopilotCli, error.to_string());
+                navigate(
+                    &app_handle,
+                    TrayNavigation {
+                        app: Some("copilot-cli".into()),
+                        ..TrayNavigation::default()
+                    },
+                );
+                refresh_tray_menu(&app_handle);
+            }
+        }
+    });
+    true
+}
+
+fn copilot_cli_group_is_current(
+    cli: &crate::copilot_byok::CopilotCliState,
+    group: &crate::copilot_byok::CopilotByokGroup,
+) -> bool {
+    if group.id == crate::copilot_byok::COPILOT_CLI_OFFICIAL_PROVIDER_ID {
+        !cli.enabled && cli.environment_matches
+    } else {
+        cli.enabled && cli.selected_group_id.as_deref() == Some(group.id.as_str())
+    }
+}
+
 enum ClickOutcome {
     /// 切过去了；`mode` 是点击时的模式，决定要不要出反馈行。
     Switched { mode: TrayMode, name: String },
@@ -2686,6 +2863,9 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 navigate(app, navigation);
                 return;
             }
+            if handle_copilot_cli_tray_event(app, event_id) {
+                return;
+            }
             if handle_profile_tray_event(app, event_id) {
                 return;
             }
@@ -2754,7 +2934,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         .visible_apps
         .unwrap_or_default();
 
-    let mut usage_futures = Vec::new();
+    let mut usage_queries = Vec::new();
 
     for app_type in TRAY_APPS.iter() {
         if !visible_apps.is_visible(app_type) {
@@ -2765,16 +2945,33 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         let log_name = app_display_name(app_type);
 
         // 解析在用的那家；未设置 / 出错都静默跳过，与 create_tray_menu 的行为保持一致。
-        let current_id = match crate::mode::current::provider_for(
-            &app_state.db,
-            app_type,
-            crate::mode::current::Purpose::InUse,
-        ) {
-            Ok(Some(id)) => id,
-            Ok(None) => continue,
-            Err(e) => {
-                log::warn!("[Tray] 读取{log_name}当前供应商失败: {e}");
-                continue;
+        let current_id = if *app_type == AppType::CopilotCli {
+            match crate::copilot_byok::get_cli_state(&app_state.db) {
+                Ok(state) => match state
+                    .groups
+                    .iter()
+                    .find(|group| copilot_cli_group_is_current(&state.cli, group))
+                {
+                    Some(group) => group.id.clone(),
+                    None => continue,
+                },
+                Err(error) => {
+                    log::warn!("[Tray] 读取 Copilot CLI 状态失败: {error}");
+                    continue;
+                }
+            }
+        } else {
+            match crate::mode::current::provider_for(
+                &app_state.db,
+                app_type,
+                crate::mode::current::Purpose::InUse,
+            ) {
+                Ok(Some(id)) => id,
+                Ok(None) => continue,
+                Err(e) => {
+                    log::warn!("[Tray] 读取{log_name}当前供应商失败: {e}");
+                    continue;
+                }
             }
         };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
@@ -2789,13 +2986,45 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
 
         if let Some(source) = tray_usage_source(app_type, &current) {
+            usage_queries.push((app_type.clone(), current_id, source));
+        }
+    }
+
+    if visible_apps.is_visible(&AppType::CopilotByok) {
+        let app_type = AppType::CopilotByok;
+        match app_state
+            .db
+            .get_all_providers(crate::copilot_byok::provider_database_app_type(&app_type))
+        {
+            Ok(providers) => {
+                for (id, provider) in providers {
+                    if provider
+                        .settings_config
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true)
+                    {
+                        if let Some(source) = tray_usage_source(&app_type, &provider) {
+                            usage_queries.push((app_type.clone(), id, source));
+                        }
+                    }
+                }
+            }
+            Err(error) => log::warn!("[Tray] 读取 VS Code Copilot 供应商失败: {error}"),
+        }
+    }
+    let usage_futures = usage_queries
+        .into_iter()
+        .map(|(app_type, current_id, source)| {
+            let app_type_str = app_type.as_str();
+            let log_name = app_display_name(&app_type);
             let app_clone = app.clone();
             let state = app.state::<AppState>();
             let copilot_state = app.state::<CopilotAuthState>();
             let xai_state = app.state::<crate::commands::XaiOAuthState>();
             let provider_id = current_id.clone();
             let app_str = app_type_str.to_string();
-            usage_futures.push(async move {
+            async move {
                 let result = match source {
                     TrayUsageSource::ManagedCodex(account_id) => {
                         let codex_state = app.state::<crate::commands::CodexOAuthState>();
@@ -2827,10 +3056,8 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                 if let Err(e) = result {
                     log::debug!("[Tray] 刷新{log_name}供应商 {provider_id} 用量失败: {e}");
                 }
-            });
-        }
-    }
-
+            }
+        });
     join_all(usage_futures).await;
 }
 
@@ -2875,7 +3102,8 @@ mod tests {
                 "Claude Desktop",
                 "Codex",
                 "Gemini CLI",
-                "Grok Build"
+                "Grok Build",
+                "Copilot CLI"
             ]
         );
         for app in TRAY_APPS {
@@ -3591,6 +3819,41 @@ mod tests {
             needs_attention: false,
             profiles: None,
         }
+    }
+
+    #[test]
+    fn copilot_cli_tray_uses_dedicated_events_and_blocks_unconfirmed_writes() {
+        let mut official = entry("official", "Official");
+        official.official = true;
+        let mut state = snapshot(
+            AppType::CopilotCli,
+            TrayMode::CopilotCli {
+                environment_conflict: false,
+                official_confirmation: true,
+            },
+            vec![official, entry("custom", "Custom")],
+        );
+        state.current_id = Some("custom".to_string());
+        let rows = provider_rows(&en(), &state);
+        assert!(
+            matches!(&rows[0], TrayEntry::Check { id, enabled: false, checked: false, .. } if id == "copilotcli_official")
+        );
+        assert!(
+            matches!(&rows[1], TrayEntry::Check { id, enabled: true, checked: true, .. } if id == "copilotcli_custom")
+        );
+        state.mode = TrayMode::CopilotCli {
+            environment_conflict: true,
+            official_confirmation: false,
+        };
+        assert!(provider_rows(&en(), &state)
+            .iter()
+            .all(|row| matches!(row, TrayEntry::Check { enabled: false, .. })));
+        assert_eq!(
+            copilot_cli_tray_provider_id("copilotcli_custom"),
+            Some("custom")
+        );
+        assert_eq!(copilot_cli_tray_provider_id("claude_custom"), None);
+        assert!(!state.uses_service());
     }
 
     fn model(problems: &[TrayProblem], apps: &[AppSnapshot]) -> Vec<TrayEntry> {

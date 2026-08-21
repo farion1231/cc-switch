@@ -50,6 +50,14 @@ pub struct VisibleApps {
     pub pi: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
+    #[serde(
+        rename = "copilot-byok",
+        alias = "copilotByok",
+        default = "default_true"
+    )]
+    pub copilot_byok: bool,
+    #[serde(rename = "copilot-cli", alias = "copilotCli", default = "default_true")]
+    pub copilot_cli: bool,
 }
 
 impl Default for VisibleApps {
@@ -65,6 +73,8 @@ impl Default for VisibleApps {
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
+            copilot_byok: true,
+            copilot_cli: true,
         }
     }
 }
@@ -79,6 +89,8 @@ impl VisibleApps {
             AppType::Gemini => self.gemini,
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
+            AppType::CopilotByok => self.copilot_byok,
+            AppType::CopilotCli => self.copilot_cli,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
@@ -1025,6 +1037,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Gemini => settings.current_provider_gemini.clone(),
         AppType::GrokBuild => settings.current_provider_grokbuild.clone(),
         AppType::OpenCode => settings.current_provider_opencode.clone(),
+        AppType::CopilotByok | AppType::CopilotCli => None,
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Pi | AppType::Mcode => None,
@@ -1044,6 +1057,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
         AppType::GrokBuild => settings.current_provider_grokbuild = id_owned.clone(),
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
+        AppType::CopilotByok | AppType::CopilotCli => {}
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Pi | AppType::Mcode => {}
@@ -1222,6 +1236,7 @@ mod tests {
         .expect("visible apps");
 
         assert!(visible.is_visible(&AppType::ClaudeDesktop));
+        assert!(visible.copilot_byok);
     }
 
     #[test]
@@ -1247,5 +1262,33 @@ mod tests {
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
         );
+    }
+
+    #[test]
+    fn visible_apps_can_hide_copilot_byok() {
+        let visible: VisibleApps = serde_json::from_value(serde_json::json!({
+            "copilotByok": false
+        }))
+        .expect("visible apps");
+
+        assert!(!visible.copilot_byok);
+    }
+
+    #[test]
+    fn visible_apps_copilot_ids_are_canonical_with_legacy_aliases() {
+        for (byok, cli) in [
+            ("copilot-byok", "copilot-cli"),
+            ("copilotByok", "copilotCli"),
+        ] {
+            let visible: VisibleApps =
+                serde_json::from_value(serde_json::json!({(byok): false, (cli): false}))
+                    .expect("visible apps");
+            assert!(!visible.copilot_byok);
+            assert!(!visible.copilot_cli);
+            let serialized = serde_json::to_value(visible).expect("serialized apps");
+            assert_eq!(serialized["copilot-byok"], false);
+            assert_eq!(serialized["copilot-cli"], false);
+            assert!(serialized.get("copilotByok").is_none());
+        }
     }
 }

@@ -53,6 +53,17 @@ describe("parseTrayNavigation", () => {
       { app: "codex" },
     );
   });
+
+  it.each(["copilot-byok", "copilot-cli"])(
+    "recognizes %s without routing through another app",
+    (app) => {
+      expect(parseTrayNavigation({ app, intent: "add" })).toEqual({
+        app,
+        intent: "add",
+        providerId: undefined,
+      });
+    },
+  );
 });
 
 describe("useTrayNavigation", () => {
