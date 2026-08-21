@@ -729,7 +729,10 @@ mod tests {
         ];
 
         let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
-        assert_eq!(usage.input_tokens, 100, "delta 无 input_tokens 时保留 start 值");
+        assert_eq!(
+            usage.input_tokens, 100,
+            "delta 无 input_tokens 时保留 start 值"
+        );
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 10);
