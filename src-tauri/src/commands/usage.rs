@@ -251,6 +251,7 @@ pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Res
 pub async fn sync_session_usage(
     state: State<'_, AppState>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    crate::settings::ensure_sessions_management_enabled()?;
     let db = state.db.clone();
     let _guard = crate::services::session_usage::session_sync_mutex()
         .lock()
@@ -277,6 +278,7 @@ fn finish_codex_rebuild(
 pub async fn rebuild_codex_usage(
     state: State<'_, AppState>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    crate::settings::ensure_sessions_management_enabled()?;
     let db = state.db.clone();
     let _guard = crate::services::session_usage::session_sync_mutex()
         .lock()

@@ -24,21 +24,28 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
     AppType::from_str(app).map_err(|e| e.to_string())
 }
 
+fn ensure_skills_management_enabled() -> Result<(), String> {
+    crate::settings::ensure_skills_management_enabled().map_err(|e| e.to_string())
+}
+
 // ========== 统一管理命令 ==========
 
 /// 获取所有已安装的 Skills
 #[tauri::command]
 pub fn get_installed_skills(app_state: State<'_, AppState>) -> Result<Vec<InstalledSkill>, String> {
+    ensure_skills_management_enabled()?;
     SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_skill_backups() -> Result<Vec<SkillBackupEntry>, String> {
+    ensure_skills_management_enabled()?;
     SkillService::list_backups().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_skill_backup(backup_id: String) -> Result<bool, String> {
+    ensure_skills_management_enabled()?;
     SkillService::delete_backup(&backup_id).map_err(|e| e.to_string())?;
     Ok(true)
 }
@@ -55,6 +62,7 @@ pub async fn install_skill_unified(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<InstalledSkill, String> {
+    ensure_skills_management_enabled()?;
     let app_type = parse_app_type(&current_app)?;
 
     service
@@ -70,6 +78,7 @@ pub fn uninstall_skill_unified(
     id: String,
     app_state: State<'_, AppState>,
 ) -> Result<SkillUninstallResult, String> {
+    ensure_skills_management_enabled()?;
     SkillService::uninstall(&app_state.db, &id).map_err(|e| e.to_string())
 }
 
@@ -79,6 +88,7 @@ pub fn restore_skill_backup(
     current_app: String,
     app_state: State<'_, AppState>,
 ) -> Result<InstalledSkill, String> {
+    ensure_skills_management_enabled()?;
     let app_type = parse_app_type(&current_app)?;
     SkillService::restore_from_backup(&app_state.db, &backup_id, &app_type)
         .map_err(|e| e.to_string())
@@ -92,6 +102,7 @@ pub fn toggle_skill_app(
     enabled: bool,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
+    ensure_skills_management_enabled()?;
     let app_type = parse_app_type(&app)?;
     SkillService::toggle_app(&app_state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
     Ok(true)
@@ -102,6 +113,7 @@ pub fn toggle_skill_app(
 pub fn scan_unmanaged_skills(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<UnmanagedSkill>, String> {
+    ensure_skills_management_enabled()?;
     SkillService::scan_unmanaged(&app_state.db).map_err(|e| e.to_string())
 }
 
@@ -111,6 +123,7 @@ pub fn import_skills_from_apps(
     imports: Vec<ImportSkillSelection>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
+    ensure_skills_management_enabled()?;
     SkillService::import_from_apps(&app_state.db, imports).map_err(|e| e.to_string())
 }
 
@@ -122,6 +135,7 @@ pub async fn discover_available_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<DiscoverableSkill>, String> {
+    ensure_skills_management_enabled()?;
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     service
         .0
@@ -136,6 +150,7 @@ pub async fn check_skill_updates(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<SkillUpdateInfo>, String> {
+    ensure_skills_management_enabled()?;
     service
         .0
         .check_updates(&app_state.db)
@@ -150,6 +165,7 @@ pub async fn update_skill(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<InstalledSkill, String> {
+    ensure_skills_management_enabled()?;
     service
         .0
         .update_skill(&app_state.db, &id)
@@ -163,6 +179,7 @@ pub async fn migrate_skill_storage(
     target: SkillStorageLocation,
     app_state: State<'_, AppState>,
 ) -> Result<MigrationResult, String> {
+    ensure_skills_management_enabled()?;
     SkillService::migrate_storage(&app_state.db, target).map_err(|e| e.to_string())
 }
 
@@ -173,6 +190,7 @@ pub async fn search_skills_sh(
     limit: usize,
     offset: usize,
 ) -> Result<SkillsShSearchResult, String> {
+    ensure_skills_management_enabled()?;
     SkillService::search_skills_sh(&query, limit, offset)
         .await
         .map_err(|e| e.to_string())
@@ -186,6 +204,7 @@ pub async fn get_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<Skill>, String> {
+    ensure_skills_management_enabled()?;
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     service
         .0
@@ -201,6 +220,7 @@ pub async fn get_skills_for_app(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<Skill>, String> {
+    ensure_skills_management_enabled()?;
     // 新版本不再区分应用，统一返回所有技能
     let _ = parse_app_type(&app)?; // 验证 app 参数有效
     get_skills(service, app_state).await
@@ -213,6 +233,7 @@ pub async fn install_skill(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
+    ensure_skills_management_enabled()?;
     install_skill_for_app("claude".to_string(), directory, service, app_state).await
 }
 
@@ -224,6 +245,7 @@ pub async fn install_skill_for_app(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
+    ensure_skills_management_enabled()?;
     let app_type = parse_app_type(&app)?;
 
     // 先获取技能信息
@@ -267,6 +289,7 @@ pub fn uninstall_skill(
     directory: String,
     app_state: State<'_, AppState>,
 ) -> Result<SkillUninstallResult, String> {
+    ensure_skills_management_enabled()?;
     uninstall_skill_for_app("claude".to_string(), directory, app_state)
 }
 
@@ -277,6 +300,7 @@ pub fn uninstall_skill_for_app(
     directory: String,
     app_state: State<'_, AppState>,
 ) -> Result<SkillUninstallResult, String> {
+    ensure_skills_management_enabled()?;
     let _ = parse_app_type(&app)?; // 验证参数
 
     // 通过 directory 找到对应的 skill id
@@ -295,12 +319,14 @@ pub fn uninstall_skill_for_app(
 /// 获取技能仓库列表
 #[tauri::command]
 pub fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>, String> {
+    ensure_skills_management_enabled()?;
     app_state.db.get_skill_repos().map_err(|e| e.to_string())
 }
 
 /// 添加技能仓库
 #[tauri::command]
 pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result<bool, String> {
+    ensure_skills_management_enabled()?;
     // 整个结构体由前端反序列化而来，owner/name/branch 会被拼进归档下载 URL。
     // 主防线在 download_repo，这里让非法值当场报错而不是沉淀进表。
     SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)
@@ -319,6 +345,7 @@ pub fn remove_skill_repo(
     name: String,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
+    ensure_skills_management_enabled()?;
     app_state
         .db
         .delete_skill_repo(&owner, &name)
@@ -333,6 +360,7 @@ pub fn install_skills_from_zip(
     current_app: String,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
+    ensure_skills_management_enabled()?;
     let app_type = parse_app_type(&current_app)?;
     let path = std::path::Path::new(&file_path);
 

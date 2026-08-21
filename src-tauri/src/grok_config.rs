@@ -408,7 +408,18 @@ pub fn write_grok_live_settings(settings: &Value) -> Result<(), AppError> {
             )
         })?;
     validate_config_toml_syntax(config)?;
-    write_text_file(&get_grok_config_path(), config)
+    let config = if crate::settings::mcp_management_enabled() {
+        config.to_string()
+    } else {
+        let path = get_grok_config_path();
+        let current = if path.exists() {
+            fs::read_to_string(&path).map_err(|error| AppError::io(&path, error))?
+        } else {
+            String::new()
+        };
+        crate::mcp::replace_toml_mcp_sections(&current, config)?
+    };
+    write_text_file(&get_grok_config_path(), &config)
 }
 
 #[cfg(test)]

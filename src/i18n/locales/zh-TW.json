@@ -721,6 +721,17 @@
       "showProfileSwitcher": "顯示專案切換",
       "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口"
     },
+    "managementScope": {
+      "title": "管理範圍",
+      "providersOnly": "僅管理供應商",
+      "providersOnlyDescription": "開啟後 CC Switch 不再掃描、匯入、同步或改寫 MCP、Skills 和會話資料",
+      "mcp": "管理 MCP",
+      "mcpDescription": "允許 CC Switch 匯入、啟停和同步各應用程式的 MCP 設定",
+      "skills": "管理 Skills",
+      "skillsDescription": "允許 CC Switch 安裝、遷移、同步和備份 Skills",
+      "sessions": "管理會話",
+      "sessionsDescription": "允許 CC Switch 掃描、恢復、刪除會話並匯入會話用量"
+    },
     "skillStorage": {
       "title": "Skills 儲存位置",
       "description": "選擇 CC Switch 存放 Skills 主副本的目錄",
