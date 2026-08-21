@@ -130,6 +130,62 @@ impl ProviderRouter {
         Ok(result)
     }
 
+    /// 选择分类器队列供应商（Auto Mode 安全分类器请求专用的侧信道）
+    ///
+    /// 与 `select_providers` 的关键差异：
+    /// - 不读 `auto_failover_enabled`，也不看「当前供应商」
+    /// - 队列为空 / 全部熔断时返回 `Ok(None)`，由调用方回落到常规路由链，
+    ///   **永不**返回 `AllProvidersCircuitOpen` / `NoProvidersConfigured`
+    ///
+    /// 熔断器与常规链路**共用** `"{app_type}:{provider_id}"` key：供应商真死了对
+    /// 两条链路都死，不该在全局最紧的延迟预算上重敲一个已知故障的端点。
+    pub async fn select_classifier_providers(
+        &self,
+        app_type: &str,
+    ) -> Result<Option<Vec<Provider>>, AppError> {
+        let all_providers = self.db.get_all_providers(app_type)?;
+        let ordered_ids: Vec<String> = self
+            .db
+            .get_classifier_queue(app_type)?
+            .into_iter()
+            .map(|item| item.provider_id)
+            .collect();
+
+        let mut result = Vec::new();
+        let mut total = 0usize;
+        let mut circuit_open = 0usize;
+
+        for provider_id in ordered_ids {
+            let Some(provider) = all_providers.get(&provider_id).cloned() else {
+                continue;
+            };
+            // 与故障转移同源的账号边界约束（Codex Official 账号卡不可复用）。
+            // 分类器队列目前只对 Claude 开放，这里保留是为了将来放开时不踩坑。
+            if !provider_supports_failover(app_type, &provider) {
+                continue;
+            }
+            total += 1;
+
+            let circuit_key = format!("{app_type}:{}", provider.id);
+            let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+
+            if breaker.is_available().await {
+                result.push(provider);
+            } else {
+                circuit_open += 1;
+            }
+        }
+
+        if result.is_empty() {
+            if total > 0 && circuit_open == total {
+                log::warn!("[{app_type}] [CLS-003] 分类器队列内供应商已全部熔断");
+            }
+            return Ok(None);
+        }
+
+        Ok(Some(result))
+    }
+
     /// 请求执行前获取熔断器“放行许可”
     ///
     /// - Closed：直接放行
@@ -633,5 +689,140 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    // ---- 分类器队列 ----
+
+    /// 建一个带 sort_index 的普通供应商并存库
+    fn seed_provider(db: &Database, id: &str, sort_index: usize) {
+        let mut provider =
+            Provider::with_id(id.to_string(), format!("Provider {id}"), json!({}), None);
+        provider.sort_index = Some(sort_index);
+        db.save_provider("claude", &provider).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_empty_returns_none() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_provider(&db, "a", 1);
+        db.set_current_provider("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db);
+        assert!(router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_orders_by_sort_index() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_provider(&db, "a", 2);
+        seed_provider(&db, "b", 1);
+        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_classifier_queue("claude", "b").unwrap();
+
+        let router = ProviderRouter::new(db);
+        let providers = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("queue should be active");
+
+        let ids: Vec<&str> = providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["b", "a"]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_ignores_current_provider_and_failover_switch() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_provider(&db, "a", 1);
+        seed_provider(&db, "b", 2);
+        // 当前供应商是 a，且自动故障转移是关的 —— 两者都不该影响分类器队列
+        db.set_current_provider("claude", "a").unwrap();
+        db.add_to_classifier_queue("claude", "b").unwrap();
+
+        let config = db.get_proxy_config_for_app("claude").await.unwrap();
+        assert!(!config.auto_failover_enabled);
+
+        let router = ProviderRouter::new(db);
+        let providers = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("queue should be active");
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_skips_open_circuit_providers() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 600,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        seed_provider(&db, "a", 1);
+        seed_provider(&db, "b", 2);
+        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_classifier_queue("claude", "b").unwrap();
+
+        let router = ProviderRouter::new(db);
+        router
+            .record_result("a", "claude", false, false, Some("boom".to_string()))
+            .await
+            .unwrap();
+
+        let providers = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("b should still be available");
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_all_open_returns_none_not_error() {
+        // 取舍 #3 的编码：分类器不可用时回落常规链路，绝不冒泡熔断错误
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 600,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        seed_provider(&db, "a", 1);
+        db.add_to_classifier_queue("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db);
+        router
+            .record_result("a", "claude", false, false, Some("boom".to_string()))
+            .await
+            .unwrap();
+
+        let selected = router.select_classifier_providers("claude").await;
+        assert!(matches!(selected, Ok(None)));
     }
 }

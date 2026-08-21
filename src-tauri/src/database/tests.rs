@@ -618,6 +618,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         "limit_monthly_usd",
         "provider_type",
         "in_failover_queue",
+        "in_classifier_queue",
     ] {
         assert!(
             Database::has_column(&conn, "providers", column).expect("check column"),

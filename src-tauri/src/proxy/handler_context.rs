@@ -6,7 +6,7 @@ use crate::app_config::AppType;
 use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
-    forwarder::RequestForwarder,
+    forwarder::{ForwardPolicy, RequestForwarder},
     server::ProxyState,
     types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
@@ -70,6 +70,17 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 本次请求的分类器判定结果
+    pub classifier: ClassifierPlan,
+}
+
+/// 本次请求的分类器判定结果
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ClassifierPlan {
+    /// 实际由分类器队列供给 provider 链（false = 未命中，或已回落到常规路由链）
+    pub routed: bool,
+    /// 发送前强制关闭 thinking
+    pub thinking_off: bool,
 }
 
 impl RequestContext {
@@ -96,7 +107,7 @@ impl RequestContext {
         let start_time = Instant::now();
 
         // 从数据库读取应用级代理配置（per-app）
-        let app_config = state
+        let mut app_config = state
             .db
             .get_proxy_config_for_app(app_type_str)
             .await
@@ -129,19 +140,94 @@ impl RequestContext {
             session_result.client_provided
         );
 
+        // 分类器判定：只对 Claude 生效。claude-desktop / codex / gemini / grokbuild
+        // 的入站体不是 Anthropic Messages 形态，特征签名永远不会命中，直接短路。
+        let mut classifier = ClassifierPlan::default();
+        let mut classifier_providers: Option<Vec<Provider>> = None;
+
+        if app_type_str == AppType::Claude.as_str()
+            && crate::proxy::classifier::is_security_classifier_request(body)
+        {
+            log::info!(
+                "[{tag}] [CLS-001] 命中 Auto Mode 安全分类器请求, model={request_model}, session={session_id}"
+            );
+
+            if app_config.classifier_queue_enabled {
+                classifier.thinking_off = app_config.classifier_force_thinking_off;
+
+                match state
+                    .provider_router
+                    .select_classifier_providers(app_type_str)
+                    .await
+                {
+                    // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
+                    // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
+                    // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
+                    Ok(Some(list)) if !list.is_empty() => {
+                        log::info!(
+                            "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
+                            list.len(),
+                            list.first().map(|p| p.name.as_str()).unwrap_or("-")
+                        );
+                        classifier.routed = true;
+                        classifier_providers = Some(list);
+                    }
+                    Ok(_) => {
+                        log::info!("[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链");
+                    }
+                    Err(e) => {
+                        log::warn!("[{tag}] [CLS-003] 读取分类器队列失败: {e}, 回落到常规路由链");
+                    }
+                }
+            }
+        }
+
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
+        let providers = match classifier_providers {
+            Some(list) => list,
+            None => state
+                .provider_router
+                .select_providers(app_type_str)
+                .await
+                .map_err(|e| match e {
+                    crate::error::AppError::AllProvidersCircuitOpen => {
+                        ProxyError::AllProvidersCircuitOpen
+                    }
+                    crate::error::AppError::NoProvidersConfigured => {
+                        ProxyError::NoProvidersConfigured
+                    }
+                    _ => ProxyError::DatabaseError(e.to_string()),
+                })?,
+        };
+
+        if classifier.routed {
+            // app_config 是 create_forwarder / streaming_timeout_config / handlers 里
+            // 非流式超时的唯一真源；就地改写这份**内存副本**（不写库）即可让
+            // 「分类器专属重试 + 短超时」在所有 handler 上自动生效。
+            //
+            // 必须解开 auto_failover_enabled 这道闸门：它关着时 create_forwarder 会把
+            // max_retries 和三个超时全部强制为 0，分类器队列只会试第一家，且永远比
+            // 客户端截止晚放弃 —— 特性等于没做。
+            //
+            // 只在队列真正接管时收紧。回落到常规链路时一个字段都不碰：那条链路是
+            // 用户自己配的，把 600 秒超时压到十几秒会把「20 秒能成功」变成「硬失败」，
+            // 而客户端本来还愿意等 —— 严格更差。
+            let (attempt_timeout, max_retries) =
+                crate::proxy::classifier::attempt_budget(providers.len());
+
+            app_config.auto_failover_enabled = true;
+            app_config.non_streaming_timeout = attempt_timeout;
+            // 分类器请求是非流式的，这两项只在上游意外以流式返回时兜底
+            app_config.streaming_first_byte_timeout = attempt_timeout;
+            app_config.streaming_idle_timeout = attempt_timeout;
+            app_config.max_retries = max_retries;
+
+            log::debug!(
+                "[{tag}] [CLS-002] 分类器预算: {} 家可用, 单次 {attempt_timeout}s, max_retries={max_retries}",
+                providers.len()
+            );
+        }
 
         let provider = providers
             .first()
@@ -173,6 +259,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            classifier,
         })
     }
 
@@ -241,6 +328,10 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            ForwardPolicy {
+                classifier_thinking_off: self.classifier.thinking_off,
+                classifier_routed: self.classifier.routed,
+            },
         )
     }
 

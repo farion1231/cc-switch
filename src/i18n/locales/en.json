@@ -375,6 +375,10 @@
         "title": "Auto Failover",
         "description": "Configure failover queue and circuit breaker strategy"
       },
+      "classifier": {
+        "title": "Classifier Queue",
+        "description": "Route Auto Mode's Bash safety-classifier requests to dedicated providers"
+      },
       "pricing": {
         "title": "Cost Pricing",
         "description": "Manage token pricing rules for each model"
@@ -2774,6 +2778,11 @@
       "takeoverRequired": "Take over {{app}} first, then enable failover"
     }
   },
+  "classifier": {
+    "enabled": "Classifier queue enabled",
+    "disabled": "Classifier queue disabled",
+    "toggleFailed": "Operation failed"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "Service Address",
@@ -2905,6 +2914,27 @@
       "reorderSuccess": "Queue order updated",
       "reorderFailed": "Failed to update order",
       "toggleFailed": "Failed to update status"
+    },
+    "classifier": {
+      "proxyRequired": "Start the routing service and take over Claude before configuring the classifier queue",
+      "enable": "Enable classifier queue",
+      "enableDescription": "When enabled, Claude Code Auto Mode's Bash safety-classifier requests are sent to the queued providers in order. If the queue is empty or every provider is circuit-broken, requests fall back to the normal routing chain instead of failing.",
+      "forceThinkingOff": "Force thinking off",
+      "forceThinkingOffDescription": "Strips thinking / reasoning_effort / output_config before sending, so a reasoning round trip cannot run into the client's timeout limit."
+    },
+    "classifierQueue": {
+      "title": "Classifier Queue",
+      "description": "Manage provider order for Auto Mode safety-classifier requests",
+      "info": "Claude Code sends a safety-classifier request before running a Bash command. The client enforces a hard timeout on it; exceeding that marks the classifier unavailable and blocks the command. Put fast, cheap providers in this queue to avoid timing out on a reasoning round trip.",
+      "selectProvider": "Select a provider to add to the queue",
+      "noAvailableProviders": "No providers available to add",
+      "empty": "Classifier queue is empty. Classifier requests use the normal routing chain until you add one.",
+      "orderHint": "Queue order matches the provider list on the home page; drag there to reorder.",
+      "modelHint": "Make sure queued providers serve the model the client requests. The classifier request is non-streaming and carries the full conversation transcript (tens of thousands of tokens), so a model with a small context window will fail and fall through to the next provider.",
+      "addSuccess": "Added to classifier queue",
+      "addFailed": "Failed to add",
+      "removeSuccess": "Removed from classifier queue",
+      "removeFailed": "Failed to remove"
     },
     "autoFailover": {
       "info": "When the failover queue has multiple providers, the system will try them in priority order when requests fail. When a provider reaches the consecutive failure threshold, the circuit breaker will open and skip it temporarily.",
