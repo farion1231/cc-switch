@@ -1594,6 +1594,15 @@ function App() {
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                onClick={() => setCurrentView("prompts")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("prompts.manage")}
+                              >
+                                <Book className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => setCurrentView("hermesMemory")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("hermes.memory.title")}
