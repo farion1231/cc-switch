@@ -110,14 +110,35 @@ describe("useSessionContentSearch", () => {
 
     render("alpha");
     await waitFor(() =>
-      expect(searchMock).toHaveBeenCalledWith("alpha", undefined),
+      expect(searchMock).toHaveBeenCalledWith(
+        "alpha",
+        undefined,
+        expect.any(Number),
+      ),
     );
 
     searchMock.mockClear();
     render("alpha", "codex");
     await waitFor(() =>
-      expect(searchMock).toHaveBeenCalledWith("alpha", "codex"),
+      expect(searchMock).toHaveBeenCalledWith(
+        "alpha",
+        "codex",
+        expect.any(Number),
+      ),
     );
+  });
+
+  // 后端靠这个递增号丢弃已被新关键词取代的扫描；号不递增就等于没有取消机制
+  it("tags each scan with an increasing request id", async () => {
+    searchMock.mockResolvedValue([]);
+    const { rerender } = render("alpha");
+
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(1));
+    rerender({ q: "beta", filter: "all" });
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(2));
+
+    const [first, second] = searchMock.mock.calls;
+    expect(second[2]).toBeGreaterThan(first[2]);
   });
 
   it("skips the backend for a blank query", async () => {

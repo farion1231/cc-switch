@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import FlexSearch from "flexsearch";
 import { sessionsApi } from "@/lib/api";
 import type { SessionMeta, SessionSearchSnippet } from "@/types";
@@ -90,6 +90,8 @@ interface ContentSearchState {
 export function useSessionContentSearch(query: string, providerFilter: string) {
   const [state, setState] = useState<ContentSearchState | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  // 递增的请求号：后端据此丢弃已被新关键词取代的扫描
+  const requestId = useRef(0);
   const needle = query.trim();
 
   useEffect(() => {
@@ -104,7 +106,11 @@ export function useSessionContentSearch(query: string, providerFilter: string) {
 
     const timer = setTimeout(() => {
       sessionsApi
-        .search(needle, providerFilter === "all" ? undefined : providerFilter)
+        .search(
+          needle,
+          providerFilter === "all" ? undefined : providerFilter,
+          ++requestId.current,
+        )
         .then((hits) => {
           if (!active) return;
           setState({

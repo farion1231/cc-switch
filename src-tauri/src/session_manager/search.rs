@@ -1,7 +1,18 @@
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 use super::{load_messages, scan_sessions, SessionMeta};
+
+/// Highest request id seen so far.
+///
+/// A scan is cancellable but not interruptible from the outside: the UI can stop
+/// waiting for a reply, but `clearTimeout` cannot recall an `invoke` that already
+/// started, so without this a few query edits would leave several full scans
+/// running at once, each with one worker per CPU. Ids come from the renderer so
+/// "newer" reflects the order the user typed, not the order the blocking pool
+/// happened to schedule.
+static LATEST_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 /// Characters of surrounding context kept on each side of a match.
 const SNIPPET_CONTEXT_CHARS: usize = 60;
@@ -37,9 +48,18 @@ pub struct SessionSearchHit {
 /// prefilter: SQLite `LIKE` folds case for ASCII only and would silently drop
 /// `Éclair` for the query `éclair`, and a raw substring scan of the JSONL would
 /// miss content behind JSON escapes.
-pub fn search_sessions(query: &str, provider_id: Option<&str>) -> Vec<SessionSearchHit> {
+///
+/// `request_id` must increase per query; a scan that a newer request has already
+/// superseded stops instead of finishing work the UI would discard.
+pub fn search_sessions(
+    query: &str,
+    provider_id: Option<&str>,
+    request_id: u64,
+) -> Vec<SessionSearchHit> {
+    LATEST_REQUEST.fetch_max(request_id, Ordering::SeqCst);
+
     let needle = lower_chars(query.trim());
-    if needle.is_empty() {
+    if needle.is_empty() || is_superseded(request_id) {
         return Vec::new();
     }
     let needle = needle.as_slice();
@@ -60,6 +80,7 @@ pub fn search_sessions(query: &str, provider_id: Option<&str>) -> Vec<SessionSea
                 scope.spawn(move || {
                     chunk
                         .iter()
+                        .take_while(|_| !is_superseded(request_id))
                         .filter_map(|meta| search_session(meta, needle))
                         .collect::<Vec<_>>()
                 })
@@ -72,8 +93,16 @@ pub fn search_sessions(query: &str, provider_id: Option<&str>) -> Vec<SessionSea
             .collect()
     });
 
+    if is_superseded(request_id) {
+        return Vec::new();
+    }
+
     hits.truncate(MAX_HITS);
     hits
+}
+
+fn is_superseded(request_id: u64) -> bool {
+    LATEST_REQUEST.load(Ordering::Relaxed) > request_id
 }
 
 fn search_session(meta: &SessionMeta, needle: &[char]) -> Option<SessionSearchHit> {
@@ -165,6 +194,7 @@ fn snippet_around(chars: &[char], start: usize, len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::path::Path;
     use tempfile::tempdir;
 
@@ -262,8 +292,23 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn empty_query_matches_nothing() {
-        assert!(search_sessions("   ", None).is_empty());
+        LATEST_REQUEST.store(0, Ordering::SeqCst);
+        assert!(search_sessions("   ", None, 1).is_empty());
+    }
+
+    /// A superseded scan must bail before touching the disk, otherwise every query
+    /// edit past the debounce leaves another full transcript scan running.
+    #[test]
+    #[serial]
+    fn a_newer_request_cancels_an_older_scan() {
+        LATEST_REQUEST.store(0, Ordering::SeqCst);
+        LATEST_REQUEST.fetch_max(9, Ordering::SeqCst);
+
+        assert!(search_sessions("anything", None, 4).is_empty());
+        assert!(is_superseded(4));
+        assert!(!is_superseded(9));
     }
 
     #[test]
