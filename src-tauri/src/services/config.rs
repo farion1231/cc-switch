@@ -131,6 +131,12 @@ impl ConfigService {
                 // OpenCode uses additive mode, no live sync needed
                 // OpenCode providers are managed directly in the config file
             }
+            AppType::CopilotByok => {
+                // VS Code profile projections are managed by copilot_byok.
+            }
+            AppType::CopilotCli => {
+                // Copilot CLI providers are projected through managed user environment files.
+            }
             AppType::OpenClaw => {
                 // OpenClaw uses additive mode, no live sync needed
                 // OpenClaw providers are managed directly in the config file

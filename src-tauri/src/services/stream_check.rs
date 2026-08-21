@@ -82,6 +82,55 @@ pub struct StreamCheckResult {
 pub struct StreamCheckService;
 
 impl StreamCheckService {
+    /// 对一个显式 URL 执行与供应商检测相同的轻量可达性检查。
+    /// 供不属于通用 `AppType` 的一级应用复用（例如 VS Code Copilot）。
+    pub async fn check_url_with_retry(
+        base_url: &str,
+        config: &StreamCheckConfig,
+    ) -> Result<StreamCheckResult, AppError> {
+        let mut last_result: Option<StreamCheckResult> = None;
+        for attempt in 0..=config.max_retries {
+            let start = Instant::now();
+            let client = crate::proxy::http_client::get();
+            let result = Self::probe_reachability(
+                &client,
+                base_url,
+                std::time::Duration::from_secs(config.timeout_secs),
+                None,
+            )
+            .await;
+            let response_time = start.elapsed().as_millis() as u64;
+            let result = Self::build_result(result, response_time, config.degraded_threshold_ms);
+
+            if result.success {
+                return Ok(StreamCheckResult {
+                    retry_count: attempt,
+                    ..result
+                });
+            }
+            if Self::should_retry(&result.message) && attempt < config.max_retries {
+                last_result = Some(result);
+                continue;
+            }
+            return Ok(StreamCheckResult {
+                retry_count: attempt,
+                ..result
+            });
+        }
+
+        Ok(last_result.unwrap_or_else(|| StreamCheckResult {
+            status: HealthStatus::Failed,
+            success: false,
+            message: "Check failed".to_string(),
+            response_time_ms: None,
+            http_status: None,
+            model_used: String::new(),
+            tested_at: chrono::Utc::now().timestamp(),
+            retry_count: config.max_retries,
+            error_category: None,
+        }))
+    }
+
     /// 执行连通性检查（仅对超时类失败重试）。
     ///
     /// `base_url_override`：用于 Copilot 等需要从 OAuth 管理器动态解析端点的供应商，

@@ -124,6 +124,8 @@ export const getProviderIconName = (providerId: string) => {
   if (providerId === "grokbuild") return "grok";
   if (providerId === "claude") return "claude";
   if (providerId === "opencode") return "opencode";
+  if (providerId === "copilot-byok") return "vscode-copilot-byok";
+  if (providerId === "copilot-cli") return "githubcopilot";
   if (providerId === "openclaw") return "openclaw";
   return providerId;
 };

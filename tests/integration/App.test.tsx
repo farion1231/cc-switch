@@ -19,6 +19,12 @@ const skillsPanelMocks = vi.hoisted(() => ({
   checkUpdates: vi.fn(),
   openDiscovery: vi.fn(),
 }));
+const copilotByokMocks = vi.hoisted(() => ({
+  openAdd: vi.fn(),
+}));
+const copilotCliMocks = vi.hoisted(() => ({
+  openAdd: vi.fn(),
+}));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -139,7 +145,54 @@ vi.mock("@/components/AppSwitcher", () => ({
       <button onClick={() => onSwitch("claude")}>switch-claude</button>
       <button onClick={() => onSwitch("codex")}>switch-codex</button>
       <button onClick={() => onSwitch("openclaw")}>switch-openclaw</button>
+      <button onClick={() => onSwitch("copilot-byok")}>switch-copilot</button>
+      <button onClick={() => onSwitch("copilot-cli")}>
+        switch-copilot-cli
+      </button>
     </div>
+  ),
+}));
+
+vi.mock("@/components/settings/CopilotByokSettings", async () => {
+  const React = await import("react");
+  const MockCopilotByokSettings = React.forwardRef((props: any, ref) => {
+    React.useImperativeHandle(ref, () => ({
+      openAdd: copilotByokMocks.openAdd,
+    }));
+    return <div data-testid="copilot-byok-settings" data-mode={props.mode} />;
+  });
+  MockCopilotByokSettings.displayName = "MockCopilotByokSettings";
+  return { CopilotByokSettings: MockCopilotByokSettings };
+});
+
+vi.mock("@/components/settings/CopilotCliSettings", async () => {
+  const React = await import("react");
+  const MockCopilotCliSettings = React.forwardRef((_props: any, ref) => {
+    React.useImperativeHandle(ref, () => ({
+      openAdd: copilotCliMocks.openAdd,
+    }));
+    return <div data-testid="copilot-cli-settings" />;
+  });
+  MockCopilotCliSettings.displayName = "MockCopilotCliSettings";
+  return { CopilotCliSettings: MockCopilotCliSettings };
+});
+
+vi.mock("@/components/settings/SettingsPage", () => ({
+  SettingsPage: ({ defaultTab, usageDefaultFilter, onOpenChange }: any) => (
+    <div
+      data-testid="settings-page"
+      data-default-tab={defaultTab}
+      data-usage-app={usageDefaultFilter?.appType}
+      data-usage-provider={usageDefaultFilter?.providerName}
+    >
+      <button onClick={() => onOpenChange(false)}>close-settings</button>
+    </div>
+  ),
+}));
+
+vi.mock("@/components/sessions/SessionManagerPage", () => ({
+  SessionManagerPage: ({ appId }: { appId: string }) => (
+    <div data-testid="session-manager-page" data-app-id={appId} />
   ),
 }));
 
@@ -204,9 +257,122 @@ describe("App integration with MSW", () => {
     toastErrorMock.mockReset();
     skillsPanelMocks.checkUpdates.mockReset();
     skillsPanelMocks.openDiscovery.mockReset();
+    copilotByokMocks.openAdd.mockReset();
+    copilotCliMocks.openAdd.mockReset();
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
   });
+
+  it("opens VS Code Copilot as a primary page from the app switcher", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(await screen.findByText("switch-openclaw"));
+    fireEvent.click(await screen.findByText("switch-copilot"));
+
+    expect(
+      await screen.findByTestId("copilot-byok-settings"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("copilot-byok-settings")).toHaveAttribute(
+      "data-mode",
+      "catalog",
+    );
+    expect(screen.getByTestId("app-switcher")).toHaveTextContent(
+      "copilot-byok",
+    );
+    expect(screen.getByTestId("app-switcher")).toBeInTheDocument();
+    expect(document.querySelector('button[title="使用统计"]')).toBeNull();
+    const syncTargetsButton = await screen.findByTitle("copilotByok.targets");
+    for (const title of [
+      "skills.manage",
+      "prompts.manage",
+      "sessionManager.title",
+      "mcp.title",
+    ]) {
+      expect(document.querySelector(`button[title="${title}"]`)).not.toBeNull();
+    }
+    expect(syncTargetsButton.querySelector(".lucide-cpu")).not.toBeNull();
+
+    const addByok = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="provider.addNewProvider"]',
+    );
+    expect(addByok).not.toBeNull();
+    fireEvent.click(addByok!);
+    expect(copilotByokMocks.openAdd).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(syncTargetsButton);
+    await waitFor(() =>
+      expect(screen.getByTestId("copilot-byok-settings")).toHaveAttribute(
+        "data-mode",
+        "targets",
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.getByTestId("copilot-byok-settings")).toHaveAttribute(
+        "data-mode",
+        "catalog",
+      ),
+    );
+
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>(
+        'button[title="sessionManager.title"]',
+      )!,
+    );
+    expect(await screen.findByTestId("session-manager-page")).toHaveAttribute(
+      "data-app-id",
+      "copilot-byok",
+    );
+  }, 10_000);
+
+  it("opens Copilot CLI as an independent primary page with first-class tools", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(await screen.findByText("switch-copilot-cli"));
+
+    expect(
+      await screen.findByTestId("copilot-cli-settings"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("app-switcher")).toHaveTextContent("copilot-cli");
+    expect(document.querySelector('button[title="使用统计"]')).toBeNull();
+    await waitFor(() =>
+      expect(
+        document.querySelector(
+          'button[title="自定义指令"], button[title="Custom Instructions"], button[title="copilotByok.cli.instructions"]',
+        ),
+      ).not.toBeNull(),
+    );
+    expect(
+      document.querySelector('button[title="skills.manage"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('button[title="sessionManager.title"]'),
+    ).not.toBeNull();
+    expect(document.querySelector('button[title="mcp.title"]')).not.toBeNull();
+    expect(
+      document.querySelector('button[title="copilotByok.targets"]'),
+    ).toBeNull();
+
+    const addCli = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="provider.addNewProvider"]',
+    );
+    expect(addCli).not.toBeNull();
+    fireEvent.click(addCli!);
+    expect(copilotCliMocks.openAdd).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>(
+        'button[title="sessionManager.title"]',
+      )!,
+    );
+    expect(await screen.findByTestId("session-manager-page")).toHaveAttribute(
+      "data-app-id",
+      "copilot-cli",
+    );
+  }, 10_000);
 
   it("covers basic provider flows via real hooks", async () => {
     const { default: App } = await import("@/App");

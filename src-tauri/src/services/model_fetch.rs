@@ -16,6 +16,8 @@ use std::time::Duration;
 pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// OpenAI 兼容的 /v1/models 响应格式
@@ -28,12 +30,17 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+    #[serde(default, alias = "display_name", alias = "displayName")]
+    name: Option<String>,
 }
 
 const FETCH_TIMEOUT_SECS: u64 = 15;
 const MAX_REQUEST_HEADERS: usize = 64;
 const MAX_HEADER_NAME_BYTES: usize = 256;
 const MAX_HEADER_VALUE_BYTES: usize = 16 * 1024;
+const MAX_MODELS_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_ERROR_RESPONSE_BYTES: usize = 64 * 1024;
+const MAX_FETCHED_MODELS: usize = 10_000;
 
 /// 404/405 响应体截断长度：避免把几十 KB HTML 404 页整页保留到错误串里。
 const ERROR_BODY_MAX_CHARS: usize = 512;
@@ -93,18 +100,22 @@ pub async fn fetch_models(
         let status = response.status();
 
         if status.is_success() {
-            let resp: ModelsResponse = response
-                .json()
-                .await
+            let body = read_response_body_limited(response, MAX_MODELS_RESPONSE_BYTES).await?;
+            let resp: ModelsResponse = serde_json::from_slice(&body)
                 .map_err(|e| format!("Failed to parse response: {e}"))?;
+            let entries = resp.data.unwrap_or_default();
+            if entries.len() > MAX_FETCHED_MODELS {
+                return Err(format!(
+                    "Models response contains more than {MAX_FETCHED_MODELS} entries"
+                ));
+            }
 
-            let mut models: Vec<FetchedModel> = resp
-                .data
-                .unwrap_or_default()
+            let mut models: Vec<FetchedModel> = entries
                 .into_iter()
                 .map(|m| FetchedModel {
                     id: m.id,
                     owned_by: m.owned_by,
+                    name: m.name,
                 })
                 .collect();
 
@@ -113,18 +124,12 @@ pub async fn fetch_models(
         }
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
-            let body = redact_model_fetch_error_body(
-                response.text().await.unwrap_or_default(),
-                &known_secrets,
-            );
+            let body = read_error_body(response, &known_secrets).await;
             last_err = Some(format!("HTTP {status}: {body}"));
             continue;
         }
 
-        let body = redact_model_fetch_error_body(
-            response.text().await.unwrap_or_default(),
-            &known_secrets,
-        );
+        let body = read_error_body(response, &known_secrets).await;
         return Err(format!("HTTP {status}: {body}"));
     }
 
@@ -132,6 +137,45 @@ pub async fn fetch_models(
         "All candidates failed: {}",
         last_err.unwrap_or_else(|| "no candidates".to_string())
     ))
+}
+
+async fn read_response_body_limited(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(format!(
+            "Response body exceeds the {max_bytes}-byte safety limit"
+        ));
+    }
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("Failed to read response: {error}"))?
+    {
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!(
+                "Response body exceeds the {max_bytes}-byte safety limit"
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+async fn read_error_body(response: reqwest::Response, known_secrets: &[String]) -> String {
+    match read_response_body_limited(response, MAX_ERROR_RESPONSE_BYTES).await {
+        Ok(body) => redact_model_fetch_error_body(
+            String::from_utf8_lossy(&body).into_owned(),
+            known_secrets,
+        ),
+        Err(error) => error,
+    }
 }
 
 fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> String {
@@ -154,10 +198,11 @@ fn build_model_fetch_headers(
         ));
     }
 
+    let is_messages = matches!(api_format, Some("anthropic-messages" | "messages"));
     let mut headers = HeaderMap::new();
     if !api_key.is_empty() {
         let (name, value) = match api_format {
-            Some("anthropic-messages") => (
+            Some("anthropic-messages" | "messages") => (
                 HeaderName::from_static("x-api-key"),
                 HeaderValue::from_str(api_key)
                     .map_err(|error| format!("Invalid API Key header value: {error}"))?,
@@ -191,12 +236,18 @@ fn build_model_fetch_headers(
             }
             let name = HeaderName::from_bytes(name.as_bytes())
                 .map_err(|error| format!("Invalid model-fetch header name {name}: {error}"))?;
-            let value = HeaderValue::from_str(raw_value)
+            let value = HeaderValue::from_str(&raw_value.replace("${apiKey}", api_key))
                 .map_err(|error| format!("Invalid model-fetch header value for {name}: {error}"))?;
             headers.insert(name, value);
         }
     }
 
+    if is_messages && !headers.contains_key("anthropic-version") {
+        headers.insert(
+            HeaderName::from_static("anthropic-version"),
+            HeaderValue::from_static("2023-06-01"),
+        );
+    }
     Ok(headers)
 }
 
@@ -234,8 +285,10 @@ pub fn build_models_url_candidates(
             candidates.push(format!("{}/v1/models", &trimmed[..idx]));
         } else if let Some(idx) = trimmed.rfind('/') {
             let root = &trimmed[..idx];
-            if root.contains("://") && root.len() > root.find("://").unwrap() + 3 {
-                candidates.push(format!("{root}/v1/models"));
+            if let Some(scheme_idx) = root.find("://") {
+                if root.len() > scheme_idx + 3 {
+                    candidates.push(format!("{root}/v1/models"));
+                }
             }
         }
         if candidates.is_empty() {
@@ -373,6 +426,22 @@ mod tests {
             &secrets,
         );
         assert_eq!(body, "invalid [REDACTED] / [REDACTED]");
+    }
+
+    #[test]
+    fn messages_protocol_uses_x_api_key_for_model_fetch() {
+        let headers = build_model_fetch_headers("secret", Some("messages"), None, None).unwrap();
+        assert_eq!(headers.get("x-api-key").unwrap(), "secret");
+        assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
+        assert!(headers.get(AUTHORIZATION).is_none());
+    }
+
+    #[test]
+    fn explicit_auth_header_is_preserved_and_expands_api_key() {
+        let custom = BTreeMap::from([("Authorization".to_string(), "Token ${apiKey}".to_string())]);
+        let headers =
+            build_model_fetch_headers("secret", Some("responses"), None, Some(&custom)).unwrap();
+        assert_eq!(headers.get(AUTHORIZATION).unwrap(), "Token secret");
     }
 
     #[test]

@@ -308,6 +308,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: options.apiKey,
             baseUrl: options.baseURL,
           };
+        } else if (appId === "copilot-byok" || appId === "copilot-cli") {
+          // First-class Copilot catalogs keep endpoint credentials at the
+          // provider root, matching the backend resolver.
+          return {
+            apiKey: (config as any).apiKey,
+            baseUrl: (config as any).url,
+          };
         }
         return { apiKey: undefined, baseUrl: undefined };
       } catch (error) {
