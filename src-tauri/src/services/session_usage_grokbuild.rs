@@ -45,6 +45,7 @@ use crate::services::usage_stats::{
 };
 use rust_decimal::Decimal;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -134,9 +135,6 @@ fn collect_grok_updates_files() -> Vec<PathBuf> {
     files
 }
 
-/// 单个 updates.jsonl 文件读取上限（50 MiB）。JSONL 单行事件通常几 KiB，
-/// 正常活跃会话数月也到不了这个量级；超过则视为异常/恶意文件，跳过。
-const MAX_GROK_FILE_BYTES: u64 = 50 * 1024 * 1024;
 /// 递归收集 session 日志时的最大目录深度，防止 symlink 循环导致栈溢出。
 const MAX_COLLECT_DEPTH: usize = 16;
 
@@ -182,28 +180,10 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
 
-    // 异常大文件直接跳过，避免一次性读取耗尽内存。
-    if metadata.len() > MAX_GROK_FILE_BYTES {
-        log::warn!(
-            "Grok session log too large ({} bytes), skipping: {}",
-            metadata.len(),
-            file_path.display()
-        );
-        return Ok(SessionSyncResult::default());
-    }
-
     let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
     if file_modified <= last_modified {
         return Ok(SessionSyncResult::default());
     }
-
-    // 文件变更时全量重读：UPSERT 幂等使重读无害，且沉降窗延后的事件本就
-    // 依赖下一轮重读补入。事件已是逐轮独立值，改 offset 增量读在正确性上
-    // 可行（无差分基线依赖），但需另行处理延后事件的 offset 回退，收益
-    // （活跃会话每周期省一次 O(N) 解析）暂不值得该复杂度。
-    let content = fs::read_to_string(file_path)
-        .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
-    let events = parse_grok_usage_events(&content);
 
     // 会话 ID = 会话目录名（与 summary.json 的 info.id 一致）。request_id
     // 唯一性押在该 UUIDv7 全局唯一上：同 ID 的归档/活跃副本经 UPSERT 幂等
@@ -222,8 +202,22 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
 
     let mut result = SessionSyncResult::default();
     let mut deferred = false;
+    let mut event_count = 0i64;
 
-    for (idx, event) in events.iter().enumerate() {
+    // 文件变更时全量重读：UPSERT 幂等使重读无害，且沉降窗延后的事件本就
+    // 依赖下一轮重读补入。逐行读取避免把持续增长的 updates.jsonl 整体
+    // 分配到内存；单行通常只有几 KiB，内存占用与文件总大小无关。
+    let file =
+        fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
+    let reader = BufReader::new(file);
+    for line_result in reader.lines() {
+        let line = line_result.map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
+        let Some(event) = parse_grok_usage_event(&line) else {
+            continue;
+        };
+        let idx = event_count;
+        event_count += 1;
+
         // 沉降窗：事件按 append 顺序时间单调，遇到第一条未沉降的事件即停，
         // 后续事件与它一起等下一轮（保持"文件前缀已导入"的简单不变量）。
         // 已知局限：未来时间戳（时钟误设）会让该文件持续延后并整文件重扫，
@@ -289,84 +283,81 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
         // 不落同步状态：下一轮重读整个文件，把沉降后的事件补入。
         result.deferred_files += 1;
     } else {
-        update_sync_state(db, &file_path_str, file_modified, events.len() as i64)?;
+        update_sync_state(db, &file_path_str, file_modified, event_count)?;
     }
 
     Ok(result)
 }
 
-/// 从 updates.jsonl 内容解析出全部逐轮用量事件（保持文件顺序）
-fn parse_grok_usage_events(content: &str) -> Vec<GrokUsageEvent> {
-    let mut events = Vec::new();
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if record.get("method").and_then(|v| v.as_str()) != Some("_x.ai/session/update") {
-            continue;
-        }
-        let update = record.get("params").and_then(|p| p.get("update"));
-        // 只认 turn_completed（实测全体带 usage 的事件均为此类；判别字段是
-        // sessionUpdate，serde internally-tagged）。字段缺失时向后兼容放行，
-        // 但显式标为其它类型的事件即使带 usage 也不导入——中途快照若与轮末
-        // 事件并存，双导会双算。
-        let kind = update
-            .and_then(|u| u.get("sessionUpdate"))
-            .and_then(|v| v.as_str());
-        if kind.is_some() && kind != Some("turn_completed") {
-            continue;
-        }
-        let Some(usage) = update
-            .and_then(|u| u.get("usage"))
-            .filter(|u| u.is_object())
-        else {
-            continue;
-        };
-        // 沉降窗与接管守卫都依赖事件时刻，没有时间戳的事件无法安全导入。
-        let Some(created_at) = parse_event_timestamp(record.get("timestamp")) else {
-            continue;
-        };
-
-        let prompt_id = update
-            .and_then(|u| u.get("prompt_id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let mut per_model: Vec<(String, GrokCounters)> = usage
-            .get("modelUsage")
-            .and_then(|m| m.as_object())
-            .map(|map| {
-                map.iter()
-                    .map(|(model, counters)| (model.clone(), parse_grok_counters(counters)))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if per_model.is_empty() {
-            // 缺 modelUsage 时退回顶层逐轮值；模型名未知，交由查价层兜底。
-            per_model.push(("unknown".to_string(), parse_grok_counters(usage)));
-        }
-        // modelUsage 是 JSON object，遍历序不保证稳定；排序保证插入顺序
-        // 与日志在多次重扫间确定。
-        per_model.sort_by(|a, b| a.0.cmp(&b.0));
-
-        events.push(GrokUsageEvent {
-            created_at,
-            prompt_id,
-            cost_is_partial: usage
-                .get("costIsPartial")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            per_model,
-        });
+/// 从一行 updates.jsonl 解析出一条逐轮用量事件。
+fn parse_grok_usage_event(line: &str) -> Option<GrokUsageEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
     }
+    let Ok(record) = serde_json::from_str::<serde_json::Value>(line) else {
+        return None;
+    };
+    if record.get("method").and_then(|v| v.as_str()) != Some("_x.ai/session/update") {
+        return None;
+    }
+    let update = record.get("params").and_then(|p| p.get("update"));
+    // 只认 turn_completed（实测全体带 usage 的事件均为此类；判别字段是
+    // sessionUpdate，serde internally-tagged）。字段缺失时向后兼容放行，
+    // 但显式标为其它类型的事件即使带 usage 也不导入——中途快照若与轮末
+    // 事件并存，双导会双算。
+    let kind = update
+        .and_then(|u| u.get("sessionUpdate"))
+        .and_then(|v| v.as_str());
+    if kind.is_some() && kind != Some("turn_completed") {
+        return None;
+    }
+    let usage = update
+        .and_then(|u| u.get("usage"))
+        .filter(|u| u.is_object())?;
+    // 沉降窗与接管守卫都依赖事件时刻，没有时间戳的事件无法安全导入。
+    let created_at = parse_event_timestamp(record.get("timestamp"))?;
 
-    events
+    let prompt_id = update
+        .and_then(|u| u.get("prompt_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let mut per_model: Vec<(String, GrokCounters)> = usage
+        .get("modelUsage")
+        .and_then(|m| m.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(model, counters)| (model.clone(), parse_grok_counters(counters)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if per_model.is_empty() {
+        // 缺 modelUsage 时退回顶层逐轮值；模型名未知，交由查价层兜底。
+        per_model.push(("unknown".to_string(), parse_grok_counters(usage)));
+    }
+    // modelUsage 是 JSON object，遍历序不保证稳定；排序保证插入顺序
+    // 与日志在多次重扫间确定。
+    per_model.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Some(GrokUsageEvent {
+        created_at,
+        prompt_id,
+        cost_is_partial: usage
+            .get("costIsPartial")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        per_model,
+    })
+}
+
+/// 从 updates.jsonl 内容解析出全部逐轮用量事件（保持文件顺序）。
+/// 生产同步路径使用 `parse_grok_usage_event` 逐行消费；该包装器仅供
+/// 小型字符串解析测试复用。
+#[cfg(test)]
+fn parse_grok_usage_events(content: &str) -> Vec<GrokUsageEvent> {
+    content.lines().filter_map(parse_grok_usage_event).collect()
 }
 
 fn parse_grok_counters(value: &serde_json::Value) -> GrokCounters {
@@ -574,7 +565,7 @@ fn insert_grok_session_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Seek, SeekFrom, Write};
     use tempfile::tempdir;
 
     /// 早于沉降窗的固定基准时刻（2023-11-14T22:13:20Z）
@@ -1185,24 +1176,48 @@ mod tests {
     }
 
     #[test]
-    fn oversized_updates_jsonl_is_skipped_without_reading_into_memory() {
+    fn oversized_updates_jsonl_still_imports_events() -> Result<(), AppError> {
         let db = Database::memory().expect("memory db");
         let temp = tempdir().expect("tempdir");
-        let path = write_session_file(temp.path(), "sess-huge", &[]);
+        let first = usage_event_line(
+            OLD_EPOCH,
+            "p1",
+            &model_counters("grok-4.5-build", 100, 10, 0, 1),
+        );
+        let after_old_limit = usage_event_line(
+            OLD_EPOCH + 60,
+            "p2",
+            &model_counters("grok-4.5-build", 250, 30, 0, 1),
+        );
+        let path = write_session_file(temp.path(), "sess-huge", &[first]);
 
-        // 制造一个超过 50 MiB 的文件，但内容为空（不会被解析）。
-        let huge = std::fs::OpenOptions::new()
+        // 构造超过原 50 MiB 上限的稀疏 JSONL，并把第二个有效事件放在旧上限
+        // 之后。每 64 KiB 写一个换行，避免测试夹具自身制造超长单行。
+        const OLD_FILE_LIMIT: u64 = 50 * 1024 * 1024;
+        const LINE_SPAN: u64 = 64 * 1024;
+        let mut huge = std::fs::OpenOptions::new()
             .write(true)
-            .truncate(true)
             .open(&path)
             .expect("open");
-        huge.set_len(MAX_GROK_FILE_BYTES + 1).expect("set_len");
+        huge.set_len(OLD_FILE_LIMIT + 1).expect("set_len");
+        for offset in (LINE_SPAN..=OLD_FILE_LIMIT).step_by(LINE_SPAN as usize) {
+            huge.seek(SeekFrom::Start(offset)).expect("seek spacer");
+            huge.write_all(b"\n").expect("write spacer");
+        }
+        huge.seek(SeekFrom::Start(OLD_FILE_LIMIT + 1))
+            .expect("seek event");
+        writeln!(huge, "{after_old_limit}").expect("write event after old limit");
         drop(huge);
 
-        let result = sync_single_grok_file(&db, &path).expect("sync should not fail");
-        assert_eq!(result.imported, 0, "oversized file must not be imported");
+        let result = sync_single_grok_file(&db, &path)?;
+        assert_eq!(
+            result.imported, 2,
+            "events beyond the old file-size limit must be imported"
+        );
         assert_eq!(result.skipped, 0);
         assert_eq!(result.deferred_files, 0);
+        assert_eq!(query_rows(&db)?.len(), 2);
+        Ok(())
     }
 
     #[test]
