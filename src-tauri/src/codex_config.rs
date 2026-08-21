@@ -2618,7 +2618,8 @@ pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
 /// builds selected `cc-switch-official` directly or redefined Codex's reserved
 /// `openai` provider. Those configs remain recognizable for cleanup but must
 /// be rebuilt before an idempotent takeover can be reused.
-pub fn codex_config_has_current_official_proxy_route(config_text: &str) -> bool {
+#[cfg(test)]
+fn codex_config_has_current_official_proxy_route(config_text: &str) -> bool {
     let Ok(doc) = config_text.parse::<DocumentMut>() else {
         return false;
     };
@@ -2627,27 +2628,49 @@ pub fn codex_config_has_current_official_proxy_route(config_text: &str) -> bool 
     {
         return false;
     }
-    let Some(providers) = doc.get("model_providers").and_then(|item| item.as_table()) else {
+    matches!(
+        current_codex_official_proxy_alias_urls(&doc),
+        Some((openai, legacy)) if openai == legacy
+    )
+}
+
+/// Whether both official-thread compatibility aliases point at the active
+/// local proxy. This applies to official and third-party takeovers alike:
+/// third-party configs keep their selected `model_provider`, but resumed
+/// built-in/legacy official threads still require these two aliases.
+pub fn codex_config_has_current_official_proxy_aliases(
+    config_text: &str,
+    proxy_base_url: &str,
+) -> bool {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
         return false;
     };
+    let expected = proxy_base_url.trim().trim_end_matches('/');
+    matches!(
+        current_codex_official_proxy_alias_urls(&doc),
+        Some((openai, legacy)) if openai == expected && legacy == expected
+    )
+}
+
+fn current_codex_official_proxy_alias_urls(doc: &DocumentMut) -> Option<(&str, &str)> {
+    let providers = doc.get("model_providers")?.as_table()?;
     if providers.contains_key(OPENAI_CODEX_MODEL_PROVIDER_ID) {
-        return false;
+        return None;
     }
     let openai_base_url = doc
-        .get("openai_base_url")
-        .and_then(|item| item.as_str())
-        .map(|url| url.trim().trim_end_matches('/').to_string());
+        .get("openai_base_url")?
+        .as_str()?
+        .trim()
+        .trim_end_matches('/');
     let compatibility_base_url = providers
         .get(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
         .and_then(|item| item.as_table())
-        .filter(|table| table_matches_codex_managed_local_official_provider(table))
-        .and_then(|table| table.get("base_url"))
-        .and_then(|item| item.as_str())
-        .map(|url| url.trim().trim_end_matches('/').to_string());
-    matches!(
-        (openai_base_url, compatibility_base_url),
-        (Some(openai), Some(legacy)) if openai == legacy
-    )
+        .filter(|table| table_matches_codex_managed_local_official_provider(table))?
+        .get("base_url")?
+        .as_str()?
+        .trim()
+        .trim_end_matches('/');
+    Some((openai_base_url, compatibility_base_url))
 }
 
 fn table_matches_codex_managed_local_official_provider(table: &toml_edit::Table) -> bool {
@@ -3616,6 +3639,18 @@ experimental_bearer_token = "PROXY_MANAGED"
             Some("http://127.0.0.1:15721/v1")
         );
         assert!(!codex_config_has_official_proxy_route(&output));
+        assert!(codex_config_has_current_official_proxy_aliases(
+            &output,
+            "http://127.0.0.1:15721/v1/"
+        ));
+        assert!(
+            !codex_config_has_current_official_proxy_aliases(input, "http://127.0.0.1:15721/v1"),
+            "legacy third-party takeovers without aliases require rebuilding"
+        );
+        assert!(
+            !codex_config_has_current_official_proxy_aliases(&output, "http://127.0.0.1:15722/v1"),
+            "aliases for an old proxy port require rebuilding"
+        );
     }
 
     #[test]
