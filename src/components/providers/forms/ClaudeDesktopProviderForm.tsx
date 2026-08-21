@@ -14,7 +14,7 @@ import {
   FormItem,
   FormMessage,
 } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -1149,21 +1149,21 @@ export function ClaudeDesktopProviderForm({
                           <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
                             {roleLabel}
                           </div>
-                          <Input
+                          <ImeSafeInput
                             value={route.labelOverride}
-                            onChange={(event) =>
+                            onValueChange={(next) =>
                               updateRoute(index, {
-                                labelOverride: event.target.value,
+                                labelOverride: next,
                               })
                             }
                             placeholder={labelPlaceholder}
                           />
                           <div className="flex gap-1">
-                            <Input
+                            <ImeSafeInput
                               value={route.model}
-                              onChange={(event) =>
+                              onValueChange={(next) =>
                                 updateRoute(index, {
-                                  model: event.target.value,
+                                  model: next,
                                 })
                               }
                               placeholder={modelPlaceholder}
@@ -1241,11 +1241,11 @@ export function ClaudeDesktopProviderForm({
                           className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_116px_36px]"
                         >
                           <div className="flex gap-1">
-                            <Input
+                            <ImeSafeInput
                               value={route.route}
-                              onChange={(event) =>
+                              onValueChange={(next) =>
                                 updateRoute(index, {
-                                  route: event.target.value,
+                                  route: next,
                                 })
                               }
                               placeholder="claude-sonnet-4-6"
