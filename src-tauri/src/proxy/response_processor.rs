@@ -147,6 +147,73 @@ pub fn is_sse_response(response: &ProxyResponse) -> bool {
     response.is_sse()
 }
 
+fn sniff_unlabelled_body_as_json(bytes: &[u8]) -> Option<bool> {
+    let bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &bytes[3..]
+    } else if bytes.len() < 3 && [0xEF, 0xBB, 0xBF].starts_with(bytes) {
+        return None;
+    } else {
+        bytes
+    };
+    bytes
+        .iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .map(|byte| matches!(byte, b'{' | b'['))
+}
+
+/// Classify an expected SSE response without trusting the protocol hint over
+/// the actual payload. Some compatible gateways ignore `stream:true` and send
+/// one complete Responses JSON document without a Content-Type header.
+///
+/// Only enough bytes to identify the first non-whitespace byte are consumed,
+/// then every consumed chunk is replayed before the untouched upstream stream.
+async fn prepare_response_for_handling(
+    response: ProxyResponse,
+    expected_sse: bool,
+) -> (ProxyResponse, bool) {
+    if is_sse_response(&response) {
+        return (response, true);
+    }
+    if response.is_json() || !expected_sse {
+        return (response, false);
+    }
+
+    const MAX_SNIFF_BYTES: usize = 8 * 1024;
+    let status = response.status();
+    let headers = response.headers().clone();
+    let mut upstream = Box::pin(response.bytes_stream());
+    let mut replay = Vec::new();
+    let mut prefix = Vec::new();
+    let is_streaming = loop {
+        match upstream.next().await {
+            Some(Ok(chunk)) => {
+                if prefix.len() < MAX_SNIFF_BYTES {
+                    let remaining = MAX_SNIFF_BYTES - prefix.len();
+                    prefix.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+                }
+                replay.push(Ok(chunk));
+                if let Some(is_json) = sniff_unlabelled_body_as_json(&prefix) {
+                    break !is_json;
+                }
+                if prefix.len() >= MAX_SNIFF_BYTES {
+                    break true;
+                }
+            }
+            Some(Err(error)) => {
+                replay.push(Err(error));
+                break true;
+            }
+            None => break true,
+        }
+    };
+    let replayed = futures::stream::iter(replay).chain(upstream);
+    (
+        ProxyResponse::streamed(status, headers, replayed),
+        is_streaming,
+    )
+}
+
 /// 处理流式响应
 pub async fn handle_streaming(
     response: ProxyResponse,
@@ -173,6 +240,12 @@ pub async fn handle_streaming(
 
     let mut response_headers = response.headers().clone();
     strip_hop_by_hop_response_headers(&mut response_headers);
+    // A protocol hint can recover SSE handling when a compatible upstream
+    // omits or mislabels Content-Type. Normalize the downstream contract too.
+    response_headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
 
     let mut builder = axum::response::Response::builder().status(status);
 
@@ -330,7 +403,22 @@ pub async fn process_response(
     parser_config: &UsageParserConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<Response, ProxyError> {
-    if is_sse_response(&response) {
+    process_response_with_stream_hint(response, ctx, state, parser_config, connection_guard, false)
+        .await
+}
+
+/// Process a response whose protocol is known to be streaming even when a
+/// compatible upstream omits the SSE content type.
+pub async fn process_response_with_stream_hint(
+    response: ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    parser_config: &UsageParserConfig,
+    connection_guard: Option<ActiveConnectionGuard>,
+    expected_sse: bool,
+) -> Result<Response, ProxyError> {
+    let (response, is_streaming) = prepare_response_for_handling(response, expected_sse).await;
+    if is_streaming {
         Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
     } else {
         handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
@@ -387,8 +475,10 @@ impl SseUsageCollector {
             .unwrap_or(true)
     }
 
-    /// 标记首个被收集的 SSE 事件时间，沿用 `first_token_ms` 的既有近似语义。
-    async fn mark_first_collected_event_time(&self) {
+    /// Observe an SSE data event independently of whether its payload is kept
+    /// for usage parsing. `first_token_ms` retains its existing approximate
+    /// semantics: time to the first usable SSE event.
+    pub async fn observe_stream_event(&self) {
         if self.inner.first_event_set.load(Ordering::Acquire) {
             return;
         }
@@ -401,7 +491,6 @@ impl SseUsageCollector {
 
     /// 推送 SSE 事件
     pub async fn push(&self, event: Value) {
-        self.mark_first_collected_event_time().await;
         let mut events = self.inner.events.lock().await;
         events.push(event);
     }
@@ -755,6 +844,11 @@ pub fn create_logged_passthrough_stream(
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
                                         if data.trim() != "[DONE]" {
+                                            if is_productive_sse_data(data) {
+                                                if let Some(c) = &collector {
+                                                    c.observe_stream_event().await;
+                                                }
+                                            }
                                             let collected = match &collector {
                                                 Some(c) if c.should_collect(data) => {
                                                     match serde_json::from_str::<Value>(data) {
@@ -800,6 +894,152 @@ pub fn create_logged_passthrough_stream(
         if let Some(guard) = &mut finish_guard {
             guard.disarm();
         }
+    }
+}
+
+fn is_productive_sse_data(data: &str) -> bool {
+    let Ok(event) = serde_json::from_str::<Value>(data) else {
+        // Preserve the historical behavior for non-JSON SSE protocols.
+        return true;
+    };
+
+    if let Some(event_type) = event.get("type").and_then(Value::as_str) {
+        if event_type.starts_with("response.") {
+            return responses_event_is_productive(&event, event_type);
+        }
+        if matches!(
+            event_type,
+            "message_start"
+                | "message_delta"
+                | "message_stop"
+                | "content_block_start"
+                | "content_block_delta"
+                | "content_block_stop"
+                | "ping"
+        ) {
+            return anthropic_event_is_productive(&event, event_type);
+        }
+    }
+
+    if event.get("choices").is_some() {
+        return openai_chat_event_is_productive(&event);
+    }
+    if event.get("candidates").is_some() {
+        return gemini_event_is_productive(&event);
+    }
+
+    // Unknown compatible JSON protocols retain the previous first-event
+    // behavior instead of being silently excluded from TTFT statistics.
+    true
+}
+
+fn responses_event_is_productive(event: &Value, event_type: &str) -> bool {
+    if !event_type.ends_with(".delta") {
+        return false;
+    }
+    match event.get("delta") {
+        Some(Value::String(delta)) => !delta.is_empty(),
+        Some(Value::Null) | None => false,
+        Some(delta) => json_value_has_content(delta),
+    }
+}
+
+fn anthropic_event_is_productive(event: &Value, event_type: &str) -> bool {
+    match event_type {
+        "content_block_delta" => event.get("delta").is_some_and(|delta| {
+            ["text", "thinking", "partial_json"]
+                .into_iter()
+                .any(|key| value_has_nonempty_string(delta.get(key)))
+        }),
+        // Standard Anthropic streams send empty block starts. A few compatible
+        // gateways inline complete text, reasoning, or tool input here and emit
+        // no following delta, so count only starts that carry real output.
+        "content_block_start" => event.get("content_block").is_some_and(|block| {
+            ["text", "thinking", "data"]
+                .into_iter()
+                .any(|key| value_has_nonempty_string(block.get(key)))
+                || block.get("input").is_some_and(json_value_has_content)
+        }),
+        _ => false,
+    }
+}
+
+fn openai_chat_event_is_productive(event: &Value) -> bool {
+    event
+        .get("choices")
+        .and_then(Value::as_array)
+        .is_some_and(|choices| {
+            choices.iter().any(|choice| {
+                let Some(delta) = choice.get("delta") else {
+                    return false;
+                };
+                ["content", "reasoning", "reasoning_content", "refusal"]
+                    .into_iter()
+                    .any(|key| delta.get(key).is_some_and(json_value_has_content))
+                    || delta
+                        .get("function_call")
+                        .is_some_and(openai_function_delta_has_content)
+                    || delta
+                        .get("tool_calls")
+                        .and_then(Value::as_array)
+                        .is_some_and(|tool_calls| {
+                            tool_calls.iter().any(|tool_call| {
+                                tool_call
+                                    .get("function")
+                                    .is_some_and(openai_function_delta_has_content)
+                            })
+                        })
+                    || delta.get("audio").is_some_and(json_value_has_content)
+            })
+        })
+}
+
+fn openai_function_delta_has_content(function: &Value) -> bool {
+    ["name", "arguments"]
+        .into_iter()
+        .any(|key| value_has_nonempty_string(function.get(key)))
+}
+
+fn gemini_event_is_productive(event: &Value) -> bool {
+    event
+        .get("candidates")
+        .and_then(Value::as_array)
+        .is_some_and(|candidates| {
+            candidates.iter().any(|candidate| {
+                candidate
+                    .get("content")
+                    .and_then(|content| content.get("parts"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            value_has_nonempty_string(part.get("text"))
+                                || part.get("functionCall").is_some_and(json_value_has_content)
+                                || part.get("inlineData").is_some_and(json_value_has_content)
+                                || part
+                                    .get("executableCode")
+                                    .is_some_and(json_value_has_content)
+                                || part
+                                    .get("codeExecutionResult")
+                                    .is_some_and(json_value_has_content)
+                        })
+                    })
+            })
+        })
+}
+
+fn value_has_nonempty_string(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.is_empty())
+}
+
+fn json_value_has_content(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(_) | Value::Number(_) => true,
+        Value::String(text) => !text.is_empty(),
+        Value::Array(values) => values.iter().any(json_value_has_content),
+        Value::Object(values) => !values.is_empty() && values.values().any(json_value_has_content),
     }
 }
 
@@ -887,6 +1127,214 @@ mod tests {
         assert!(formatted.contains("cf-ray=abc123-SJC"), "{formatted}");
         assert!(!formatted.contains("super-secret"), "{formatted}");
         assert!(!formatted.contains("cookie-secret"), "{formatted}");
+    }
+
+    #[tokio::test]
+    async fn expected_sse_recovers_streaming_when_content_type_is_missing() {
+        let response = ProxyResponse::buffered(
+            http::StatusCode::OK,
+            HeaderMap::new(),
+            Bytes::from_static(b"data: {}\n\n"),
+        );
+
+        let (_, is_streaming) = prepare_response_for_handling(response, true).await;
+        assert!(is_streaming);
+    }
+
+    #[tokio::test]
+    async fn expected_sse_does_not_override_explicit_json() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let response = ProxyResponse::buffered(
+            http::StatusCode::OK,
+            headers,
+            Bytes::from_static(br#"{"ok":true}"#),
+        );
+
+        let (_, is_streaming) = prepare_response_for_handling(response, true).await;
+        assert!(!is_streaming);
+    }
+
+    #[tokio::test]
+    async fn expected_sse_does_not_override_unlabelled_complete_json() {
+        let body = Bytes::from_static(br#"{"id":"resp_123","object":"response"}"#);
+        let response = ProxyResponse::streamed(
+            http::StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::iter([
+                Ok::<_, std::io::Error>(Bytes::from_static(b" \r\n")),
+                Ok(body.clone()),
+            ]),
+        );
+
+        let (response, is_streaming) = prepare_response_for_handling(response, true).await;
+        assert!(!is_streaming);
+        let replayed = response
+            .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
+            .await
+            .unwrap();
+        assert_eq!(
+            replayed,
+            Bytes::from_static(b" \r\n{\"id\":\"resp_123\",\"object\":\"response\"}")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_content_type_without_stream_hint_remains_non_streaming() {
+        let response = ProxyResponse::buffered(
+            http::StatusCode::OK,
+            HeaderMap::new(),
+            Bytes::from_static(b"opaque response"),
+        );
+
+        let (_, is_streaming) = prepare_response_for_handling(response, false).await;
+        assert!(!is_streaming);
+    }
+
+    #[tokio::test]
+    async fn first_token_timing_is_not_delayed_until_usage_event() {
+        let start_time = std::time::Instant::now();
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let captured_for_callback = captured.clone();
+        let collector = SseUsageCollector::new(start_time, None, move |_, first_token_ms| {
+            *captured_for_callback.lock().unwrap() = first_token_ms;
+        });
+
+        collector.observe_stream_event().await;
+        let observed_by_ms = start_time.elapsed().as_millis() as u64;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        collector.push(serde_json::json!({"usage": {}})).await;
+        collector.finish().await;
+
+        let first_token_ms = captured.lock().unwrap().expect("first event timing");
+        assert!(
+            first_token_ms <= observed_by_ms + 5,
+            "first event timing {first_token_ms}ms should precede delayed usage; observation completed by {observed_by_ms}ms"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_lifecycle_events_do_not_start_first_token_timer() {
+        let start_time = std::time::Instant::now();
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let captured_for_callback = captured.clone();
+        let collector = SseUsageCollector::new(start_time, None, move |_, first_token_ms| {
+            *captured_for_callback.lock().unwrap() = first_token_ms;
+        });
+        let upstream = async_stream::stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"data: {\"type\":\"response.created\"}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+            ));
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"data: [DONE]\n\n"));
+        };
+        let output = create_logged_passthrough_stream(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        tokio::pin!(output);
+        while let Some(chunk) = output.next().await {
+            chunk.unwrap();
+        }
+
+        let first_token_ms = captured.lock().unwrap().expect("productive event timing");
+        assert!(
+            first_token_ms >= 40,
+            "lifecycle metadata started the first-token timer at {first_token_ms}ms"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_lifecycle_events_do_not_start_first_token_timer() {
+        let start_time = std::time::Instant::now();
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let captured_for_callback = captured.clone();
+        let collector = SseUsageCollector::new(start_time, None, move |_, first_token_ms| {
+            *captured_for_callback.lock().unwrap() = first_token_ms;
+        });
+        let upstream = async_stream::stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10}}}\n\n",
+            ));
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+            ));
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                b"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+            ));
+        };
+        let output = create_logged_passthrough_stream(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        tokio::pin!(output);
+        while let Some(chunk) = output.next().await {
+            chunk.unwrap();
+        }
+
+        let first_token_ms = captured.lock().unwrap().expect("productive event timing");
+        assert!(
+            first_token_ms >= 40,
+            "Claude lifecycle metadata started the first-token timer at {first_token_ms}ms"
+        );
+    }
+
+    #[test]
+    fn productive_sse_classifier_ignores_supported_protocol_metadata() {
+        let metadata = [
+            serde_json::json!({"type": "response.created"}),
+            serde_json::json!({"type": "response.in_progress"}),
+            serde_json::json!({"type": "message_start", "message": {"usage": {"input_tokens": 10}}}),
+            serde_json::json!({"type": "content_block_start", "content_block": {"type": "text", "text": ""}}),
+            serde_json::json!({"type": "content_block_delta", "delta": {"type": "signature_delta", "signature": "sig"}}),
+            serde_json::json!({"choices": [{"delta": {"role": "assistant"}}]}),
+            serde_json::json!({"choices": [], "usage": {"completion_tokens": 4}}),
+            serde_json::json!({"candidates": [], "usageMetadata": {"candidatesTokenCount": 4}}),
+        ];
+
+        for event in metadata {
+            let encoded = serde_json::to_string(&event).unwrap();
+            assert!(!is_productive_sse_data(&encoded), "metadata: {encoded}");
+        }
+    }
+
+    #[test]
+    fn productive_sse_classifier_accepts_supported_protocol_output() {
+        let output = [
+            serde_json::json!({"type": "response.output_text.delta", "delta": "hello"}),
+            serde_json::json!({"type": "response.function_call_arguments.delta", "delta": "{"}),
+            serde_json::json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hello"}}),
+            serde_json::json!({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{"}}),
+            serde_json::json!({"type": "content_block_start", "content_block": {"type": "tool_use", "input": {"city": "Tokyo"}}}),
+            serde_json::json!({"choices": [{"delta": {"content": "hello"}}]}),
+            serde_json::json!({"choices": [{"delta": {"tool_calls": [{"function": {"arguments": "{"}}]}}]}),
+            serde_json::json!({"candidates": [{"content": {"parts": [{"text": "hello"}]}}]}),
+            serde_json::json!({"candidates": [{"content": {"parts": [{"functionCall": {"name": "lookup", "args": {"city": "Tokyo"}}}]}}]}),
+        ];
+
+        for event in output {
+            let encoded = serde_json::to_string(&event).unwrap();
+            assert!(is_productive_sse_data(&encoded), "output: {encoded}");
+        }
     }
 
     #[tokio::test]

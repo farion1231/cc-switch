@@ -4,7 +4,9 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::services::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH};
+use crate::services::sql_helpers::{
+    fresh_input_sql, perceived_latency_sql, INPUT_TOKEN_SEMANTICS_FRESH,
+};
 use crate::services::usage_stats::effective_usage_log_filter;
 use chrono::{Duration, Local, TimeZone};
 
@@ -118,6 +120,7 @@ impl Database {
         let effective_filter = effective_usage_log_filter("l");
         let fresh_detail_input = fresh_input_sql("l");
         let fresh_old_input = fresh_input_sql("old");
+        let detail_latency = perceived_latency_sql("l");
         // request_model 维度保留路由接管的「客户端别名 → 真实模型」映射，
         // pricing_model 维度保留写入时的计价基准（request 计价模式下与 model 分叉）；
         // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
@@ -156,7 +159,7 @@ impl Database {
                     COALESCE(SUM(l.cache_read_tokens), 0) as new_cr,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as new_cc,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost,
-                    COALESCE(AVG(l.latency_ms), 0) as new_lat
+                    COALESCE(AVG({detail_latency}), 0) as new_lat
                 FROM proxy_request_logs l
                 WHERE l.created_at < ?1 AND {effective_filter}
                 GROUP BY d, a, p, m, rm, pm
@@ -340,6 +343,47 @@ mod tests {
                 row.get(0)
             })?;
         assert_eq!(remaining, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_uses_first_token_latency_for_streaming_requests() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    latency_ms, first_token_ms, is_streaming,
+                    status_code, created_at
+                ) VALUES ('stream-latency', 'p1', 'codex', 'gpt-5.6-sol',
+                          60000, 1000, 1, 200, ?1)",
+                [old_ts],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    latency_ms, first_token_ms, is_streaming,
+                    status_code, created_at
+                ) VALUES ('non-stream-latency', 'p1', 'codex', 'gpt-5.6-sol',
+                          2000, 500, 0, 200, ?1)",
+                [old_ts + 1],
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 2);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let avg_latency: f64 = conn.query_row(
+            "SELECT avg_latency_ms FROM usage_daily_rollups
+             WHERE provider_id = 'p1' AND model = 'gpt-5.6-sol'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(avg_latency, 1500.0);
 
         Ok(())
     }
