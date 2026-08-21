@@ -69,6 +69,14 @@ import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
+import {
+  CopilotByokSettings,
+  type CopilotByokSettingsHandle,
+} from "@/components/settings/CopilotByokSettings";
+import {
+  CopilotCliSettings,
+  type CopilotCliSettingsHandle,
+} from "@/components/settings/CopilotCliSettings";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { ProxyToggle } from "@/components/proxy/ProxyToggle";
@@ -96,6 +104,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
+import type { UsageDefaultFilter } from "@/components/usage/UsageDashboard";
 import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
@@ -124,6 +133,7 @@ type View =
   | "universal"
   | "sessions"
   | "workspace"
+  | "copilotTargets"
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
@@ -144,6 +154,9 @@ const getInitialApp = (): AppId => {
   if (saved && APP_IDS.includes(saved)) {
     return saved;
   }
+  if (localStorage.getItem(VIEW_STORAGE_KEY) === "copilotByok") {
+    return "copilot-byok";
+  }
   return "claude";
 };
 
@@ -159,6 +172,7 @@ const VALID_VIEWS: View[] = [
   "universal",
   "sessions",
   "workspace",
+  "copilotTargets",
   "openclawEnv",
   "openclawTools",
   "openclawAgents",
@@ -166,6 +180,9 @@ const VALID_VIEWS: View[] = [
 ];
 
 const getInitialView = (): View => {
+  if (localStorage.getItem(VIEW_STORAGE_KEY) === "copilotByok") {
+    return "providers";
+  }
   const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
   if (saved && VALID_VIEWS.includes(saved)) {
     return saved;
@@ -178,12 +195,17 @@ function App() {
   const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
-  const sharedFeatureApp: AppId =
-    activeApp === "claude-desktop" ? "claude" : activeApp;
   const [currentView, setCurrentView] = useState<View>(getInitialView);
+  const primaryToolbarApp: AppId = activeApp;
+  const sharedFeatureApp: AppId =
+    primaryToolbarApp === "claude-desktop" ? "claude" : primaryToolbarApp;
+  const isPrimaryView = currentView === "providers";
   const [skillsDiscoverySource, setSkillsDiscoverySource] =
     useState<SkillsPageSource>("repos");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
+  const [usageDefaultFilter, setUsageDefaultFilter] = useState<
+    UsageDefaultFilter | undefined
+  >();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
@@ -214,15 +236,24 @@ function App() {
     [settingsData?.visibleApps],
   );
 
+  const isAppVisible = (app: AppId): boolean => {
+    if (app === "copilot-byok") return visibleApps.copilotByok;
+    if (app === "copilot-cli") return visibleApps.copilotCli;
+    return visibleApps[app];
+  };
+
   const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
+    return APP_IDS.find(isAppVisible) ?? "claude";
   };
 
   useEffect(() => {
-    if (!visibleApps[activeApp]) {
-      setActiveApp(getFirstVisibleApp());
+    const firstVisibleApp = getFirstVisibleApp();
+    const activeAppVisible = isAppVisible(activeApp);
+    if (currentView !== "providers" || activeAppVisible) return;
+    if (firstVisibleApp) {
+      setActiveApp(firstVisibleApp);
     }
-  }, [visibleApps, activeApp]);
+  }, [visibleApps, activeApp, currentView]);
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
@@ -239,7 +270,9 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
-      sharedFeatureApp !== "pi"
+      sharedFeatureApp !== "pi" &&
+      sharedFeatureApp !== "copilot-byok" &&
+      sharedFeatureApp !== "copilot-cli"
     ) {
       setCurrentView("providers");
     }
@@ -265,6 +298,8 @@ function App() {
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
+  const copilotByokRef = useRef<CopilotByokSettingsHandle>(null);
+  const copilotCliRef = useRef<CopilotCliSettingsHandle>(null);
   // 订阅未管理 Skill 的共享缓存（实际扫描由 UnifiedSkillsPanel 进入页面时触发）。
   // 这里 enabled 默认 false，仅用于「导入」按钮的绿点提示，不主动发起扫描。
   const { data: unmanagedSkills } = useScanUnmanagedSkills();
@@ -293,6 +328,7 @@ function App() {
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning: currentAppUsesProxy && isProxyRunning,
+    enabled: activeApp !== "copilot-byok" && activeApp !== "copilot-cli",
   });
   const { data: piCurrentState } = usePiCurrentState(activeApp === "pi");
   const providers = useMemo(() => data?.providers ?? {}, [data]);
@@ -316,7 +352,9 @@ function App() {
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
-    sharedFeatureApp === "pi";
+    sharedFeatureApp === "pi" ||
+    sharedFeatureApp === "copilot-byok" ||
+    sharedFeatureApp === "copilot-cli";
   const hasMcpSupport = sharedFeatureApp !== "pi";
 
   const {
@@ -677,7 +715,13 @@ function App() {
       if (isTextEditableTarget(event.target)) return;
 
       event.preventDefault();
-      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
+      setCurrentView(
+        view === "skillsDiscovery"
+          ? "skills"
+          : view === "settings"
+            ? "providers"
+            : "providers",
+      );
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -1014,6 +1058,7 @@ function App() {
               onOpenChange={() => setCurrentView("providers")}
               onImportSuccess={handleImportSuccess}
               defaultTab={settingsDefaultTab}
+              usageDefaultFilter={usageDefaultFilter}
             />
           );
         case "prompts":
@@ -1081,6 +1126,14 @@ function App() {
           );
         case "workspace":
           return <WorkspaceFilesPanel />;
+        case "copilotTargets":
+          return (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6">
+              <div className="flex-1 overflow-y-auto overflow-x-hidden px-1 pb-12 pt-4">
+                <CopilotByokSettings mode="targets" />
+              </div>
+            </div>
+          );
         case "openclawEnv":
           return <EnvPanel />;
         case "openclawTools":
@@ -1088,6 +1141,31 @@ function App() {
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
         default:
+          if (activeApp === "copilot-byok") {
+            return (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6">
+                <div className="flex-1 overflow-y-auto overflow-x-hidden px-1 pb-12">
+                  <CopilotByokSettings
+                    ref={copilotByokRef}
+                    mode="catalog"
+                    onOpenWebsite={handleOpenWebsite}
+                  />
+                </div>
+              </div>
+            );
+          }
+          if (activeApp === "copilot-cli") {
+            return (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6">
+                <div className="flex-1 overflow-y-auto overflow-x-hidden px-1 pb-12 pt-4">
+                  <CopilotCliSettings
+                    ref={copilotCliRef}
+                    onOpenWebsite={handleOpenWebsite}
+                  />
+                </div>
+              </div>
+            );
+          }
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
@@ -1277,7 +1355,7 @@ function App() {
             className="flex items-center gap-1"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
-            {currentView !== "providers" ? (
+            {!isPrimaryView ? (
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -1300,9 +1378,11 @@ function App() {
                 <h1 className="text-lg font-semibold">
                   {currentView === "settings" && t("settings.title")}
                   {currentView === "prompts" &&
-                    t("prompts.title", {
-                      appName: t(`apps.${sharedFeatureApp}`),
-                    })}
+                    (sharedFeatureApp === "copilot-cli"
+                      ? t("copilotByok.cli.instructions")
+                      : t("prompts.title", {
+                          appName: t(`apps.${sharedFeatureApp}`),
+                        }))}
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "skillsDiscovery" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
@@ -1313,6 +1393,7 @@ function App() {
                     })}
                   {currentView === "sessions" && t("sessionManager.title")}
                   {currentView === "workspace" && t("workspace.title")}
+                  {currentView === "copilotTargets" && t("copilotByok.targets")}
                   {currentView === "openclawEnv" && t("openclaw.env.title")}
                   {currentView === "openclawTools" && t("openclaw.tools.title")}
                   {currentView === "openclawAgents" &&
@@ -1352,6 +1433,10 @@ function App() {
                     variant="ghost"
                     size="icon"
                     onClick={() => {
+                      setUsageDefaultFilter({
+                        appType: "all",
+                        revision: Date.now(),
+                      });
                       setSettingsDefaultTab("usage");
                       setCurrentView("settings");
                     }}
@@ -1389,6 +1474,8 @@ function App() {
                 </div>
               )}
             {currentView === "providers" &&
+              activeApp !== "copilot-byok" &&
+              activeApp !== "copilot-cli" &&
               (settingsData?.showProfileSwitcher ?? true) && (
                 <div
                   className="flex shrink-0 items-center"
@@ -1400,10 +1487,13 @@ function App() {
             {/* 弹性中段：空间不足时由 AppSwitcher 自行收纳溢出应用；
                 justify-end + overflow-hidden 只裁剪 resize 瞬间的过渡帧 */}
             <div className="flex flex-1 min-w-0 items-center justify-end overflow-hidden py-4">
-              {currentView === "providers" && (
+              {isPrimaryView && (
                 <AppSwitcher
                   activeApp={activeApp}
-                  onSwitch={setActiveApp}
+                  onSwitch={(app) => {
+                    setActiveApp(app);
+                    setCurrentView("providers");
+                  }}
                   visibleApps={visibleApps}
                 />
               )}
@@ -1566,13 +1656,15 @@ function App() {
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={
-                            activeApp === "openclaw"
-                              ? "openclaw"
-                              : activeApp === "hermes"
-                                ? "hermes"
-                                : activeApp === "grokbuild"
-                                  ? "grokbuild"
-                                  : "default"
+                            primaryToolbarApp === "copilot-byok"
+                              ? "copilot"
+                              : primaryToolbarApp === "openclaw"
+                                ? "openclaw"
+                                : primaryToolbarApp === "hermes"
+                                  ? "hermes"
+                                  : primaryToolbarApp === "grokbuild"
+                                    ? "grokbuild"
+                                    : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1580,7 +1672,7 @@ function App() {
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.15 }}
                         >
-                          {activeApp === "hermes" ? (
+                          {primaryToolbarApp === "hermes" ? (
                             <>
                               <Button
                                 variant="ghost"
@@ -1621,7 +1713,7 @@ function App() {
                                 </Button>
                               )}
                             </>
-                          ) : activeApp === "openclaw" ? (
+                          ) : primaryToolbarApp === "openclaw" ? (
                             <>
                               <Button
                                 variant="ghost"
@@ -1671,10 +1763,25 @@ function App() {
                             </>
                           ) : (
                             <>
+                              {primaryToolbarApp === "copilot-byok" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setCurrentView("copilotTargets")
+                                  }
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("copilotByok.targets")}
+                                >
+                                  <Cpu className="w-4 h-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => setCurrentView("skills")}
+                                onClick={() => {
+                                  setCurrentView("skills");
+                                }}
                                 className={cn(
                                   "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
                                   "transition-all duration-200 ease-in-out overflow-hidden",
@@ -1689,16 +1796,24 @@ function App() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => setCurrentView("prompts")}
+                                onClick={() => {
+                                  setCurrentView("prompts");
+                                }}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("prompts.manage")}
+                                title={
+                                  primaryToolbarApp === "copilot-cli"
+                                    ? t("copilotByok.cli.instructions")
+                                    : t("prompts.manage")
+                                }
                               >
                                 <Book className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => setCurrentView("sessions")}
+                                onClick={() => {
+                                  setCurrentView("sessions");
+                                }}
                                 className={cn(
                                   "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
                                   "transition-all duration-200 ease-in-out overflow-hidden",
@@ -1728,7 +1843,15 @@ function App() {
                     </div>
 
                     <Button
-                      onClick={() => setIsAddOpen(true)}
+                      onClick={() => {
+                        if (activeApp === "copilot-byok") {
+                          copilotByokRef.current?.openAdd();
+                        } else if (activeApp === "copilot-cli") {
+                          copilotCliRef.current?.openAdd();
+                        } else {
+                          setIsAddOpen(true);
+                        }
+                      }}
                       size="icon"
                       className={`ml-2 ${addActionButtonClass}`}
                       aria-label={t("provider.addNewProvider")}

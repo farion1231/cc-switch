@@ -196,6 +196,18 @@ export function RequestLogTable({
                 ) : (
                   logs.map((log) => {
                     const unpriced = isUnpricedUsage(log);
+                    const isVscodeSession =
+                      log.appType === "copilot-byok" &&
+                      log.dataSource === "vscode_session";
+                    const modelDisplayName = isVscodeSession
+                      ? log.modelDisplayName?.trim() || log.model
+                      : log.model;
+                    const modelTitle =
+                      !isVscodeSession &&
+                      log.requestModel &&
+                      log.requestModel !== log.model
+                        ? `${log.requestModel} → ${log.model}`
+                        : modelDisplayName;
                     return (
                       <TableRow key={log.requestId}>
                         <TableCell className="text-center whitespace-nowrap text-xs px-1.5">
@@ -213,15 +225,9 @@ export function RequestLogTable({
                           {log.providerName || t("usage.unknownProvider")}
                         </TableCell>
                         <TableCell className="text-center font-mono text-xs max-w-[200px]">
-                          <div
-                            className="truncate"
-                            title={
-                              log.requestModel && log.requestModel !== log.model
-                                ? `${log.requestModel} → ${log.model}`
-                                : log.model
-                            }
-                          >
-                            {log.requestModel &&
+                          <div className="truncate" title={modelTitle}>
+                            {!isVscodeSession &&
+                            log.requestModel &&
                             log.requestModel !== log.model ? (
                               <span>
                                 {log.requestModel}
@@ -231,7 +237,7 @@ export function RequestLogTable({
                                 </span>
                               </span>
                             ) : (
-                              log.model
+                              modelDisplayName
                             )}
                           </div>
                         </TableCell>

@@ -377,6 +377,8 @@ command = "say"
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
+                copilot_byok: false,
+                copilot_cli: false,
                 hermes: false,
             },
             description: None,

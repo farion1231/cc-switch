@@ -386,6 +386,77 @@ impl Database {
         Ok(())
     }
 
+    /// Atomically replaces every provider in a dedicated catalog namespace.
+    ///
+    /// This is intentionally separate from `save_provider`: callers that own a
+    /// complete, ordered catalog need all rows (and their endpoint rows) to move
+    /// together or not at all.
+    pub fn replace_provider_catalog(
+        &self,
+        app_type: &str,
+        providers: &[Provider],
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.execute(
+            "DELETE FROM provider_endpoints WHERE app_type = ?1",
+            params![app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "DELETE FROM providers WHERE app_type = ?1",
+            params![app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        for provider in providers {
+            let mut meta = provider.meta.clone().unwrap_or_default();
+            let endpoints = std::mem::take(&mut meta.custom_endpoints);
+            tx.execute(
+                "INSERT INTO providers (
+                    id, app_type, name, settings_config, website_url, category,
+                    created_at, sort_index, notes, icon, icon_color, meta,
+                    is_current, in_failover_queue
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13)",
+                params![
+                    provider.id,
+                    app_type,
+                    provider.name,
+                    serde_json::to_string(&provider.settings_config).map_err(|e| {
+                        AppError::Database(format!("Failed to serialize settings_config: {e}"))
+                    })?,
+                    provider.website_url,
+                    provider.category,
+                    provider.created_at,
+                    provider.sort_index,
+                    provider.notes,
+                    provider.icon,
+                    provider.icon_color,
+                    serde_json::to_string(&meta).map_err(|e| AppError::Database(format!(
+                        "Failed to serialize meta: {e}"
+                    )))?,
+                    provider.in_failover_queue,
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+            for (url, endpoint) in endpoints {
+                tx.execute(
+                    "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![provider.id, app_type, url, endpoint.added_at],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn set_current_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn

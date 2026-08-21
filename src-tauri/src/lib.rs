@@ -9,9 +9,11 @@ mod codex_history_migration;
 mod codex_state_db;
 mod commands;
 mod config;
+mod copilot_byok;
 mod database;
 mod deeplink;
 mod error;
+mod file_transaction;
 mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
@@ -722,7 +724,14 @@ pub fn run() {
                 app_state.db.is_providers_empty().unwrap_or(false);
 
             for app_type in
-                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
+                crate::app_config::AppType::all().filter(|t| {
+                    !t.is_additive_mode()
+                        && !matches!(
+                            t,
+                            crate::app_config::AppType::CopilotByok
+                                | crate::app_config::AppType::CopilotCli
+                        )
+                })
             {
                 if !crate::services::provider::should_import_default_config_on_startup(
                     &app_state,
@@ -871,6 +880,15 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
 
+            // Re-project the managed Copilot catalog on every launch. VS Code does
+            // not expose SecretStorage to external applications, so newer CC Switch
+            // versions may need to repair derived per-model authentication headers
+            // even when the catalog itself has not changed.
+            match crate::copilot_byok::sync_selected_on_startup(app_state.db.as_ref()) {
+                Ok(()) => log::debug!("✓ Synchronized Copilot BYOK profiles"),
+                Err(e) => log::warn!("✗ Failed to synchronize Copilot BYOK profiles: {e}"),
+            }
+
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
                 let has_omo = app_state
@@ -985,6 +1003,7 @@ pub fn run() {
                     crate::app_config::AppType::Gemini,
                     crate::app_config::AppType::GrokBuild,
                     crate::app_config::AppType::OpenCode,
+                    crate::app_config::AppType::CopilotCli,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
@@ -1681,6 +1700,30 @@ pub fn run() {
             commands::copilot_get_models_for_account,
             commands::copilot_get_usage,
             commands::copilot_get_usage_for_account,
+            // VS Code Copilot BYOK model catalog
+            commands::copilot_byok_get_state,
+            commands::copilot_cli_get_state,
+            commands::copilot_byok_set_cli_selection,
+            commands::copilot_cli_set_selection,
+            commands::copilot_byok_disable_cli,
+            commands::copilot_cli_disable,
+            commands::copilot_cli_open_terminal,
+            commands::copilot_byok_update_usage_script,
+            commands::copilot_cli_update_usage_script,
+            commands::copilot_byok_set_targets,
+            commands::copilot_byok_add_custom_target,
+            commands::copilot_byok_remove_custom_target,
+            commands::copilot_byok_upsert_group,
+            commands::copilot_byok_delete_group,
+            commands::copilot_byok_reorder_groups,
+            commands::copilot_cli_upsert_group,
+            commands::copilot_cli_delete_group,
+            commands::copilot_cli_reorder_groups,
+            commands::copilot_byok_sync,
+            commands::copilot_byok_import_models,
+            commands::copilot_byok_restore_backup,
+            commands::copilot_byok_check_connection,
+            commands::copilot_cli_check_connection,
             // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,

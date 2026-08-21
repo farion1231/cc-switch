@@ -6,7 +6,10 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
-type DirectoryAppId = Exclude<AppId, "claude-desktop">;
+type DirectoryAppId = Exclude<
+  AppId,
+  "claude-desktop" | "copilot-byok" | "copilot-cli"
+>;
 
 interface DirectorySettingsProps {
   appConfigDir?: string;

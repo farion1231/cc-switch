@@ -4005,6 +4005,20 @@ mod tests {
     use std::env;
     use tempfile::TempDir;
 
+    #[tokio::test]
+    async fn vscode_copilot_rejects_proxy_takeover_before_starting_server() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+
+        let error = service
+            .set_takeover_for_app("copilot-byok", true)
+            .await
+            .expect_err("Copilot takeover must be rejected");
+
+        assert!(error.contains("不支持本地路由"));
+        assert!(!service.is_running().await);
+    }
+
     struct TempHome {
         #[allow(dead_code)]
         dir: TempDir,

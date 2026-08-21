@@ -46,6 +46,43 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_installed_skills`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/copilot_byok_get_state`, () =>
+    success({
+      groups: [],
+      targets: [
+        {
+          id: "vscode-stable-default",
+          source: "detected",
+          edition: "stable",
+          editionName: "Visual Studio Code",
+          profileId: null,
+          profileName: "Default",
+          isDefault: true,
+          languageModelsPath:
+            "C:\\Users\\test\\AppData\\Roaming\\Code\\User\\chatLanguageModels.json",
+          configExists: true,
+          backupExists: false,
+          selected: true,
+          managedGroupCount: 0,
+          readError: null,
+        },
+      ],
+      selectedTargetIds: ["vscode-stable-default"],
+      managedModelCount: 0,
+      cli: {
+        supported: true,
+        enabled: false,
+        selectedGroupId: null,
+        selectedModelId: null,
+        selectedProviderName: null,
+        selectedModelName: null,
+        environmentMatches: false,
+        environmentConflicts: [],
+        officialActivationRequiresConfirmation: false,
+      },
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/list_profiles`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);

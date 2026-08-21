@@ -17,11 +17,23 @@ export interface ModelsDevModalities {
   output?: string[];
 }
 
+export interface ModelsDevLimit {
+  context?: number;
+  input?: number;
+  output?: number;
+}
+
 export interface ModelsDevModel {
   id?: string;
   name?: string;
+  family?: string;
   release_date?: string;
+  attachment?: boolean;
+  reasoning?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
   cost?: ModelsDevCost;
+  limit?: ModelsDevLimit;
   modalities?: ModelsDevModalities;
   status?: string;
 }
