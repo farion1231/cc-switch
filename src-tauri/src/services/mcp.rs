@@ -146,6 +146,7 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Pi => {}
+            AppType::Cursor => {}
         }
         Ok(())
     }
@@ -183,6 +184,7 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Pi => {}
+            AppType::Cursor => {}
         }
         Ok(())
     }
@@ -229,7 +231,7 @@ impl McpService {
     ) -> Result<(), AppError> {
         if matches!(
             app,
-            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Pi
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Pi | AppType::Cursor
         ) {
             return Ok(());
         }

@@ -9,6 +9,7 @@ mod codex_history_migration;
 mod codex_state_db;
 mod commands;
 mod config;
+mod cursor;
 mod database;
 mod deeplink;
 mod error;
@@ -438,6 +439,7 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -1472,6 +1474,21 @@ pub fn run() {
             // model list fetch (OpenAI-compatible /v1/models)
             commands::fetch_models_for_config,
             commands::get_opencode_models,
+            // Cursor model catalog and runtime
+            commands::get_cursor_providers,
+            commands::get_cursor_endpoints,
+            commands::save_cursor_provider,
+            commands::save_cursor_providers,
+            commands::delete_cursor_endpoint,
+            commands::delete_cursor_provider,
+            commands::set_cursor_provider_enabled,
+            commands::get_cursor_runtime_state,
+            commands::start_cursor_runtime,
+            commands::stop_cursor_runtime,
+            commands::install_cursor_ca,
+            commands::remove_cursor_ca,
+            commands::sync_cursor_usage,
+            commands::test_cursor_model,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,

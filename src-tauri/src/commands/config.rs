@@ -132,7 +132,6 @@ pub async fn get_config_status(
             let path = crate::hermes_config::get_hermes_dir()
                 .to_string_lossy()
                 .to_string();
-
             Ok(ConfigStatus { exists, path })
         }
         AppType::Pi => {
@@ -145,6 +144,9 @@ pub async fn get_config_status(
                 exists: config_path.exists(),
                 path,
             })
+        }
+        AppType::Cursor => {
+            Err("Cursor is runtime-only and has no generic config directory".to_string())
         }
     }
 }
@@ -168,6 +170,9 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Cursor => {
+            return Err("Cursor is runtime-only and has no generic config directory".to_string())
+        }
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -187,6 +192,9 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Cursor => {
+            return Err("Cursor is runtime-only and has no generic config directory".to_string())
+        }
     };
 
     if !config_dir.exists() {

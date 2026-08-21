@@ -450,6 +450,20 @@ Download the latest Linux build from the [Releases](../../releases) page:
 - pnpm 8+
 - Rust 1.85+
 - Tauri CLI 2.8+
+- Go 1.25+
+- Protocol Buffers compiler (`protoc`) 35+
+- `protoc-gen-go` 1.36.11
+- `protoc-gen-connect-go` 1.19.1
+
+The Tauri development and build commands compile the bundled Cursor sidecar. Initialize its submodule and install the pinned protobuf generators before installing project dependencies:
+
+```bash
+git submodule update --init --recursive
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+```
+
+Ensure the Go binary directory (usually `$(go env GOPATH)/bin`) is available on `PATH`.
 
 ### Development Commands
 
