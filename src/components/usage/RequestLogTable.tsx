@@ -17,6 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast } from "sonner";
+import { copyText } from "@/lib/clipboard";
 import { useRequestLogs } from "@/lib/query/usage";
 import {
   getFreshInputTokens,
@@ -103,6 +105,15 @@ export function RequestLogTable({
     if (parsed < 1 || parsed > totalPages) return;
     setPage(parsed - 1);
     setPageInput("");
+  };
+
+  const handleCopyError = async (message: string) => {
+    try {
+      await copyText(message);
+      toast.success(t("usage.errorCopied"));
+    } catch {
+      toast.error(t("usage.errorCopyFailed"));
+    }
   };
 
   const language = i18n.resolvedLanguage || i18n.language || "en";
@@ -299,15 +310,33 @@ export function RequestLogTable({
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          <span
-                            className={
-                              log.statusCode >= 200 && log.statusCode < 300
-                                ? "text-green-600"
-                                : "text-red-600"
+                          {(() => {
+                            const isSuccess =
+                              log.statusCode >= 200 && log.statusCode < 300;
+                            const statusClass = isSuccess
+                              ? "text-green-600"
+                              : "text-red-600";
+                            const errorMessage = log.errorMessage?.trim();
+
+                            if (!isSuccess && errorMessage) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyError(errorMessage)}
+                                  aria-label={`${log.statusCode} – ${t("usage.clickToCopy")}`}
+                                  className={`${statusClass} cursor-pointer underline decoration-dotted underline-offset-2 hover:decoration-solid`}
+                                >
+                                  {log.statusCode}
+                                </button>
+                              );
                             }
-                          >
-                            {log.statusCode}
-                          </span>
+
+                            return (
+                              <span className={statusClass}>
+                                {log.statusCode}
+                              </span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-center text-xs text-muted-foreground">
                           {log.dataSource || "proxy"}
