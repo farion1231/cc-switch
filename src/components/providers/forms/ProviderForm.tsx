@@ -55,6 +55,11 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import {
+  DEEPSEEK_HARNESS_DEFAULT_CONFIG,
+  getDeepSeekHarnessPresetEntries,
+  type DeepSeekHarnessProviderPreset,
+} from "@/config/deepseekHarnessProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
@@ -139,7 +144,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | DeepSeekHarnessProviderPreset;
 };
 
 function getPresetProviderType(
@@ -392,8 +398,19 @@ function ProviderFormFull({
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
-    setSelectedPresetId(initialData ? null : "custom");
-    setActivePreset(null);
+    const initialPresetId =
+      !initialData && appId === "deepseek-harness"
+        ? "deepseek-harness-0"
+        : "custom";
+    setSelectedPresetId(initialData ? null : initialPresetId);
+    setActivePreset(
+      !initialData && appId === "deepseek-harness"
+        ? {
+            id: initialPresetId,
+            category: "official",
+          }
+        : null,
+    );
 
     if (!initialData) {
       setDraftCustomEndpoints([]);
@@ -451,7 +468,9 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "deepseek-harness"
+                    ? JSON.stringify(DEEPSEEK_HARNESS_DEFAULT_CONFIG, null, 2)
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -774,6 +793,8 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "deepseek-harness") {
+      return getDeepSeekHarnessPresetEntries();
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -2093,6 +2114,18 @@ function ProviderFormFull({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
         websiteUrl: preset.websiteUrl ?? "",
         settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    if (appId === "deepseek-harness") {
+      const preset = entry.preset as DeepSeekHarnessProviderPreset;
+      form.reset({
+        name: preset.name,
+        websiteUrl: preset.websiteUrl,
+        settingsConfig: JSON.stringify(preset.settingsConfig, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });

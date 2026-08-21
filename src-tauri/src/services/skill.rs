@@ -605,7 +605,7 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::Pi => {
+            AppType::Pi | AppType::DeepSeekHarness => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
         }
@@ -625,6 +625,9 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::DeepSeekHarness => {
+                crate::deepseek_harness_config::get_dsh_home().join("skills")
+            }
         })
     }
 

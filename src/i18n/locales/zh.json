@@ -910,7 +910,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "deepseek-harness": "DeepSeek Harness"
   },
   "pi": {
     "empty": {

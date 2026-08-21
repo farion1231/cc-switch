@@ -69,6 +69,7 @@ anyhow = "1.0"
 zip = "2.2"
 serde_yaml = "0.9"
 tempfile = "3"
+yaml-rust = { version = "0.3", features = ["preserve_order"] }
 url = "2.5"
 auto-launch = "0.5"
 once_cell = "1.21.3"

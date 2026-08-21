@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { SKILLS_APP_IDS, type SkillsAppId } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -264,6 +264,10 @@ const UnifiedSkillsPanel = React.forwardRef<
     : toggleAppMutation.isPending
       ? toggleAppMutation.variables?.app
       : null;
+  const skillsPendingApp =
+    pendingApp !== null && (SKILLS_APP_IDS as string[]).includes(pendingApp)
+      ? (pendingApp as SkillsAppId)
+      : null;
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     if (!beginWrite()) return;
@@ -277,7 +281,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleToggleAll = async (app: AppId, enabled: boolean) => {
+  const handleToggleAll = async (app: SkillsAppId, enabled: boolean) => {
     if (!skills || !beginWrite()) return;
 
     const ids = skills
@@ -629,7 +633,7 @@ const UnifiedSkillsPanel = React.forwardRef<
             appIds={visibleSkillAppIds}
             totalCount={skills?.length ?? 0}
             onToggleAll={handleToggleAll}
-            pendingApp={pendingApp}
+            pendingApp={skillsPendingApp}
             disabled={interactionBlocked}
           />
         </div>
