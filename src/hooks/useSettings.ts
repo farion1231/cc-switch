@@ -112,6 +112,7 @@ export function useSettings(): UseSettingsResult {
     syncLanguage(initialLanguage);
     resetAllDirectories({
       claude: sanitizeDir(data?.claudeConfigDir),
+      codefree: sanitizeDir(data?.codefreeConfigDir),
       codex: sanitizeDir(data?.codexConfigDir),
       gemini: sanitizeDir(data?.geminiConfigDir),
       grokbuild: sanitizeDir(data?.grokConfigDir),

@@ -11,6 +11,7 @@ export type AppType =
   | "opencode"
   | "openclaw"
   | "hermes"
+  | "codefree"
   | "pi";
 
 /** Skill 应用启用状态 */
@@ -23,6 +24,7 @@ export interface SkillApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  codefree: boolean;
   pi: boolean;
 }
 

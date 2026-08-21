@@ -191,6 +191,7 @@ export interface UsageRangeSelection {
  */
 export type AppType =
   | "claude"
+  | "codefree"
   | "codex"
   | "gemini"
   | "grokbuild"
@@ -201,6 +202,7 @@ export type AppTypeFilter = "all" | AppType;
 
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
+  "codefree",
   "codex",
   "gemini",
   "grokbuild",

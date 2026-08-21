@@ -19,6 +19,8 @@ pub struct McpApps {
     pub opencode: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub codefree: bool,
 }
 
 impl McpApps {
@@ -34,6 +36,7 @@ impl McpApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => false, // Pi core has no native MCP registry.
             AppType::ClaudeDesktop => false,
+            AppType::Codefree => self.codefree,
         }
     }
 
@@ -49,6 +52,7 @@ impl McpApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => {}            // Pi core has no native MCP registry.
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
+            AppType::Codefree => self.codefree = enabled,
         }
     }
 
@@ -73,6 +77,9 @@ impl McpApps {
         if self.hermes {
             apps.push(AppType::Hermes);
         }
+        if self.codefree {
+            apps.push(AppType::Codefree);
+        }
         apps
     }
 
@@ -84,6 +91,7 @@ impl McpApps {
             && !self.grokbuild
             && !self.opencode
             && !self.hermes
+            && !self.codefree
     }
 }
 
@@ -102,6 +110,8 @@ pub struct SkillApps {
     pub opencode: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub codefree: bool,
     #[serde(default)]
     pub pi: bool,
 }
@@ -119,6 +129,7 @@ impl SkillApps {
             AppType::Pi => self.pi,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
+            AppType::Codefree => self.codefree,
         }
     }
 
@@ -134,6 +145,7 @@ impl SkillApps {
             AppType::Pi => self.pi = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::Codefree => self.codefree = enabled,
         }
     }
 
@@ -158,6 +170,9 @@ impl SkillApps {
         if self.hermes {
             apps.push(AppType::Hermes);
         }
+        if self.codefree {
+            apps.push(AppType::Codefree);
+        }
         if self.pi {
             apps.push(AppType::Pi);
         }
@@ -172,6 +187,7 @@ impl SkillApps {
             && !self.grokbuild
             && !self.opencode
             && !self.hermes
+            && !self.codefree
             && !self.pi
     }
 
@@ -316,6 +332,10 @@ pub struct McpRoot {
     /// Hermes MCP 配置（实际使用 config.yaml）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub hermes: McpConfig,
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub codefree: McpConfig,
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub pi: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -332,6 +352,8 @@ impl Default for McpRoot {
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
             hermes: McpConfig::default(),
+            codefree: McpConfig::default(),
+            pi: McpConfig::default(),
         }
     }
 }
@@ -367,6 +389,8 @@ pub struct PromptRoot {
     pub openclaw: PromptConfig,
     #[serde(default)]
     pub hermes: PromptConfig,
+    #[serde(default)]
+    pub codefree: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -391,6 +415,7 @@ pub enum AppType {
     OpenCode,
     OpenClaw,
     Hermes,
+    Codefree,
     Pi,
 }
 
@@ -405,6 +430,7 @@ impl AppType {
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
+            AppType::Codefree => "codefree",
             AppType::Pi => "pi",
         }
     }
@@ -413,11 +439,15 @@ impl AppType {
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
     /// - Additive mode (true): Providers coexist in native config and can be enabled independently
-    ///   (OpenCode, OpenClaw, Hermes, Pi)
+    ///   (OpenCode, OpenClaw, Hermes, Codefree, Pi)
     pub fn is_additive_mode(&self) -> bool {
         matches!(
             self,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi
+            AppType::OpenCode
+                | AppType::OpenClaw
+                | AppType::Hermes
+                | AppType::Codefree
+                | AppType::Pi
         )
     }
 
@@ -439,6 +469,7 @@ impl AppType {
             AppType::OpenCode,
             AppType::OpenClaw,
             AppType::Hermes,
+            AppType::Codefree,
             AppType::Pi,
         ]
         .into_iter()
@@ -459,11 +490,12 @@ impl FromStr for AppType {
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
+            "codefree" => Ok(AppType::Codefree),
             "pi" => Ok(AppType::Pi),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, codefree, pi。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, codefree, pi."),
             )),
         }
     }
@@ -489,6 +521,9 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codefree: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -503,6 +538,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
+            AppType::Codefree => self.codefree.as_ref(),
             AppType::Pi => None,
         }
     }
@@ -518,6 +554,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
+            AppType::Codefree => self.codefree = snippet,
             AppType::Pi => {}
         }
     }
@@ -715,6 +752,38 @@ impl MultiAppConfig {
         }
     }
 
+    /// 获取指定客户端的 MCP 配置（不可变引用）
+    pub fn mcp_for(&self, app: &AppType) -> &McpConfig {
+        match app {
+            AppType::Claude => &self.mcp.claude,
+            AppType::ClaudeDesktop => &self.mcp.claude_desktop,
+            AppType::Codex => &self.mcp.codex,
+            AppType::Gemini => &self.mcp.gemini,
+            AppType::GrokBuild => &self.mcp.grokbuild,
+            AppType::OpenCode => &self.mcp.opencode,
+            AppType::OpenClaw => &self.mcp.openclaw,
+            AppType::Hermes => &self.mcp.hermes,
+            AppType::Codefree => &self.mcp.codefree,
+            AppType::Pi => &self.mcp.pi,
+        }
+    }
+
+    /// 获取指定客户端的 MCP 配置（可变引用）
+    pub fn mcp_for_mut(&mut self, app: &AppType) -> &mut McpConfig {
+        match app {
+            AppType::Claude => &mut self.mcp.claude,
+            AppType::ClaudeDesktop => &mut self.mcp.claude_desktop,
+            AppType::Codex => &mut self.mcp.codex,
+            AppType::Gemini => &mut self.mcp.gemini,
+            AppType::GrokBuild => &mut self.mcp.grokbuild,
+            AppType::OpenCode => &mut self.mcp.opencode,
+            AppType::OpenClaw => &mut self.mcp.openclaw,
+            AppType::Hermes => &mut self.mcp.hermes,
+            AppType::Codefree => &mut self.mcp.codefree,
+            AppType::Pi => &mut self.mcp.pi,
+        }
+    }
+
     /// 创建默认配置并自动导入已存在的提示词文件
     fn default_with_auto_import() -> Result<Self, AppError> {
         log::info!("首次启动，创建默认配置并检测提示词文件");
@@ -842,6 +911,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
             AppType::Hermes => &mut config.prompts.hermes.prompts,
+            AppType::Codefree => &mut config.prompts.codefree.prompts,
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
             AppType::Pi => return Ok(false),
@@ -888,6 +958,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
+                AppType::Codefree => continue, // Codefree didn't exist in v3.6.x, skip
                 AppType::Pi => continue,       // Pi didn't exist in v3.6.x, skip
             };
 

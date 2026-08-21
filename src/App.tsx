@@ -239,9 +239,17 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "codefree" &&
       sharedFeatureApp !== "pi"
     ) {
       setCurrentView("providers");
+    }
+  }, [sharedFeatureApp, currentView]);
+
+  // Fallback from providers view when switching to codefree (no provider support)
+  useEffect(() => {
+    if (currentView === "providers" && sharedFeatureApp === "codefree") {
+      setCurrentView("sessions");
     }
   }, [sharedFeatureApp, currentView]);
 
@@ -316,8 +324,10 @@ function App() {
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "codefree" ||
     sharedFeatureApp === "pi";
   const hasMcpSupport = sharedFeatureApp !== "pi";
+  const hasProviderSupport = sharedFeatureApp !== "codefree";
 
   const {
     addProvider,
@@ -1277,7 +1287,8 @@ function App() {
             className="flex items-center gap-1"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
-            {currentView !== "providers" ? (
+            {currentView !== "providers" &&
+            !(currentView === "sessions" && sharedFeatureApp === "codefree") ? (
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -1319,6 +1330,35 @@ function App() {
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
                 </h1>
+              </div>
+            ) : currentView === "sessions" &&
+              sharedFeatureApp === "codefree" ? (
+              <div className="flex items-center gap-2">
+                <RoutingActivationBrand
+                  active={isProxyRunning && isCurrentAppTakeoverActive}
+                  contextKey={activeApp}
+                  ready={
+                    proxyStatus !== undefined && takeoverStatus !== undefined
+                  }
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setSettingsDefaultTab("general");
+                    setCurrentView("settings");
+                  }}
+                  title={t("common.settings")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Settings className="w-4 h-4" />
+                </Button>
+                <UpdateBadge
+                  onClick={() => {
+                    setSettingsDefaultTab("about");
+                    setCurrentView("settings");
+                  }}
+                />
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -1400,13 +1440,15 @@ function App() {
             {/* 弹性中段：空间不足时由 AppSwitcher 自行收纳溢出应用；
                 justify-end + overflow-hidden 只裁剪 resize 瞬间的过渡帧 */}
             <div className="flex flex-1 min-w-0 items-center justify-end overflow-hidden py-4">
-              {currentView === "providers" && (
+              {(currentView === "providers" && activeApp !== "codefree") ||
+              (currentView === "sessions" &&
+                sharedFeatureApp === "codefree") ? (
                 <AppSwitcher
                   activeApp={activeApp}
                   onSwitch={setActiveApp}
                   visibleApps={visibleApps}
                 />
-              )}
+              ) : null}
             </div>
             {/* 固定右端：主操作（添加供应商等）shrink-0，任何配置下不被挤出 */}
             <div className="flex shrink-0 items-center py-4">
@@ -1560,7 +1602,9 @@ function App() {
                     )}
                   </>
                 )}
-                {currentView === "providers" && (
+                {(currentView === "providers" && activeApp !== "codefree") ||
+                (currentView === "sessions" &&
+                  sharedFeatureApp === "codefree") ? (
                   <>
                     <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                       <AnimatePresence mode="wait">
@@ -1572,7 +1616,9 @@ function App() {
                                 ? "hermes"
                                 : activeApp === "grokbuild"
                                   ? "grokbuild"
-                                  : "default"
+                                  : activeApp === "codefree"
+                                    ? "codefree"
+                                    : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1580,7 +1626,28 @@ function App() {
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.15 }}
                         >
-                          {activeApp === "hermes" ? (
+                          {activeApp === "codefree" ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("skills")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("skills.manage")}
+                              >
+                                <Wrench className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("sessions")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("sessionManager.title")}
+                              >
+                                <History className="w-4 h-4" />
+                              </Button>
+                            </>
+                          ) : activeApp === "hermes" ? (
                             <>
                               <Button
                                 variant="ghost"
@@ -1727,17 +1794,19 @@ function App() {
                       </AnimatePresence>
                     </div>
 
-                    <Button
-                      onClick={() => setIsAddOpen(true)}
-                      size="icon"
-                      className={`ml-2 ${addActionButtonClass}`}
-                      aria-label={t("provider.addNewProvider")}
-                      title={t("provider.addNewProvider")}
-                    >
-                      <Plus className="w-5 h-5" />
-                    </Button>
+                    {hasProviderSupport && (
+                      <Button
+                        onClick={() => setIsAddOpen(true)}
+                        size="icon"
+                        className={`ml-2 ${addActionButtonClass}`}
+                        aria-label={t("provider.addNewProvider")}
+                        title={t("provider.addNewProvider")}
+                      >
+                        <Plus className="w-5 h-5" />
+                      </Button>
+                    )}
                   </>
-                )}
+                ) : null}
               </div>
             </div>
           </div>

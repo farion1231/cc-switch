@@ -34,6 +34,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     opencode: "AGENTS.md",
     openclaw: "AGENTS.md",
     hermes: "SOUL.md",
+    codefree: "AGENTS.md",
     pi: "AGENTS.md",
   };
   const filename = filenameMap[appId];

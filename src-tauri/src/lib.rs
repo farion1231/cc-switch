@@ -4,6 +4,7 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+mod codefree_config;
 mod codex_config;
 mod codex_history_migration;
 mod codex_state_db;

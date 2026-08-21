@@ -67,7 +67,8 @@ impl Database {
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codefree BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -97,6 +98,7 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codefree BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -535,6 +537,13 @@ impl Database {
                         log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!(
+                            "迁移数据库从 v17 到 v18（CodeFree-O 支持：添加 enabled_codefree 列）"
+                        );
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1562,6 +1571,32 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
+    }
+
+    /// v17 -> v18 迁移：添加 CodeFree-O 支持
+    ///
+    /// 为 mcp_servers、skills 表添加 enabled_codefree 列。
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_codefree",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_codefree",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        log::info!("v17 -> v18 迁移完成：已添加 CodeFree-O 支持");
         Ok(())
     }
 
@@ -3407,6 +3442,28 @@ mod tests {
              VALUES ('pi_session', 'request', 'semantic', 1)",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_adds_codefree_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        // 先建表（v17 结构，无 enabled_codefree 列）
+        Database::create_tables_on_conn(&conn)?;
+        // 回退 enabled_codefree 列以模拟 v17 数据库
+        conn.execute("ALTER TABLE mcp_servers DROP COLUMN enabled_codefree", [])?;
+        conn.execute("ALTER TABLE skills DROP COLUMN enabled_codefree", [])?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "mcp_servers",
+            "enabled_codefree"
+        )?);
+        assert!(Database::has_column(&conn, "skills", "enabled_codefree")?);
         Ok(())
     }
 }
