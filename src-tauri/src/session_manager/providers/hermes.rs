@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
+use rusqlite::{types::ValueRef, Connection};
 use serde_json::Value;
 
 use crate::hermes_config::get_hermes_dir;
@@ -184,6 +184,22 @@ fn row_to_json(row: &rusqlite::Row, columns: &[String]) -> Value {
     Value::Object(map)
 }
 
+fn sqlite_timestamp_to_ms(value: ValueRef<'_>) -> Option<i64> {
+    let value = match value {
+        ValueRef::Integer(value) => Value::Number(value.into()),
+        ValueRef::Real(value) => {
+            return Some(if value > 1_000_000_000_000.0 {
+                value as i64
+            } else {
+                (value * 1000.0) as i64
+            });
+        }
+        ValueRef::Text(value) => Value::String(std::str::from_utf8(value).ok()?.to_string()),
+        ValueRef::Null | ValueRef::Blob(_) => return None,
+    };
+    parse_timestamp_to_ms(&value)
+}
+
 /// Load messages from the Hermes SQLite database.
 pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
     let (db_path, session_id) = parse_sqlite_source(source)
@@ -195,19 +211,27 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
     )
     .map_err(|e| format!("Failed to open Hermes database: {e}"))?;
 
-    // Try querying with common column names
-    let query =
-        "SELECT role, content, created_at FROM messages WHERE session_id = ?1 ORDER BY created_at ASC";
+    let columns = get_table_columns(&conn, "messages");
+    let timestamp_column = ["timestamp", "created_at"]
+        .into_iter()
+        .find(|candidate| columns.iter().any(|column| column == *candidate))
+        .ok_or_else(|| {
+            "Hermes messages table has no supported timestamp column (timestamp or created_at)"
+                .to_string()
+        })?;
+    let query = format!(
+        "SELECT role, content, {timestamp_column} FROM messages WHERE session_id = ?1 ORDER BY {timestamp_column} ASC"
+    );
 
     let mut stmt = conn
-        .prepare(query)
+        .prepare(&query)
         .map_err(|e| format!("Failed to prepare messages query: {e}"))?;
 
     let rows = stmt
         .query_map([session_id.as_str()], |row| {
             let role: String = row.get(0)?;
             let content: String = row.get(1)?;
-            let ts: Option<i64> = row.get(2).ok();
+            let ts = row.get_ref(2).ok().and_then(sqlite_timestamp_to_ms);
             Ok((role, content, ts))
         })
         .map_err(|e| format!("Failed to query messages: {e}"))?;
@@ -218,12 +242,7 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
         if content.trim().is_empty() {
             continue;
         }
-        let ts_ms = ts.and_then(|v| parse_timestamp_to_ms(&Value::Number(v.into())));
-        messages.push(SessionMessage {
-            role,
-            content,
-            ts: ts_ms,
-        });
+        messages.push(SessionMessage { role, content, ts });
     }
 
     Ok(messages)
@@ -514,6 +533,70 @@ mod tests {
         assert!(parse_sqlite_source("not-sqlite").is_none());
         assert!(parse_sqlite_source("sqlite:").is_none());
         assert!(parse_sqlite_source("sqlite:/path#").is_none());
+    }
+
+    #[test]
+    fn load_messages_sqlite_supports_real_timestamp_column() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("state.db");
+        let conn = Connection::open(&db_path).expect("open database");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                timestamp REAL NOT NULL
+            );
+            INSERT INTO messages (session_id, role, content, timestamp)
+            VALUES ('s1', 'assistant', 'second', 1700000002.0);
+            INSERT INTO messages (session_id, role, content, timestamp)
+            VALUES ('s1', 'user', 'first', 1700000001.750);
+            "#,
+        )
+        .expect("create current Hermes schema");
+        drop(conn);
+
+        let source = format!("sqlite:{}#s1", db_path.display());
+        let messages = load_messages_sqlite(&source).expect("load messages");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "first");
+        assert_eq!(messages[0].ts, Some(1_700_000_001_750));
+        assert_eq!(messages[1].content, "second");
+    }
+
+    #[test]
+    fn load_messages_sqlite_falls_back_to_integer_created_at_column() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("state.db");
+        let conn = Connection::open(&db_path).expect("open database");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                created_at INTEGER NOT NULL
+            );
+            INSERT INTO messages (session_id, role, content, created_at)
+            VALUES ('s1', 'assistant', 'second', 1700000002);
+            INSERT INTO messages (session_id, role, content, created_at)
+            VALUES ('s1', 'user', 'first', 1700000001);
+            "#,
+        )
+        .expect("create legacy Hermes schema");
+        drop(conn);
+
+        let source = format!("sqlite:{}#s1", db_path.display());
+        let messages = load_messages_sqlite(&source).expect("load messages");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "first");
+        assert_eq!(messages[0].ts, Some(1_700_000_001_000));
+        assert_eq!(messages[1].content, "second");
     }
 
     #[test]
