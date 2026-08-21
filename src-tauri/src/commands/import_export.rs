@@ -12,7 +12,18 @@ use crate::database::backup::BackupEntry;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::services::provider::ProviderService;
+use crate::services::skill::skill_state_write_guard;
+use crate::services::sync_protocol::sync_mutex;
 use crate::store::AppState;
+
+async fn run_with_database_restore_lock<T, Start, Fut>(start_operation: Start) -> T
+where
+    Start: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    let _sync_guard = sync_mutex().lock().await;
+    start_operation().await
+}
 
 // ─── File import/export ──────────────────────────────────────
 
@@ -43,16 +54,24 @@ pub async fn import_config_from_file(
     #[allow(non_snake_case)] filePath: String,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
-    let db = state.db.clone();
-    let db_for_sync = db.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let path_buf = PathBuf::from(&filePath);
-        let backup_id = db.import_sql(&path_buf)?;
-        let warning = post_sync_warning_from_result(Ok(run_post_import_sync(db_for_sync)));
-        if let Some(msg) = warning.as_ref() {
-            log::warn!("[Import] post-import sync warning: {msg}");
-        }
-        Ok::<_, AppError>(success_payload_with_warning(backup_id, warning))
+    let app_state_for_sync = state.inner().clone();
+    let db = app_state_for_sync.db.clone();
+    run_with_database_restore_lock(move || {
+        tauri::async_runtime::spawn_blocking(move || {
+            let path_buf = PathBuf::from(&filePath);
+            let backup_id = {
+                // SQL restore replaces the `skills` table. Exclude local Skill
+                // mutations while the database image is being swapped.
+                let _skill_state_guard = skill_state_write_guard();
+                db.import_sql(&path_buf)?
+            };
+            let warning =
+                post_sync_warning_from_result(Ok(run_post_import_sync(&app_state_for_sync)));
+            if let Some(msg) = warning.as_ref() {
+                log::warn!("[Import] post-import sync warning: {msg}");
+            }
+            Ok::<_, AppError>(success_payload_with_warning(backup_id, warning))
+        })
     })
     .await
     .map_err(|e| format!("导入配置失败: {e}"))?
@@ -153,11 +172,27 @@ pub async fn restore_db_backup(
     state: State<'_, AppState>,
     filename: String,
 ) -> Result<String, String> {
-    let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || db.restore_from_backup(&filename))
-        .await
-        .map_err(|e| format!("Restore failed: {e}"))?
-        .map_err(|e: AppError| e.to_string())
+    let app_state_for_sync = state.inner().clone();
+    let db = app_state_for_sync.db.clone();
+    run_with_database_restore_lock(move || {
+        tauri::async_runtime::spawn_blocking(move || {
+            let restored = {
+                let _skill_state_guard = skill_state_write_guard();
+                db.restore_from_backup(&filename)?
+            };
+            let warning =
+                post_sync_warning_from_result(Ok(run_post_import_sync(&app_state_for_sync)));
+            if let Some(message) = warning {
+                // This legacy command returns only the restored filename, so keep
+                // restore success and surface incomplete projection in the log.
+                log::warn!("[Restore] post-import sync warning: {message}");
+            }
+            Ok::<_, AppError>(restored)
+        })
+    })
+    .await
+    .map_err(|e| format!("Restore failed: {e}"))?
+    .map_err(|e: AppError| e.to_string())
 }
 
 /// Rename a database backup file
@@ -173,4 +208,41 @@ pub fn rename_db_backup(
 #[tauri::command]
 pub fn delete_db_backup(filename: String) -> Result<(), String> {
     Database::delete_backup(&filename).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_with_database_restore_lock;
+    use crate::services::sync_protocol::sync_mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn manual_restore_starts_blocking_work_after_global_lock_acquisition() {
+        let guard = sync_mutex().lock().await;
+        let entered = Arc::new(AtomicBool::new(false));
+        let entered_in_task = Arc::clone(&entered);
+        let restore = run_with_database_restore_lock(move || {
+            tokio::task::spawn_blocking(move || {
+                entered_in_task.store(true, Ordering::SeqCst);
+            })
+        });
+        tokio::pin!(restore);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), restore.as_mut())
+                .await
+                .is_err(),
+            "restore must wait while another sync operation holds the global lock"
+        );
+        assert!(!entered.load(Ordering::SeqCst));
+
+        drop(guard);
+        tokio::time::timeout(Duration::from_secs(1), restore.as_mut())
+            .await
+            .expect("restore should start after lock release")
+            .expect("blocking restore task should complete");
+        assert!(entered.load(Ordering::SeqCst));
+    }
 }

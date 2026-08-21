@@ -13,6 +13,9 @@ export interface ManagedAuthAccount {
   authenticated_at: number;
   is_default: boolean;
   github_domain: string;
+  /** Codex-only: the account predates persisted id_token support. */
+  reauth_required?: boolean;
+  /** xAI-only: the refresh credential is invalid and the account is unusable. */
   requires_reauth: boolean;
 }
 
