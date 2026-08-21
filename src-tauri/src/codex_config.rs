@@ -1200,10 +1200,11 @@ fn codex_catalog_model_entry(
     entry_obj.insert("description".to_string(), json!(display_name));
     entry_obj.insert("context_window".to_string(), json!(context_window));
     entry_obj.insert("max_context_window".to_string(), json!(context_window));
-    // Only the Responses -> Chat bridge currently synthesizes the single
-    // `compaction` item that Codex remote compaction requires. Advertising an
-    // automatic threshold for Anthropic/native profiles would make Codex
-    // trigger a protocol path those gateways cannot complete.
+    // Pin an explicit threshold for the Responses -> Chat bridge so the
+    // generated catalog follows cc-switch's effective provider window. Native
+    // Responses and Anthropic profiles must not inherit this Chat-specific
+    // override: when the field is absent, Codex derives its normal 90% limit
+    // from `context_window`.
     if profile == CodexCatalogToolProfile::ProxyChat {
         entry_obj.insert(
             "auto_compact_token_limit".to_string(),
@@ -4413,12 +4414,12 @@ base_url = "https://production.api/v1"
         );
         assert!(
             entry.get("auto_compact_token_limit").is_none(),
-            "native Responses entries must not advertise Chat-only compaction support"
+            "native Responses entries must not inherit a Chat-specific threshold override"
         );
     }
 
     #[test]
-    fn auto_compact_threshold_is_only_advertised_for_proxy_chat() {
+    fn proxy_chat_catalog_sets_an_explicit_auto_compact_threshold() {
         let template = json!({
             "auto_compact_token_limit": 1,
             "base_instructions": "You are a coding agent."
@@ -4456,7 +4457,7 @@ base_url = "https://production.api/v1"
                 catalog["models"][0]
                     .get("auto_compact_token_limit")
                     .is_none(),
-                "unsupported profile {profile:?} must remove inherited compaction thresholds"
+                "profile {profile:?} must remove inherited Chat-specific thresholds"
             );
         }
     }
