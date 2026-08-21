@@ -19,7 +19,7 @@ interface UsageFooterProps {
 }
 
 /** UsageData → QuotaTier 转换（Token Plan 使用） */
-function toQuotaTier(data: UsageData): QuotaTier {
+export function toQuotaTier(data: UsageData): QuotaTier {
   const extra = data.extra;
   if (extra && extra.startsWith("{")) {
     try {
@@ -30,6 +30,8 @@ function toQuotaTier(data: UsageData): QuotaTier {
         resetsAt: parsed.resetsAt || null,
         usedValueUsd: parsed.usedValueUsd ?? null,
         maxValueUsd: parsed.maxValueUsd ?? null,
+        usedCredits: parsed.usedCredits ?? null,
+        maxCredits: parsed.maxCredits ?? null,
         planLabel: parsed.planLabel ?? null,
       };
     } catch {

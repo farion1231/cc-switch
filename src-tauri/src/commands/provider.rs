@@ -633,12 +633,20 @@ async fn query_provider_usage_inner(
             });
         }
 
-        // ZenMux 的 tier 携带 USD 额度信息，需要编码为 JSON extra
+        // ZenMux 的 tier 携带 USD 额度信息，需要编码为 JSON extra；
+        // 智谱 V3 积分套餐携带 used_credits/max_credits，同样需要 JSON extra
+        // （否则 extra 只能放裸 resets_at 字符串，前端无法区分 V2 百分比与 V3 积分）。
         let has_usd = quota
             .tiers
             .first()
             .map(|t| t.used_value_usd.is_some())
             .unwrap_or(false);
+        let has_credits = quota
+            .tiers
+            .first()
+            .map(|t| t.used_credits.is_some())
+            .unwrap_or(false);
+        let structured_extra = has_usd || has_credits;
         let plan_label = quota
             .credential_message
             .as_deref()
@@ -653,7 +661,7 @@ async fn query_provider_usage_inner(
                 let total = 100.0;
                 let used = tier.utilization;
                 let remaining = total - used;
-                let extra = if has_usd {
+                let extra = if structured_extra {
                     let mut extra_json = serde_json::json!({
                         "resetsAt": tier.resets_at,
                     });
@@ -662,6 +670,14 @@ async fn query_provider_usage_inner(
                     }
                     if let Some(v) = tier.max_value_usd {
                         extra_json["maxValueUsd"] = serde_json::json!(v);
+                    }
+                    // V3 积分套餐：透传已用/总积分（前端据此切换为积分展示）。
+                    // 字段名与前端 QuotaTier 类型对齐（camelCase）。
+                    if let Some(v) = tier.used_credits {
+                        extra_json["usedCredits"] = serde_json::json!(v);
+                    }
+                    if let Some(v) = tier.max_credits {
+                        extra_json["maxCredits"] = serde_json::json!(v);
                     }
                     if first_tier {
                         if let Some(ref label) = plan_label {

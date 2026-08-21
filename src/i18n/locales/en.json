@@ -3239,6 +3239,8 @@
     "credits": "Credits",
     "copilotPremium": "Premium",
     "utilization": "{{value}}%",
+    "creditsUnit": "credits",
+    "creditUsage": "{{used}}/{{total}} {{unit}}",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",
     "expired": "Session expired",

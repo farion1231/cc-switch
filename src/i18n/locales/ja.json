@@ -3239,6 +3239,8 @@
     "credits": "クレジット",
     "copilotPremium": "プレミアム",
     "utilization": "{{value}}%",
+    "creditsUnit": "クレジット",
+    "creditUsage": "{{used}}/{{total}} {{unit}}",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",

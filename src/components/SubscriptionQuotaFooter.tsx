@@ -317,15 +317,32 @@ export const TierBadge: React.FC<{
   const countdown = countdownStr(tier.resetsAt);
 
   const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
+  // 智谱 V3 积分套餐：有 usedCredits/maxCredits 时改用积分绝对值展示，
+  // 替换 V2 的百分比，对齐智谱官网 "currentValue / usage 积分" 形式。
+  const hasCredits = tier.usedCredits != null && tier.maxCredits != null;
 
   return (
     <div className="flex items-center gap-0.5">
       <span className="text-gray-500 dark:text-gray-400">{label}:</span>
-      <span
-        className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
-      >
-        {t("subscription.utilization", { value: Math.round(tier.utilization) })}
-      </span>
+      {hasCredits ? (
+        <span
+          className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+        >
+          {t("subscription.creditUsage", {
+            used: Math.round(tier.usedCredits!),
+            total: Math.round(tier.maxCredits!),
+            unit: t("subscription.creditsUnit"),
+          })}
+        </span>
+      ) : (
+        <span
+          className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+        >
+          {t("subscription.utilization", {
+            value: Math.round(tier.utilization),
+          })}
+        </span>
+      )}
       {hasUsd && (
         <span className="text-muted-foreground/60">
           (${tier.usedValueUsd!.toFixed(2)}/${tier.maxValueUsd!.toFixed(2)})
@@ -378,11 +395,23 @@ const TierBar: React.FC<{
         className="flex items-center gap-2 flex-shrink-0"
         style={{ width: "30%" }}
       >
-        <span
-          className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
-        >
-          {Math.round(tier.utilization)}%
-        </span>
+        {tier.usedCredits != null && tier.maxCredits != null ? (
+          <span
+            className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+          >
+            {t("subscription.creditUsage", {
+              used: Math.round(tier.usedCredits),
+              total: Math.round(tier.maxCredits),
+              unit: t("subscription.creditsUnit"),
+            })}
+          </span>
+        ) : (
+          <span
+            className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+          >
+            {Math.round(tier.utilization)}%
+          </span>
+        )}
         {resetText && (
           <span
             className="text-[10px] text-muted-foreground/70 truncate"

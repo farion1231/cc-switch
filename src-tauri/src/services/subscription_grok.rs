@@ -664,6 +664,8 @@ pub(crate) async fn query_grok_quota(
             .map(|dt| dt.to_rfc3339()),
         used_value_usd: None,
         max_value_usd: None,
+        used_credits: None,
+        max_credits: None,
     };
 
     Ok(SubscriptionQuota {
