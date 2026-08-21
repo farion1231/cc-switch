@@ -54,11 +54,53 @@ pub(crate) fn strip_leading_anthropic_billing_header(text: &str) -> &str {
 }
 
 /// Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)
-/// These models require `max_completion_tokens` instead of `max_tokens`.
 pub fn is_openai_o_series(model: &str) -> bool {
     model.len() > 1
         && model.starts_with('o')
         && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
+}
+
+/// Known maximum output token limits for model families whose cap is below what
+/// Claude Code typically requests (32 000). Azure deployments often carry a
+/// regional prefix (e.g. "eastus-gpt-4o-01"), so matching uses `contains`.
+///
+/// Returns `None` for models with higher or unknown limits — those pass through
+/// unchanged.
+pub fn known_max_output_tokens(model: &str) -> Option<i64> {
+    let m = model.to_lowercase();
+    if m.contains("gpt-4o") || m.contains("gpt4o") {
+        Some(16_384) // gpt-4o family: 16 384 output tokens
+    } else if m.contains("gpt-4-turbo")
+        || (m.contains("gpt-4-") && !m.contains("gpt-4o") && !m.contains("gpt-4."))
+    {
+        Some(4_096) // classic gpt-4 and gpt-4-turbo: 4 096 output tokens
+    } else if m.contains("gpt-3.5") {
+        Some(4_096)
+    } else {
+        None
+    }
+}
+
+/// Clamp a JSON token value to a model's known output-token cap.
+/// Returns the original value when no cap is known or the value is already within bounds.
+pub fn clamp_max_tokens(model: &str, v: &serde_json::Value) -> serde_json::Value {
+    if let (Some(cap), Some(n)) = (known_max_output_tokens(model), v.as_i64()) {
+        if n > cap {
+            return json!(cap);
+        }
+    }
+    v.clone()
+}
+
+/// Detect models that require `max_completion_tokens` instead of `max_tokens`.
+/// Covers o-series (o1, o3, o4-mini) and gpt-5+ (gpt-5, gpt-5.1, gpt-5-mini, etc.)
+pub fn requires_max_completion_tokens(model: &str) -> bool {
+    let normalized = model.to_lowercase();
+    is_openai_o_series(&normalized)
+        || normalized
+            .strip_prefix("gpt-")
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|c| c.is_ascii_digit() && c >= '5')
 }
 
 /// Detect Responses-compatible models that support reasoning effort.
@@ -70,11 +112,7 @@ pub fn is_openai_o_series(model: &str) -> bool {
 ///   model; retain the previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_lowercase();
-    is_openai_o_series(&normalized)
-        || normalized
-            .strip_prefix("gpt-")
-            .and_then(|rest| rest.chars().next())
-            .is_some_and(|c| c.is_ascii_digit() && c >= '5')
+    requires_max_completion_tokens(&normalized)
         || normalized == "grok-4.5"
         || normalized.starts_with("grok-4.5-")
         || normalized.starts_with("grok-build-")
@@ -183,13 +221,14 @@ pub fn anthropic_to_openai_with_reasoning_content(
     normalize_openai_system_messages(&mut messages);
     result["messages"] = json!(messages);
 
-    // 转换参数 — o-series 模型需要 max_completion_tokens
+    // 转换参数 — o-series 和 gpt-5+ 需要 max_completion_tokens；同时 clamp 到模型上限
     let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
     if let Some(v) = body.get("max_tokens") {
-        if is_openai_o_series(model) {
-            result["max_completion_tokens"] = v.clone();
+        let clamped = clamp_max_tokens(model, v);
+        if requires_max_completion_tokens(model) {
+            result["max_completion_tokens"] = clamped;
         } else {
-            result["max_tokens"] = v.clone();
+            result["max_tokens"] = clamped;
         }
     }
     if let Some(v) = body.get("temperature") {
@@ -1739,6 +1778,59 @@ mod tests {
         assert!(!is_openai_o_series("openai-gpt"));
         assert!(!is_openai_o_series("o"));
         assert!(!is_openai_o_series(""));
+    }
+
+    #[test]
+    fn test_known_max_output_tokens() {
+        // gpt-4o family (including Azure regional deployments)
+        assert_eq!(known_max_output_tokens("gpt-4o"), Some(16_384));
+        assert_eq!(known_max_output_tokens("gpt-4o-mini"), Some(16_384));
+        assert_eq!(known_max_output_tokens("eastus-gpt-4o-01"), Some(16_384));
+        assert_eq!(
+            known_max_output_tokens("swedencentral-gpt-4o"),
+            Some(16_384)
+        );
+        // classic gpt-4
+        assert_eq!(known_max_output_tokens("gpt-4-turbo"), Some(4_096));
+        assert_eq!(known_max_output_tokens("gpt-4-0613"), Some(4_096));
+        // gpt-3.5
+        assert_eq!(known_max_output_tokens("gpt-3.5-turbo"), Some(4_096));
+        // no cap for gpt-5+ or unknown models
+        assert_eq!(known_max_output_tokens("gpt-5"), None);
+        assert_eq!(known_max_output_tokens("claude-sonnet-4-6"), None);
+    }
+
+    #[test]
+    fn test_clamp_max_tokens() {
+        // clamps when over the limit
+        assert_eq!(clamp_max_tokens("gpt-4o", &json!(32000)), json!(16_384));
+        assert_eq!(
+            clamp_max_tokens("eastus-gpt-4o-01", &json!(32000)),
+            json!(16_384)
+        );
+        // passes through when within limit
+        assert_eq!(clamp_max_tokens("gpt-4o", &json!(1024)), json!(1024));
+        // passes through for unknown models
+        assert_eq!(clamp_max_tokens("gpt-5", &json!(32000)), json!(32000));
+        // passes through non-integer values
+        assert_eq!(clamp_max_tokens("gpt-4o", &json!(null)), json!(null));
+    }
+
+    #[test]
+    fn test_requires_max_completion_tokens() {
+        // o-series
+        assert!(requires_max_completion_tokens("o1"));
+        assert!(requires_max_completion_tokens("o3-mini"));
+        assert!(requires_max_completion_tokens("o4-mini"));
+        // gpt-5+
+        assert!(requires_max_completion_tokens("gpt-5"));
+        assert!(requires_max_completion_tokens("gpt-5.4"));
+        assert!(requires_max_completion_tokens("gpt-5-mini"));
+        assert!(requires_max_completion_tokens("gpt-5-codex"));
+        // not affected
+        assert!(!requires_max_completion_tokens("gpt-4o"));
+        assert!(!requires_max_completion_tokens("gpt-4-turbo"));
+        assert!(!requires_max_completion_tokens("claude-sonnet-4-6"));
     }
 
     #[test]
