@@ -381,6 +381,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
     icon: "sudocode-us",
   },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://apicdn.xycai.us",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://apicdn.xycai.us",
+    model: "gemini-3.6-flash",
+    description: "XycAi",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
+    icon: "xycai",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "E-FlowCode",

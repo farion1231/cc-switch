@@ -22,7 +22,10 @@ use serde_json::{json, Value};
 const ANTHROPIC_THINKING_PLACEHOLDER: &str = "tool call";
 const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 // Keep hints lowercase; matching lowercases only the input value.
-const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
+// Moonshot/Kimi exited on vendor request (2026-08): their endpoints no longer
+// require thinking replay on tool-call turns, and injected placeholders
+// disrupt the model's chain of thought. Do not re-add without re-confirming.
+const REASONING_VENDOR_HINTS: &[&str] = &["deepseek", "mimo", "xiaomimimo"];
 
 // ChatGPT Codex 后端按 originator+version 组合做模型 cohort 路由：非官方身份会把
 // gpt-5.6-luna 解析到未部署的内部引擎（HTTP 404 Model not found，openai/codex#31967，
@@ -2115,7 +2118,9 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_openai_chat_preserves_reasoning_content_for_kimi_provider() {
+    fn test_transform_openai_chat_skips_reasoning_content_for_kimi_provider() {
+        // Kimi 2026-08 反馈：不再需要 reasoning_content 回放，注入反而扰乱思维链。
+        // Kimi/Moonshot 已从 REASONING_VENDOR_HINTS 撤出，应与通用 provider 同行为。
         let provider = create_provider_with_meta(
             json!({
                 "env": {
@@ -2145,8 +2150,8 @@ mod tests {
                 .unwrap();
 
         let msg = &transformed["messages"][0];
-        assert_eq!(msg["reasoning_content"], "I should call the tool.");
         assert!(msg.get("tool_calls").is_some());
+        assert!(msg.get("reasoning_content").is_none());
     }
 
     #[test]
@@ -2312,7 +2317,9 @@ mod tests {
     }
 
     #[test]
-    fn test_kimi_anthropic_tool_history_injects_missing_thinking() {
+    fn test_kimi_anthropic_tool_history_not_modified() {
+        // Kimi 2026-08 反馈：Anthropic 兼容端点不再要求 tool_use 轮回放 thinking，
+        // 注入占位符反而扰乱思维链。Kimi 应走通用透传，请求体一字不动。
         let provider = create_provider(json!({
             "env": {
                 "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
@@ -2328,6 +2335,7 @@ mod tests {
                 ]
             }]
         });
+        let original = body.clone();
 
         let changed = normalize_anthropic_tool_thinking_history_for_provider(
             &mut body,
@@ -2335,11 +2343,8 @@ mod tests {
             "anthropic",
         );
 
-        assert!(changed);
-        let content = body["messages"][0]["content"].as_array().unwrap();
-        assert_eq!(content[0]["type"], "thinking");
-        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
-        assert_eq!(content[1]["type"], "tool_use");
+        assert!(!changed);
+        assert_eq!(body, original);
     }
 
     #[test]

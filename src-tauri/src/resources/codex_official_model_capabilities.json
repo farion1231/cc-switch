@@ -1,5 +1,5 @@
 {
-  "source": "openai/codex rust-v0.147.0 bundled model registry (2026-08-07)",
+  "source": "openai/codex rust-v0.147.0 compatibility fields, verified through rust-v0.149.0 (2026-08-21); keeps the 0.147 supports_parallel_tool_calls field and intentionally omits 0.149 max_context_window values for third-party relay safety",
   "models": {
     "gpt-5.6-sol": {
       "default_reasoning_level": "low",
