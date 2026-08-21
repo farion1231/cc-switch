@@ -78,6 +78,43 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
         return Vec::new();
     }
 
+    // Build a lookup of "first user message content" per session in one
+    // query so the list view can show a sensible title without an N+1
+    // round-trip per row. We only consider active=1 rows so compacted
+    // turns don't pollute the preview.
+    let mut first_user_msg: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='messages'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0
+    {
+        let sql = "SELECT m.session_id, m.content \
+                   FROM messages m \
+                   JOIN ( \
+                     SELECT session_id, MIN(timestamp) AS first_ts \
+                     FROM messages \
+                     WHERE role = 'user' AND active = 1 \
+                     GROUP BY session_id \
+                   ) first ON first.session_id = m.session_id AND first.first_ts = m.timestamp \
+                   WHERE m.role = 'user'";
+        if let Ok(mut stmt) = conn.prepare(sql) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                let sid: String = row.get(0)?;
+                let content: String = row.get(1)?;
+                Ok((sid, content))
+            }) {
+                for row in rows.flatten() {
+                    first_user_msg.insert(row.0, row.1);
+                }
+            }
+        }
+    }
+
     // Query sessions — use flexible column access via pragma
     let columns = get_table_columns(&conn, "sessions");
 
@@ -96,7 +133,17 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
     let db_source = format!("sqlite:{}", db_path.display());
 
     for row_result in rows.flatten() {
-        if let Some(meta) = sqlite_row_to_session_meta(&row_result, &db_source) {
+        if let Some(mut meta) = sqlite_row_to_session_meta(&row_result, &db_source) {
+            // The sessions table doesn't carry a title column in Hermes
+            // (v3.x). If `display_name` is blank — which it always is today —
+            // fall back to the first user message we just looked up, so the
+            // list view shows something meaningful instead of an 8-char id.
+            if meta.title.is_none() || meta.title.as_deref() == Some("") {
+                if let Some(msg) = first_user_msg.get(&meta.session_id) {
+                    meta.title = Some(truncate_summary(msg, TITLE_MAX_CHARS).to_string());
+                    meta.summary = Some(msg.clone());
+                }
+            }
             sessions.push(meta);
         }
     }
@@ -185,6 +232,20 @@ fn row_to_json(row: &rusqlite::Row, columns: &[String]) -> Value {
 }
 
 /// Load messages from the Hermes SQLite database.
+///
+/// Hermes' `messages` table has these columns we care about:
+///   - role          : "user" | "assistant" | "tool" | "system"
+///   - content       : TEXT (assistant/user text or tool result JSON-as-text)
+///   - timestamp     : REAL Unix epoch seconds (with fractional part)
+///   - tool_calls    : JSON array of OpenAI-style function calls, present on
+///                     assistant turns when the model emitted one or more tool
+///                     invocations (e.g. `terminal`, `web_search`).
+///   - tool_name     : populated on tool-result rows (`role="tool"`).
+///   - active        : 0 = compacted/superseded (skip these).
+///
+/// We render tool calls the same way Codex does — assistant tool_use becomes
+/// `"[Tool: <name>]"` and tool result rows become their content string with
+/// `role="tool"`, so the SessionManager UI can color them uniformly.
 pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
     let (db_path, session_id) = parse_sqlite_source(source)
         .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
@@ -195,9 +256,12 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
     )
     .map_err(|e| format!("Failed to open Hermes database: {e}"))?;
 
-    // Try querying with common column names
-    let query =
-        "SELECT role, content, created_at FROM messages WHERE session_id = ?1 ORDER BY created_at ASC";
+    // Hermes messages schema (v3+):
+    //   timestamp REAL NOT NULL — Unix epoch seconds
+    // We deliberately skip `active = 0` rows (compacted/rolled-back turns).
+    let query = "SELECT role, content, timestamp, tool_calls, tool_name, active \
+                 FROM messages WHERE session_id = ?1 \
+                 ORDER BY timestamp ASC, id ASC";
 
     let mut stmt = conn
         .prepare(query)
@@ -206,27 +270,98 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
     let rows = stmt
         .query_map([session_id.as_str()], |row| {
             let role: String = row.get(0)?;
-            let content: String = row.get(1)?;
-            let ts: Option<i64> = row.get(2).ok();
-            Ok((role, content, ts))
+            let content: Option<String> = row.get(1).ok();
+            let ts: Option<f64> = row.get(2).ok();
+            let tool_calls: Option<String> = row.get(3).ok();
+            let tool_name: Option<String> = row.get(4).ok();
+            let active: Option<i64> = row.get(5).ok();
+            Ok((role, content, ts, tool_calls, tool_name, active))
         })
         .map_err(|e| format!("Failed to query messages: {e}"))?;
 
     let mut messages = Vec::new();
     for row in rows.flatten() {
-        let (role, content, ts) = row;
-        if content.trim().is_empty() {
+        let (role, content, ts, tool_calls, tool_name, active) = row;
+
+        // Skip compacted/superseded turns.
+        if matches!(active, Some(0)) {
             continue;
         }
-        let ts_ms = ts.and_then(|v| parse_timestamp_to_ms(&Value::Number(v.into())));
-        messages.push(SessionMessage {
-            role,
-            content,
-            ts: ts_ms,
-        });
+
+        // For assistant turns with tool_calls, emit one [Tool: name] line per
+        // call (mirrors Codex's `function_call` rendering). If there is also
+        // text content, emit that first so the reasoning narrative stays
+        // visible.
+        let mut emitted_any = false;
+        if role == "assistant" {
+            if let Some(ref text) = content {
+                if !text.trim().is_empty() {
+                    messages.push(SessionMessage {
+                        role: "assistant".to_string(),
+                        content: text.clone(),
+                        ts: ts.and_then(timestamp_secs_to_ms),
+                    });
+                    emitted_any = true;
+                }
+            }
+            if let Some(tc_json) = tool_calls.as_deref() {
+                if let Ok(Value::Array(calls)) = serde_json::from_str::<Value>(tc_json) {
+                    for call in calls {
+                        let name = call
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(Value::as_str)
+                            .or_else(|| call.get("name").and_then(Value::as_str))
+                            .unwrap_or("unknown");
+                        messages.push(SessionMessage {
+                            role: "assistant".to_string(),
+                            content: format!("[Tool: {name}]"),
+                            ts: ts.and_then(timestamp_secs_to_ms),
+                        });
+                        emitted_any = true;
+                    }
+                }
+            }
+        } else {
+            // user / tool / system / other: content is the message body.
+            // For tool results, prefer `tool_name` as a header so the reader
+            // can tell which call produced this output.
+            let body = match (role.as_str(), tool_name.as_deref()) {
+                ("tool", Some(name)) if !name.is_empty() => {
+                    let inner = content.unwrap_or_default();
+                    if inner.trim().is_empty() {
+                        format!("[Result: {name}]")
+                    } else {
+                        format!("[Result: {name}]\n{inner}")
+                    }
+                }
+                _ => content.unwrap_or_default(),
+            };
+            if !body.trim().is_empty() {
+                messages.push(SessionMessage {
+                    role,
+                    content: body,
+                    ts: ts.and_then(timestamp_secs_to_ms),
+                });
+                emitted_any = true;
+            }
+        }
+
+        // Suppress the unused assignment lint when no message was emitted.
+        let _ = emitted_any;
     }
 
     Ok(messages)
+}
+
+/// Hermes stores timestamps as Unix epoch seconds (REAL). Convert to ms.
+fn timestamp_secs_to_ms(secs: f64) -> Option<i64> {
+    let ms = (secs * 1000.0).round() as i64;
+    if ms <= 0 {
+        None
+    } else {
+        Some(ms)
+    }
 }
 
 /// Delete a session from the Hermes SQLite database.
@@ -599,5 +734,143 @@ mod tests {
 
         delete_session(dir.path(), &path, "session").expect("should delete");
         assert!(!path.exists());
+    }
+
+    // ── SQLite integration tests (real schema, in-memory) ──────────────
+    //
+    // These guard against the regressions that originally made Hermes
+    // sessions invisible in the SessionManager:
+    //   1. `load_messages_sqlite` must query the `timestamp` column, not
+    //      `created_at` (Hermes' schema uses REAL seconds).
+    //   2. tool_calls JSON must be rendered as `[Tool: name]`, not blank.
+    //   3. `active = 0` rows must be skipped.
+
+    use rusqlite::Connection;
+
+    fn build_hermes_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                cwd TEXT,
+                started_at REAL,
+                ended_at REAL,
+                message_count INTEGER DEFAULT 0
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                tool_calls TEXT,
+                tool_name TEXT,
+                timestamp REAL NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1
+            );
+            "#,
+        )
+        .expect("create schema");
+        conn
+    }
+
+    #[test]
+    fn load_messages_sqlite_reads_timestamp_column_and_orders_by_it() {
+        let conn = build_hermes_db();
+        // Insert out-of-order to make sure ORDER BY timestamp actually sorts.
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["s1", "assistant", "second reply", 1000.5],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["s1", "user", "first question", 1000.0],
+        ).unwrap();
+
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("state.db");
+        conn.execute_batch(&format!(
+            "ATTACH DATABASE '{}' AS disk; CREATE TABLE disk.sessions AS SELECT * FROM sessions; CREATE TABLE disk.messages AS SELECT * FROM messages; DETACH DATABASE disk;",
+            db_path.display()
+        )).expect("materialize db");
+
+        let source = format!("sqlite:{}#s1", db_path.display());
+        let msgs = load_messages_sqlite(&source).expect("load_messages_sqlite");
+
+        assert_eq!(msgs.len(), 2, "should load both rows from a `timestamp` column");
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "first question");
+        assert_eq!(msgs[0].ts, Some(1_000_000));
+        assert_eq!(msgs[1].role, "assistant");
+        assert_eq!(msgs[1].ts, Some(1_000_500));
+    }
+
+    #[test]
+    fn load_messages_sqlite_renders_tool_calls_as_tool_markers() {
+        let conn = build_hermes_db();
+        let tool_calls_json = r#"[{"id":"c1","function":{"name":"terminal","arguments":"{\"command\":\"ls\"}"}}]"#;
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params!["s2", "assistant", "let me check", tool_calls_json, 2000.0],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, tool_name, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params!["s2", "tool", "file1.txt\nfile2.txt", "terminal", 2001.0],
+        ).unwrap();
+
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("state.db");
+        conn.execute_batch(&format!(
+            "ATTACH DATABASE '{}' AS disk; CREATE TABLE disk.sessions AS SELECT * FROM sessions; CREATE TABLE disk.messages AS SELECT * FROM messages; DETACH DATABASE disk;",
+            db_path.display()
+        )).expect("materialize db");
+
+        let source = format!("sqlite:{}#s2", db_path.display());
+        let msgs = load_messages_sqlite(&source).expect("load_messages_sqlite");
+
+        // assistant turn should produce: (text) + ([Tool: terminal])
+        assert_eq!(msgs.len(), 3, "expected text + tool + tool_result");
+        assert_eq!(msgs[0].content, "let me check");
+        assert_eq!(msgs[1].content, "[Tool: terminal]");
+        // tool result gets a header from tool_name
+        assert!(
+            msgs[2].content.starts_with("[Result: terminal]"),
+            "got {:?}",
+            msgs[2].content
+        );
+        assert!(msgs[2].content.contains("file1.txt"));
+    }
+
+    #[test]
+    fn load_messages_sqlite_skips_inactive_rows() {
+        let conn = build_hermes_db();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp, active) VALUES (?1, ?2, ?3, ?4, 0)",
+            rusqlite::params!["s3", "assistant", "compacted thought", 3000.0],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["s3", "user", "live question", 3001.0],
+        ).unwrap();
+
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("state.db");
+        conn.execute_batch(&format!(
+            "ATTACH DATABASE '{}' AS disk; CREATE TABLE disk.sessions AS SELECT * FROM sessions; CREATE TABLE disk.messages AS SELECT * FROM messages; DETACH DATABASE disk;",
+            db_path.display()
+        )).expect("materialize db");
+
+        let source = format!("sqlite:{}#s3", db_path.display());
+        let msgs = load_messages_sqlite(&source).expect("load_messages_sqlite");
+
+        assert_eq!(msgs.len(), 1, "active=0 row must be filtered out");
+        assert_eq!(msgs[0].content, "live question");
+    }
+
+    #[test]
+    fn timestamp_secs_to_ms_handles_fractional_seconds() {
+        assert_eq!(timestamp_secs_to_ms(1_700_000_000.5), Some(1_700_000_000_500));
+        assert_eq!(timestamp_secs_to_ms(0.0), None);
+        assert_eq!(timestamp_secs_to_ms(-1.0), None);
     }
 }
