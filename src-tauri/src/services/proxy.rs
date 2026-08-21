@@ -2311,6 +2311,7 @@ impl ProxyService {
                 );
             } else {
                 self.write_live_config_for_app(app_type, &config)?;
+                self.ensure_codex_official_proxy_compatibility_after_restore(app_type)?;
                 log::info!("{app_type_str} Live 配置已从备份恢复");
                 return Ok(());
             }
@@ -2324,6 +2325,7 @@ impl ProxyService {
         // 2.1) 优先从 SSOT（当前供应商）重建 Live（比"清理字段"更可用）
         match self.restore_live_from_ssot_for_app(app_type) {
             Ok(true) => {
+                self.ensure_codex_official_proxy_compatibility_after_restore(app_type)?;
                 log::info!("{app_type_str} Live 配置已从 SSOT 恢复（无备份兜底）");
                 return Ok(());
             }
@@ -2341,7 +2343,30 @@ impl ProxyService {
 
         // 2.2) 最后兜底：尽力清理占位符与本地代理地址，避免长期卡在代理占位符状态
         self.cleanup_takeover_placeholders_in_live_for_app(app_type)?;
+        self.ensure_codex_official_proxy_compatibility_after_restore(app_type)?;
         log::info!("{app_type_str} Live 接管占位符已清理（无备份兜底）");
+        Ok(())
+    }
+
+    fn ensure_codex_official_proxy_compatibility_after_restore(
+        &self,
+        app_type: &AppType,
+    ) -> Result<(), String> {
+        if !matches!(app_type, AppType::Codex) {
+            return Ok(());
+        }
+        let current = crate::codex_config::read_codex_config_text()
+            .map_err(|e| format!("读取 Codex 恢复配置失败: {e}"))?;
+        let compatible =
+            crate::codex_config::ensure_codex_official_proxy_compatibility_provider(&current)
+                .map_err(|e| format!("写入 Codex 旧会话兼容路由失败: {e}"))?;
+        if compatible != current {
+            crate::config::write_text_file(
+                &crate::codex_config::get_codex_config_path(),
+                &compatible,
+            )
+            .map_err(|e| format!("写入 Codex 旧会话兼容路由失败: {e}"))?;
+        }
         Ok(())
     }
 
@@ -2478,9 +2503,11 @@ impl ProxyService {
             }
         }
 
-        doc.get("base_url")
-            .and_then(|value| value.as_str())
-            .is_some_and(predicate)
+        ["openai_base_url", "base_url"].into_iter().any(|key| {
+            doc.get(key)
+                .and_then(|value| value.as_str())
+                .is_some_and(&predicate)
+        })
     }
 
     async fn live_takeover_matches_current_proxy(
@@ -2502,15 +2529,21 @@ impl ProxyService {
             }
             AppType::Codex => {
                 let config = self.read_codex_live()?;
-                let base_url_matches = config
-                    .get("config")
-                    .and_then(|value| value.as_str())
-                    .is_some_and(|config_text| {
-                        Self::codex_config_has_base_url_matching(config_text, |url| {
-                            Self::proxy_urls_match(url, &proxy_codex_base_url)
-                        })
-                    });
-                Ok(Self::is_codex_live_taken_over(&config) && base_url_matches)
+                let config_text = config.get("config").and_then(|value| value.as_str());
+                let base_url_matches = config_text.is_some_and(|config_text| {
+                    Self::codex_config_has_base_url_matching(config_text, |url| {
+                        Self::proxy_urls_match(url, &proxy_codex_base_url)
+                    })
+                });
+                let official_aliases_are_current = config_text.is_some_and(|config_text| {
+                    crate::codex_config::codex_config_has_current_official_proxy_aliases(
+                        config_text,
+                        &proxy_codex_base_url,
+                    )
+                });
+                Ok(Self::is_codex_live_taken_over(&config)
+                    && base_url_matches
+                    && official_aliases_are_current)
             }
             AppType::Gemini => {
                 let config = self.read_gemini_live()?;
@@ -2580,14 +2613,14 @@ impl ProxyService {
         }
 
         if let Some(cfg_str) = config.get("config").and_then(|v| v.as_str()) {
-            let updated = Self::remove_local_toml_base_url(cfg_str);
+            let updated = crate::codex_config::remove_codex_official_proxy_route(cfg_str)
+                .map_err(|e| format!("清理 Codex 官方接管路由失败: {e}"))?;
+            let updated = Self::remove_local_toml_base_url(&updated);
             let updated =
                 crate::codex_config::remove_codex_experimental_bearer_token_if(&updated, |token| {
                     token == PROXY_TOKEN_PLACEHOLDER
                 })
                 .map_err(|e| format!("清理 Codex 接管占位符失败: {e}"))?;
-            let updated = crate::codex_config::remove_codex_official_proxy_route(&updated)
-                .map_err(|e| format!("清理 Codex 官方接管路由失败: {e}"))?;
             config["config"] = json!(updated);
         }
 
@@ -3443,7 +3476,8 @@ impl ProxyService {
                     .map_err(|e| format!("更新 Codex 上游模型失败: {e}"))?;
         }
 
-        Ok(updated)
+        crate::codex_config::apply_codex_official_proxy_aliases(&updated, proxy_url)
+            .map_err(|e| format!("生成 Codex 旧会话兼容路由失败: {e}"))
     }
 
     fn apply_codex_takeover_auth_placeholder(settings: &mut Value, provider: Option<&Provider>) {
@@ -4050,6 +4084,25 @@ mod tests {
                 None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    #[test]
+    fn codex_base_url_matcher_recognizes_builtin_openai_override() {
+        let config = r#"model_provider = "openai"
+openai_base_url = "http://127.0.0.1:15721/v1"
+
+[model_providers.cc-switch-official]
+name = "OpenAI"
+base_url = "http://127.0.0.1:15721/v1"
+requires_openai_auth = true
+supports_websockets = false
+wire_api = "responses"
+"#;
+
+        assert!(ProxyService::codex_config_has_base_url_matching(
+            config,
+            |url| ProxyService::proxy_urls_match(url, "http://127.0.0.1:15721/v1")
+        ));
     }
 
     fn assert_env_str(env: &Map<String, Value>, key: &str, expected: Option<&str>) {
@@ -5696,6 +5749,228 @@ wire_api = "responses"
 
     #[tokio::test]
     #[serial]
+    async fn codex_official_takeover_routes_existing_threads_without_rewriting_history() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+        crate::codex_config::write_codex_live_atomic(
+            &json!({
+                "auth_mode": "chatgpt",
+                "tokens": { "access_token": "oauth-access" }
+            }),
+            Some("model = \"gpt-5.4\"\n"),
+        )
+        .expect("seed official live config");
+
+        let mut official = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("codex", &official)
+            .expect("save official provider");
+        db.set_current_provider("codex", crate::database::CODEX_OFFICIAL_PROVIDER_ID)
+            .expect("set current provider");
+        crate::settings::set_current_provider(
+            &AppType::Codex,
+            Some(crate::database::CODEX_OFFICIAL_PROVIDER_ID),
+        )
+        .expect("set local current provider");
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        let session_dir = codex_dir.join("sessions/2026/08/19");
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+        let session_path = session_dir.join("existing-thread.jsonl");
+        std::fs::write(
+            &session_path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"existing\",\"model_provider\":\"openai\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model_provider_id\":\"openai\"}}}\n",
+            ),
+        )
+        .expect("seed existing session");
+        let legacy_session_path = session_dir.join("legacy-routed-thread.jsonl");
+        let legacy_session = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"legacy\",\"model_provider\":\"cc-switch-official\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model_provider_id\":\"cc-switch-official\"}}}\n",
+        );
+        std::fs::write(&legacy_session_path, legacy_session).expect("seed legacy routed session");
+        let mut active_rollout = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&session_path)
+            .expect("keep active rollout handle open");
+        let state_db_path = codex_dir.join(crate::codex_state_db::CODEX_STATE_DB_FILENAME);
+        let state_conn = rusqlite::Connection::open(&state_db_path).expect("open Codex state db");
+        state_conn
+            .execute_batch(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL);
+                 INSERT INTO threads (id, model_provider) VALUES ('existing', 'openai');
+                 INSERT INTO threads (id, model_provider) VALUES ('legacy', 'cc-switch-official');",
+            )
+            .expect("seed Codex state db");
+        drop(state_conn);
+
+        service
+            .set_takeover_for_app("codex", true)
+            .await
+            .expect("enable official takeover");
+        let expected_proxy_base_url = running_codex_base_url(&service).await;
+        let legacy_route = format!(
+            r#"model_provider = "cc-switch-official"
+
+[model_providers.cc-switch-official]
+name = "OpenAI"
+base_url = "{expected_proxy_base_url}"
+requires_openai_auth = true
+supports_websockets = false
+wire_api = "responses"
+"#
+        );
+        crate::config::write_text_file(
+            &crate::codex_config::get_codex_config_path(),
+            &legacy_route,
+        )
+        .expect("simulate legacy managed route");
+        service
+            .set_takeover_for_app("codex", true)
+            .await
+            .expect("upgrade legacy official route without touching history");
+        use std::io::Write;
+        active_rollout
+            .write_all(b"{\"type\":\"response_item\",\"payload\":{\"role\":\"assistant\",\"content\":\"late-active-write\"}}\n")
+            .expect("append through active rollout handle");
+        active_rollout.flush().expect("flush active rollout");
+        let enabled_text = std::fs::read_to_string(&session_path).expect("read enabled session");
+        assert!(enabled_text.contains("\"model_provider\":\"openai\""));
+        assert!(enabled_text.contains("\"model_provider_id\":\"openai\""));
+        assert!(
+            enabled_text.contains("late-active-write"),
+            "takeover must not replace an active rollout file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&legacy_session_path).expect("read legacy session"),
+            legacy_session,
+            "takeover must not rewrite legacy rollout metadata"
+        );
+
+        let live_config =
+            crate::codex_config::read_codex_config_text().expect("read routed Codex config");
+        let live_doc: toml::Value = toml::from_str(&live_config).expect("parse routed config");
+        assert_eq!(
+            live_doc.get("model_provider").and_then(toml::Value::as_str),
+            Some("openai"),
+            "new official threads must stay in the native openai bucket"
+        );
+        assert_eq!(
+            live_doc
+                .get("openai_base_url")
+                .and_then(toml::Value::as_str),
+            Some(expected_proxy_base_url.as_str()),
+            "native OpenAI threads must use Codex's supported built-in base URL override"
+        );
+        assert!(
+            live_doc
+                .get("model_providers")
+                .and_then(|providers| providers.get("openai"))
+                .is_none(),
+            "the reserved built-in OpenAI provider must never be redefined"
+        );
+        assert_eq!(
+            live_doc["model_providers"]["cc-switch-official"]
+                .get("base_url")
+                .and_then(toml::Value::as_str),
+            Some(expected_proxy_base_url.as_str()),
+            "legacy CC Switch thread buckets must keep their legal local provider alias"
+        );
+        let state_conn = rusqlite::Connection::open(&state_db_path).expect("reopen state db");
+        for (thread_id, expected_provider) in
+            [("existing", "openai"), ("legacy", "cc-switch-official")]
+        {
+            let provider: String = state_conn
+                .query_row(
+                    "SELECT model_provider FROM threads WHERE id = ?1",
+                    [thread_id],
+                    |row| row.get(0),
+                )
+                .expect("read enabled provider");
+            assert_eq!(
+                provider, expected_provider,
+                "takeover must not mutate Codex state DB"
+            );
+        }
+        drop(state_conn);
+
+        service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable official takeover");
+        let disabled_text = std::fs::read_to_string(&session_path).expect("read disabled session");
+        assert!(disabled_text.contains("\"model_provider\":\"openai\""));
+        assert!(disabled_text.contains("\"model_provider_id\":\"openai\""));
+        assert!(disabled_text.contains("late-active-write"));
+        assert_eq!(
+            std::fs::read_to_string(&legacy_session_path).expect("read disabled legacy session"),
+            legacy_session
+        );
+
+        let restored_config =
+            crate::codex_config::read_codex_config_text().expect("read restored Codex config");
+        let restored_doc: toml::Value =
+            toml::from_str(&restored_config).expect("parse restored Codex config");
+        let legacy_compat = &restored_doc["model_providers"]["cc-switch-official"];
+        assert!(legacy_compat.get("base_url").is_none());
+        assert_eq!(
+            legacy_compat
+                .get("requires_openai_auth")
+                .and_then(toml::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            legacy_compat
+                .get("supports_websockets")
+                .and_then(toml::Value::as_bool),
+            Some(true)
+        );
+        assert!(!crate::codex_config::codex_config_has_official_proxy_route(
+            &restored_config
+        ));
+
+        let state_conn = rusqlite::Connection::open(&state_db_path).expect("reopen restored DB");
+        let legacy_provider: String = state_conn
+            .query_row(
+                "SELECT model_provider FROM threads WHERE id = 'legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read restored legacy provider");
+        assert_eq!(legacy_provider, "cc-switch-official");
+        drop(state_conn);
+
+        service
+            .restore_live_config_for_app_with_fallback_inner(&AppType::Codex)
+            .await
+            .expect("repeat startup-style restore idempotently");
+        assert_eq!(
+            crate::codex_config::read_codex_config_text()
+                .expect("read config after repeated restore"),
+            restored_config
+        );
+        assert_eq!(
+            std::fs::read_to_string(&legacy_session_path)
+                .expect("read legacy session after repeated restore"),
+            legacy_session
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn codex_takeover_enabled_commit_failure_restores_native_live_bundle() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -6166,6 +6441,136 @@ wire_api = "responses"
 
     #[tokio::test]
     #[serial]
+    async fn codex_set_takeover_upgrades_legacy_third_party_route_with_missing_aliases() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+        service.start().await.expect("start proxy server");
+        let proxy_base_url = running_codex_base_url(&service).await;
+
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access"
+            }
+        });
+        let original_config = r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "rightcode-key"
+"#;
+        let legacy_takeover_config = format!(
+            r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "{proxy_base_url}"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+"#
+        );
+        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some(&legacy_takeover_config))
+            .expect("seed legacy third-party takeover");
+
+        let mut provider = Provider::with_id(
+            "rightcode".to_string(),
+            "RightCode".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "rightcode-key" },
+                "config": original_config
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        db.save_provider("codex", &provider)
+            .expect("save third-party provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": oauth_auth,
+                "config": original_config
+            }))
+            .expect("serialize original backup"),
+        )
+        .await
+        .expect("seed original live backup");
+        let mut proxy_config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get Codex proxy config");
+        proxy_config.enabled = true;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("mark Codex takeover enabled");
+
+        assert!(
+            !service
+                .live_takeover_matches_current_proxy(&AppType::Codex)
+                .await
+                .expect("classify legacy takeover"),
+            "a legacy takeover without official aliases must be rebuilt"
+        );
+
+        service
+            .set_takeover_for_app("codex", true)
+            .await
+            .expect("upgrade legacy takeover");
+
+        let upgraded = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read upgraded live config");
+        let doc: toml::Value = toml::from_str(&upgraded).expect("parse upgraded live config");
+        assert_eq!(
+            doc.get("model_provider").and_then(toml::Value::as_str),
+            Some("rightcode")
+        );
+        assert_eq!(
+            doc.get("openai_base_url").and_then(toml::Value::as_str),
+            Some(proxy_base_url.as_str())
+        );
+        assert_eq!(
+            doc["model_providers"]["cc-switch-official"]
+                .get("base_url")
+                .and_then(toml::Value::as_str),
+            Some(proxy_base_url.as_str())
+        );
+        assert!(service
+            .live_takeover_matches_current_proxy(&AppType::Codex)
+            .await
+            .expect("classify upgraded takeover"));
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("read backup")
+            .expect("backup remains");
+        assert!(
+            backup
+                .original_config
+                .contains("https://rightcode.example/v1"),
+            "upgrade must preserve the original restorable backup"
+        );
+
+        service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable upgraded takeover");
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn codex_takeover_preserves_native_auth_even_when_legacy_toggle_is_disabled() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -6490,12 +6895,12 @@ wire_api = "chat"
         )
         .expect("apply official proxy config");
         let parsed: toml::Value = toml::from_str(&output).expect("valid official route");
-        let route_id = crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID;
-        let route = &parsed["model_providers"][route_id];
-
-        assert_eq!(parsed["model_provider"].as_str(), Some(route_id));
-        assert_eq!(route["base_url"].as_str(), Some(proxy_url));
-        assert_eq!(route["requires_openai_auth"].as_bool(), Some(true));
+        assert_eq!(parsed["model_provider"].as_str(), Some("openai"));
+        assert_eq!(parsed["openai_base_url"].as_str(), Some(proxy_url));
+        assert!(parsed["model_providers"].get("openai").is_none());
+        let legacy_route = &parsed["model_providers"]["cc-switch-official"];
+        assert_eq!(legacy_route["base_url"].as_str(), Some(proxy_url));
+        assert_eq!(legacy_route["requires_openai_auth"].as_bool(), Some(true));
         assert!(parsed.get("experimental_bearer_token").is_none());
     }
 
@@ -7594,9 +7999,23 @@ wire_api = "responses"
 
         let restored = service.read_codex_live().expect("read restored Codex live");
         assert_eq!(restored.get("auth"), Some(&rotated_live_auth));
+        let restored_config = restored
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("restored config");
+        let restored_doc: toml::Value =
+            toml::from_str(restored_config).expect("parse restored config");
         assert_eq!(
-            restored.get("config").and_then(Value::as_str),
-            Some("model = \"gpt-5.4\"\n")
+            restored_doc.get("model").and_then(toml::Value::as_str),
+            Some("gpt-5.4")
+        );
+        let compatibility = &restored_doc["model_providers"]["cc-switch-official"];
+        assert!(compatibility.get("base_url").is_none());
+        assert_eq!(
+            compatibility
+                .get("supports_websockets")
+                .and_then(toml::Value::as_bool),
+            Some(true)
         );
     }
 
