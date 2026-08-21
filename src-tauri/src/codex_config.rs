@@ -518,6 +518,11 @@ pub fn record_codex_managed_oauth_live_auth(auth: &Value) -> Result<(), AppError
     crate::config::write_json_file(&get_codex_managed_oauth_live_auth_marker_path(), &marker)
 }
 
+/// live `auth` 与 `account_id` 是否指向 marker 记下的那次托管登录。
+///
+/// marker 里的 key 与 `account_id` 都由 claims 推导，但可能取自不同世代的 claim 集合
+/// （先只有 email、轮换后多了 user_id），直接比字符串会把同一个人判成两个人。改问
+/// 「这份 auth 是否同时拥有两个 key」，经由 auth 传递地判等。
 pub fn codex_auth_matches_recorded_managed_oauth(
     auth: &Value,
     account_id: &str,
@@ -527,10 +532,10 @@ pub fn codex_auth_matches_recorded_managed_oauth(
         return Ok(false);
     }
 
-    let Some(auth_account_id) = extract_codex_managed_oauth_account_id(auth) else {
-        return Ok(false);
-    };
-    if !managed_marker_refers_to_account(&auth_account_id, account_id) {
+    // 形状白名单只回答「这是不是托管写入的 bundle」；归属一律交给 claims 身份判定。
+    if extract_codex_managed_oauth_account_id(auth).is_none()
+        || !codex_live_auth_is_managed_chatgpt_login(auth, account_id)
+    {
         return Ok(false);
     }
 
@@ -550,13 +555,15 @@ pub fn codex_auth_matches_recorded_managed_oauth(
     // legacy extra field, and matching intentionally no longer consults it:
     // the Codex CLI rotates access tokens during normal self-refresh.
     Ok(matches!(marker.version, 1 | 2)
-        && managed_marker_refers_to_account(&marker.account_id, account_id))
+        && codex_live_auth_is_managed_chatgpt_login(auth, &marker.account_id))
 }
 
-/// marker 里记的 key 与请求的 `account_id` 是否指向同一次登录。
+/// marker 里记的 key 与请求的 `account_id` 是否指向同一次登录——**仅供手上没有 live
+/// auth 可据以判定归属的降级路径**（清理 marker 时盘上的 auth 可能已不存在）。
 ///
-/// marker 一律由 claims 推导，因此是复合键；升级前存下的账号 key 却仍是裸工作区 ID，
-/// 直接字符串比较会恒不相等，导致 marker 既刷不新也清不掉。
+/// 有 auth 时一律走 `codex_live_auth_is_managed_chatgpt_login`：两个 key 可能取自不同
+/// 世代的 claim 集合，字符串比较会把同一个人判成两个人。这里只能容忍「claims 复合键 vs
+/// 升级前存下的裸工作区 ID」这一种跨形状，否则 marker 清不掉。
 fn managed_marker_refers_to_account(marker_account_id: &str, account_id: &str) -> bool {
     use crate::proxy::providers::codex_oauth_auth::split_composite_account_id;
 
@@ -3684,6 +3691,76 @@ base_url = "https://single.example.com/v1"
         assert!(
             !codex_live_auth_is_managed_chatgpt_login(&rotated, "other@example.com::team-ws"),
             "the personal claim still has to discriminate members of one workspace"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn marker_still_refers_to_the_account_after_claims_gain_a_user_id() {
+        // 登录当时的 id_token 只有 email，账号 key 因此是 `email::ws`；之后 CLI 轮换
+        // 出的 token 多带了 openai_auth.user_id，marker 便按更高优先级算成
+        // `user_id::ws`。两个复合键不相等，但它们是同一个人。
+        let _home = CodexLiveTestHome::new();
+        let rotated = chatgpt_bundle(
+            json!({
+                "email": "user@example.com",
+                "chatgpt_account_id": "team-ws",
+                "https://api.openai.com/auth": { "user_id": "user-abc" }
+            }),
+            "team-ws",
+            "2026-01-02T03:04:05.000000000Z",
+        );
+        record_codex_managed_oauth_live_auth(&rotated).expect("record marker");
+
+        assert!(
+            codex_auth_matches_recorded_managed_oauth(&rotated, "user@example.com::team-ws")
+                .expect("marker lookup"),
+            "a richer claim set must not orphan the account key stored at login time"
+        );
+        assert!(
+            !codex_auth_matches_recorded_managed_oauth(&rotated, "other@example.com::team-ws")
+                .expect("marker lookup"),
+            "the personal claim still has to discriminate members of one workspace"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn refresh_sync_rerecords_the_marker_when_the_key_generations_differ() {
+        // commit 宣称的可见行为：CLI 自刷新后 marker 仍会被重写。谓词判等只是手段，
+        // 这里锁住的是端到端结果——盘上 marker 从登录世代的 key 更新到刷新世代的 key。
+        let _home = CodexLiveTestHome::new();
+        let claims = json!({
+            "email": "user@example.com",
+            "chatgpt_account_id": "team-ws",
+            "https://api.openai.com/auth": { "user_id": "user-abc" }
+        });
+        let current = chatgpt_bundle(claims.clone(), "team-ws", "2026-01-02T03:04:05Z");
+        crate::config::write_json_file(&get_codex_auth_path(), &current).expect("seed live auth");
+        // 登录当时的 id_token 只有 email，marker 因此记的是 `email::ws`。
+        crate::config::write_json_file(
+            &get_codex_managed_oauth_live_auth_marker_path(),
+            &CodexManagedOAuthLiveAuthMarker {
+                version: 2,
+                account_id: "user@example.com::team-ws".to_string(),
+            },
+        )
+        .expect("seed login-era marker");
+
+        let refreshed = chatgpt_bundle(claims, "team-ws", "2026-01-02T04:05:06Z");
+        assert!(sync_codex_managed_oauth_live_auth_after_refresh(
+            "user@example.com::team-ws",
+            "refresh",
+            &refreshed,
+        )
+        .expect("sync refreshed auth"));
+
+        let marker: CodexManagedOAuthLiveAuthMarker =
+            read_json_file(&get_codex_managed_oauth_live_auth_marker_path())
+                .expect("marker must survive the refresh");
+        assert_eq!(
+            marker.account_id, "user-abc::team-ws",
+            "the marker has to be re-recorded from the refreshed claims"
         );
     }
 
