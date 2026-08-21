@@ -406,6 +406,18 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
+/// Check if the provider has a catalog with model mappings
+/// This is used to skip env-based model mapping for providers that use catalog models
+pub fn codex_provider_has_catalog_model(provider: &Provider) -> bool {
+    provider
+        .settings_config
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|models| models.as_array())
+        .map(|models| !models.is_empty())
+        .unwrap_or(false)
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
