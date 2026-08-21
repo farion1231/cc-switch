@@ -2135,6 +2135,13 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
 pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::hermes_config;
 
+    let pinned = hermes_config::pin_discover_models_for_existing_providers()?;
+    if pinned > 0 {
+        log::info!(
+            "Pinned discover_models: false for {pinned} Hermes provider(s) with declared models"
+        );
+    }
+
     let providers = hermes_config::get_providers()?;
     if providers.is_empty() {
         return Ok(0);
