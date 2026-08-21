@@ -1543,4 +1543,23 @@ export const providerPresets: ProviderPreset[] = [
     icon: "jiekou",
     iconColor: "#000000",
   },
+  {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.abliteration.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "abliterated-model-large",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "abliterated-model",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "abliterated-model-large",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "abliterated-model-large",
+      },
+    },
+    category: "third_party",
+    endpointCandidates: ["https://api.abliteration.ai"],
+    icon: "abliteration",
+    iconColor: "#0A0A0A",
+  },
 ];

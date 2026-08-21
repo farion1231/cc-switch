@@ -2061,4 +2061,30 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "jiekou",
     iconColor: "#000000",
   },
+  {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "abliteration",
+      "https://api.abliteration.ai/v1",
+      "abliterated-model-large",
+    ),
+    endpointCandidates: ["https://api.abliteration.ai/v1"],
+    modelCatalog: modelCatalog([
+      {
+        model: "abliterated-model-large",
+        displayName: "Abliterated Large",
+        contextWindow: 1000000,
+      },
+      {
+        model: "abliterated-model",
+        displayName: "Abliterated Model",
+        contextWindow: 262144,
+      },
+    ]),
+    category: "third_party",
+    icon: "abliteration",
+  },
 ];
