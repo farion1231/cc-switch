@@ -206,6 +206,7 @@
     "mode": "Model handling",
     "modeDirect": "Direct",
     "modeProxy": "Requires routing",
+    "authFieldHint": "How the local proxy sends the credential upstream: ANTHROPIC_AUTH_TOKEN sends Authorization: Bearer, ANTHROPIC_API_KEY sends x-api-key.",
     "modelMappingToggle": "Needs model mapping",
     "modelMappingOffHint": "Direct mode works only when the provider accepts Claude Desktop's three role IDs (claude-sonnet-* / claude-opus-* / claude-haiku-*); for any other model name (including legacy IDs like claude-3-5-sonnet-…), select Model Mapping.",
     "modelMappingOnHint": "Claude Desktop only accepts the three role IDs claude-sonnet-* / claude-opus-* / claude-haiku-*. In Model Mapping mode, CC Switch maps these roles to your provider's actual models and keeps local routing running while in use.",
