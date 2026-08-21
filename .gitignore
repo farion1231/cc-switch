@@ -23,6 +23,9 @@ nul
 flatpak/cc-switch.deb
 flatpak-build/
 flatpak-repo/
+.cache/
+dist-flatpak/
+.pnpm-store/
 .worktrees/
 .spec-workflow/
 copilot-api

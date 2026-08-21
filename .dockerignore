@@ -1,0 +1,13 @@
+.git
+node_modules
+.cache
+.pnpm-store
+.flatpak-builder
+flatpak-build
+flatpak-repo
+dist-flatpak
+src-tauri/target
+manual-deb-extract
+manual-flatpak-build
+manual-flatpak-repo
+*.log
