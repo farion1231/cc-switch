@@ -42,7 +42,8 @@
     "deleting": "删除中...",
     "auto": "自动",
     "enabled": "已开启",
-    "notSet": "未设置"
+    "notSet": "未设置",
+    "copyFailed": "复制失败，请手动复制"
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
@@ -442,6 +443,13 @@
           "debug": "详细信息，包含 SSE 流和请求/响应详情",
           "trace": "全部日志，最详细"
         }
+      },
+      "publicRoute": {
+        "title": "公网路由",
+        "description": "经公网隧道把本地路由暴露给支持自定义 Base URL 的应用（如 Cursor）",
+        "enabled": "已启用",
+        "disabled": "未启用",
+        "proxyRequired": "需要先启动本地路由，才能配置公网路由"
       }
     },
     "language": "界面语言",
@@ -910,6 +918,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi"
   },
   "pi": {
@@ -1145,6 +1154,9 @@
     "resume": "恢复会话",
     "resumeTooltip": "在终端中恢复此会话",
     "noResumeCommand": "此会话无法恢复",
+    "exportMarkdown": "导出 Markdown",
+    "exportMarkdownCopied": "Markdown 已复制",
+    "exportMarkdownTooltip": "导出为 Markdown 复制到剪贴板",
     "copyCommand": "复制命令",
     "copyMessage": "复制消息",
     "messageCopied": "已复制消息内容",
@@ -2013,7 +2025,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -2428,6 +2441,18 @@
       "openConfig": "在 Hermes Web UI 调整上限",
       "runtimeNote": "更改将在 Hermes 下次启动或新建会话时生效。"
     }
+  },
+  "cursor": {
+    "needsRouting": "需要路由",
+    "form": {
+      "baseUrl": "API 端点",
+      "baseUrlHint": "供应商的 API 端点地址。",
+      "model": "模型（可选）",
+      "modelPlaceholder": "gpt-4o, claude-sonnet-4-20250514, ...",
+      "modelHint": "可选。留空则使用供应商的默认模型。"
+    },
+    "needsPublicRoute": "需要公网路由",
+    "needsPublicRouteHint": "打开设置中的公网路由"
   },
   "env": {
     "warning": {
@@ -2954,7 +2979,45 @@
       "stopFailed": "停止路由服务失败：{{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "publicRoute": {
+      "title": "公网路由",
+      "statusOff": "把本地路由经公网隧道暴露给外部应用",
+      "statusStarting": "隧道建立中…",
+      "statusRunning": "隧道已建立",
+      "enabled": "公网路由已启用，正在建立隧道…",
+      "disabled": "公网路由已关闭",
+      "toggleFailed": "切换公网路由失败",
+      "waitingTunnel": "正在建立公网隧道（cloudflared），通常需要几秒…",
+      "publicUrl": "公网地址",
+      "setupTitle": "接入示例：在 Cursor 中完成以下配置",
+      "stepBaseUrl": "Settings → Models → Override OpenAI Base URL 填：",
+      "stepApiKey": "OpenAI API Key 填 CC Switch 自动生成的隧道密钥（必填，公网隧道鉴权用）：",
+      "stepModel": "添加模型并选中使用：模型名填供应商 modelCatalog 里配置的客户端名（Cursor Model Name），代理会自动映射为上游模型名",
+      "ephemeralHint": "快速隧道地址每次重建都会变；新地址已自动复制到剪贴板，需在 Cursor 中重新粘贴。需要固定地址可在关闭后改用「固定域名」模式。",
+      "keyCopied": "密钥已复制",
+      "takeoverHint": "Cursor 经本地路由接管时需要配置公网路由（隧道），请到 设置 → 路由 → 公网路由 查看设置方式",
+      "switching": "切换中…",
+      "tunnelMode": "隧道模式",
+      "modeQuick": "快速隧道",
+      "modeQuickHint": "免账号，地址每次重建都会变",
+      "modeNamed": "固定域名",
+      "modeNamedHint": "需 Cloudflare 账户，地址不变",
+      "namedTunnelName": "隧道名",
+      "namedHostname": "对外域名",
+      "namedSetupTitle": "一次性配置（在终端执行）",
+      "saveTunnelConfig": "保存隧道配置",
+      "configSaved": "隧道配置已保存",
+      "configSaveFailed": "保存隧道配置失败",
+      "baseUrlCopied": "Base URL 已复制，请到 Cursor → Settings → Models → Override OpenAI Base URL 粘贴",
+      "routePathsTitle": "各应用路由路径（按需复制）",
+      "namedStableHint": "固定域名不会变化，Cursor 里粘贴一次即可长期使用。",
+      "regenerateKey": "重新生成",
+      "keyRegenerated": "新密钥已生成并复制，请到 Cursor → Settings → Models → OpenAI API Key 重新粘贴",
+      "keyRegenerateFailed": "重新生成密钥失败",
+      "keyRegeneratedNoCopy": "新密钥已生成，请点击上方复制按钮手动复制到 Cursor",
+      "routePathsGateHint": "仅已开启「本地路由」接管的应用可经公网路由访问；未开启的应用请求会被拒绝"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 连通正常 ({{responseTimeMs}}ms)",

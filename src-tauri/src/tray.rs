@@ -156,7 +156,7 @@ pub struct TrayAppSection {
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
 
-pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
+pub const TRAY_SECTIONS: [TrayAppSection; 5] = [
     TrayAppSection {
         app_type: AppType::Claude,
         prefix: "claude_",
@@ -184,6 +184,13 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
         empty_id: "grokbuild_empty",
         header_label: "Grok Build",
         log_name: "Grok Build",
+    },
+    TrayAppSection {
+        app_type: AppType::Cursor,
+        prefix: "cursor_",
+        empty_id: "cursor_empty",
+        header_label: "Cursor",
+        log_name: "Cursor",
     },
 ];
 
@@ -1133,7 +1140,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                 }
             };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
-        // 进内存（每次悬停 × 3 sections 的热路径）。
+        // 进内存（每次悬停 × TRAY_SECTIONS 的热路径）。
         let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
             Ok(Some(p)) => p,
             Ok(None) => continue,
@@ -1288,6 +1295,18 @@ mod tests {
         assert_eq!(section.prefix, "grokbuild_");
         assert_eq!(section.empty_id, "grokbuild_empty");
         assert_eq!(section.header_label, "Grok Build");
+    }
+
+    #[test]
+    fn tray_sections_include_cursor_provider_switching() {
+        let section = TRAY_SECTIONS
+            .iter()
+            .find(|section| section.app_type == AppType::Cursor)
+            .expect("Cursor tray section should exist");
+
+        assert_eq!(section.prefix, "cursor_");
+        assert_eq!(section.empty_id, "cursor_empty");
+        assert_eq!(section.header_label, "Cursor");
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {

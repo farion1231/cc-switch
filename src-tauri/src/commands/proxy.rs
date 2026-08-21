@@ -35,6 +35,7 @@ pub async fn stop_proxy_server(state: tauri::State<'_, AppState>) -> Result<(), 
         || takeover.grokbuild
         || takeover.opencode
         || takeover.openclaw
+        || takeover.cursor
     {
         return Err(
             "仍有应用处于代理接管状态，请先在设置中关闭对应应用接管后再停止本地路由。".to_string(),
@@ -465,4 +466,254 @@ pub async fn get_circuit_breaker_stats(
     // 目前先返回 None，后续可以通过 ProxyService 暴露接口来实现
     let _ = (state, provider_id, app_type);
     Ok(None)
+}
+
+// ==================== 公网路由（Cursor 经公网隧道接入）（第三方供应商经公网隧道接入 Cursor）====================
+
+/// 公网路由（Cursor 经公网隧道接入）状态（隧道 + 配置）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicRouteStatus {
+    pub enabled: bool,
+    /// 公网路由隧道鉴权密钥（ccsk-*），需填到 Cursor 的 OpenAI API Key 输入框
+    pub api_key: Option<String>,
+    pub tunnel_running: bool,
+    pub public_url: Option<String>,
+    pub local_url: Option<String>,
+    pub tunnel_error: Option<String>,
+    /// 当前 Cursor 供应商名（供 UI 展示要添加的模型）
+    pub current_provider_name: Option<String>,
+    /// 隧道模式："quick"（默认）或 "named"
+    pub tunnel_mode: String,
+    /// 命名隧道名（mode = named 时）
+    pub named_tunnel: Option<String>,
+    /// 命名隧道域名（mode = named 时）
+    pub named_hostname: Option<String>,
+}
+
+/// 查询 公网路由（Cursor 经公网隧道接入）状态
+#[tauri::command]
+pub async fn get_public_route_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<PublicRouteStatus, String> {
+    let mut settings = crate::settings::get_settings();
+
+    // 惰性生成密钥：历史版本可能没有，保证启用状态下总有密钥可展示/校验
+    if settings.public_route_enabled
+        && settings
+            .public_route_api_key
+            .as_deref()
+            .map(str::is_empty)
+            .unwrap_or(true)
+    {
+        settings.public_route_api_key = Some(crate::settings::generate_public_route_api_key());
+        if let Err(e) = crate::settings::update_settings(settings.clone()) {
+            log::warn!("[Tunnel] 生成 公网路由密钥后保存失败: {e}");
+        }
+    }
+
+    let tunnel = state.proxy_service.public_route_tunnel_status().await;
+
+    let current_provider_name =
+        crate::settings::get_current_provider(&crate::app_config::AppType::Cursor).and_then(|id| {
+            state
+                .db
+                .get_provider_by_id(&id, "cursor")
+                .ok()
+                .flatten()
+                .map(|p| p.name)
+        });
+
+    Ok(PublicRouteStatus {
+        enabled: settings.public_route_enabled,
+        api_key: settings.public_route_api_key.clone(),
+        tunnel_running: tunnel.running,
+        public_url: tunnel.public_url,
+        local_url: tunnel.local_url,
+        tunnel_error: tunnel.last_error,
+        current_provider_name,
+        tunnel_mode: settings
+            .public_route_tunnel_mode
+            .clone()
+            .unwrap_or_else(|| "quick".to_string()),
+        named_tunnel: settings.public_route_named_tunnel.clone(),
+        named_hostname: settings.public_route_named_hostname.clone(),
+    })
+}
+
+/// 列出 Cloudflare 账户下已有的命名隧道（供 公网路由 设置选择）。
+/// 未登录（缺 cert.pem）时返回带引导文案的错误。
+#[tauri::command]
+pub async fn list_named_tunnels(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::proxy::cloudflared::NamedTunnel>, String> {
+    state.proxy_service.list_named_tunnels().await
+}
+
+/// 保存 公网路由隧道配置（模式 + 命名隧道参数）。
+/// 公网路由开启中时，保存后立即按新配置重建隧道。
+#[tauri::command]
+pub async fn set_public_route_tunnel_config(
+    state: tauri::State<'_, AppState>,
+    mode: String,
+    named_tunnel: Option<String>,
+    named_hostname: Option<String>,
+) -> Result<PublicRouteStatus, String> {
+    if mode != "quick" && mode != "named" {
+        return Err(format!("未知隧道模式: {mode}"));
+    }
+    if mode == "named" {
+        let ok = named_tunnel
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty())
+            && named_hostname
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|s| !s.is_empty());
+        if !ok {
+            return Err("命名隧道模式需要填写隧道名和域名".to_string());
+        }
+    }
+
+    let mut settings = crate::settings::get_settings();
+    settings.public_route_tunnel_mode = Some(mode);
+    settings.public_route_named_tunnel = named_tunnel;
+    settings.public_route_named_hostname = named_hostname;
+    crate::settings::update_settings(settings.clone()).map_err(|e| e.to_string())?;
+
+    // 托管开启中：按新配置重建隧道（先停后起）
+    if settings.public_route_enabled {
+        let _ = state.proxy_service.stop_public_route_tunnel().await;
+        state
+            .proxy_service
+            .start_public_route_tunnel()
+            .await
+            .map_err(|e| format!("按新配置重建隧道失败: {e}"))?;
+    }
+
+    get_public_route_status(state).await
+}
+
+/// 启用 公网路由（Cursor 经公网隧道接入）：保存配置并启动 cloudflared 隧道。
+/// 要求本地代理已在运行且接管了 Cursor。
+#[tauri::command]
+pub async fn enable_public_route(
+    state: tauri::State<'_, AppState>,
+) -> Result<PublicRouteStatus, String> {
+    // 本地代理必须在运行
+    if !state.proxy_service.is_running().await {
+        return Err("请先在「本地路由」中启动代理服务器".to_string());
+    }
+
+    // 持久化配置（密钥没有则生成——隧道暴露公网，/cursor/v1/* 强制 Bearer 校验）
+    let mut settings = crate::settings::get_settings();
+    settings.public_route_enabled = true;
+    if settings
+        .public_route_api_key
+        .as_deref()
+        .map(str::is_empty)
+        .unwrap_or(true)
+    {
+        settings.public_route_api_key = Some(crate::settings::generate_public_route_api_key());
+    }
+    crate::settings::update_settings(settings).map_err(|e| e.to_string())?;
+
+    // 启动隧道
+    state
+        .proxy_service
+        .start_public_route_tunnel()
+        .await
+        .map_err(|e| format!("启动隧道失败: {e}"))?;
+
+    get_public_route_status(state).await
+}
+
+/// 禁用 公网路由（Cursor 经公网隧道接入）：停止隧道并清除开关。
+#[tauri::command]
+pub async fn disable_public_route(
+    state: tauri::State<'_, AppState>,
+) -> Result<PublicRouteStatus, String> {
+    let _ = state.proxy_service.stop_public_route_tunnel().await;
+
+    let mut settings = crate::settings::get_settings();
+    settings.public_route_enabled = false;
+    crate::settings::update_settings(settings).map_err(|e| e.to_string())?;
+
+    get_public_route_status(state).await
+}
+
+// ==================== 公网路由密钥重新生成（TDD 测试） ====================
+
+/// 重新生成 公网路由 隧道鉴权密钥并持久化，返回新密钥。
+/// Cursor 的 key 走云端账户同步、本地写无效，重新生成后需用户把新密钥
+/// 手工重新粘贴进 Cursor（#review ccsk 手工重新生成）。
+fn regenerate_public_route_key_in_settings() -> Result<String, String> {
+    let mut settings = crate::settings::get_settings();
+    let new_key = crate::settings::generate_public_route_api_key();
+    settings.public_route_api_key = Some(new_key.clone());
+    crate::settings::update_settings(settings).map_err(|e| e.to_string())?;
+    Ok(new_key)
+}
+
+/// 重新生成 公网路由 隧道鉴权密钥（ccsk-*）。返回最新状态供前端展示/复制新密钥。
+#[tauri::command]
+pub async fn regenerate_public_route_api_key(
+    state: tauri::State<'_, AppState>,
+) -> Result<PublicRouteStatus, String> {
+    regenerate_public_route_key_in_settings()?;
+    get_public_route_status(state).await
+}
+
+#[cfg(test)]
+mod public_route_regenerate_tests {
+    use super::regenerate_public_route_key_in_settings;
+    use std::env;
+
+    fn with_temp_home<T>(test: impl FnOnce() -> T) -> T {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let old_home = env::var_os("HOME");
+        let old_test = env::var_os("CC_SWITCH_TEST_HOME");
+        env::set_var("HOME", temp.path());
+        env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        crate::settings::reload_settings().expect("reload settings");
+        let result = test();
+        match old_home {
+            Some(v) => env::set_var("HOME", v),
+            None => env::remove_var("HOME"),
+        }
+        match old_test {
+            Some(v) => env::set_var("CC_SWITCH_TEST_HOME", v),
+            None => env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        result
+    }
+
+    // with_temp_home 改写了进程级 HOME/CC_SWITCH_TEST_HOME，须与其他 env 测试互斥
+    #[serial_test::serial]
+    #[test]
+    fn regenerate_changes_and_persists_key() {
+        with_temp_home(|| {
+            crate::settings::update_settings(crate::settings::AppSettings {
+                public_route_enabled: true,
+                public_route_api_key: Some("ccsk-old-key".to_string()),
+                ..Default::default()
+            })
+            .expect("seed old key");
+
+            let new = regenerate_public_route_key_in_settings().expect("regenerate");
+            assert!(
+                new.starts_with("ccsk-"),
+                "key must keep ccsk- prefix, got {new}"
+            );
+            assert_ne!(new, "ccsk-old-key", "regenerated key must differ from old");
+            assert_eq!(
+                crate::settings::get_settings()
+                    .public_route_api_key
+                    .as_deref(),
+                Some(new.as_str()),
+                "new key must be persisted"
+            );
+        });
+    }
 }

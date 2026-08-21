@@ -21,6 +21,17 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
 
+/// 判断开启代理接管时，当前供应商是否需要弹出"官方供应商"风险告警。
+///
+/// Cursor 的供应商机制与 Claude Code / Codex 不同：Cursor 用户配置的 provider
+/// 都是自己填写 base_url + API key 的第三方上游（包括 Anthropic、OpenAI、DeepSeek 等），
+/// 只有 "Cursor Official" 才走 Cursor 自身账号体系。因此 Cursor 应用不应在此告警。
+pub fn should_warn_official_provider(app_type: &AppType, provider: &Provider) -> bool {
+    !matches!(app_type, AppType::Cursor)
+        && provider.category.as_deref() == Some("official")
+        && !crate::services::provider::official_provider_supports_proxy_takeover(app_type, provider)
+}
+
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
@@ -393,6 +404,8 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    /// 公网路由（Cursor 经公网隧道接入）的 cloudflared 隧道管理器
+    cloudflared: crate::proxy::cloudflared::CloudflaredManager,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -418,7 +431,65 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            cloudflared: crate::proxy::cloudflared::CloudflaredManager::new(),
         }
+    }
+
+    /// 启动 公网路由（Cursor 经公网隧道接入）隧道：把本地代理暴露到公网，供 公网路由 使用。
+    /// 要求本地代理已在运行（接管了 Cursor）。
+    ///
+    /// 注意：Cursor 的 公网路由 设置走云端账户同步，本地写 state.vscdb 不会被读取
+    /// （2026-08-05 实测确认），公网地址需用户在 Cursor 中手动粘贴。
+    pub async fn start_public_route_tunnel(
+        &self,
+    ) -> Result<crate::proxy::cloudflared::TunnelStatus, String> {
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+
+        // 隧道模式：默认免账号快速隧道；配置完整时用命名隧道（固定域名）
+        let settings = crate::settings::get_settings();
+        let named = settings.public_route_named_tunnel.clone();
+        let hostname = settings.public_route_named_hostname.clone();
+        let mode = if settings.public_route_tunnel_mode.as_deref() == Some("named") {
+            match (named, hostname) {
+                (Some(t), Some(h)) if !t.trim().is_empty() && !h.trim().is_empty() => {
+                    crate::proxy::cloudflared::TunnelMode::Named {
+                        tunnel: t.trim().to_string(),
+                        hostname: h.trim().to_string(),
+                    }
+                }
+                _ => {
+                    return Err(
+                        "命名隧道模式需要填写隧道名和域名（或在 公网路由 设置中改用快速隧道）"
+                            .to_string(),
+                    )
+                }
+            }
+        } else {
+            crate::proxy::cloudflared::TunnelMode::Quick
+        };
+
+        let status = self.cloudflared.start(&proxy_url, &mode).await?;
+        if let Some(public_url) = &status.public_url {
+            log::info!("[Tunnel] 隧道就绪: {public_url}（需在 Cursor 中手动粘贴 Base URL）");
+        }
+        Ok(status)
+    }
+
+    /// 停止 公网路由（Cursor 经公网隧道接入）隧道。
+    pub async fn stop_public_route_tunnel(&self) -> Result<(), String> {
+        self.cloudflared.stop().await
+    }
+
+    /// 列出 Cloudflare 账户下已有的命名隧道。
+    pub async fn list_named_tunnels(
+        &self,
+    ) -> Result<Vec<crate::proxy::cloudflared::NamedTunnel>, String> {
+        self.cloudflared.list_named_tunnels().await
+    }
+
+    /// 查询隧道状态。
+    pub async fn public_route_tunnel_status(&self) -> crate::proxy::cloudflared::TunnelStatus {
+        self.cloudflared.status().await
     }
 
     #[cfg(test)]
@@ -1123,6 +1194,12 @@ impl ProxyService {
             .await
             .map(|c| c.enabled)
             .unwrap_or(false);
+        let cursor_enabled = self
+            .db
+            .get_proxy_config_for_app("cursor")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
         // OpenCode and OpenClaw don't support proxy features, always return false
         let opencode_enabled = false;
         let openclaw_enabled = false;
@@ -1134,6 +1211,7 @@ impl ProxyService {
             grokbuild: grokbuild_enabled,
             opencode: opencode_enabled,
             openclaw: openclaw_enabled,
+            cursor: cursor_enabled,
         })
     }
 
@@ -1143,7 +1221,7 @@ impl ProxyService {
     /// - 关闭：仅恢复当前 app 的 Live 配置；若无其它接管，则自动停止代理服务
     pub async fn set_takeover_for_app(&self, app_type: &str, enabled: bool) -> Result<(), String> {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
-        if !app.supports_local_proxy() {
+        if !app.supports_local_proxy() && !matches!(app, AppType::Cursor) {
             return Err(format!("{} 不支持本地路由", app.as_str()));
         }
         let app_type_str = app.as_str();
@@ -1282,11 +1360,7 @@ impl ProxyService {
                 crate::settings::get_effective_current_provider(&self.db, &app)
             {
                 if let Ok(Some(provider)) = self.db.get_provider_by_id(&current_id, app_type_str) {
-                    if provider.category.as_deref() == Some("official")
-                        && !crate::services::provider::official_provider_supports_proxy_takeover(
-                            &app, &provider,
-                        )
-                    {
+                    if should_warn_official_provider(&app, &provider) {
                         if let Some(handle) = self.app_handle.read().await.as_ref() {
                             let _ = handle.emit(
                                 "proxy-official-warning",
@@ -1416,6 +1490,8 @@ impl ProxyService {
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
             AppType::GrokBuild => self.read_grok_live()?,
+            // Cursor 接管不写 env.json；无 live→provider 同步需求（见 sync_live_config_to_provider）。
+            AppType::Cursor => return Ok(()),
             _ => return Err("该应用不支持代理功能".to_string()),
         };
 
@@ -1679,6 +1755,8 @@ impl ProxyService {
                     }
                 }
             }
+            // Cursor: env.json is cc-switch managed, no live→provider sync needed.
+            AppType::Cursor => {}
             _ => {}
         }
 
@@ -1758,7 +1836,7 @@ impl ProxyService {
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
         // 4. 清除所有应用的 enabled 状态（用户手动关闭，不需要下次自动恢复）
-        for app_type in ["claude", "codex", "gemini", "grokbuild"] {
+        for app_type in ["claude", "codex", "gemini", "grokbuild", "cursor"] {
             if let Ok(mut config) = self.db.get_proxy_config_for_app(app_type).await {
                 if config.enabled {
                     config.enabled = false;
@@ -1884,6 +1962,34 @@ impl ProxyService {
             }
         }
 
+        // Cursor — backup the current env.json before takeover
+        if let Ok(env) = crate::cursor_config::read_cursor_env() {
+            let base_url = env
+                .get("OPENAI_BASE_URL")
+                .or_else(|| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if base_url.starts_with("http://localhost") || base_url.starts_with("http://127.0.0.1")
+            {
+                log::warn!("cursor env.json 已被代理接管，不备份");
+            } else {
+                // Include subscription status in backup for restore
+                let mut backup = env.clone();
+                if let Ok(Some(status)) = crate::cursor_config::read_subscription_status_internal()
+                {
+                    if let Some(obj) = backup.as_object_mut() {
+                        obj.insert("_subscription_status".to_string(), Value::String(status));
+                    }
+                }
+                let json_str = serde_json::to_string(&backup)
+                    .map_err(|e| format!("序列化 Cursor env.json 失败: {e}"))?;
+                self.db
+                    .save_live_backup("cursor", &json_str)
+                    .await
+                    .map_err(|e| format!("备份 Cursor 配置失败: {e}"))?;
+            }
+        }
+
         log::info!("已备份所有应用的 Live 配置");
         Ok(())
     }
@@ -1895,6 +2001,12 @@ impl ProxyService {
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
             AppType::GrokBuild => ("grokbuild", self.read_grok_live()?),
+            AppType::Cursor => {
+                // Cursor 接管不写 env.json，备份仅作为接管标记；文件缺失时用空对象兜底，
+                // 不报错（用户可能从未有过 env.json）。
+                let env = crate::cursor_config::read_cursor_env().unwrap_or_else(|_| json!({}));
+                ("cursor", env)
+            }
             _ => return Err("该应用不支持代理功能".to_string()),
         };
 
@@ -2110,6 +2222,25 @@ impl ProxyService {
                 self.write_grok_live(&live_config)?;
                 log::info!("Grok Build Live 配置已接管，代理地址: {proxy_grok_base_url}");
             }
+            AppType::Cursor => {
+                // Cursor 的 "Override OpenAI Base URL"/API Key 权威来源是云端账户同步，
+                // 本地写 env.json / state.vscdb 一律无效（2026-08-05 实测），且 Cursor 云端
+                // SSRF 拦私网——唯一可用路径是公网隧道 + 用户手工粘贴。接管不写 env.json。
+                //
+                // 接管在此只做：保证本地代理运行、把当前 Cursor 供应商设为代理路由目标
+                //（见 refresh_active_target_from_current_provider / proxy 按 is_current 路由）。
+                let cursor_proxy_url = format!("{}/cursor/v1", proxy_url.trim_end_matches('/'));
+
+                // Bypass Cursor's local subscription check so it doesn't block
+                // requests before they reach the proxy.
+                if let Err(e) = crate::cursor_config::bypass_subscription_check() {
+                    log::warn!("Cursor 订阅状态绕过失败（非致命）: {e}");
+                }
+
+                log::info!(
+                    "Cursor 接管完成（不写 env.json，用户手工粘贴公网地址），代理地址: {cursor_proxy_url}"
+                );
+            }
             _ => return Err("该应用不支持代理功能".to_string()),
         }
 
@@ -2176,6 +2307,15 @@ impl ProxyService {
                         );
                     }
                 }
+            }
+            AppType::Cursor => {
+                // 与 strict 相同：重接管也不写 env.json（Cursor 手工粘贴公网地址）。
+                // 仅保留订阅状态绕过。
+                let cursor_proxy_url = format!("{}/cursor/v1", proxy_url.trim_end_matches('/'));
+                if let Err(e) = crate::cursor_config::bypass_subscription_check() {
+                    log::warn!("Cursor 订阅状态绕过失败（非致命）: {e}");
+                }
+                log::info!("Cursor 已重新接管（不写 env.json），代理地址: {cursor_proxy_url}");
             }
             _ => {}
         }
@@ -2246,6 +2386,39 @@ impl ProxyService {
                     log::info!("Grok Build Live 配置已恢复");
                 }
             }
+            AppType::Cursor => {
+                // Cursor 接管不写 env.json，恢复也无需写回——用户配置从未被我们改动。
+                // 只恢复订阅状态（见下方），并保留备份删除逻辑由调用方处理。
+                if self
+                    .db
+                    .get_live_backup("cursor")
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    log::info!("Cursor 恢复完成（接管未写 env.json，无配置需写回）");
+                }
+
+                // Restore Cursor subscription status.
+                // Read original from backup; if no backup, clear our injected value.
+                let original_status =
+                    if let Ok(Some(backup)) = self.db.get_live_backup("cursor").await {
+                        let config: Value =
+                            serde_json::from_str(&backup.original_config).unwrap_or_default();
+                        config
+                            .get("_subscription_status")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    };
+                if let Err(e) =
+                    crate::cursor_config::restore_subscription_status(original_status.as_deref())
+                {
+                    log::warn!("Cursor 订阅状态恢复失败（非致命）: {e}");
+                }
+            }
             _ => {}
         }
 
@@ -2261,6 +2434,7 @@ impl ProxyService {
             AppType::Codex,
             AppType::Gemini,
             AppType::GrokBuild,
+            AppType::Cursor,
         ] {
             if let Err(e) = self
                 .restore_live_config_for_app_with_fallback(&app_type)
@@ -2351,6 +2525,11 @@ impl ProxyService {
             AppType::Codex => self.write_codex_restore_backup(config),
             AppType::Gemini => self.write_gemini_live(config),
             AppType::GrokBuild => self.write_grok_live(config),
+            // Cursor 不写 env.json（云端账户同步，本地写入无效；用户手工粘贴公网地址）。
+            AppType::Cursor => {
+                let _ = config;
+                Ok(())
+            }
             _ => Err("该应用不支持代理功能".to_string()),
         }
     }
@@ -2373,6 +2552,21 @@ impl ProxyService {
                 Ok(config) => Self::is_grok_live_taken_over(&config),
                 Err(_) => false,
             },
+            AppType::Cursor => {
+                // Check if env.json OPENAI_BASE_URL points to the proxy
+                match crate::cursor_config::read_cursor_env() {
+                    Ok(env) => {
+                        let base_url = env
+                            .get("OPENAI_BASE_URL")
+                            .or_else(|| env.get("ANTHROPIC_BASE_URL"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        base_url.starts_with("http://localhost")
+                            || base_url.starts_with("http://127.0.0.1")
+                    }
+                    Err(_) => false,
+                }
+            }
             _ => false,
         }
     }
@@ -2534,6 +2728,26 @@ impl ProxyService {
                         });
                 Ok(Self::is_grok_live_taken_over(&config) && base_url_matches)
             }
+            AppType::Cursor => {
+                // Cursor 接管不再写 env.json（用户手工粘贴公网地址），无法再从 env.json
+                // 判定接管态。"已接管且匹配当前代理"改为以 live 备份 + enabled 为标记：
+                // 存在备份即视为已接管，避免每次切换都重复 backup→restore→re-takeover
+                // 搅动（#review MEDIUM）。
+                let has_backup = self
+                    .db
+                    .get_live_backup("cursor")
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some();
+                let enabled = self
+                    .db
+                    .get_proxy_config_for_app("cursor")
+                    .await
+                    .map(|c| c.enabled)
+                    .unwrap_or(false);
+                Ok(has_backup && enabled)
+            }
             _ => Ok(false),
         }
     }
@@ -2644,7 +2858,7 @@ impl ProxyService {
     /// 检查是否处于 Live 接管模式
     pub async fn is_takeover_active(&self) -> Result<bool, String> {
         let status = self.get_takeover_status().await?;
-        Ok(status.claude || status.codex || status.gemini || status.grokbuild)
+        Ok(status.claude || status.codex || status.gemini || status.grokbuild || status.cursor)
     }
 
     /// 从异常退出中恢复（启动时调用）
@@ -2779,6 +2993,22 @@ impl ProxyService {
             AppType::Codex => Self::is_codex_live_taken_over(config),
             AppType::Gemini => Self::is_gemini_live_taken_over(config),
             AppType::GrokBuild => Self::is_grok_live_taken_over(config),
+            AppType::Cursor => {
+                // 代理接管态有两种密钥形态：未启用 公网路由 时写占位符，启用后写
+                // 真实 ccsk-* 密钥。base_url 指向本地代理才是接管态的本质判据，
+                // 仅按占位符判断会在 公网路由 模式下漏判（#6124 review P1/P2 交互）。
+                let key_is_placeholder = config
+                    .get("OPENAI_API_KEY")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|key| key == PROXY_TOKEN_PLACEHOLDER);
+                let base_is_local_proxy = config
+                    .get("OPENAI_BASE_URL")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|url| {
+                        url.starts_with("http://localhost") || url.starts_with("http://127.0.0.1")
+                    });
+                key_is_placeholder || base_is_local_proxy
+            }
             _ => false,
         }
     }
@@ -2923,6 +3153,13 @@ impl ProxyService {
                 };
                 serde_json::to_string(&env_backup)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
+            }
+            AppType::Cursor => {
+                // 与 backup_live_config_strict 一致，备份必须是 env.json 形状，
+                // 恢复时 write_cursor_env 才能直接写回（#6124 review P2 缺口）。
+                let env_backup = crate::cursor_config::provider_config_to_env(&effective_settings);
+                serde_json::to_string(&env_backup)
+                    .map_err(|e| format!("序列化 Cursor 配置失败: {e}"))?
             }
             _ => return Err(format!("未知的应用类型: {app_type}")),
         };
@@ -3402,7 +3639,7 @@ impl ProxyService {
         provider_id: &str,
     ) -> Result<(), String> {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
-        if !app.supports_local_proxy() {
+        if !app.supports_local_proxy() && !matches!(app, AppType::Cursor) {
             return Err(format!("{} 不支持本地路由", app.as_str()));
         }
         let outcome = self.hot_switch_provider(app_type, provider_id).await?;
@@ -3922,6 +4159,7 @@ impl ProxyService {
                 AppType::Codex,
                 AppType::Gemini,
                 AppType::GrokBuild,
+                AppType::Cursor,
             ] {
                 updated_any |= self
                     .reproject_takeover_live_config_if_enabled(&app_type)
@@ -7245,6 +7483,49 @@ model = "gpt-5.1-codex"
 
     #[tokio::test]
     #[serial]
+    async fn update_live_backup_from_provider_writes_cursor_env_shape() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "cur1".to_string(),
+            "Cursor".to_string(),
+            json!({
+                "baseUrl": "https://api.deepseek.com/v1",
+                "apiKey": "sk-test",
+                "model": "deepseek-v4-pro",
+            }),
+            None,
+        );
+
+        service
+            .update_live_backup_from_provider("cursor", &provider)
+            .await
+            .expect("Cursor hot-switch backup must be supported");
+
+        let backup = db
+            .get_live_backup("cursor")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        assert_eq!(
+            stored.get("OPENAI_BASE_URL").and_then(|v| v.as_str()),
+            Some("https://api.deepseek.com/v1"),
+            "Cursor backup must store the env.json shape so restore can write it back"
+        );
+        assert_eq!(
+            stored.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
+            Some("sk-test")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn update_live_backup_from_provider_applies_codex_common_config() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -9999,5 +10280,307 @@ experimental_bearer_token = "PROXY_MANAGED"
             .expect("read backup")
             .expect("backup exists");
         assert_eq!(backup.original_config, original_backup);
+    }
+
+    #[test]
+    fn cursor_official_provider_does_not_warn_on_takeover() {
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            serde_json::json!({
+                "baseUrl": "https://api.deepseek.com/v1",
+                "apiKey": "sk-deepseek",
+                "model": "deepseek-v4-pro",
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        assert!(!should_warn_official_provider(&AppType::Cursor, &provider));
+    }
+
+    #[test]
+    fn claude_official_provider_warns_on_takeover() {
+        let mut provider = Provider::with_id(
+            "anthropic".to_string(),
+            "Anthropic".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_MODEL": "claude-sonnet-4-20250514",
+                }
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        assert!(should_warn_official_provider(&AppType::Claude, &provider));
+    }
+
+    #[test]
+    fn codex_official_provider_does_not_warn_on_takeover() {
+        let settings = serde_json::json!({
+            "auth": { "OPENAI_API_KEY": "" },
+            "config": "model_provider = \"openai\"\nmodel = \"gpt-5.5\"\n",
+        });
+        let mut provider = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "ChatGPT".to_string(),
+            settings,
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        assert!(!should_warn_official_provider(&AppType::Codex, &provider));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stop_with_restore_clears_cursor_enabled_state() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let mut config = db
+            .get_proxy_config_for_app("cursor")
+            .await
+            .expect("get cursor proxy config");
+        config.enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("enable cursor proxy");
+
+        service
+            .stop_with_restore()
+            .await
+            .expect("stop proxy with restore");
+
+        let after = db
+            .get_proxy_config_for_app("cursor")
+            .await
+            .expect("read cursor proxy config after stop");
+        assert!(
+            !after.enabled,
+            "manual proxy stop must clear cursor.enabled so is_takeover_active() returns false"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cursor_takeover_does_not_write_env_json() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 18021;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set fixed proxy port");
+        let service = ProxyService::new(db.clone());
+
+        service
+            .takeover_live_config_strict(&AppType::Cursor)
+            .await
+            .expect("takeover cursor live config");
+
+        // Cursor 的 URL/Key 走云端账户同步，本地 env.json 写入无效（2026-08-05 实测），
+        // 接管不再写 env.json——用户手工粘贴公网地址。
+        let env = crate::cursor_config::read_cursor_env().expect("read cursor env.json");
+        assert!(
+            env.get("OPENAI_BASE_URL")
+                .and_then(|v| v.as_str())
+                .is_none(),
+            "Cursor takeover must NOT write OPENAI_BASE_URL into env.json"
+        );
+        assert!(
+            env.get("ANTHROPIC_BASE_URL")
+                .and_then(|v| v.as_str())
+                .is_none(),
+            "Cursor takeover must NOT write ANTHROPIC_BASE_URL into env.json"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cursor_takeover_does_not_write_env_json_even_with_public_route() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            public_route_enabled: true,
+            public_route_api_key: Some("ccsk-test-key".to_string()),
+            ..Default::default()
+        })
+        .expect("enable public route");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 18022;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set fixed proxy port");
+        let service = ProxyService::new(db.clone());
+
+        service
+            .takeover_live_config_strict(&AppType::Cursor)
+            .await
+            .expect("takeover cursor live config");
+
+        // 公网路由 key 同样不写 env.json：用户把公网 URL 与 ccsk key 手工粘贴进 Cursor
+        let env = crate::cursor_config::read_cursor_env().expect("read cursor env.json");
+        assert!(
+            env.get("OPENAI_BASE_URL")
+                .and_then(|v| v.as_str())
+                .is_none(),
+            "Cursor takeover must NOT write the proxy URL into env.json"
+        );
+        assert!(
+            env.get("OPENAI_API_KEY").and_then(|v| v.as_str()).is_none(),
+            "Cursor takeover must NOT write the 公网路由 key into env.json"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cursor_best_effort_retakeover_leaves_env_json_untouched() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 18023;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set fixed proxy port");
+        let service = ProxyService::new(db.clone());
+
+        // 模拟代理重启后按 best_effort 重新接管 Cursor（重启重应用循环入口）
+        service
+            .takeover_live_config_best_effort(&AppType::Cursor)
+            .await
+            .expect("best-effort retakeover cursor");
+
+        // best_effort 重接管同样不写 env.json（Cursor 手工粘贴公网地址）
+        let env = crate::cursor_config::read_cursor_env().expect("read cursor env.json");
+        assert!(
+            env.get("OPENAI_BASE_URL")
+                .and_then(|v| v.as_str())
+                .is_none(),
+            "best_effort retakeover must NOT refresh env.json"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cursor_live_matches_current_proxy_with_backup_and_enabled() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        // Cursor 接管不写 env.json：以 live 备份 + enabled 为接管标记
+        db.save_live_backup("cursor", "{}")
+            .await
+            .expect("seed cursor backup");
+        let mut cfg = db
+            .get_proxy_config_for_app("cursor")
+            .await
+            .expect("get cursor cfg");
+        cfg.enabled = true;
+        db.update_proxy_config_for_app(cfg)
+            .await
+            .expect("enable cursor takeover");
+
+        assert!(
+            service
+                .live_takeover_matches_current_proxy(&AppType::Cursor)
+                .await
+                .expect("detect Cursor takeover"),
+            "Cursor takeover (backup + enabled) must be recognized as active"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cursor_live_matches_current_proxy_rejects_without_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        // enabled 但没有 live 备份 → 未接管（避免把旧 env.json 残留误判为接管）
+        let mut cfg = db
+            .get_proxy_config_for_app("cursor")
+            .await
+            .expect("get cursor cfg");
+        cfg.enabled = true;
+        db.update_proxy_config_for_app(cfg)
+            .await
+            .expect("enable cursor takeover");
+
+        assert!(
+            !service
+                .live_takeover_matches_current_proxy(&AppType::Cursor)
+                .await
+                .expect("detect Cursor takeover"),
+            "without a live backup cursor must not be considered taken over"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cursor_live_matches_current_proxy_requires_enabled() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        // 有备份但 enabled = false → 不算接管
+        db.save_live_backup("cursor", "{}")
+            .await
+            .expect("seed cursor backup");
+
+        assert!(
+            !service
+                .live_takeover_matches_current_proxy(&AppType::Cursor)
+                .await
+                .expect("detect Cursor takeover"),
+            "backup alone without enabled must not count as takeover"
+        );
+    }
+
+    #[test]
+    fn cursor_live_has_proxy_placeholder_recognizes_public_route_key() {
+        // 公网路由写真实 ccsk-* 密钥，备份/SSOT 守卫必须仍能识别接管态
+        let taken_over = json!({
+            "OPENAI_BASE_URL": "http://127.0.0.1:18026/cursor/v1",
+            "OPENAI_API_KEY": "ccsk-generated-key",
+        });
+        assert!(
+            ProxyService::live_has_proxy_placeholder_for_app(&AppType::Cursor, &taken_over),
+            "公网路由-mode takeover env.json must be recognized as proxy-owned"
+        );
+    }
+
+    #[test]
+    fn cursor_live_has_proxy_placeholder_recognizes_placeholder_key() {
+        let taken_over = json!({
+            "OPENAI_BASE_URL": "http://127.0.0.1:18026/cursor/v1",
+            "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+        });
+        assert!(
+            ProxyService::live_has_proxy_placeholder_for_app(&AppType::Cursor, &taken_over),
+            "placeholder-key takeover env.json must be recognized as proxy-owned"
+        );
+    }
+
+    #[test]
+    fn cursor_live_has_proxy_placeholder_rejects_remote_provider() {
+        let legit = json!({
+            "OPENAI_BASE_URL": "https://api.kimi.com/v1",
+            "OPENAI_API_KEY": "sk-kimi",
+        });
+        assert!(
+            !ProxyService::live_has_proxy_placeholder_for_app(&AppType::Cursor, &legit),
+            "a real provider env.json must not be treated as proxy-owned"
+        );
     }
 }

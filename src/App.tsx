@@ -239,6 +239,7 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "cursor" &&
       sharedFeatureApp !== "pi"
     ) {
       setCurrentView("providers");
@@ -316,6 +317,7 @@ function App() {
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "cursor" ||
     sharedFeatureApp === "pi";
   const hasMcpSupport = sharedFeatureApp !== "pi";
 
@@ -1141,6 +1143,10 @@ function App() {
                       onDuplicate={handleDuplicateProvider}
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
+                      onOpenPublicRouteSettings={() => {
+                        setSettingsDefaultTab("proxy");
+                        setCurrentView("settings");
+                      }}
                       onOpenTerminal={
                         activeApp === "claude" ? handleOpenTerminal : undefined
                       }

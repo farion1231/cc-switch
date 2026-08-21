@@ -58,10 +58,10 @@ pub use claude::{
 pub use codex::CodexAdapter;
 pub use codex::{
     apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
-    inject_codex_chat_prompt_cache_key, is_codex_official_provider,
-    provider_needs_responses_namespace_flatten, resolve_codex_catalog_tool_profile,
-    resolve_codex_chat_reasoning_config, should_convert_codex_responses_to_anthropic,
-    should_convert_codex_responses_to_chat,
+    codex_provider_uses_chat_completions, inject_codex_chat_prompt_cache_key,
+    is_codex_official_provider, provider_needs_responses_namespace_flatten,
+    resolve_codex_catalog_tool_profile, resolve_codex_chat_reasoning_config,
+    should_convert_codex_responses_to_anthropic, should_convert_responses_to_chat_for_app,
 };
 pub use gemini::GeminiAdapter;
 
@@ -207,7 +207,9 @@ impl ProviderType {
                 ProviderType::Gemini
             }
             AppType::GrokBuild => ProviderType::Codex,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Cursor => {
+                ProviderType::Codex
+            }
             AppType::Pi => return None,
         };
         Some(provider_type)
@@ -263,7 +265,9 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Cursor => {
+            Box::new(CodexAdapter::new())
+        }
         AppType::Pi => return None,
     })
 }

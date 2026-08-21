@@ -605,6 +605,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::Cursor => {
+                if let Some(custom) = crate::settings::get_cursor_override_dir() {
+                    return Ok(custom.join("rules"));
+                }
+            }
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
@@ -624,6 +629,7 @@ impl SkillService {
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
+            AppType::Cursor => crate::cursor_config::get_cursor_dir().join("rules"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
         })
     }
