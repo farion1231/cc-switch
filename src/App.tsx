@@ -654,20 +654,23 @@ function App() {
     currentViewRef.current = currentView;
   }, [currentView]);
 
-  // Skill 面板可能持有未保存的开关改动，先让它决定是否要拦下这次返回
-  const navigateBack = useCallback(() => {
-    const view = currentViewRef.current;
-    const proceed = () =>
-      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
+  const navigateTo = useCallback((view: View) => {
+    const proceed = () => setCurrentView(view);
 
     if (
-      view === "skills" &&
+      currentViewRef.current === "skills" &&
       unifiedSkillsPanelRef.current?.confirmLeave(proceed)
     ) {
       return;
     }
     proceed();
   }, []);
+
+  const navigateBack = useCallback(() => {
+    navigateTo(
+      currentViewRef.current === "skillsDiscovery" ? "skills" : "providers",
+    );
+  }, [navigateTo]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -677,7 +680,7 @@ function App() {
           return;
         }
         event.preventDefault();
-        setCurrentView("settings");
+        navigateTo("settings");
         return;
       }
 
@@ -699,7 +702,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [navigateBack]);
+  }, [navigateBack, navigateTo]);
 
   const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
   const openHermesWebUI = useOpenHermesWebUI(() =>

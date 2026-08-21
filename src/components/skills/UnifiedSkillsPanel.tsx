@@ -54,10 +54,6 @@ import {
 
 const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
 
-/**
- * 一次应用开关改动的反向操作：把 ids 对应的 Skill 在 app 上写回 enabled。
- * 开关仍是即时落盘的，撤销栈只负责把它们改回来。
- */
 interface SkillAppToggleStep {
   ids: string[];
   app: AppId;
@@ -83,7 +79,6 @@ export interface UnifiedSkillsPanelHandle {
   openInstallFromZip: () => void;
   openRestoreFromBackup: () => void;
   checkUpdates: () => void;
-  /** 存在未保存的开关改动时弹出确认框并返回 true（本次返回交由面板接管） */
   confirmLeave: (proceed: () => void) => boolean;
 }
 
@@ -345,7 +340,6 @@ const UnifiedSkillsPanel = React.forwardRef<
 
     try {
       const result = await bulkToggleAppMutation.mutateAsync(step);
-      // 写回失败的条目留在栈顶，否则它们既没还原也无从重试
       const failedIds = result.failed.map((failure) => failure.item);
       setUndoSteps((steps) =>
         failedIds.length > 0
@@ -365,7 +359,6 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  // 快捷键只注册一次，撤销逻辑经 ref 取最新闭包
   const undoLastRef = React.useRef(handleUndoLast);
   undoLastRef.current = handleUndoLast;
 
@@ -385,7 +378,12 @@ const UnifiedSkillsPanel = React.forwardRef<
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  /** 保存：改动已经落盘，清空撤销栈即可离开 */
+  const requestLeaveConfirm = (proceed: () => void) => {
+    if (!canUndo) return false;
+    setLeaveConfirm({ proceed });
+    return true;
+  };
+
   const handleKeepChanges = () => {
     const proceed = leaveConfirm?.proceed;
     setUndoSteps([]);
@@ -393,7 +391,6 @@ const UnifiedSkillsPanel = React.forwardRef<
     proceed?.();
   };
 
-  /** 不保存：倒序回放撤销栈，较早的状态最后写入，回到进入本页时的样子 */
   const handleDiscardChanges = async () => {
     const proceed = leaveConfirm?.proceed;
     if (!beginWrite(true)) return;
@@ -416,7 +413,6 @@ const UnifiedSkillsPanel = React.forwardRef<
 
     setLeaveConfirm(null);
     if (failure !== undefined) {
-      // 撤销栈保持原样，用户可以再次返回重试，或改选「保存」离开
       toast.error(t("skills.unsavedChanges.discardFailed"), {
         description: String(failure),
       });
@@ -724,22 +720,20 @@ const UnifiedSkillsPanel = React.forwardRef<
   React.useImperativeHandle(ref, () => ({
     openDiscovery: () => {
       if (
-        !checkUpdatesLockRef.current &&
-        !writeLockRef.current &&
-        !interactionBlocked
+        checkUpdatesLockRef.current ||
+        writeLockRef.current ||
+        interactionBlocked
       ) {
-        onOpenDiscovery();
+        return;
       }
+      if (requestLeaveConfirm(onOpenDiscovery)) return;
+      onOpenDiscovery();
     },
     openImport: handleOpenImport,
     openInstallFromZip: handleInstallFromZip,
     openRestoreFromBackup: handleOpenRestoreFromBackup,
     checkUpdates: handleCheckUpdates,
-    confirmLeave: (proceed: () => void) => {
-      if (!canUndo) return false;
-      setLeaveConfirm({ proceed });
-      return true;
-    },
+    confirmLeave: requestLeaveConfirm,
   }));
 
   return (
@@ -770,7 +764,6 @@ const UnifiedSkillsPanel = React.forwardRef<
             size="sm"
             className="h-7 gap-1 whitespace-nowrap text-xs disabled:opacity-100"
             onClick={handleUndoLast}
-            // 收起时仅是视觉隐藏，必须禁用才不会留下看不见的焦点目标
             disabled={interactionBlocked || !canUndo}
             title={t("skills.undoHint")}
           >
@@ -919,7 +912,6 @@ interface UnsavedSkillChangesDialogProps {
   onCancel: () => void;
 }
 
-/** 离开 Skill 面板前询问是否保留本次的应用开关改动 */
 const UnsavedSkillChangesDialog: React.FC<UnsavedSkillChangesDialogProps> = ({
   open,
   pending,

@@ -1063,4 +1063,69 @@ describe("UnifiedSkillsPanel", () => {
     expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1);
     expect(ref.current?.confirmLeave(proceed)).toBe(false);
   });
+
+  it("confirms before the discover action leaves the panel", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "first-id" })];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["first-id"],
+      failed: [],
+    });
+    const onOpenDiscovery = vi.fn();
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={onOpenDiscovery}
+        currentApp="claude"
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1),
+    );
+
+    act(() => {
+      ref.current!.openDiscovery();
+    });
+
+    expect(onOpenDiscovery).not.toHaveBeenCalled();
+    expect(screen.getByText("skills.unsavedChanges.title")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "skills.unsavedChanges.discard" }),
+    );
+
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenLastCalledWith({
+        ids: ["first-id"],
+        app: "claude",
+        enabled: false,
+      });
+      expect(onOpenDiscovery).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("opens discovery directly when no toggle was changed", () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    const onOpenDiscovery = vi.fn();
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={onOpenDiscovery}
+        currentApp="claude"
+      />,
+    );
+
+    act(() => {
+      ref.current!.openDiscovery();
+    });
+
+    expect(onOpenDiscovery).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByText("skills.unsavedChanges.title"),
+    ).not.toBeInTheDocument();
+  });
 });
