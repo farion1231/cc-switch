@@ -20,8 +20,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+// Strict JSON on purpose: the file ships a `.json` extension, so third-party
+// consumers parse it with strict JSON readers even though OpenClaw itself
+// tolerates JSON5 (#6467).
 const OPENCLAW_DEFAULT_SOURCE: &str =
-    "{\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n}\n";
+    "{\n  \"models\": {\n    \"mode\": \"merge\",\n    \"providers\": {}\n  }\n}\n";
 const OPENCLAW_TOOLS_PROFILES: &[&str] = &["minimal", "coding", "messaging", "full"];
 
 // ============================================================================
@@ -293,6 +296,9 @@ impl OpenClawConfigDocument {
             .iter_mut()
             .find(|pair| json5_key_name(&pair.key) == Some(key))
         {
+            // Re-quote the key so sections written bare by older versions are
+            // healed back to strict JSON on the next write.
+            existing.key = make_json5_key(key);
             existing.value = new_value;
             return Ok(());
         }
@@ -538,21 +544,9 @@ fn make_root_pair(key: &str, value: RtJSONValue, closing_ws: String) -> RtJSONKe
 }
 
 fn make_json5_key(key: &str) -> RtJSONValue {
-    if is_identifier_key(key) {
-        RtJSONValue::Identifier(key.to_string())
-    } else {
-        RtJSONValue::DoubleQuotedString(key.to_string())
-    }
-}
-
-fn is_identifier_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-
-    matches!(first, 'a'..='z' | 'A'..='Z' | '_' | '$')
-        && chars.all(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$'))
+    // Always emit a double-quoted key: OpenClaw accepts JSON5, but strict JSON
+    // consumers of `openclaw.json` reject bare identifiers (#6467).
+    RtJSONValue::DoubleQuotedString(key.to_string())
 }
 
 fn json5_key_name(key: &RtJSONValue) -> Option<&str> {
@@ -990,7 +984,7 @@ mod tests {
 
             let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
             assert!(written.contains("// top-level comment"));
-            assert!(written.contains("agents: {"));
+            assert!(written.contains("\"agents\": {"));
             assert!(written.contains("provider/model"));
         });
     }
@@ -1084,6 +1078,59 @@ mod tests {
 
             let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
             assert!(written.contains("\"providers\": {}"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn created_config_parses_as_strict_json() {
+        // No existing config file: the document is seeded from
+        // OPENCLAW_DEFAULT_SOURCE, which must stay strict JSON (#6467).
+        with_test_paths("", |config_path| {
+            fs::remove_file(config_path).unwrap();
+
+            let outcome = set_provider("p1", json!({ "api": "anthropic-messages" })).unwrap();
+            assert!(outcome.backup_path.is_none());
+
+            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            let parsed = serde_json::from_str::<Value>(&written)
+                .expect("newly created openclaw.json must parse as strict JSON");
+            assert!(parsed
+                .get("models")
+                .and_then(|m| m.get("providers"))
+                .is_some());
+            assert!(written.contains("\"models\": {"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn write_heals_bare_root_keys_to_strict_json() {
+        // Shape reported in #6467: a strict-JSON config where cc-switch
+        // previously appended/replaced the `models` section with a bare key
+        // (nested values were serialized, so only the root key is bare).
+        let source = r#"{
+  "agents": {
+    "defaults": {
+      "model": "p1/x"
+    }
+  },
+  models: {
+    "mode": "merge",
+    "providers": {}
+  }
+}
+"#;
+
+        with_test_paths(source, |_| {
+            let outcome = set_provider("p1", json!({ "api": "anthropic-messages" })).unwrap();
+            assert!(outcome.backup_path.is_some());
+
+            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            let parsed = serde_json::from_str::<Value>(&written)
+                .expect("rewritten openclaw.json must parse as strict JSON");
+            assert!(parsed.get("agents").is_some());
+            assert!(written.contains("\"models\": {"));
         });
     }
 }
