@@ -339,7 +339,7 @@ CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
 2. **切换供应商**：
    - 主界面：选择供应商 → 点击"启用"
    - 系统托盘：直接点击供应商名称（立即生效）
-3. **生效方式**：重启终端或对应的 CLI 工具以应用更改（CLaude Code 无需重启）
+3. **生效方式**：重启终端或对应的 CLI 工具以应用更改（Claude Code 无需重启）
 4. **恢复官方登录**：添加"官方登录"预设，重启 CLI 工具后按照其登录/OAuth 流程操作
 
 ### MCP、Prompts、Skills 与会话
