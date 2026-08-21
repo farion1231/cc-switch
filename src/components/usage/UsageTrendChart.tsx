@@ -19,7 +19,10 @@ import {
   parseFiniteNumber,
 } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
+import { isMac } from "@/lib/platform";
 import type { UsageRangeSelection } from "@/types/usage";
+
+const ENABLE_CHART_ANIMATIONS = !isMac();
 
 interface UsageTrendChartProps {
   range: UsageRangeSelection;
@@ -290,6 +293,7 @@ export function UsageTrendChart({
               fillOpacity={1}
               fill="url(#colorInput)"
               strokeWidth={2}
+              isAnimationActive={ENABLE_CHART_ANIMATIONS}
             />
             <Area
               yAxisId="tokens"
@@ -300,6 +304,7 @@ export function UsageTrendChart({
               fillOpacity={1}
               fill="url(#colorOutput)"
               strokeWidth={2}
+              isAnimationActive={ENABLE_CHART_ANIMATIONS}
             />
             <Area
               yAxisId="tokens"
@@ -310,6 +315,7 @@ export function UsageTrendChart({
               fillOpacity={1}
               fill="url(#colorCacheCreation)"
               strokeWidth={2}
+              isAnimationActive={ENABLE_CHART_ANIMATIONS}
             />
             <Area
               yAxisId="tokens"
@@ -320,6 +326,7 @@ export function UsageTrendChart({
               fillOpacity={1}
               fill="url(#colorCacheRead)"
               strokeWidth={2}
+              isAnimationActive={ENABLE_CHART_ANIMATIONS}
             />
             <Area
               yAxisId="cost"
@@ -330,6 +337,7 @@ export function UsageTrendChart({
               fill="none"
               strokeWidth={2}
               strokeDasharray="4 4"
+              isAnimationActive={ENABLE_CHART_ANIMATIONS}
             />
           </AreaChart>
         </ResponsiveContainer>
