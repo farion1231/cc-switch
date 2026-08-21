@@ -1200,6 +1200,19 @@ fn codex_catalog_model_entry(
     entry_obj.insert("description".to_string(), json!(display_name));
     entry_obj.insert("context_window".to_string(), json!(context_window));
     entry_obj.insert("max_context_window".to_string(), json!(context_window));
+    // Pin an explicit threshold for the Responses -> Chat bridge so the
+    // generated catalog follows cc-switch's effective provider window. Native
+    // Responses and Anthropic profiles must not inherit this Chat-specific
+    // override: when the field is absent, Codex derives its normal 90% limit
+    // from `context_window`.
+    if profile == CodexCatalogToolProfile::ProxyChat {
+        entry_obj.insert(
+            "auto_compact_token_limit".to_string(),
+            json!(context_window.saturating_mul(9) / 10),
+        );
+    } else {
+        entry_obj.remove("auto_compact_token_limit");
+    }
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -4399,6 +4412,54 @@ base_url = "https://production.api/v1"
             entry.get("context_window").and_then(|v| v.as_u64()),
             Some(1_000_000)
         );
+        assert!(
+            entry.get("auto_compact_token_limit").is_none(),
+            "native Responses entries must not inherit a Chat-specific threshold override"
+        );
+    }
+
+    #[test]
+    fn proxy_chat_catalog_sets_an_explicit_auto_compact_threshold() {
+        let template = json!({
+            "auto_compact_token_limit": 1,
+            "base_instructions": "You are a coding agent."
+        });
+        let specs = vec![CodexCatalogModelSpec {
+            model: "deepseek-v4-pro".to_string(),
+            display_name: Some("DeepSeek V4 Pro".to_string()),
+            context_window: Some(1_000_000),
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+            reasoning_levels: None,
+            default_reasoning_level: None,
+        }];
+
+        let proxy = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+        assert_eq!(
+            proxy["models"][0]
+                .get("auto_compact_token_limit")
+                .and_then(Value::as_u64),
+            Some(900_000)
+        );
+
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::Anthropic,
+        ] {
+            let catalog = codex_model_catalog_from_specs(&specs, &template, profile, 128_000);
+            assert!(
+                catalog["models"][0]
+                    .get("auto_compact_token_limit")
+                    .is_none(),
+                "profile {profile:?} must remove inherited Chat-specific thresholds"
+            );
+        }
     }
 
     #[test]
