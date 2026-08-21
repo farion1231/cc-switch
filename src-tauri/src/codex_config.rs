@@ -1886,7 +1886,24 @@ fn codex_model_catalog_from_settings(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Option<Value>, AppError> {
-    let specs = codex_catalog_model_specs(settings);
+    let mut specs = codex_catalog_model_specs(settings);
+    // A routed provider can have a complete config.toml (including its active
+    // model) without a form-level model catalog. Codex only exposes context
+    // management for models in model_catalog_json, so synthesize that one
+    // active model in this specific legacy/route-only shape. An explicitly
+    // present catalog, including { "models": [] }, remains authoritative.
+    if specs.is_empty() && settings.get("modelCatalog").is_none() {
+        if let Some(model) = codex_top_level_model(config_text) {
+            specs.push(CodexCatalogModelSpec {
+                model,
+                display_name: None,
+                context_window: None,
+                supports_parallel_tool_calls: None,
+                input_modalities: None,
+                base_instructions: None,
+            });
+        }
+    }
     if specs.is_empty() {
         return Ok(None);
     }
@@ -4518,6 +4535,60 @@ base_url = "https://production.api/v1"
         );
     }
 
+    #[test]
+    fn absent_model_catalog_uses_active_model_and_configured_context_window() {
+        let catalog = codex_model_catalog_from_settings(
+            &json!({}),
+            "model = \"claude-sonnet-4-6\"\nmodel_context_window = 200000\n",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should not error")
+        .expect("the active model should be cataloged when modelCatalog is absent");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(Value::as_str),
+            Some("claude-sonnet-4-6")
+        );
+        assert_eq!(
+            entry.get("context_window").and_then(Value::as_u64),
+            Some(200_000)
+        );
+    }
+
+    #[test]
+    fn absent_model_catalog_defaults_active_model_context_window_to_128k() {
+        let catalog = codex_model_catalog_from_settings(
+            &json!({}),
+            "model = \"claude-sonnet-4-6\"\n",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should not error")
+        .expect("the active model should be cataloged when modelCatalog is absent");
+
+        assert_eq!(
+            catalog["models"][0]
+                .get("context_window")
+                .and_then(Value::as_u64),
+            Some(128_000)
+        );
+    }
+
+    #[test]
+    fn explicit_empty_model_catalog_does_not_synthesize_active_model() {
+        let catalog = codex_model_catalog_from_settings(
+            &json!({ "modelCatalog": { "models": [] } }),
+            "model = \"claude-sonnet-4-6\"\n",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should not error");
+
+        assert!(
+            catalog.is_none(),
+            "an explicit empty catalog must continue to clear the generated catalog"
+        );
+    }
+
     const DEEPSEEK_NATIVE_CONFIG: &str = r#"model = "deepseek-v4-flash"
 model_provider = "custom"
 
@@ -4837,12 +4908,12 @@ web_search = "disabled"
 
     #[test]
     fn anthropic_profile_disables_web_search_without_catalog() {
-        // Regression: even when no model catalog is generated (empty/absent
+        // Regression: even when no model catalog is generated (an explicit empty
         // modelCatalog), an Anthropic provider must still disable web_search — the
         // Responses→Anthropic transform drops the hosted tool, so leaving it on
         // exposes a dead tool. The None-catalog branch previously always left it on.
         let config = "model = \"claude-sonnet-4-6\"\n";
-        let settings = serde_json::json!({});
+        let settings = serde_json::json!({ "modelCatalog": { "models": [] } });
 
         let anthropic = prepare_codex_config_text_with_model_catalog(
             &settings,
