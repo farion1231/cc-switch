@@ -581,25 +581,27 @@ fn normalize_provider_models_for_write(config: &mut serde_json::Value) {
     }
 }
 
-/// Pin the declared `models:` list as Hermes' only source of truth.
+/// Pin the final declared `models:` mapping as Hermes' only source of truth.
 ///
 /// Hermes live-probes `/v1/models` by default and treats a dict-shaped
 /// `models:` field as per-model metadata, not an allowlist. CC Switch users
-/// expect their configured model list to be authoritative, so every provider
-/// that declares models must opt out of discovery.
-fn pin_discover_models_for_write(config: &mut serde_json::Value) {
-    let Some(obj) = config.as_object_mut() else {
+/// expect their configured model list to be authoritative. This must run
+/// after forward-compatible fields are restored from disk: an unrelated UI
+/// update can omit `models` while the final provider still declares them.
+fn pin_discover_models_for_write(config: &mut serde_yaml::Value) {
+    let Some(map) = config.as_mapping_mut() else {
         return;
     };
-    let has_models = obj
-        .get("models")
-        .and_then(|v| v.as_object())
+    let models_key = serde_yaml::Value::String("models".to_string());
+    let has_models = map
+        .get(&models_key)
+        .and_then(|v| v.as_mapping())
         .map(|m| !m.is_empty())
         .unwrap_or(false);
     if has_models {
-        obj.insert(
-            "discover_models".to_string(),
-            serde_json::Value::Bool(false),
+        map.insert(
+            serde_yaml::Value::String("discover_models".to_string()),
+            serde_yaml::Value::Bool(false),
         );
     }
 }
@@ -833,7 +835,6 @@ pub fn set_provider(
 
     // Normalize `models` from UI array to Hermes YAML dict before serializing.
     normalize_provider_models_for_write(&mut normalized);
-    pin_discover_models_for_write(&mut normalized);
 
     // Extract the first model id (now a key in the normalized dict) so we can
     // propagate it to the singular `model:` field Hermes reads.
@@ -878,6 +879,15 @@ pub fn set_provider(
         *existing = yaml_val;
     } else {
         providers.push(yaml_val);
+    }
+
+    // Pin after the forward-compatible merge, because an unrelated partial
+    // update may omit `models` that were retained from the on-disk provider.
+    if let Some(provider) = providers
+        .iter_mut()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name))
+    {
+        pin_discover_models_for_write(provider);
     }
 
     let providers_value = serde_yaml::Value::Sequence(providers);
@@ -1685,6 +1695,39 @@ custom_providers:
 
     #[test]
     #[serial]
+    fn set_provider_pins_discovery_after_merging_retained_models() {
+        // Partial updates do not always include the UI's models field. The
+        // retained on-disk mapping must still disable Hermes live discovery.
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: acme
+    base_url: https://old.example.com
+    models:
+      model-a:
+        context_length: 200000
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            set_provider(
+                "acme",
+                serde_json::json!({
+                    "base_url": "https://new.example.com"
+                }),
+            )
+            .unwrap();
+
+            let provider = get_provider("acme").unwrap().unwrap();
+            assert_eq!(provider["base_url"], "https://new.example.com");
+            assert_eq!(provider["models"][0]["id"], "model-a");
+            assert_eq!(provider["discover_models"], false);
+        });
+    }
+
+    #[test]
+    #[serial]
     fn get_providers_surfaces_providers_dict_as_read_only() {
         with_test_home(|| {
             let yaml = "\
@@ -1980,9 +2023,7 @@ custom_providers:
                 200000
             );
             assert_eq!(
-                provider
-                    .get("discover_models")
-                    .and_then(|v| v.as_bool()),
+                provider.get("discover_models").and_then(|v| v.as_bool()),
                 Some(false),
                 "declared models must opt out of Hermes live discovery"
             );
