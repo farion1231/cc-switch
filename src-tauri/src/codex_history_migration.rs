@@ -393,12 +393,19 @@ fn restore_codex_official_history_inner(
     collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
     let mut restored_jsonl_files = 0;
     for file_path in files {
+        let mut restore_current_segment = false;
         if rewrite_codex_session_file_lines(
             &file_path,
             codex_dir,
             restore_backup_root,
-            |content| codex_session_file_is_in_official_ledger(content, &official_session_ids),
-            rewrite_codex_session_provider_line_for_restore,
+            |_| true,
+            |line| {
+                rewrite_codex_session_provider_line_for_ledger_restore(
+                    line,
+                    &official_session_ids,
+                    &mut restore_current_segment,
+                )
+            },
         )? {
             restored_jsonl_files += 1;
         }
@@ -568,24 +575,30 @@ fn collect_files_with_extension(
     }
 }
 
-fn codex_session_file_is_in_official_ledger(
-    content: &str,
+fn rewrite_codex_session_provider_line_for_ledger_restore(
+    line: &str,
     official_session_ids: &HashSet<String>,
-) -> bool {
-    content.lines().any(|line| {
-        if !line.contains("\"session_meta\"") {
-            return false;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            return false;
-        };
-        value.get("type").and_then(Value::as_str) == Some("session_meta")
-            && value
+    restore_current_segment: &mut bool,
+) -> Option<String> {
+    if line.contains("\"session_meta\"") {
+        // A rollout may contain copied/replayed segments for multiple sessions.
+        // Reset before parsing so a malformed boundary cannot inherit the
+        // previous segment's restoration scope.
+        *restore_current_segment = false;
+        let value = serde_json::from_str::<Value>(line).ok()?;
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            *restore_current_segment = value
                 .get("payload")
                 .and_then(|payload| payload.get("id"))
                 .and_then(Value::as_str)
-                .is_some_and(|session_id| official_session_ids.contains(session_id))
-    })
+                .is_some_and(|session_id| official_session_ids.contains(session_id));
+        }
+    }
+
+    if !*restore_current_segment {
+        return None;
+    }
+    rewrite_codex_session_provider_line_for_restore(line)
 }
 
 fn rewrite_codex_session_provider_line_for_restore(line: &str) -> Option<String> {
@@ -1050,7 +1063,7 @@ fn rewrite_codex_session_file_lines(
     codex_dir: &Path,
     backup_root: &Path,
     should_rewrite_file: impl FnOnce(&str) -> bool,
-    rewrite_line: impl Fn(&str) -> Option<String>,
+    mut rewrite_line: impl FnMut(&str) -> Option<String>,
 ) -> Result<bool, AppError> {
     let metadata_before = fs::metadata(path).map_err(|e| AppError::io(path, e))?;
     let modified_before = metadata_before.modified().ok();
@@ -1928,6 +1941,71 @@ base_url = "https://proxy.example/v1"
         assert_eq!(rerun.restored_jsonl_files, 0);
         assert_eq!(rerun.restored_state_rows, 0);
         assert_eq!(rerun.skipped_reason.as_deref(), Some("nothing_to_restore"));
+    }
+
+    #[test]
+    fn restore_scopes_mixed_rollout_segments_to_ledger_session() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let ledger_parent = dir.path().join("ledger");
+        let restore_backup_root = dir.path().join("restore-backup");
+
+        let generation = ledger_parent.join("20260612_010101");
+        let backup_session_dir = generation.join("jsonl/sessions/2026/06/01");
+        fs::create_dir_all(&backup_session_dir).expect("create backup session dir");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            backup_session_dir.join("official.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"openai\"}}\n",
+        )
+        .expect("write backup session");
+        fs::write(
+            generation.join("meta.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "codexConfigDir": canonical_dir_string(&codex_dir)
+            }))
+            .expect("serialize meta"),
+        )
+        .expect("write meta");
+
+        let session_dir = codex_dir.join("sessions/2026/06/12");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let mixed_path = session_dir.join("mixed.jsonl");
+        fs::write(
+            &mixed_path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"segment\":\"s1\",\"thread_settings\":{\"model_provider_id\":\"custom\"}}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"segment\":\"s2\",\"thread_settings\":{\"model_provider_id\":\"custom\"}}}\n",
+            ),
+        )
+        .expect("write mixed session");
+
+        let outcome = restore_codex_official_history_inner(
+            &codex_dir,
+            &ledger_parent,
+            &restore_backup_root,
+            "",
+        )
+        .expect("restore");
+        assert_eq!(outcome.restored_jsonl_files, 1);
+
+        let lines = fs::read_to_string(&mixed_path)
+            .expect("read mixed session")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("valid jsonl"))
+            .collect::<Vec<_>>();
+        assert_eq!(lines[0]["payload"]["model_provider"], "openai");
+        assert_eq!(
+            lines[1]["payload"]["thread_settings"]["model_provider_id"],
+            "openai"
+        );
+        assert_eq!(lines[2]["payload"]["model_provider"], "custom");
+        assert_eq!(
+            lines[3]["payload"]["thread_settings"]["model_provider_id"], "custom",
+            "an unrelated session segment in the same file must remain untouched"
+        );
     }
 
     #[test]
