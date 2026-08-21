@@ -230,6 +230,29 @@ export const formatSessionMessagePreview = (
   );
 };
 
+export const getSearchSnippet = (
+  content: string,
+  query: string,
+  fromIndex = 0,
+  contextLength = 80,
+) => {
+  if (!query) return null;
+  const matchIndex = content
+    .toLowerCase()
+    .indexOf(query.toLowerCase(), fromIndex);
+  if (matchIndex < 0) return null;
+
+  const start = Math.max(0, matchIndex - contextLength);
+  const end = Math.min(
+    content.length,
+    matchIndex + query.length + contextLength,
+  );
+
+  return `${start > 0 ? "…" : ""}${content.slice(start, end)}${
+    end < content.length ? "…" : ""
+  }`;
+};
+
 export const highlightText = (text: string, query: string): ReactNode => {
   if (!query) return text;
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

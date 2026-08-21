@@ -1150,7 +1150,10 @@
     "messageCopied": "Message copied",
     "conversationHistory": "Conversation History",
     "expandContent": "Expand full content",
-    "collapseContent": "Collapse"
+    "collapseContent": "Collapse",
+    "remoteImage": "Remote image",
+    "loadRemoteImage": "Load remote image",
+    "hiddenSearchMatch": "Match in original text"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
