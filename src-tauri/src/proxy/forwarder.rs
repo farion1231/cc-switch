@@ -19,7 +19,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig, GuardrailConfig},
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
@@ -159,6 +159,10 @@ pub struct RequestForwarder {
     optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 围栏检测器配置
+    guardrail_config: GuardrailConfig,
+    /// 围栏检测器实例（如果配置启用）
+    guardrail_detector: Option<super::guardrail_detector::GuardrailDetector>,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
@@ -198,6 +202,42 @@ impl RequestForwarder {
         replaced_images
     }
 
+    /// 围栏检测：检查响应是否包含拒绝内容
+    ///
+    /// 返回：Some(拒绝原因) 如果检测到拒绝，None 否则
+    fn check_guardrail_refusal(&self, response: &ProxyResponse) -> Option<String> {
+        let detector = self.guardrail_detector.as_ref()?;
+
+        // 目前只检测非流式响应（Buffered）
+        // 流式响应的检测需要更复杂的逻辑，暂不实现
+        let response_text = match response {
+            ProxyResponse::Buffered { body, .. } => {
+                // 尝试解析为 JSON 并提取文本
+                if let Ok(json) = serde_json::from_slice::<Value>(body) {
+                    super::guardrail_detector::GuardrailDetector::extract_response_text(&json)
+                } else {
+                    // 非 JSON 响应，直接使用原始文本
+                    String::from_utf8_lossy(body).to_string()
+                }
+            }
+            _ => {
+                // 流式响应暂不检测
+                return None;
+            }
+        };
+
+        let response_length = response_text.len();
+        let has_tool_calls = false; // 简化：暂不检测工具调用
+
+        let verdict = detector.detect_refusal(&response_text, response_length, has_tool_calls);
+
+        if verdict.is_refusal() && detector.should_trigger_failover(&verdict) {
+            Some(verdict.reason().to_string())
+        } else {
+            None
+        }
+    }
+
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
     ///
     /// 受 `enabled && request_media_fallback` 管辖；不涉及 `request_media_heuristic`——
@@ -235,11 +275,26 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        guardrail_config: GuardrailConfig,
         max_retries: u32,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
         let max_attempts = (max_retries as usize).saturating_add(1);
+
+        // 初始化围栏检测器（仅当配置启用时）
+        let guardrail_detector = if guardrail_config.enabled {
+            match super::guardrail_detector::GuardrailDetector::new(guardrail_config.clone()) {
+                Ok(detector) => Some(detector),
+                Err(e) => {
+                    log::warn!("[Guardrail] 初始化检测器失败: {e}，围栏检测将被禁用");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             router,
             status,
@@ -254,6 +309,8 @@ impl RequestForwarder {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            guardrail_config,
+            guardrail_detector,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
