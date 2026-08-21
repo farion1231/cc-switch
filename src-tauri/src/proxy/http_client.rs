@@ -32,6 +32,15 @@ enum ProxyMode {
 
 static PROXY_MODE: OnceCell<RwLock<ProxyMode>> = OnceCell::new();
 
+/// 串行化全局代理状态更新。
+///
+/// 系统代理 watcher（refresh_system_proxy）与显式全局代理设置（apply_proxy /
+/// update_proxy）会并发修改 GLOBAL_CLIENT / CURRENT_PROXY_URL / PROXY_MODE。
+/// 若不串行化，watcher 在“检查到 System 模式”之后、真正改写状态之前，可能被
+/// apply_proxy 插队：refresh 会用系统代理覆盖刚写入的显式代理，而模式却停在
+/// Explicit，导致后续 watcher 不再自愈、请求一直走错误的代理。
+static PROXY_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 设置 CC Switch 代理服务器的监听端口
 ///
 /// 应在代理服务器启动时调用，以便系统代理检测能正确识别自己的端口
@@ -112,6 +121,7 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// # Arguments
 /// * `proxy_url` - 代理 URL，None 或空字符串表示直连
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
+    let _guard = proxy_state_guard();
     let explicit = proxy_url.filter(|s| !s.trim().is_empty());
     let resolved = resolve_proxy(explicit);
     let new_client = build_client(resolved.as_deref())?;
@@ -153,6 +163,7 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
 #[allow(dead_code)]
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
+    let _guard = proxy_state_guard();
     let explicit = proxy_url.filter(|s| !s.trim().is_empty());
     let resolved = resolve_proxy(explicit);
     let new_client = build_client(resolved.as_deref())?;
@@ -191,6 +202,9 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 ///
 /// 返回是否有变化。
 pub fn refresh_system_proxy() -> bool {
+    // 与 apply_proxy/update_proxy 串行化：模式检查与状态改写必须在同一临界区内，
+    // 避免被“显式代理设置”插队导致覆盖刚写入的显式代理。
+    let _guard = proxy_state_guard();
     if !is_system_mode() {
         return false;
     }
@@ -232,6 +246,11 @@ pub fn refresh_system_proxy() -> bool {
         label_for(&detected)
     );
     true
+}
+
+/// 获取代理状态串行化锁的守卫（中毒时自动恢复）。
+fn proxy_state_guard() -> std::sync::MutexGuard<'static, ()> {
+    PROXY_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// 解析出站代理：显式全局代理优先，否则跟随系统代理。
