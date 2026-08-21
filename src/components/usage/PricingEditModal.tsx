@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUpdateModelPricing } from "@/lib/query/usage";
+import { formatPrice, type ModelsDevEntry } from "@/lib/modelsDevPricing";
 import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
 import { ModelsDevPickerDialog } from "./ModelsDevPickerDialog";
 
@@ -85,6 +86,21 @@ export function PricingEditModal({
     }
   };
 
+  const handleModelsDevSelect = (entry: ModelsDevEntry) => {
+    setFormData({
+      modelId: entry.normalizedId,
+      displayName: entry.modelName,
+      inputCost: formatPrice(entry.input),
+      outputCost: formatPrice(entry.output),
+      cacheReadCost: formatPrice(entry.cacheRead),
+      cacheCreationCost: formatPrice(entry.cacheWrite),
+    });
+    setIsPickerOpen(false);
+    toast.success(t("usage.modelsDevFilled", "已填入定价，请检查后保存"), {
+      closeButton: true,
+    });
+  };
+
   return (
     <FullScreenPanel
       isOpen={open}
@@ -129,7 +145,7 @@ export function PricingEditModal({
             className="shrink-0"
           >
             <Globe className="mr-1.5 h-4 w-4" />
-            {t("usage.importFromModelsDev", "从 models.dev 导入")}
+            {t("usage.importFromModelsDev", "从 models.dev 引用数据")}
           </Button>
         </div>
       )}
@@ -248,10 +264,7 @@ export function PricingEditModal({
         <ModelsDevPickerDialog
           open={isPickerOpen}
           onClose={() => setIsPickerOpen(false)}
-          onImported={() => {
-            setIsPickerOpen(false);
-            onClose();
-          }}
+          onSelect={handleModelsDevSelect}
         />
       )}
     </FullScreenPanel>
