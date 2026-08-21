@@ -1,12 +1,19 @@
 import { useMemo, useState, useEffect } from "react";
-import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  AlertTriangle,
+  GripVertical,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
-import type { Provider } from "@/types";
+import type { OpenClawProviderConfig, Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -23,13 +30,17 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
+  resolveCodexOfficialIdentity,
   supportsOfficialProxyTakeover,
   providerNeedsRouting,
 } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
+import { ProviderStatusBadge } from "@/components/providers/ProviderStatusBadge";
+import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -66,7 +77,9 @@ interface ProviderCardProps {
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   // OpenClaw: default model
   isDefaultModel?: boolean;
-  onSetAsDefault?: () => void;
+  isRemovalProtected?: boolean;
+  isStateChangeProtected?: boolean;
+  onSetAsDefault?: (modelId?: string) => void;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -116,14 +129,30 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
   const config = provider.settingsConfig;
 
   if (config && typeof config === "object") {
+    const object = config as Record<string, any>;
     const envBase =
-      (config as Record<string, any>)?.env?.ANTHROPIC_BASE_URL ||
-      (config as Record<string, any>)?.env?.GOOGLE_GEMINI_BASE_URL;
+      object?.env?.ANTHROPIC_BASE_URL || object?.env?.GOOGLE_GEMINI_BASE_URL;
     if (typeof envBase === "string" && envBase.trim()) {
       return envBase;
     }
 
-    const baseUrl = (config as Record<string, any>)?.config;
+    const directBaseUrl =
+      object.baseUrl ||
+      object.base_url ||
+      object.options?.baseURL ||
+      (Array.isArray(object.models)
+        ? object.models.find(
+            (model: unknown) =>
+              model &&
+              typeof model === "object" &&
+              typeof (model as Record<string, unknown>).baseUrl === "string",
+          )?.baseUrl
+        : undefined);
+    if (typeof directBaseUrl === "string" && directBaseUrl.trim()) {
+      return directBaseUrl;
+    }
+
+    const baseUrl = object.config;
 
     if (typeof baseUrl === "string" && baseUrl.includes("base_url")) {
       const extractedBaseUrl = extractCodexBaseUrl(baseUrl);
@@ -165,16 +194,49 @@ export function ProviderCard({
   activeProviderId,
   // OpenClaw: default model
   isDefaultModel,
+  isRemovalProtected,
+  isStateChangeProtected,
   onSetAsDefault,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
+  const managedCodexAccountId = resolveManagedAccountId(
+    provider.meta,
+    "codex_oauth",
+  )?.trim();
+  const {
+    data: codexAuthStatus,
+    isSuccess: isCodexAuthStatusSuccess,
+    isError: isCodexAuthStatusError,
+  } = useQuery({
+    queryKey: ["managed-auth-status", "codex_oauth"],
+    queryFn: () => authApi.authGetStatus("codex_oauth"),
+    enabled:
+      codexOfficialIdentity === "managed_account" &&
+      Boolean(managedCodexAccountId),
+    staleTime: 30_000,
+  });
+  const managedCodexAccount = codexAuthStatus?.accounts.find(
+    (account) => account.id === managedCodexAccountId,
+  );
+  const manualNote = provider.notes?.trim() || undefined;
+  const providerNameIncludesAccountLogin = Boolean(
+    managedCodexAccount?.login &&
+      (provider.name.trim() === managedCodexAccount.login ||
+        provider.name.trim() ===
+          `OpenAI Official (${managedCodexAccount.login})`),
+  );
 
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
-  const isAdditiveMode = appId === "opencode" && !isAnyOmo;
+  const isAdditiveMode = (appId === "opencode" && !isAnyOmo) || appId === "pi";
 
-  const { data: health } = useProviderHealth(provider.id, appId);
+  const { data: health } = useProviderHealth(
+    provider.id,
+    appId,
+    isProxyAppId(appId),
+  );
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -183,6 +245,15 @@ export function ProviderCard({
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
+
+  const openclawDefaultModelOptions = useMemo(() => {
+    if (appId !== "openclaw") return [];
+    const config = provider.settingsConfig as OpenClawProviderConfig;
+    if (!Array.isArray(config?.models)) return [];
+    return config.models
+      .filter((model) => typeof model.id === "string" && model.id.trim())
+      .map((model) => ({ id: model.id, name: model.name }));
+  }, [appId, provider.settingsConfig]);
 
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
@@ -194,7 +265,9 @@ export function ProviderCard({
     return true;
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
-  const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
+  const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
+  const usageEnabled =
+    provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
   const isOfficial = isOfficialProvider(provider, appId);
   const supportsOfficialSubscription =
     isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
@@ -227,7 +300,9 @@ export function ProviderCard({
   const isHermesReadOnly =
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
-    provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+    appId === "codex"
+      ? isBoundCodexOfficial
+      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
@@ -235,11 +310,8 @@ export function ProviderCard({
   const codexNeedsRouting =
     appId === "codex" && providerNeedsRouting(appId, provider);
   // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
-  const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" || appId === "hermes"
-      ? isInConfig
-      : isCurrent;
+  // 累加模式应用：使用 isInConfig 代替 isCurrent
+  const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -279,7 +351,7 @@ export function ProviderCard({
     ? isCurrent
     : appId === "openclaw"
       ? Boolean(isDefaultModel)
-      : appId === "opencode"
+      : appId === "opencode" || appId === "pi"
         ? false
         : isAutoFailoverEnabled
           ? activeProviderId === provider.id
@@ -292,6 +364,7 @@ export function ProviderCard({
     (!isAnyOmo &&
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
+  const hasStateHighlight = shouldUseGreen || shouldUseBlue;
 
   return (
     <div
@@ -304,8 +377,7 @@ export function ProviderCard({
         shouldUseGreen &&
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
-        !(isActiveProvider || hasPersistentConfigHighlight) &&
-          "hover:shadow-sm",
+        !hasStateHighlight && "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -315,27 +387,27 @@ export function ProviderCard({
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
           shouldUseGreen && "from-emerald-500/10",
           shouldUseBlue && "from-blue-500/10",
-          !shouldUseGreen && !shouldUseBlue && "from-primary/10",
-          isActiveProvider || hasPersistentConfigHighlight
-            ? "opacity-100"
-            : "opacity-0",
+          !hasStateHighlight && "from-primary/10",
+          hasStateHighlight ? "opacity-100" : "opacity-0",
         )}
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <button
-            type="button"
-            className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-              "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-              dragHandleProps?.isDragging && "cursor-grabbing",
-            )}
-            aria-label={t("provider.dragHandle")}
-            {...(dragHandleProps?.attributes ?? {})}
-            {...(dragHandleProps?.listeners ?? {})}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
+          {dragHandleProps && (
+            <button
+              type="button"
+              className={cn(
+                "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
+                "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
+                dragHandleProps.isDragging && "cursor-grabbing",
+              )}
+              aria-label={t("provider.dragHandle")}
+              {...dragHandleProps.attributes}
+              {...dragHandleProps.listeners}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          )}
 
           <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
@@ -352,7 +424,13 @@ export function ProviderCard({
 
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2 min-h-7">
-              <h3 className="text-base font-semibold leading-none">
+              <h3
+                className={cn(
+                  "text-base font-semibold leading-none",
+                  codexOfficialIdentity && "min-w-0 flex-1 truncate",
+                )}
+                title={codexOfficialIdentity ? provider.name : undefined}
+              >
                 {provider.name}
               </h3>
 
@@ -370,82 +448,55 @@ export function ProviderCard({
 
               {appId === "claude-desktop" &&
                 providerNeedsRouting(appId, provider) && (
-                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                    {t("claudeDesktop.modeProxy", {
+                  <ProviderStatusBadge
+                    tone="info"
+                    label={t("provider.needsRouting", {
                       defaultValue: "需要路由",
                     })}
-                  </span>
+                  />
                 )}
 
               {appId === "claude" && providerNeedsRouting(appId, provider) && (
-                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {t("claudeCode.needsRouting", {
+                <ProviderStatusBadge
+                  tone="info"
+                  label={t("provider.needsRouting", {
                     defaultValue: "需要路由",
                   })}
-                </span>
-              )}
-
-              {codexNeedsRouting && (
-                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {t("codex.needsRouting", {
-                    defaultValue: "需要路由",
-                  })}
-                </span>
-              )}
-
-              {appId === "claude" && provider.category === "official" && (
-                <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
-                  {t("claudeCode.noRoutingSupport", {
-                    defaultValue: "不支持路由",
-                  })}
-                </span>
-              )}
-
-              {appId === "codex" && supportsOfficialRouting && (
-                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {isProxyTakeover
-                    ? t("codex.officialRouting", {
-                        defaultValue: "官方账号路由",
-                      })
-                    : t("codex.nativeLogin", {
-                        defaultValue: "Codex 登录",
-                      })}
-                </span>
-              )}
-
-              {appId === "codex" &&
-                provider.category === "official" &&
-                !supportsOfficialRouting && (
-                  <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
-                    {t("codex.noRoutingSupport", {
-                      defaultValue: "不支持路由",
-                    })}
-                  </span>
-                )}
-
-              {isProxyRunning && isInFailoverQueue && health && (
-                <ProviderHealthBadge
-                  consecutiveFailures={health.consecutive_failures}
-                  isHealthy={health.is_healthy}
                 />
               )}
 
+              {codexNeedsRouting && (
+                <ProviderStatusBadge
+                  tone="info"
+                  label={t("provider.needsRouting", {
+                    defaultValue: "需要路由",
+                  })}
+                />
+              )}
+
+              {appId === "claude" && provider.category === "official" && (
+                <ProviderStatusBadge
+                  label={t("provider.noRoutingSupport", {
+                    defaultValue: "不支持路由",
+                  })}
+                />
+              )}
+
+              {isProxyRunning &&
+                !supportsOfficialRouting &&
+                isInFailoverQueue &&
+                health && (
+                  <ProviderHealthBadge
+                    consecutiveFailures={health.consecutive_failures}
+                    isHealthy={health.is_healthy}
+                  />
+                )}
+
               {isAutoFailoverEnabled &&
+                !supportsOfficialRouting &&
                 isInFailoverQueue &&
                 failoverPriority && (
                   <FailoverPriorityBadge priority={failoverPriority} />
-                )}
-
-              {provider.category === "third_party" &&
-                provider.meta?.isPartner && (
-                  <span
-                    className="text-yellow-500 dark:text-yellow-400"
-                    title={t("provider.officialPartner", {
-                      defaultValue: "官方合作伙伴",
-                    })}
-                  >
-                    ⭐
-                  </span>
                 )}
 
               {isHermesReadOnly && (
@@ -462,7 +513,73 @@ export function ProviderCard({
               )}
             </div>
 
-            {displayUrl && (
+            {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+              <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+                {codexOfficialIdentity === "native_login" ? (
+                  <span className="min-w-0 truncate" title={manualNote}>
+                    {manualNote ??
+                      t("codex.followCodexLoginDescription", {
+                        defaultValue: "账号会随 Codex CLI 当前登录变化",
+                      })}
+                  </span>
+                ) : managedCodexAccount ? (
+                  <>
+                    <span
+                      className="min-w-0 truncate"
+                      title={manualNote ?? managedCodexAccount.login}
+                    >
+                      {manualNote ??
+                        (providerNameIncludesAccountLogin
+                          ? t("codex.openAiAccount", {
+                              defaultValue: "OpenAI 账号",
+                            })
+                          : managedCodexAccount.login)}
+                    </span>
+                    {managedCodexAccount.reauth_required && (
+                      <span className="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {t("codexOauth.reauthBadge", "需要重新登录")}
+                      </span>
+                    )}
+                  </>
+                ) : isCodexAuthStatusError ? (
+                  <span className="inline-flex min-w-0 items-center gap-1 text-amber-700 dark:text-amber-300">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">
+                      {t("codex.accountStatusUnavailable", {
+                        defaultValue: "无法读取账号信息",
+                      })}
+                    </span>
+                  </span>
+                ) : isCodexAuthStatusSuccess ? (
+                  <>
+                    <span className="inline-flex min-w-0 items-center gap-1 text-sm text-amber-700 dark:text-amber-300">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        {t("codex.boundAccountUnavailable", {
+                          defaultValue: "绑定的账号不可用",
+                        })}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-sm font-medium text-primary hover:underline"
+                      onClick={() => onEdit(provider)}
+                    >
+                      {t("codex.chooseAccount", {
+                        defaultValue: "选择账号",
+                      })}
+                    </button>
+                  </>
+                ) : (
+                  <span className="min-w-0 truncate">
+                    {t("codex.accountLoading", {
+                      defaultValue: "正在加载账号…",
+                    })}
+                  </span>
+                )}
+              </div>
+            ) : displayUrl ? (
               <button
                 type="button"
                 onClick={handleOpenWebsite}
@@ -477,7 +594,7 @@ export function ProviderCard({
               >
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -491,11 +608,18 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : isCodexOauth ? (
-                <CodexOauthQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
+                !isBoundCodexOfficial || usageEnabled ? (
+                  <CodexOauthQuotaFooter
+                    meta={provider.meta}
+                    inline={true}
+                    isCurrent={isCurrent}
+                    autoQueryInterval={
+                      isBoundCodexOfficial
+                        ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
+                        : undefined
+                    }
+                  />
+                ) : null
               ) : isXaiOauth ? (
                 <XaiOauthQuotaFooter
                   meta={provider.meta}
@@ -582,7 +706,7 @@ export function ProviderCard({
               onConfigureUsage={
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
-                isCodexOauth ||
+                (isCodexOauth && !isBoundCodexOfficial) ||
                 isXaiOauth
                   ? undefined
                   : () => onConfigureUsage(provider)
@@ -599,9 +723,14 @@ export function ProviderCard({
               }
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
-              onToggleFailover={onToggleFailover}
+              onToggleFailover={
+                supportsOfficialRouting ? undefined : onToggleFailover
+              }
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
+              isRemovalProtected={isRemovalProtected}
+              isStateChangeProtected={isStateChangeProtected}
+              defaultModelOptions={openclawDefaultModelOptions}
               onSetAsDefault={onSetAsDefault}
             />
           </div>

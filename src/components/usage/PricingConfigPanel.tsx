@@ -53,7 +53,7 @@ export function PricingConfigPanel() {
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-  // 三个应用的配置状态
+  // All applications with a first-class usage pipeline.
   const [appConfigs, setAppConfigs] = useState<AppConfigState>({
     claude: { multiplier: "1", source: "response" },
     codex: { multiplier: "1", source: "response" },

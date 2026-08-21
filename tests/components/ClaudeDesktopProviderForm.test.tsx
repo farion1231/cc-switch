@@ -1,9 +1,64 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeDesktopProviderForm } from "@/components/providers/forms/ClaudeDesktopProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
+
+const authState = vi.hoisted(() => ({
+  codexReauthRequired: false,
+}));
+const toastMocks = vi.hoisted(() => ({
+  error: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: toastMocks.error,
+    success: vi.fn(),
+  },
+}));
+
+vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/components/providers/forms/hooks")>();
+  return {
+    ...actual,
+    useCopilotAuth: () => ({
+      isAuthenticated: false,
+      accounts: [],
+    }),
+    useCodexOauth: () => ({
+      isAuthenticated: true,
+      defaultAccountId: "acct-managed",
+      accounts: [
+        {
+          id: "acct-managed",
+          is_default: true,
+          reauth_required: authState.codexReauthRequired,
+          requires_reauth: false,
+        },
+      ],
+    }),
+    useXaiOauth: () => ({
+      isAuthenticated: false,
+      accounts: [],
+    }),
+  };
+});
+
+vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
+  CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
+}));
+
+vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
+  CopilotAuthSection: () => <div data-testid="copilot-auth-section" />,
+}));
+
+vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
+  XaiOAuthSection: () => <div data-testid="xai-oauth-section" />,
+}));
 
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
@@ -30,6 +85,10 @@ function renderForm(
 }
 
 describe("ClaudeDesktopProviderForm", () => {
+  beforeEach(() => {
+    authState.codexReauthRequired = false;
+  });
+
   it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
     "托管 OAuth %s 即使旧数据是 direct 也强制开启模型映射",
     (providerType) => {
@@ -51,13 +110,93 @@ describe("ClaudeDesktopProviderForm", () => {
         },
       });
 
-      const modelMappingToggle = screen.getByRole("switch", {
-        name: "需要模型映射",
+      const modelModePicker = screen.getByRole("combobox", {
+        name: "接入方式",
       });
-      expect(modelMappingToggle).toBeChecked();
-      expect(modelMappingToggle).toBeDisabled();
+      expect(modelModePicker).toHaveTextContent("模型映射");
+      expect(modelModePicker).toBeDisabled();
     },
   );
+
+  it("新建自定义供应商默认使用直连并显示模型列表", () => {
+    renderForm(undefined);
+
+    expect(
+      screen.getByRole("combobox", { name: "接入方式" }),
+    ).toHaveTextContent("直连");
+    expect(screen.getByText("模型列表")).toBeInTheDocument();
+    expect(screen.queryByText("模型角色")).not.toBeInTheDocument();
+  });
+
+  it("直连预设保留预设模型列表", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderForm(undefined, onSubmit);
+
+    await user.click(screen.getByRole("button", { name: /PackyCode/ }));
+
+    expect(screen.getByDisplayValue("claude-sonnet-5")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("claude-opus-5")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("claude-haiku-4-5")).toBeInTheDocument();
+
+    await user.clear(screen.getByDisplayValue("claude-sonnet-5"));
+    await user.type(screen.getByLabelText("API Key"), "sk-test");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(
+      onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes,
+    ).toMatchObject({
+      "claude-opus-5": { model: "claude-opus-5" },
+      "claude-haiku-4-5": { model: "claude-haiku-4-5" },
+    });
+    expect(
+      onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes,
+    ).not.toHaveProperty("claude-sonnet-5");
+  });
+
+  it("直连与模型映射分别保留自己的模型列表", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const user = userEvent.setup();
+    renderForm({
+      name: "Proxy Provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": {
+            model: "upstream-sonnet",
+          },
+        },
+      },
+    });
+
+    expect(screen.getByDisplayValue("upstream-sonnet")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "接入方式" }));
+    await user.click(await screen.findByRole("option", { name: "直连" }));
+
+    expect(screen.getByText("模型列表")).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("claude-sonnet-4-6"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByDisplayValue("claude-sonnet-5"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "接入方式" }));
+    await user.click(await screen.findByRole("option", { name: "模型映射" }));
+
+    expect(screen.getByDisplayValue("upstream-sonnet")).toBeInTheDocument();
+  });
 
   it("编辑模型映射的菜单显示名时保持输入框焦点", () => {
     renderForm({
@@ -292,5 +431,68 @@ describe("ClaudeDesktopProviderForm", () => {
         model: "claude-sonnet-5",
       },
     });
+  });
+
+  it("不允许保存需要重新登录的 Codex OAuth 账号", async () => {
+    authState.codexReauthRequired = true;
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Codex OAuth Provider",
+        category: "third_party",
+        settingsConfig: { env: {} },
+        meta: {
+          providerType: "codex_oauth",
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "acct-managed",
+          },
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-model" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        "已绑定账号不存在或需要重新登录，请重新选择账号",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("未选择账号时不允许保存需要重新登录的 Codex OAuth 默认账号", async () => {
+    authState.codexReauthRequired = true;
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Codex OAuth Default Account Provider",
+        category: "third_party",
+        settingsConfig: { env: {} },
+        meta: {
+          providerType: "codex_oauth",
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-model" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        "已绑定账号不存在或需要重新登录，请重新选择账号",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

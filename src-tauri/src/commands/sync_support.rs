@@ -1,17 +1,43 @@
 use serde_json::{json, Value};
-use std::sync::Arc;
 
-use crate::database::Database;
 use crate::error::AppError;
-use crate::services::provider::ProviderService;
+use crate::services::{model_pricing, PromptService, ProviderService};
 use crate::settings;
 use crate::store::AppState;
 
-pub(crate) fn run_post_import_sync(db: Arc<Database>) -> Result<(), AppError> {
-    let app_state = AppState::new(db);
-    ProviderService::sync_current_to_live(&app_state)?;
-    settings::reload_settings()?;
-    Ok(())
+pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError> {
+    let mut failures = Vec::new();
+
+    if let Err(error) = ProviderService::sync_current_to_live(app_state) {
+        failures.push(format!("live configuration: {error}"));
+    }
+    if let Err(error) = PromptService::sync_all_to_live(app_state) {
+        failures.push(format!("prompts: {error}"));
+    }
+    if let Err(error) = model_pricing::sync_local_model_pricing(&app_state.db) {
+        failures.push(format!("model pricing: {error}"));
+    }
+    if let Err(error) = settings::reload_settings() {
+        failures.push(format!("settings cache: {error}"));
+    }
+
+    match app_state.db.get_log_config() {
+        Ok(log_config) => log::set_max_level(log_config.to_level_filter()),
+        Err(error) => {
+            log::set_max_level(log::LevelFilter::Info);
+            failures.push(format!("runtime log level: {error}"));
+        }
+    }
+    app_state.usage_cache.invalidate_all();
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "部分导入后同步失败: {}",
+            failures.join("; ")
+        )))
+    }
 }
 
 fn post_sync_warning<E: std::fmt::Display>(err: E) -> String {
