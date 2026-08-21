@@ -2034,7 +2034,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "zcode": "ZCode"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
