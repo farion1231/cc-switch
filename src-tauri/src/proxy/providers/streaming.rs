@@ -171,6 +171,15 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
 
+        // 上游流结束后追加一个只含空行分隔符的哨兵块：带缓冲的反向代理可能在交付
+        // 最后一帧时省略尾部空行并直接关闭连接，这帧会一直残留在 buffer 里。
+        // 哨兵让这样的最后一帧（finish_reason / [DONE]）也走统一的块处理循环，
+        // 而不是在 EOF 时被静默丢弃（与 streaming_codex_anthropic.rs 的 EOF 尾块
+        // 处理同源）。buffer 为空或只剩空白时它只会产生一个被跳过的空块。
+        let stream = stream.chain(futures::stream::iter([Ok::<Bytes, E>(
+            Bytes::from_static(b"\n\n"),
+        )]));
+
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
@@ -514,7 +523,14 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 注意：OpenRouter 某些 provider 会发送多个带 finish_reason 的 chunk
                                         // （第一个 usage 为 null，后续才补全）。此处只做缓存，不立即发送，
                                         // 等到 [DONE] 或流末尾再统一发出，确保 usage 完整且只发一次。
-                                        if let Some(finish_reason) = &choice.finish_reason {
+                                        // 部分兼容网关会在每个 chunk 上发空字符串 finish_reason（#5087）：
+                                        // 空串等同缺失，不是终止信号，否则会提前关块并占掉唯一的
+                                        // message_delta 名额。
+                                        let finish_reason = choice
+                                            .finish_reason
+                                            .as_deref()
+                                            .filter(|reason| !reason.is_empty());
+                                        if let Some(finish_reason) = finish_reason {
                                             let stop_reason = map_stop_reason(Some(finish_reason));
                                             let usage_json =
                                                 chunk_usage_json.clone().or_else(|| latest_usage.clone());
@@ -647,20 +663,28 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         // 流自然结束但未收到 [DONE] 时，确保发送缓存的 message_delta 和 message_stop。
         // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
         if !stream_ended_with_error {
-            let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
-                pending_message_delta.take()
-            {
+            if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
                 let event = build_message_delta_event(stop_reason, usage_json);
                 let sse_data = format!("event: message_delta\ndata: {}\n\n",
                     serde_json::to_string(&event).unwrap_or_default());
                 log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end)");
                 yield Ok(Bytes::from(sse_data));
-                true
-            } else {
-                false
-            };
+            } else if has_sent_message_start && !has_sent_message_stop {
+                // 上游没发过任何 finish_reason 就结束了（无 [DONE] 的干净 EOF，常见于
+                // 中间层直接断开）。按 Anthropic 语义用 max_tokens 标记截断，不把残缺
+                // 输出伪装成正常完成；严格客户端（omp/pi-ai 等）缺 message_stop 会
+                // 整轮丢弃。
+                let event = build_message_delta_event(
+                    Some("max_tokens".to_string()),
+                    latest_usage.clone(),
+                );
+                let sse_data = format!("event: message_delta\ndata: {}\n\n",
+                    serde_json::to_string(&event).unwrap_or_default());
+                log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (truncation fallback)");
+                yield Ok(Bytes::from(sse_data));
+            }
 
-            if emitted_pending_message_delta && !has_sent_message_stop {
+            if has_sent_message_start && !has_sent_message_stop {
                 let event = json!({"type": "message_stop"});
                 let sse_data = format!("event: message_stop\ndata: {}\n\n",
                     serde_json::to_string(&event).unwrap_or_default());
@@ -1199,17 +1223,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stream_end_without_finish_reason_does_not_emit_success_terminal_events() {
+    async fn test_stream_end_without_finish_reason_finalizes_as_truncated() {
+        // #6462: a clean EOF without any finish_reason must still complete the
+        // Anthropic envelope — strict clients (omp's pi-ai parser) discard the
+        // whole turn when message_stop is missing. Truncation is reported via
+        // stop_reason=max_tokens (not a success end_turn), mirroring how
+        // streaming_codex_anthropic.rs finalizes vanished upstreams.
         let input = "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n";
 
         let events = collect_anthropic_events(input).await;
 
-        assert!(!events
+        let message_delta = events
             .iter()
-            .any(|event| event_type(event) == Some("message_delta")));
-        assert!(!events
-            .iter()
-            .any(|event| event_type(event) == Some("message_stop")));
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("truncated stream must emit a terminal message_delta");
+        assert_eq!(
+            message_delta
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("max_tokens")
+        );
+
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event_type(event) == Some("message_stop"))
+                .count(),
+            1
+        );
+        assert!(!events.iter().any(|e| event_type(e) == Some("error")));
     }
 
     #[tokio::test]
@@ -1244,5 +1286,87 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_trailing_frame_without_final_blank_line_is_flushed_at_eof() {
+        // A buffering reverse proxy may deliver the terminal frame without its
+        // trailing blank line and close the connection; that frame must not be
+        // silently dropped (#6462).
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_tail\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tail\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("trailing finish_reason frame must be parsed at EOF");
+        assert_eq!(
+            message_delta
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("end_turn")
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(3)
+        );
+
+        let message_stops = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_stop"))
+            .count();
+        assert_eq!(message_stops, 1);
+    }
+
+    #[tokio::test]
+    async fn test_empty_finish_reason_is_treated_as_absent() {
+        // Some compatible gateways put `finish_reason: ""` on every chunk
+        // (#5087). An empty reason must not act as a terminal signal: it must
+        // not fragment content blocks nor consume the single message_delta.
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_empty\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"you\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_empty\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\" & me\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_empty\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        let text_block_starts = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .filter(|event| {
+                event
+                    .pointer("/content_block/type")
+                    .and_then(|v| v.as_str())
+                    == Some("text")
+            })
+            .count();
+        assert_eq!(
+            text_block_starts, 1,
+            "empty finish_reason must not fragment the text block"
+        );
+
+        let text_deltas: Vec<&str> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_delta"))
+            .filter_map(|event| event.pointer("/delta/text").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(text_deltas, vec!["you", " & me"]);
+
+        let message_deltas = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .count();
+        assert_eq!(
+            message_deltas, 1,
+            "empty finish_reason must not consume the terminal message_delta slot"
+        );
     }
 }
