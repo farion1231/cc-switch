@@ -8,6 +8,15 @@ use crate::services::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH}
 use crate::services::usage_stats::effective_usage_log_filter;
 use chrono::{Duration, Local, TimeZone};
 
+const VSCODE_SESSION_DATA_SOURCE: &str = "vscode_session";
+const COPILOT_CLI_SESSION_DATA_SOURCE: &str = "copilot_cli_session";
+
+fn prune_eligible_filter(alias: &str) -> String {
+    format!(
+        "COALESCE(NULLIF(TRIM({alias}.data_source), ''), 'proxy') NOT IN ('{VSCODE_SESSION_DATA_SOURCE}', '{COPILOT_CLI_SESSION_DATA_SOURCE}')"
+    )
+}
+
 /// Compute the rollup/prune cutoff aligned to a local-day boundary.
 ///
 /// Anything strictly older than the returned timestamp will be aggregated into
@@ -62,11 +71,15 @@ impl Database {
     pub fn rollup_and_prune(&self, retain_days: i64) -> Result<u64, AppError> {
         let cutoff = compute_local_midnight_cutoff(Local::now(), retain_days)?;
         let conn = lock_conn!(self.conn);
+        let prune_eligible = prune_eligible_filter("l");
 
         // Check if there are any rows to process
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM proxy_request_logs WHERE created_at < ?1",
+                &format!(
+                    "SELECT COUNT(*) FROM proxy_request_logs l
+                     WHERE l.created_at < ?1 AND {prune_eligible}"
+                ),
                 [cutoff],
                 |row| row.get(0),
             )
@@ -116,6 +129,8 @@ impl Database {
     fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
+        let prune_eligible = prune_eligible_filter("l");
+        let delete_prune_eligible = prune_eligible_filter("proxy_request_logs");
         let fresh_detail_input = fresh_input_sql("l");
         let fresh_old_input = fresh_input_sql("old");
         // request_model 维度保留路由接管的「客户端别名 → 真实模型」映射，
@@ -158,7 +173,7 @@ impl Database {
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost,
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
                 FROM proxy_request_logs l
-                WHERE l.created_at < ?1 AND {effective_filter}
+                WHERE l.created_at < ?1 AND {prune_eligible} AND {effective_filter}
                 GROUP BY d, a, p, m, rm, pm
             ) agg
             LEFT JOIN usage_daily_rollups old
@@ -171,10 +186,15 @@ impl Database {
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
         // INSERT uses the effective-log filter to exclude duplicate session rows.
-        // DELETE intentionally prunes all old details so those duplicates are discarded.
+        // VS Code session rows keep their stable request IDs instead of being
+        // rolled up: catalog replays can then upsert them without counting the
+        // same historical request again.
         let deleted = conn
             .execute(
-                "DELETE FROM proxy_request_logs WHERE created_at < ?1",
+                &format!(
+                    "DELETE FROM proxy_request_logs
+                     WHERE proxy_request_logs.created_at < ?1 AND {delete_prune_eligible}"
+                ),
                 [cutoff],
             )
             .map_err(|e| AppError::Database(format!("Pruning old logs failed: {e}")))?;
@@ -185,7 +205,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_local_midnight_cutoff;
+    use super::{compute_local_midnight_cutoff, VSCODE_SESSION_DATA_SOURCE};
     use crate::database::Database;
     use crate::error::AppError;
     use chrono::{Local, TimeZone};
@@ -278,6 +298,62 @@ mod tests {
                 row.get(0)
             })?;
         assert_eq!(remaining, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn vscode_session_rows_keep_stable_request_ids_instead_of_being_rolled_up(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86_400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (
+                    'vscode_session:s-1:r-1', 'vscode-copilot', 'copilot-byok',
+                    'gpt-test', 100, 10, 40, '0', 100, 200, ?1, ?2
+                )",
+                rusqlite::params![old_ts, VSCODE_SESSION_DATA_SOURCE],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at, data_source
+                ) VALUES (
+                    'proxy-old', 'anthropic', 'claude', 'claude-test',
+                    200, 20, '0', 100, 200, ?1, 'proxy'
+                )",
+                [old_ts],
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+        let conn = crate::database::lock_conn!(db.conn);
+        let detail_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs
+             WHERE request_id = 'vscode_session:s-1:r-1'",
+            [],
+            |row| row.get(0),
+        )?;
+        let rollup_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usage_daily_rollups
+             WHERE app_type = 'copilot-byok'",
+            [],
+            |row| row.get(0),
+        )?;
+        let archived_proxy_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usage_daily_rollups WHERE app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(detail_count, 1);
+        assert_eq!(rollup_count, 0);
+        assert_eq!(archived_proxy_count, 1);
         Ok(())
     }
 

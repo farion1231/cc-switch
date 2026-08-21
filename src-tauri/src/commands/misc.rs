@@ -5,7 +5,7 @@ use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tauri::AppHandle;
@@ -4387,24 +4387,30 @@ fn escape_windows_batch_value(value: &str) -> String {
 /// Windows: Run a start command with common error handling
 #[cfg(target_os = "windows")]
 fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
     let mut full_args = vec!["/C", "start"];
     full_args.extend(args);
 
-    let output = Command::new("cmd")
+    // Never capture the launcher output here. `start` intentionally detaches the
+    // terminal, but that terminal inherits the launcher's stdio handles. Using
+    // `Command::output()` therefore keeps its pipe readers open until the whole
+    // terminal process tree exits, which makes the synchronous Tauri command—and
+    // consequently the desktop UI—appear hung for the lifetime of the terminal.
+    let status = Command::new("cmd")
         .args(&full_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
+        .status()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
+    if !status.success() {
         return Err(format!(
-            "{} 启动失败 (exit code: {:?}): {}",
+            "{} 启动失败 (exit code: {:?})",
             terminal_name,
-            output.status.code(),
-            stderr
+            status.code(),
         ));
     }
 
@@ -4417,16 +4423,43 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
 ///
 /// **Security**：`command_line` 会被原样拼进 shell/batch 脚本，调用方必须
 /// 保证它是可信字符串（当前只由后端硬编码调用）。
+fn unique_terminal_script_path(temp_dir: &Path, label: &str, extension: &str) -> PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let safe_label = label
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let safe_label = if safe_label.is_empty() {
+        "terminal"
+    } else {
+        &safe_label
+    };
+    temp_dir.join(format!(
+        "cc_switch_{safe_label}_{}_{timestamp}_{counter}.{extension}",
+        std::process::id()
+    ))
+}
+
 pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
-    let pid = std::process::id();
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let (script_file, script_content) = {
-        let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
+        let file = unique_terminal_script_path(&temp_dir, label, "sh");
         let content = format!(
             r#"#!/usr/bin/env sh
-trap 'rm -f "{script_path}"' EXIT
+trap 'rm -f -- "$0"' EXIT
 echo "[cc-switch] Starting: {label}"
 echo ""
 {cmd}
@@ -4434,7 +4467,6 @@ echo ""
 echo "[cc-switch] Command exited. Press Enter to close."
 read -r _
 "#,
-            script_path = file.display(),
             label = label,
             cmd = command_line,
         );
@@ -4445,9 +4477,9 @@ read -r _
     {
         use std::os::unix::fs::PermissionsExt;
 
-        std::fs::write(&script_file, &script_content)
+        crate::config::atomic_write_private(&script_file, script_content.as_bytes())
             .map_err(|e| format!("写入启动脚本失败: {e}"))?;
-        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o700))
             .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
         let preferred = crate::settings::get_preferred_terminal();
@@ -4480,9 +4512,9 @@ read -r _
         use std::os::unix::fs::PermissionsExt;
         use std::process::Command;
 
-        std::fs::write(&script_file, &script_content)
+        crate::config::atomic_write_private(&script_file, script_content.as_bytes())
             .map_err(|e| format!("写入启动脚本失败: {e}"))?;
-        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o700))
             .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
         let preferred = crate::settings::get_preferred_terminal();
@@ -4549,13 +4581,14 @@ read -r _
         let preferred = crate::settings::get_preferred_terminal();
         let terminal = preferred.as_deref().unwrap_or("cmd");
 
-        let bat_file = temp_dir.join(format!("cc_switch_{}_{}.bat", label, pid));
+        let bat_file = unique_terminal_script_path(&temp_dir, label, "bat");
         let content = format!(
             "@echo off\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
             label = label,
             cmd = command_line,
         );
-        std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+        crate::config::atomic_write_private(&bat_file, content.as_bytes())
+            .map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
         let bat_path = bat_file.to_string_lossy();
         let ps_cmd = format!("& '{}'", bat_path);
@@ -4591,9 +4624,124 @@ read -r _
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
-        let _ = (temp_dir, pid, command_line, label);
+        let _ = (temp_dir, command_line, label);
         Err("不支持的操作系统".to_string())
     }
+}
+
+fn validate_scoped_environment(
+    environment: &BTreeMap<String, Option<String>>,
+) -> Result<(), String> {
+    for (name, value) in environment {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte == b'_' || byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        {
+            return Err(format!("非法环境变量名: {name}"));
+        }
+        if value.as_deref().is_some_and(|value| value.contains('\0')) {
+            return Err(format!("环境变量包含 NUL: {name}"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_scoped_environment_command(
+    command_line: &str,
+    environment: &BTreeMap<String, Option<String>>,
+    cwd: Option<&Path>,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    validate_scoped_environment(environment)?;
+    let mut script = String::from("$ErrorActionPreference = 'Stop'\r\n");
+    for (name, value) in environment {
+        match value {
+            Some(value) => {
+                let encoded = STANDARD.encode(value.as_bytes());
+                script.push_str(&format!(
+                    "$env:{name} = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}'))\r\n"
+                ));
+            }
+            None => script.push_str(&format!(
+                "Remove-Item -LiteralPath 'Env:{name}' -ErrorAction SilentlyContinue\r\n"
+            )),
+        }
+    }
+    if let Some(cwd) = cwd {
+        let encoded = STANDARD.encode(cwd.to_string_lossy().as_bytes());
+        script.push_str(&format!(
+            "Set-Location -LiteralPath ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))\r\n"
+        ));
+    }
+    // `command_line` is backend-owned. User/provider data only appears as
+    // base64 payloads above and cannot change PowerShell syntax.
+    script.push_str("$ErrorActionPreference = 'Continue'\r\n");
+    script.push_str("& ");
+    script.push_str(command_line);
+    script.push_str("\r\n");
+
+    let mut utf16 = Vec::with_capacity(script.len() * 2);
+    for code_unit in script.encode_utf16() {
+        utf16.extend_from_slice(&code_unit.to_le_bytes());
+    }
+    Ok(format!(
+        "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        STANDARD.encode(utf16)
+    ))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn build_unix_scoped_environment_command(
+    command_line: &str,
+    environment: &BTreeMap<String, Option<String>>,
+    cwd: Option<&Path>,
+) -> Result<String, String> {
+    validate_scoped_environment(environment)?;
+    let mut lines = Vec::with_capacity(environment.len() + 2);
+    for (name, value) in environment {
+        match value {
+            Some(value) => lines.push(format!("export {name}={}", shell_single_quote(value))),
+            None => lines.push(format!("unset {name}")),
+        }
+    }
+    if let Some(cwd) = cwd {
+        lines.push(format!(
+            "cd -- {} || exit 1",
+            shell_single_quote(&cwd.to_string_lossy())
+        ));
+    }
+    lines.push(command_line.to_string());
+    Ok(lines.join("\n"))
+}
+
+/// Launch a trusted command with a process-scoped environment. Unlike the
+/// persistent Copilot CLI switcher, this never changes user environment state.
+pub(crate) fn launch_terminal_running_with_env(
+    command_line: &str,
+    label: &str,
+    environment: &BTreeMap<String, Option<String>>,
+    cwd: Option<String>,
+) -> Result<(), String> {
+    let cwd = resolve_launch_cwd(cwd)?;
+
+    #[cfg(target_os = "windows")]
+    let scoped_command =
+        build_windows_scoped_environment_command(command_line, environment, cwd.as_deref())?;
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let scoped_command =
+        build_unix_scoped_environment_command(command_line, environment, cwd.as_deref())?;
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    let scoped_command = {
+        let _ = (command_line, environment, cwd);
+        return Err("不支持的操作系统".to_string());
+    };
+
+    launch_terminal_running(&scoped_command, label)
 }
 
 /// 设置窗口主题（Windows/macOS 标题栏颜色）
@@ -4615,6 +4763,104 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn terminal_launcher_uses_unique_sanitized_script_paths() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let first = unique_terminal_script_path(temp.path(), "copilot/cli", "sh");
+        let second = unique_terminal_script_path(temp.path(), "copilot/cli", "sh");
+
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), Some(temp.path()));
+        assert!(first
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("cc_switch_copilot_cli_")));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_terminal_launcher_does_not_wait_for_terminal_process_tree() {
+        let started = std::time::Instant::now();
+        run_windows_start_command(
+            &[
+                "/B",
+                "powershell",
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                "Start-Sleep -Seconds 4",
+            ],
+            "test terminal",
+        )
+        .expect("detached Windows terminal launcher should start");
+
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "launcher waited for the detached terminal process tree"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn scoped_copilot_terminal_encodes_secrets_and_working_directory() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+        let environment = BTreeMap::from([
+            (
+                "COPILOT_PROVIDER_API_KEY".to_string(),
+                Some("secret' %PATH% & value\nsecond".to_string()),
+            ),
+            ("COPILOT_PROVIDER_HEADERS".to_string(), None),
+        ]);
+        let cwd = Path::new(r"C:\Work Space\Project's");
+        let command = build_windows_scoped_environment_command("copilot", &environment, Some(cwd))
+            .expect("build scoped terminal command");
+
+        assert!(!command.contains("secret' %PATH%"));
+        let encoded = command
+            .split_whitespace()
+            .last()
+            .expect("encoded PowerShell payload");
+        let bytes = STANDARD.decode(encoded).expect("decode payload");
+        let words = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        let script = String::from_utf16(&words).expect("UTF-16 PowerShell script");
+        assert!(script.contains("& copilot"));
+        assert!(script.contains(&STANDARD.encode("secret' %PATH% & value\nsecond")));
+        assert!(script.contains(&STANDARD.encode(cwd.to_string_lossy().as_bytes())));
+        assert!(script.contains("Remove-Item -LiteralPath 'Env:COPILOT_PROVIDER_HEADERS'"));
+    }
+
+    #[test]
+    fn scoped_terminal_rejects_untrusted_environment_names() {
+        let environment = BTreeMap::from([("BAD-NAME".to_string(), Some("value".to_string()))]);
+        assert!(validate_scoped_environment(&environment).is_err());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn scoped_unix_terminal_quotes_values_and_working_directory() {
+        let environment = BTreeMap::from([
+            (
+                "COPILOT_PROVIDER_API_KEY".to_string(),
+                Some("secret' value".to_string()),
+            ),
+            ("COPILOT_PROVIDER_HEADERS".to_string(), None),
+        ]);
+        let command = build_unix_scoped_environment_command(
+            "copilot",
+            &environment,
+            Some(Path::new("/tmp/Project O'Brien")),
+        )
+        .expect("build scoped terminal command");
+        assert!(command.contains("export COPILOT_PROVIDER_API_KEY='secret'\"'\"' value'"));
+        assert!(command.contains("unset COPILOT_PROVIDER_HEADERS"));
+        assert!(command.contains("cd -- '/tmp/Project O'\"'\"'Brien' || exit 1"));
+        assert!(command.ends_with("copilot"));
+    }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
     /// `/bin/echo --version` 在 macOS/Linux 均即刻成功退出。

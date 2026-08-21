@@ -49,6 +49,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { usageApi } from "@/lib/api/usage";
 import { toast } from "sonner";
+import copilotByokIcon from "@/assets/icons/vscode-copilot-byok.png";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
 
@@ -72,6 +73,8 @@ const APP_FILTER_ICON: Record<AppType, string> = {
   grokbuild: "grok",
   opencode: "opencode",
   pi: "pi",
+  "copilot-byok": "vscode-copilot-byok",
+  "copilot-cli": "githubcopilot",
 };
 
 // Select 的 "all" 哨兵和用户自定义名称同处一个值域——真有来源/模型叫 "all"
@@ -81,14 +84,22 @@ const encodeOptionValue = (name: string) => `${DYNAMIC_OPTION_PREFIX}${name}`;
 const decodeOptionValue = (value: string) =>
   value === "all" ? undefined : value.slice(DYNAMIC_OPTION_PREFIX.length);
 
+export interface UsageDefaultFilter {
+  appType: AppTypeFilter;
+  providerName?: string;
+  revision: number;
+}
+
 interface UsageDashboardProps {
   refreshIntervalMs?: number;
   onRefreshIntervalChange?: (next: number) => Promise<boolean> | boolean | void;
+  defaultFilter?: UsageDefaultFilter;
 }
 
 export function UsageDashboard({
   refreshIntervalMs: savedRefreshIntervalMs,
   onRefreshIntervalChange,
+  defaultFilter,
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -107,6 +118,13 @@ export function UsageDashboard({
   useEffect(() => {
     setRefreshIntervalMs(normalizeRefreshInterval(savedRefreshIntervalMs));
   }, [savedRefreshIntervalMs]);
+
+  useEffect(() => {
+    if (!defaultFilter) return;
+    setAppType(defaultFilter.appType);
+    setProviderName(defaultFilter.providerName);
+    setModel(undefined);
+  }, [defaultFilter]);
 
   // 切应用时清掉下游筛选，避免留下一个在新范围内查无数据的"幽灵"组合；
   // 切 Provider 同理清掉模型（模型选项随 Provider 级联）。
@@ -271,6 +289,12 @@ export function UsageDashboard({
                 >
                   {type === "all" ? (
                     <LayoutGrid className="h-4 w-4" />
+                  ) : type === "copilot-byok" ? (
+                    <img
+                      src={copilotByokIcon}
+                      alt=""
+                      className="h-4 w-4 object-contain"
+                    />
                   ) : (
                     <ProviderIcon
                       icon={APP_FILTER_ICON[type]}

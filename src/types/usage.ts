@@ -13,6 +13,8 @@ export interface RequestLog {
   providerName?: string;
   appType: string;
   model: string;
+  /** Human-readable resolved model name when the source provides one. */
+  modelDisplayName?: string;
   requestModel?: string;
   /** 写入时实际用于计价的模型名；路由接管 + request 计价模式下可能与 model 不同 */
   pricingModel?: string;
@@ -195,7 +197,9 @@ export type AppType =
   | "gemini"
   | "grokbuild"
   | "opencode"
-  | "pi";
+  | "pi"
+  | "copilot-byok"
+  | "copilot-cli";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -206,21 +210,28 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "grokbuild",
   "opencode",
   "pi",
+  "copilot-byok",
+  "copilot-cli",
 ];
 
 /**
- * App types whose proxy uses an OpenAI-style protocol. Two consequences:
+ * App types whose stored `inputTokens` include cache reads and writes.
  *
- * 1. `inputTokens` already includes the cached portion (must subtract
- *    `cacheReadTokens` to get fresh-input semantics — see
- *    [getFreshInputTokens]).
- * 2. The protocol does not report cache _creation_ separately, only cache
- *    _reads_. So `cacheCreationTokens` is always 0 for these app types and
- *    the UI should label it as N/A rather than 0.
+ * `inputTokens` must have both cache counters removed to get fresh-input
+ * semantics — see [getFreshInputTokens]. Copilot CLI reports cache creation;
+ * the proxy-backed OpenAI-style apps currently do not, so cache-write
+ * availability is tracked separately below.
  *
  * Mirror of the Rust `CACHE_INCLUSIVE_APP_TYPES` whitelist.
  */
 export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
+  "codex",
+  "gemini",
+  "grokbuild",
+  "copilot-cli",
+]);
+
+const CACHE_WRITE_UNAVAILABLE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
   "grokbuild",
@@ -238,7 +249,7 @@ export function getCacheWriteAvailability(
 ): CacheWriteAvailability {
   if (appTypes.length === 0) return "ok";
   const unavailable = appTypes.filter((appType) =>
-    CACHE_INCLUSIVE_APP_TYPES.has(appType),
+    CACHE_WRITE_UNAVAILABLE_APP_TYPES.has(appType),
   ).length;
   if (unavailable === appTypes.length) return "na";
   const partial = appTypes.some((appType) =>
@@ -252,19 +263,20 @@ export interface CacheNormalizableLog {
   appType: string;
   inputTokens: number;
   cacheReadTokens: number;
+  cacheCreationTokens: number;
 }
 
 /**
- * For a single request log, return the input token count with cache reads
- * removed. Anthropic-style providers already report `inputTokens` without
- * cache, so they pass through unchanged.
+ * For a single request log, return the input token count with cache reads and
+ * writes removed. Anthropic-style providers already report `inputTokens`
+ * without cache, so they pass through unchanged.
  */
 export function getFreshInputTokens(log: CacheNormalizableLog): number {
   if (
     CACHE_INCLUSIVE_APP_TYPES.has(log.appType) &&
-    log.inputTokens >= log.cacheReadTokens
+    log.inputTokens >= log.cacheReadTokens + log.cacheCreationTokens
   ) {
-    return log.inputTokens - log.cacheReadTokens;
+    return log.inputTokens - log.cacheReadTokens - log.cacheCreationTokens;
   }
   return log.inputTokens;
 }

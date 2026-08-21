@@ -43,6 +43,12 @@ impl McpService {
         if prev_apps.opencode && !server.apps.opencode {
             Self::remove_server_from_app(state, &server.id, &AppType::OpenCode)?;
         }
+        if prev_apps.copilot_byok && !server.apps.copilot_byok {
+            Self::remove_server_from_app(state, &server.id, &AppType::CopilotByok)?;
+        }
+        if prev_apps.copilot_cli && !server.apps.copilot_cli {
+            Self::remove_server_from_app(state, &server.id, &AppType::CopilotCli)?;
+        }
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
@@ -137,6 +143,12 @@ impl McpService {
                     &server.server,
                 )?;
             }
+            AppType::CopilotByok => {
+                mcp::sync_single_server_to_copilot(&server.id, &server.server)?;
+            }
+            AppType::CopilotCli => {
+                mcp::sync_single_server_to_copilot_cli(&server.id, &server.server)?;
+            }
             AppType::OpenClaw => {
                 // OpenClaw MCP support is still in development (Issue #4834)
                 // Skip for now
@@ -174,6 +186,12 @@ impl McpService {
             AppType::GrokBuild => mcp::remove_server_from_grokbuild(id)?,
             AppType::OpenCode => {
                 mcp::remove_server_from_opencode(id)?;
+            }
+            AppType::CopilotByok => {
+                mcp::remove_server_from_copilot(id)?;
+            }
+            AppType::CopilotCli => {
+                mcp::remove_server_from_copilot_cli(id)?;
             }
             AppType::OpenClaw => {
                 // OpenClaw MCP support is still in development
@@ -509,6 +527,49 @@ impl McpService {
         Ok(new_count)
     }
 
+    /// 从当前设备选中的 VS Code Profile 导入 MCP。
+    pub fn import_from_copilot(state: &AppState) -> Result<usize, AppError> {
+        let imported = crate::mcp::import_from_copilot()?;
+        let mut existing = state.db.get_all_mcp_servers()?;
+        let mut new_count = 0;
+
+        for server in imported {
+            let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                let mut merged = existing_server.clone();
+                merged.apps.copilot_byok = true;
+                merged
+            } else {
+                new_count += 1;
+                server
+            };
+            state.db.save_mcp_server(&to_save)?;
+            existing.insert(to_save.id.clone(), to_save);
+        }
+        Ok(new_count)
+    }
+
+    /// Import GitHub Copilot CLI's ~/.copilot/mcp-config.json independently
+    /// from VS Code profile MCP files.
+    pub fn import_from_copilot_cli(state: &AppState) -> Result<usize, AppError> {
+        let imported = crate::mcp::import_from_copilot_cli()?;
+        let mut existing = state.db.get_all_mcp_servers()?;
+        let mut new_count = 0;
+
+        for server in imported {
+            let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                let mut merged = existing_server.clone();
+                merged.apps.copilot_cli = true;
+                merged
+            } else {
+                new_count += 1;
+                server
+            };
+            state.db.save_mcp_server(&to_save)?;
+            existing.insert(to_save.id.clone(), to_save);
+        }
+        Ok(new_count)
+    }
+
     /// 从所有支持 MCP 的应用导入服务器，返回新导入的数量。
     ///
     /// Best-effort：单个应用导入失败（如坏 config.toml）不阻断其余应用；
@@ -519,12 +580,14 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 6] = [
+        let results: [(&str, Result<usize, AppError>); 8] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
             ("grokbuild", Self::import_from_grokbuild(state)),
             ("opencode", Self::import_from_opencode(state)),
+            ("copilot-byok", Self::import_from_copilot(state)),
+            ("copilot-cli", Self::import_from_copilot_cli(state)),
             ("hermes", Self::import_from_hermes(state)),
         ];
         for (app, result) in results {

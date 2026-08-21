@@ -155,6 +155,7 @@ pub struct TrayAppSection {
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
+const COPILOT_CLI_TRAY_PREFIX: &str = "copilotcli_";
 
 pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
     TrayAppSection {
@@ -329,6 +330,14 @@ fn provider_uses_official_subscription(provider: &crate::provider::Provider) -> 
         .unwrap_or(false)
 }
 
+fn provider_usage_is_enabled(app_type: &AppType, provider: &crate::provider::Provider) -> bool {
+    let is_official_provider = provider.category.as_deref() == Some("official");
+    provider.has_usage_script_enabled()
+        && (!is_official_provider
+            || app_type == &AppType::CopilotCli
+            || provider_uses_official_subscription(provider))
+}
+
 fn format_usage_suffix(
     app_state: &AppState,
     app_type: &AppType,
@@ -337,9 +346,7 @@ fn format_usage_suffix(
 ) -> Option<String> {
     // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
     // 并顺手 invalidate，防止后续重建继续命中过期数据。
-    let is_official_provider = provider.category.as_deref() == Some("official");
-    let can_use_script = provider.has_usage_script_enabled()
-        && (!is_official_provider || provider_uses_official_subscription(provider));
+    let can_use_script = provider_usage_is_enabled(app_type, provider);
     if can_use_script {
         // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
         if let Some(Some(s)) =
@@ -514,6 +521,103 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
         }
     }
     false
+}
+
+/// Copilot CLI uses a dedicated environment transaction rather than the
+/// normal live-config ProviderService, so its tray events must stay on the
+/// first-class Copilot CLI path as well.
+fn copilot_cli_tray_provider_id(event_id: &str) -> Option<&str> {
+    event_id.strip_prefix(COPILOT_CLI_TRAY_PREFIX)
+}
+
+pub fn handle_copilot_cli_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
+    let Some(provider_id) = copilot_cli_tray_provider_id(event_id) else {
+        return false;
+    };
+    let provider_id = provider_id.to_string();
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(app_state) = app_handle.try_state::<AppState>() else {
+            return;
+        };
+        match crate::copilot_byok::set_cli_provider(
+            app_state.db.as_ref(),
+            &provider_id,
+            None,
+            false,
+        ) {
+            Ok(next) => {
+                refresh_tray_menu(&app_handle);
+                if let Err(error) = app_handle.emit("copilot-cli-state-changed", &next) {
+                    log::error!("发射 Copilot CLI 状态事件失败: {error}");
+                }
+                if let Err(error) = app_handle.emit(
+                    "provider-switched",
+                    serde_json::json!({
+                        "appType": "copilot-cli",
+                        "providerId": provider_id,
+                        "proxyEnabled": false,
+                        "autoFailoverEnabled": false
+                    }),
+                ) {
+                    log::error!("发射 Copilot CLI 供应商切换事件失败: {error}");
+                }
+            }
+            Err(error) => {
+                log::error!("切换 Copilot CLI 供应商 {provider_id} 失败: {error}");
+                refresh_tray_menu(&app_handle);
+            }
+        }
+    });
+    true
+}
+
+fn copilot_cli_group_is_current(
+    cli: &crate::copilot_byok::CopilotCliState,
+    group: &crate::copilot_byok::CopilotByokGroup,
+) -> bool {
+    if group.id == crate::copilot_byok::COPILOT_CLI_OFFICIAL_PROVIDER_ID {
+        !cli.enabled && cli.environment_matches
+    } else {
+        cli.enabled && cli.selected_group_id.as_deref() == Some(group.id.as_str())
+    }
+}
+
+fn copilot_cli_submenu_label(
+    app_state: &AppState,
+    cli_state: &crate::copilot_byok::CopilotByokState,
+) -> String {
+    let selected_group = cli_state
+        .groups
+        .iter()
+        .find(|group| copilot_cli_group_is_current(&cli_state.cli, group));
+    let warning = if !cli_state.cli.environment_conflicts.is_empty()
+        || cli_state.cli.official_activation_requires_confirmation
+    {
+        " ⚠"
+    } else {
+        ""
+    };
+
+    selected_group.map_or_else(
+        || format!("Copilot CLI{warning}"),
+        |group| {
+            let app_type = AppType::CopilotCli;
+            let suffix = app_state
+                .db
+                .get_provider_by_id(
+                    &group.id,
+                    crate::copilot_byok::provider_database_app_type(&app_type),
+                )
+                .ok()
+                .flatten()
+                .and_then(|provider| {
+                    format_usage_suffix(app_state, &app_type, &provider, &group.id)
+                })
+                .unwrap_or_default();
+            format!("Copilot CLI · {}{}{warning}", group.name, suffix)
+        },
+    )
 }
 
 /// 处理 Auto 点击：启用 proxy 和 auto_failover
@@ -810,6 +914,61 @@ pub fn create_tray_menu(
         menu_builder = menu_builder.separator();
     }
 
+    if visible_apps.is_visible(&AppType::CopilotCli) {
+        match crate::copilot_byok::get_cli_state(&app_state.db) {
+            Ok(cli_state) => {
+                let submenu_label = copilot_cli_submenu_label(app_state, &cli_state);
+                let managed_conflict =
+                    cli_state.cli.enabled && !cli_state.cli.environment_conflicts.is_empty();
+                let mut submenu_builder =
+                    SubmenuBuilder::with_id(app, "submenu_copilot-cli", &submenu_label);
+                for group in &cli_state.groups {
+                    let is_official =
+                        group.id == crate::copilot_byok::COPILOT_CLI_OFFICIAL_PROVIDER_ID;
+                    let requires_confirmation =
+                        is_official && cli_state.cli.official_activation_requires_confirmation;
+                    let enabled = !managed_conflict && !requires_confirmation;
+                    let label = if requires_confirmation {
+                        format!("{} ⚠", group.name)
+                    } else {
+                        group.name.clone()
+                    };
+                    let item = CheckMenuItem::with_id(
+                        app,
+                        format!("{COPILOT_CLI_TRAY_PREFIX}{}", group.id),
+                        &label,
+                        enabled,
+                        copilot_cli_group_is_current(&cli_state.cli, group),
+                        None::<&str>,
+                    )
+                    .map_err(|error| {
+                        AppError::Message(format!("创建 Copilot CLI 菜单项失败: {error}"))
+                    })?;
+                    submenu_builder = submenu_builder.item(&item);
+                }
+                let submenu = submenu_builder.build().map_err(|error| {
+                    AppError::Message(format!("构建 Copilot CLI 子菜单失败: {error}"))
+                })?;
+                section_handles.insert(AppType::CopilotCli, submenu.clone());
+                menu_builder = menu_builder.item(&submenu).separator();
+            }
+            Err(error) => {
+                log::warn!("读取 Copilot CLI 托盘状态失败: {error}");
+                let unavailable = MenuItem::with_id(
+                    app,
+                    "copilotcli_unavailable",
+                    "Copilot CLI (unavailable)",
+                    false,
+                    None::<&str>,
+                )
+                .map_err(|menu_error| {
+                    AppError::Message(format!("创建 Copilot CLI 不可用提示失败: {menu_error}"))
+                })?;
+                menu_builder = menu_builder.item(&unavailable).separator();
+            }
+        }
+    }
+
     // 项目 Profile 子菜单：项目列表全应用共享，按分组嵌套子菜单各自勾选/应用
     // （组内应用可见且存在项目时才显示该组）
     {
@@ -957,6 +1116,15 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
             log::debug!("[Tray] 更新{}子菜单标题失败: {e}", section.log_name);
         }
     }
+
+    if let Some(submenu) = handles.get(&AppType::CopilotCli) {
+        if let Ok(cli_state) = crate::copilot_byok::get_cli_state(&app_state.db) {
+            let new_label = copilot_cli_submenu_label(app_state.inner(), &cli_state);
+            if let Err(e) = submenu.set_text(&new_label) {
+                log::debug!("[Tray] 更新 Copilot CLI 子菜单标题失败: {e}");
+            }
+        }
+    }
 }
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
@@ -1039,6 +1207,9 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             app.exit(0);
         }
         _ => {
+            if handle_copilot_cli_tray_event(app, event_id) {
+                return;
+            }
             if handle_profile_tray_event(app, event_id) {
                 return;
             }
@@ -1075,14 +1246,15 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
     });
 }
 
-/// 并行刷新每个可见 app "当前 provider" 的用量；成功 / 失败结果都通过各
-/// command 的 write-through 逻辑写入 `UsageCache`，单次重建菜单由
+/// 并行刷新普通 app 的当前 provider、已启用的 VS Code Copilot provider，
+/// 以及当前 Copilot CLI provider 的用量；成功 / 失败结果都通过各 command
+/// 的 write-through 逻辑写入 `UsageCache`，单次重建菜单由
 /// `schedule_tray_refresh` 做合并。内部 10 秒节流防止鼠标悬停反复进出时
 /// 雪崩请求；互斥锁被毒化时以上次状态为准继续推进，不会永久阻塞。
 ///
-/// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多发
-/// `TRAY_SECTIONS.len()` 次外部请求；只有显式启用的用量查询（含官方订阅、
-/// coding_plan / balance / Copilot / 自定义脚本）才会发请求。
+/// 只有显式启用的用量查询（含官方订阅、coding_plan / balance / Copilot /
+/// 自定义脚本）才会发请求。VS Code Copilot 是累加模式，所以每个已启用且
+/// 配置了查询的 provider 各发一次；Copilot CLI 只查询当前选中的 provider。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
@@ -1110,14 +1282,13 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         .visible_apps
         .unwrap_or_default();
 
-    let mut script_futures = Vec::new();
+    let mut usage_queries: Vec<(AppType, String, &'static str)> = Vec::new();
 
     for section in TRAY_SECTIONS.iter() {
         if !visible_apps.is_visible(&section.app_type) {
             continue;
         }
 
-        let app_type_str = section.app_type.as_str();
         let log_name = section.log_name;
 
         // 解析 effective current provider；未设置 / 出错都静默跳过，
@@ -1134,7 +1305,10 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
             };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
         // 进内存（每次悬停 × 3 sections 的热路径）。
-        let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
+        let current = match app_state
+            .db
+            .get_provider_by_id(&current_id, section.app_type.as_str())
+        {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {
@@ -1144,32 +1318,82 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
 
         // 与 format_usage_suffix 同一优先级：只有显式启用的用量查询才发请求。
-        let is_official_provider = current.category.as_deref() == Some("official");
-        if current.has_usage_script_enabled()
-            && (!is_official_provider || provider_uses_official_subscription(&current))
+        if provider_usage_is_enabled(&section.app_type, &current) {
+            usage_queries.push((section.app_type.clone(), current_id, log_name));
+        }
+    }
+
+    if visible_apps.is_visible(&AppType::CopilotByok) {
+        let app_type = AppType::CopilotByok;
+        match app_state
+            .db
+            .get_all_providers(crate::copilot_byok::provider_database_app_type(&app_type))
         {
+            Ok(providers) => {
+                for (provider_id, provider) in providers {
+                    let provider_enabled = provider
+                        .settings_config
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true);
+                    if provider_enabled && provider_usage_is_enabled(&app_type, &provider) {
+                        usage_queries.push((app_type.clone(), provider_id, "VS Code Copilot"));
+                    }
+                }
+            }
+            Err(e) => log::warn!("[Tray] 读取 VS Code Copilot 供应商失败: {e}"),
+        }
+    }
+
+    if visible_apps.is_visible(&AppType::CopilotCli) {
+        match crate::copilot_byok::get_cli_state(&app_state.db) {
+            Ok(cli_state) => {
+                if let Some(group) = cli_state
+                    .groups
+                    .iter()
+                    .find(|group| copilot_cli_group_is_current(&cli_state.cli, group))
+                {
+                    let app_type = AppType::CopilotCli;
+                    match app_state.db.get_provider_by_id(
+                        &group.id,
+                        crate::copilot_byok::provider_database_app_type(&app_type),
+                    ) {
+                        Ok(Some(provider)) if provider_usage_is_enabled(&app_type, &provider) => {
+                            usage_queries.push((app_type, group.id.clone(), "Copilot CLI"));
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::warn!("[Tray] 读取 Copilot CLI 当前供应商失败: {e}")
+                        }
+                    }
+                }
+            }
+            Err(e) => log::warn!("[Tray] 读取 Copilot CLI 状态失败: {e}"),
+        }
+    }
+
+    let script_futures = usage_queries
+        .into_iter()
+        .map(|(app_type, provider_id, log_name)| {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
             let copilot_state = app.state::<CopilotAuthState>();
             let xai_state = app.state::<crate::commands::XaiOAuthState>();
-            let provider_id = current_id.clone();
-            let app_str = app_type_str.to_string();
-            script_futures.push(async move {
+            async move {
                 if let Err(e) = crate::commands::queryProviderUsage(
                     app_clone,
                     state,
                     copilot_state,
                     xai_state,
                     provider_id.clone(),
-                    app_str,
+                    app_type.as_str().to_string(),
                 )
                 .await
                 {
                     log::debug!("[Tray] 刷新{log_name}供应商 {provider_id} 用量失败: {e}");
                 }
-            });
-        }
-    }
+            }
+        });
 
     join_all(script_futures).await;
 }
@@ -1177,8 +1401,8 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_script_summary, format_subscription_summary, provider_uses_official_subscription,
-        TRAY_ID, TRAY_SECTIONS,
+        copilot_cli_tray_provider_id, format_script_summary, format_subscription_summary,
+        provider_usage_is_enabled, provider_uses_official_subscription, TRAY_ID, TRAY_SECTIONS,
     };
     use crate::app_config::AppType;
     use crate::provider::{Provider, UsageData, UsageResult};
@@ -1223,6 +1447,50 @@ mod tests {
             "account-1"
         ))));
         assert!(provider_uses_official_subscription(&provider(None)));
+    }
+
+    #[test]
+    fn copilot_cli_official_allows_its_explicit_usage_query() {
+        let provider: Provider = serde_json::from_value(serde_json::json!({
+            "id": "copilot-cli-official",
+            "name": "GitHub Copilot Official",
+            "settingsConfig": {},
+            "category": "official",
+            "meta": {
+                "usage_script": {
+                    "enabled": true,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": "token_plan",
+                    "codingPlanProvider": "kimi"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert!(provider_usage_is_enabled(&AppType::CopilotCli, &provider));
+        assert!(!provider_usage_is_enabled(&AppType::Claude, &provider));
+    }
+
+    #[test]
+    fn disabled_usage_query_never_enters_the_tray_refresh_queue() {
+        let provider: Provider = serde_json::from_value(serde_json::json!({
+            "id": "custom",
+            "name": "Custom",
+            "settingsConfig": {},
+            "category": "custom",
+            "meta": {
+                "usage_script": {
+                    "enabled": false,
+                    "language": "javascript",
+                    "code": "return {};"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert!(!provider_usage_is_enabled(&AppType::CopilotByok, &provider));
+        assert!(!provider_usage_is_enabled(&AppType::CopilotCli, &provider));
     }
 
     #[test]
@@ -1288,6 +1556,19 @@ mod tests {
         assert_eq!(section.prefix, "grokbuild_");
         assert_eq!(section.empty_id, "grokbuild_empty");
         assert_eq!(section.header_label, "Grok Build");
+    }
+
+    #[test]
+    fn copilot_cli_tray_events_use_the_dedicated_switch_path() {
+        assert_eq!(
+            copilot_cli_tray_provider_id("copilotcli_copilot-cli-official"),
+            Some("copilot-cli-official")
+        );
+        assert_eq!(
+            copilot_cli_tray_provider_id("copilotcli_custom-provider"),
+            Some("custom-provider")
+        );
+        assert_eq!(copilot_cli_tray_provider_id("codex_custom-provider"), None);
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {

@@ -117,6 +117,24 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::CopilotByok => {
+            let path = crate::copilot_byok::selected_language_model_paths()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .next()
+                .ok_or_else(|| "No VS Code Copilot sync target is selected".to_string())?;
+            Ok(ConfigStatus {
+                exists: path.exists(),
+                path: path.to_string_lossy().to_string(),
+            })
+        }
+        AppType::CopilotCli => {
+            let path = crate::copilot_byok::copilot_cli_home().map_err(|e| e.to_string())?;
+            Ok(ConfigStatus {
+                exists: path.exists(),
+                path: path.to_string_lossy().to_string(),
+            })
+        }
         AppType::OpenClaw => {
             let config_path = crate::openclaw_config::get_openclaw_config_path();
             let exists = config_path.exists();
@@ -165,6 +183,12 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
+        AppType::CopilotByok => {
+            crate::copilot_byok::primary_profile_config_dir().map_err(|e| e.to_string())?
+        }
+        AppType::CopilotCli => {
+            crate::copilot_byok::copilot_cli_home().map_err(|e| e.to_string())?
+        }
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
@@ -184,6 +208,12 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
+        AppType::CopilotByok => {
+            crate::copilot_byok::primary_profile_config_dir().map_err(|e| e.to_string())?
+        }
+        AppType::CopilotCli => {
+            crate::copilot_byok::copilot_cli_home().map_err(|e| e.to_string())?
+        }
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
