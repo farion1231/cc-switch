@@ -18,6 +18,12 @@ vi.mock("@/lib/api/usage", () => ({
   },
 }));
 
+const invokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+}));
+
 import {
   MODELS_DEV_STARTUP_SYNC_INTERVAL_MS,
   syncModelsDevPricing,
@@ -40,11 +46,11 @@ describe("syncModelsDevPricing", () => {
     vi.clearAllMocks();
     updateModelPricingBatch.mockResolvedValue(2);
     recordModelsDevSyncResult.mockResolvedValue(undefined);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command !== "fetch_models_dev_pricing") {
+        throw new Error(`Unexpected command: ${command}`);
+      }
+      return JSON.stringify({
           openai: {
             models: {
               "gpt-5": {
@@ -63,9 +69,8 @@ describe("syncModelsDevPricing", () => {
               },
             },
           },
-        }),
-      }),
-    );
+        });
+    });
   });
 
   it("skips network access when automatic sync is disabled", async () => {
@@ -77,7 +82,7 @@ describe("syncModelsDevPricing", () => {
     const result = await syncModelsDevPricing();
 
     expect(result.skipped).toBe(true);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
     expect(updateModelPricingBatch).not.toHaveBeenCalled();
   });
 
@@ -100,7 +105,7 @@ describe("syncModelsDevPricing", () => {
       changed: 0,
       syncedAt: lastSyncAt,
     });
-    expect(fetch).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
     expect(updateModelPricingBatch).not.toHaveBeenCalled();
   });
 
@@ -127,9 +132,7 @@ describe("syncModelsDevPricing", () => {
       expect.any(Number),
       null,
     );
-    const fetchOptions = vi.mocked(fetch).mock.calls[0]?.[1];
-    expect(fetchOptions).toEqual({ signal: expect.any(AbortSignal) });
-    expect(fetchOptions).not.toHaveProperty("cache");
+    expect(invokeMock).toHaveBeenCalledWith("fetch_models_dev_pricing");
   });
 
   it("stops a startup sync when automatic sync is disabled during download", async () => {
@@ -191,7 +194,7 @@ describe("syncModelsDevPricing", () => {
   it("persists the last error without replacing the previous success time", async () => {
     const previous = { ...state, config: { ...state.config, lastSyncAt: 123 } };
     getModelsDevSyncConfig.mockResolvedValue(previous);
-    vi.mocked(fetch).mockRejectedValueOnce(new Error("offline"));
+    invokeMock.mockRejectedValueOnce(new Error("offline"));
 
     await expect(syncModelsDevPricing()).rejects.toThrow("offline");
     expect(recordModelsDevSyncResult).toHaveBeenCalledWith(null, "offline");
