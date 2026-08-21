@@ -2506,6 +2506,15 @@
     "updateAll": "すべて更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "{{count}} 個のスキルを更新しました",
+    "undo": "元に戻す",
+    "undoHint": "直前のアプリ切り替えを元に戻す（Ctrl/⌘+Z）",
+    "undoFailed": "元に戻せませんでした",
+    "unsavedChanges": {
+      "title": "確認が必要な変更",
+      "message": "このページでアプリの切り替えを変更しました。「保存しない」を選ぶと、このページを開いた時点の状態に戻ります。",
+      "discard": "保存しない",
+      "discardFailed": "元の状態に戻せませんでした"
+    },
     "error": {
       "skillNotFound": "スキルが見つかりません: {{directory}}",
       "missingRepoInfo": "リポジトリ情報（owner または name）が不足しています",

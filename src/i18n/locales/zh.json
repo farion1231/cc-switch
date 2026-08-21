@@ -2506,6 +2506,15 @@
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "已成功更新 {{count}} 个技能",
+    "undo": "撤销",
+    "undoHint": "撤销上一步应用开关改动（Ctrl/⌘+Z）",
+    "undoFailed": "撤销失败",
+    "unsavedChanges": {
+      "title": "有待确认的改动",
+      "message": "你在本页修改了应用开关。选择「不保存」将还原到进入本页时的状态。",
+      "discard": "不保存",
+      "discardFailed": "还原失败"
+    },
     "error": {
       "skillNotFound": "技能不存在：{{directory}}",
       "missingRepoInfo": "缺少仓库信息（owner 或 name）",
