@@ -381,3 +381,49 @@ describe("providerNeedsRouting", () => {
     );
   });
 });
+
+describe("resolveCodexOfficialIdentity 与后端判定顺序对齐", () => {
+  // 自建网关代理 ChatGPT backend：认证仍取 auth.json 里的登录态
+  // （requires_openai_auth = true），请求出口换成自己的 origin。
+  const workerConfig = `model_provider = "myworker"\n\n[model_providers.myworker]\nname = "My Worker"\nbase_url = "https://worker.example.com/backend-api/codex"\nwire_api = "responses"\nrequires_openai_auth = true\n`;
+
+  const managedWithCustomUpstream = mkProvider({
+    id: "managed-worker-account",
+    category: "official",
+    settingsConfig: { auth: {}, config: workerConfig },
+    meta: {
+      authBinding: {
+        source: "managed_account",
+        authProvider: "codex_oauth",
+        accountId: "acct-managed",
+      },
+    },
+  });
+
+  it("托管绑定指向自建上游时仍是官方身份", () => {
+    // 后端 is_codex_official_provider 先认托管绑定再看上游。这里若回 null，
+    // 后端会注入 OAuth token 而前端在接管期间拒绝切换，两边打架。
+    expect(
+      resolveCodexOfficialIdentity("codex" as AppId, managedWithCustomUpstream),
+    ).toBe("managed_account");
+    expect(
+      supportsOfficialProxyTakeover(
+        "codex" as AppId,
+        managedWithCustomUpstream,
+      ),
+    ).toBe(true);
+  });
+
+  it("未绑定却声明第三方上游的卡仍判为非官方", () => {
+    expect(
+      resolveCodexOfficialIdentity(
+        "codex" as AppId,
+        mkProvider({
+          id: "plain-third-party",
+          category: "official",
+          settingsConfig: { auth: {}, config: workerConfig },
+        }),
+      ),
+    ).toBeNull();
+  });
+});
