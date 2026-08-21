@@ -242,12 +242,34 @@
       "stopBlockedByTakeover": "其它应用正在使用代理接管。请先在设置中关闭对应应用接管，再停止本地路由。"
     }
   },
+  "codexDesktop": {
+    "followCodexLoginDescription": "账号会随 Codex Desktop 当前登录变化",
+    "modeLabel": "接入方式",
+    "modeDirect": "直连",
+    "modeProxy": "本地网关",
+    "modeHint": "直连会把供应商配置写入 Codex Desktop；本地网关用于协议转换和动态认证。",
+    "modeProxyRequiredHint": "该供应商需要协议转换或动态认证，将通过 CC Switch 本地网关连接。",
+    "statusTitle": "Codex Desktop 配置需要检查",
+    "statusDirectoryConflict": "Codex CLI（{{cliDir}}）与 Codex Desktop（{{desktopDir}}）正在使用同一个配置目录。请在设置中为 Desktop 指定独立目录。",
+    "statusNotConfigured": "当前供应商尚未写入 Codex Desktop 配置；请重新切换该供应商。",
+    "statusGatewayStopped": "当前供应商使用本地网关，请开启页面顶部的本地路由开关并保持 CC Switch 运行。",
+    "statusGatewayTokenMissing": "本地网关 token 尚未生成；重新切换当前供应商可修复。",
+    "statusBaseUrlMismatch": "Codex Desktop 配置地址与当前供应商不一致；当前为 {{actual}}，应为 {{expected}}。重新切换当前供应商可修复。",
+    "route": {
+      "tooltip": {
+        "active": "Codex Desktop 本地网关已开启 - {{address}}:{{port}}",
+        "inactive": "开启 Codex Desktop 本地网关，用于需要协议转换或动态认证的供应商。当前配置地址：{{address}}:{{port}}"
+      }
+    }
+  },
   "notifications": {
     "providerAdded": "供应商已添加",
     "providerSaved": "供应商配置已保存",
     "providerDeleted": "供应商删除成功",
     "switchSuccess": "切换成功！",
     "codexRestartRequired": "切换成功，请重启客户端以生效",
+    "codexDesktopRestartRequired": "切换成功，重启 Codex Desktop 后生效",
+    "codexDesktopProxyRestartRequired": "切换成功，请保持 CC Switch 运行，并重启 Codex Desktop 后生效",
     "grokBuildRestartRequired": "切换成功，请重启 Grok Build 以生效",
     "claudeDesktopRestartRequired": "切换成功，重启 Claude Desktop 后生效",
     "claudeDesktopProxyRestartRequired": "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效",
@@ -291,7 +313,8 @@
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
     "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
-    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本地路由模式"
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本地路由模式",
+    "proxyReasonCodexDesktop": "使用 Codex Desktop 本地网关模式"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -777,8 +800,11 @@
     "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
     "claudeConfigDir": "Claude Code 配置目录",
     "claudeConfigDirDescription": "覆盖 Claude 配置目录 (settings.json)。真正自定义目录会在目录内存放 Claude MCP 的 .claude.json；默认 ~/.claude 目录仍使用 Claude 默认的 ~/.claude.json。",
-    "codexConfigDir": "Codex 配置目录",
-    "codexConfigDirDescription": "覆盖 Codex 配置目录。",
+    "codexConfigDir": "Codex CLI 配置目录",
+    "codexConfigDirDescription": "覆盖 Codex CLI 配置目录。",
+    "codexDesktopConfigDir": "Codex Desktop 配置目录",
+    "codexDesktopConfigDirDescription": "为 Codex Desktop 使用独立的配置目录。",
+    "codexDesktopConfigDirConflict": "Codex Desktop 与 Codex CLI 不能使用同一个配置目录。修复前将禁用 Desktop 实时配置操作。",
     "geminiConfigDir": "Gemini 配置目录",
     "geminiConfigDirDescription": "覆盖 Gemini 配置目录 (.env)。",
     "grokConfigDir": "Grok Build 配置目录",
@@ -793,6 +819,7 @@
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
+    "browsePlaceholderCodexDesktop": "例如：/home/<你的用户名>/.codex-desktop",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
     "browsePlaceholderGrok": "例如：/home/<你的用户名>/.grok",
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
@@ -904,7 +931,10 @@
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
-    "codex": "Codex",
+    "codex": "Codex CLI",
+    "codexCli": "Codex CLI",
+    "codexDesktop": "Codex Desktop",
+    "codex-desktop": "Codex Desktop",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
@@ -2193,7 +2223,8 @@
     "switcherTooltip": {
       "claude": "项目：一键切换 Claude Code 的供应商 / MCP / Skills / 记忆文件",
       "claude-desktop": "项目：一键切换 Claude Desktop 的供应商",
-      "codex": "项目：一键切换 Codex 的供应商 / MCP / Skills / 记忆文件"
+      "codex": "项目：一键切换 Codex 的供应商 / MCP / Skills / 记忆文件",
+      "codex-desktop": "项目：一键切换 Codex Desktop 的供应商"
     },
     "none": "不使用项目",
     "searchPlaceholder": "搜索项目",
@@ -2202,7 +2233,8 @@
     "createDescription": {
       "claude": "把 Claude Code 当前的供应商、MCP、Skills、记忆文件保存为一个项目，之后可一键切换。",
       "claude-desktop": "把 Claude Desktop 当前的供应商保存为一个项目，之后可一键切换。",
-      "codex": "把 Codex 当前的供应商、MCP、Skills 和记忆文件配置保存为一个项目，之后可一键切换。"
+      "codex": "把 Codex 当前的供应商、MCP、Skills 和记忆文件配置保存为一个项目，之后可一键切换。",
+      "codex-desktop": "把 Codex Desktop 当前的供应商保存为一个项目，之后可一键切换。"
     },
     "manage": "管理项目…",
     "manageTitle": "管理项目",

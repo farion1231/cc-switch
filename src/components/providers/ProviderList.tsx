@@ -207,6 +207,12 @@ export function ProviderList({
     enabled: appId === "claude-desktop",
     refetchInterval: appId === "claude-desktop" ? 5000 : false,
   });
+  const { data: codexDesktopStatus } = useQuery({
+    queryKey: ["codexDesktopStatus"],
+    queryFn: () => providersApi.getCodexDesktopStatus(),
+    enabled: appId === "codex-desktop",
+    refetchInterval: appId === "codex-desktop" ? 5000 : false,
+  });
   const {
     data: piCurrentState,
     isSuccess: isPiCurrentStateSuccess,
@@ -257,6 +263,9 @@ export function ProviderList({
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
           queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
+        }
+        if (appId === "codex-desktop") {
+          queryClient.invalidateQueries({ queryKey: ["codexDesktopStatus"] });
         }
         toast.success(t("provider.importCurrentDescription"));
       } else {
@@ -374,6 +383,68 @@ export function ProviderList({
     return messages;
   }, [appId, claudeDesktopStatus, t]);
 
+  const codexDesktopStatusMessages = useMemo(() => {
+    if (appId !== "codex-desktop" || !codexDesktopStatus) return [];
+
+    const messages: string[] = [];
+    if (codexDesktopStatus.directoryConflict) {
+      messages.push(
+        t("codexDesktop.statusDirectoryConflict", {
+          cliDir: codexDesktopStatus.cliConfigDir,
+          desktopDir: codexDesktopStatus.desktopConfigDir,
+          defaultValue:
+            "Codex CLI 与 Codex Desktop 正在使用同一个配置目录。请在设置中为 Desktop 指定独立目录。",
+        }),
+      );
+      return messages;
+    }
+
+    if (!codexDesktopStatus.configured && currentProviderId) {
+      messages.push(
+        t("codexDesktop.statusNotConfigured", {
+          defaultValue:
+            "当前供应商尚未写入 Codex Desktop 配置；请重新切换该供应商。",
+        }),
+      );
+    }
+    if (
+      codexDesktopStatus.mode === "proxy" &&
+      !codexDesktopStatus.proxyRunning
+    ) {
+      messages.push(
+        t("codexDesktop.statusGatewayStopped", {
+          defaultValue:
+            "当前供应商使用本地网关，请开启页面顶部的本地路由开关并保持 CC Switch 运行。",
+        }),
+      );
+    }
+    if (
+      codexDesktopStatus.mode === "proxy" &&
+      !codexDesktopStatus.gatewayTokenConfigured
+    ) {
+      messages.push(
+        t("codexDesktop.statusGatewayTokenMissing", {
+          defaultValue: "本地网关 token 尚未生成；重新切换当前供应商可修复。",
+        }),
+      );
+    }
+
+    const expected = codexDesktopStatus.expectedBaseUrl?.replace(/\/+$/, "");
+    const actual = codexDesktopStatus.actualBaseUrl?.replace(/\/+$/, "");
+    if (expected && expected !== actual) {
+      messages.push(
+        t("codexDesktop.statusBaseUrlMismatch", {
+          expected,
+          actual: actual || "-",
+          defaultValue:
+            "Codex Desktop 配置地址与当前供应商不一致；当前为 {{actual}}，应为 {{expected}}。重新切换当前供应商可修复。",
+        }),
+      );
+    }
+
+    return messages;
+  }, [appId, codexDesktopStatus, currentProviderId, t]);
+
   const piStateErrorMessages = [
     isPiCurrentStateError ? extractErrorMessage(piCurrentStateError) : "",
   ].filter(Boolean);
@@ -415,6 +486,21 @@ export function ProviderList({
     return (
       <div className="mt-4 space-y-4">
         {piStateErrorNotice}
+        {codexDesktopStatusMessages.length > 0 && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+            <div className="flex items-center gap-2 font-medium">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {t("codexDesktop.statusTitle", {
+                defaultValue: "Codex Desktop 配置需要检查",
+              })}
+            </div>
+            <ul className="mt-2 space-y-1 text-xs leading-relaxed">
+              {codexDesktopStatusMessages.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         <ProviderEmptyState
           appId={appId}
           onCreate={appId === "pi" ? undefined : onCreate}
@@ -534,6 +620,21 @@ export function ProviderList({
           </div>
           <ul className="mt-2 space-y-1 text-xs leading-relaxed">
             {claudeDesktopStatusMessages.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {codexDesktopStatusMessages.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-2 font-medium">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {t("codexDesktop.statusTitle", {
+              defaultValue: "Codex Desktop 配置需要检查",
+            })}
+          </div>
+          <ul className="mt-2 space-y-1 text-xs leading-relaxed">
+            {codexDesktopStatusMessages.map((message) => (
               <li key={message}>{message}</li>
             ))}
           </ul>

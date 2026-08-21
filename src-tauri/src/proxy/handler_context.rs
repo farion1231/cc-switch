@@ -95,12 +95,19 @@ impl RequestContext {
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
 
-        // 从数据库读取应用级代理配置（per-app）
-        let app_config = state
-            .db
-            .get_proxy_config_for_app(app_type_str)
-            .await
-            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+        // Only apps with a proxy_config row inherit retry/failover settings.
+        // Codex Desktop uses the shared gateway transport, but owns an
+        // independent Provider namespace and deliberately has no proxy_config
+        // row (or schema migration).
+        let app_config = if app_type.supports_local_proxy() {
+            state
+                .db
+                .get_proxy_config_for_app(app_type_str)
+                .await
+                .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+        } else {
+            disabled_proxy_config(app_type_str)
+        };
 
         // 从数据库读取整流器配置
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
@@ -280,6 +287,23 @@ impl RequestContext {
     }
 }
 
+fn disabled_proxy_config(app_type: &str) -> AppProxyConfig {
+    AppProxyConfig {
+        app_type: app_type.to_string(),
+        enabled: false,
+        auto_failover_enabled: false,
+        max_retries: 0,
+        streaming_first_byte_timeout: 0,
+        streaming_idle_timeout: 0,
+        non_streaming_timeout: 0,
+        circuit_failure_threshold: 5,
+        circuit_success_threshold: 2,
+        circuit_timeout_seconds: 60,
+        circuit_error_rate_threshold: 0.6,
+        circuit_min_requests: 10,
+    }
+}
+
 /// Pull the Gemini model name out of an API path.
 ///
 /// Accepts forms like `/v1beta/models/gemini-pro:generateContent`,
@@ -300,7 +324,19 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_gemini_model_from_path;
+    use super::{disabled_proxy_config, extract_gemini_model_from_path};
+
+    #[test]
+    fn codex_desktop_request_config_disables_proxy_retry_state() {
+        let config = disabled_proxy_config("codex-desktop");
+        assert_eq!(config.app_type, "codex-desktop");
+        assert!(!config.enabled);
+        assert!(!config.auto_failover_enabled);
+        assert_eq!(config.max_retries, 0);
+        assert_eq!(config.streaming_first_byte_timeout, 0);
+        assert_eq!(config.streaming_idle_timeout, 0);
+        assert_eq!(config.non_streaming_timeout, 0);
+    }
 
     #[test]
     fn extract_model_with_action() {

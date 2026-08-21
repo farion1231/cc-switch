@@ -10,6 +10,7 @@ export const APP_PROFILE_SCOPE: Partial<Record<AppId, ProfileScope>> = {
   claude: "claude",
   "claude-desktop": "claude-desktop",
   codex: "codex",
+  "codex-desktop": "codex-desktop",
 };
 
 /** 分组内的 payload 槽位 key（后端 ProfileScope::apps 的前端镜像） */
@@ -17,6 +18,7 @@ const SCOPE_SLOT_KEYS: Record<ProfileScope, (keyof PerApp<unknown>)[]> = {
   claude: ["claude"],
   "claude-desktop": ["claude-desktop"],
   codex: ["codex"],
+  "codex-desktop": ["codex-desktop"],
 };
 
 /**
@@ -26,6 +28,9 @@ const SCOPE_SLOT_KEYS: Record<ProfileScope, (keyof PerApp<unknown>)[]> = {
  */
 export function hasScopeSnapshot(profile: Profile, scope: ProfileScope) {
   const { providers, mcp, skills, prompts } = profile.payload;
+  if (scope === "codex-desktop") {
+    return providers["codex-desktop"] !== null;
+  }
   return SCOPE_SLOT_KEYS[scope].some(
     (app) =>
       providers[app] !== null ||

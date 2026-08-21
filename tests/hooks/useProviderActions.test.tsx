@@ -386,6 +386,36 @@ describe("useProviderActions", () => {
     );
   });
 
+  it("uses proxy process readiness for Codex Desktop local gateway", async () => {
+    switchProviderMutateAsync.mockResolvedValue(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { codexDesktopMode: "proxy" },
+    });
+
+    const { result, rerender } = renderHook(
+      ({ isProxyRunning }) =>
+        useProviderActions("codex-desktop", isProxyRunning, false),
+      { initialProps: { isProxyRunning: true }, wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+    expect(toastWarningMock).not.toHaveBeenCalled();
+
+    rerender({ isProxyRunning: false });
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      expect.stringContaining("Codex Desktop 本地网关模式"),
+    );
+  });
+
   it("allows the native Codex official provider during takeover", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();

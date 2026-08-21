@@ -188,13 +188,14 @@ vi.mock("@/components/mcp/McpPanel", () => ({
 
 const renderApp = (AppComponent: ComponentType) => {
   const client = new QueryClient();
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
         <AppComponent />
       </Suspense>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 };
 
 describe("App integration with MSW", () => {
@@ -264,6 +265,37 @@ describe("App integration with MSW", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
+
+  it("shows the local gateway toggle for Codex Desktop providers", async () => {
+    localStorage.setItem("cc-switch-last-app", "codex-desktop");
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    const routeToggle = await screen.findByTitle(/Codex Desktop/);
+    expect(routeToggle).toContainElement(screen.getByRole("switch"));
+  });
+
+  it("refreshes Codex Desktop provider and status caches after profile events", async () => {
+    const { default: App } = await import("@/App");
+    const { client } = renderApp(App);
+    await screen.findByTestId("provider-list");
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+
+    emitTauriEvent("profile-applied", {
+      profileId: "desktop-profile",
+      scope: "codex-desktop",
+    });
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["providers", "codex-desktop"],
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["codexDesktopStatus"],
+      });
+    });
+  });
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");

@@ -9,7 +9,6 @@ use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
-use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
@@ -496,7 +495,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             Ok(source) if source.is_object() => json_is_subset(settings, &source),
             _ => false,
         },
-        AppType::Codex => {
+        AppType::Codex | AppType::CodexDesktop => {
             let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
             if config_toml.trim().is_empty() {
                 return false;
@@ -570,7 +569,7 @@ pub(crate) fn remove_common_config_from_settings(
             json_deep_remove(&mut result, &source);
             Ok(result)
         }
-        AppType::Codex => {
+        AppType::Codex | AppType::CodexDesktop => {
             let mut result = settings.clone();
             let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
             let mut target_doc = if config_toml.trim().is_empty() {
@@ -628,7 +627,7 @@ fn apply_common_config_to_settings(
             json_deep_merge(&mut result, &source);
             Ok(result)
         }
-        AppType::Codex => {
+        AppType::Codex | AppType::CodexDesktop => {
             let mut result = settings.clone();
             let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
             let mut target_doc = if config_toml.trim().is_empty() {
@@ -737,6 +736,15 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         return Ok(());
     }
 
+    if matches!(app_type, AppType::CodexDesktop) {
+        crate::codex_desktop_config::apply_provider(db, &effective_provider)?;
+        log::info!(
+            "Codex Desktop live configuration written for provider '{}'",
+            effective_provider.id
+        );
+        return Ok(());
+    }
+
     write_live_snapshot(app_type, &effective_provider)
 }
 
@@ -758,9 +766,14 @@ fn apply_codex_official_auth(
     provider: &mut Provider,
     codex_oauth_manager: Option<&Arc<CodexOAuthManager>>,
 ) -> Result<(), AppError> {
-    if !matches!(app_type, AppType::Codex)
-        || !crate::proxy::providers::is_codex_official_provider(provider)
-    {
+    let Some(target) = crate::codex_config::CodexTarget::from_app(app_type) else {
+        return Ok(());
+    };
+    // Desktop official cards are explicitly categorized; retain the CLI
+    // legacy predicate for older fixed cards whose category was not stored.
+    let is_legacy_cli_official = matches!(target, crate::codex_config::CodexTarget::Cli)
+        && crate::proxy::providers::is_codex_official_provider(provider);
+    if provider.category.as_deref() != Some("official") && !is_legacy_cli_official {
         return Ok(());
     }
 
@@ -788,7 +801,8 @@ fn apply_codex_official_auth(
         ));
     };
 
-    let auth = get_codex_managed_oauth_live_auth_value(manager.clone(), account_id.clone())?;
+    let auth =
+        get_codex_managed_oauth_live_auth_value(manager.clone(), target, account_id.clone())?;
 
     let Some(settings_obj) = provider.settings_config.as_object_mut() else {
         return Err(AppError::Config(
@@ -812,12 +826,16 @@ fn apply_codex_official_auth(
 /// token 读取。
 fn get_codex_managed_oauth_live_auth_value(
     manager: Arc<CodexOAuthManager>,
+    target: crate::codex_config::CodexTarget,
     account_id: String,
 ) -> Result<Value, AppError> {
     std::thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
             if let Some((refresh_token, id_token, last_refresh_ms)) =
-                crate::codex_config::read_codex_live_auth_refresh_for_account(&account_id)
+                crate::codex_config::read_codex_live_auth_refresh_for_account_for(
+                    target,
+                    &account_id,
+                )
             {
                 if let Err(err) = manager
                     .adopt_account_refresh_token(
@@ -871,12 +889,13 @@ fn get_codex_managed_oauth_live_auth_value(
 /// a compare-before-write check.
 pub(crate) fn prepare_codex_managed_oauth_live_auth_switch_away(
     manager: Arc<CodexOAuthManager>,
+    target: crate::codex_config::CodexTarget,
     account_id: String,
 ) -> Result<Option<String>, AppError> {
     std::thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
             manager
-                .prepare_live_auth_for_account_switch_away(&account_id)
+                .prepare_live_auth_for_account_switch_away_for(target, &account_id)
                 .await
                 .map_err(|error| error.to_string())
         })
@@ -1031,6 +1050,17 @@ fn restore_live_settings_for_provider_backfill(
         }
         return settings;
     }
+    // Codex Desktop proxy mode writes a derived gateway token and route into
+    // its live files. Those values are not provider credentials; keep the DB
+    // snapshot as the source of truth when switching away.
+    if matches!(app_type, AppType::CodexDesktop)
+        && matches!(
+            crate::codex_desktop_config::provider_mode(provider),
+            crate::provider::CodexDesktopMode::Proxy
+        )
+    {
+        return provider.settings_config.clone();
+    }
     if !matches!(app_type, AppType::Codex) {
         return live_settings;
     }
@@ -1173,6 +1203,7 @@ pub(crate) enum LiveSnapshot {
         settings: Option<Value>,
     },
     Codex {
+        target: crate::codex_config::CodexTarget,
         auth: Option<Value>,
         config: Option<String>,
     },
@@ -1194,9 +1225,14 @@ impl LiveSnapshot {
                     delete_file(&path)?;
                 }
             }
-            LiveSnapshot::Codex { auth, config } => {
-                let auth_path = get_codex_auth_path();
-                let config_path = get_codex_config_path();
+            LiveSnapshot::Codex {
+                target,
+                auth,
+                config,
+            } => {
+                crate::codex_config::ensure_codex_target_isolated(*target)?;
+                let auth_path = crate::codex_config::get_codex_auth_path_for(*target);
+                let config_path = crate::codex_config::get_codex_config_path_for(*target);
                 if let Some(value) = auth {
                     write_json_file(&auth_path, value)?;
                 } else if auth_path.exists() {
@@ -1254,6 +1290,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             ));
         }
         AppType::Codex => {
+            let target = crate::codex_config::CodexTarget::from_app(app_type)
+                .expect("Codex app type must map to a live target");
             let obj = provider
                 .settings_config
                 .as_object()
@@ -1269,7 +1307,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             // the proxy router (apiFormat meta/settings + TOML wire_api).
             let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
-            crate::codex_config::write_codex_provider_live_with_catalog(
+            crate::codex_config::write_codex_provider_live_with_catalog_for(
+                target,
                 &provider.settings_config,
                 provider.category.as_deref(),
                 auth,
@@ -1282,8 +1321,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
                 .is_some()
             {
-                crate::codex_config::record_codex_managed_oauth_live_auth(auth)?;
+                crate::codex_config::record_codex_managed_oauth_live_auth_for(target, auth)?;
             }
+        }
+        AppType::CodexDesktop => {
+            return Err(AppError::localized(
+                "codex_desktop.live.requires_db_context",
+                "Codex Desktop 配置写入需要通过供应商切换流程执行",
+                "Codex Desktop configuration must be written through the provider switch flow",
+            ));
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
@@ -1545,7 +1591,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     }
 
     // Skill sync
-    for app_type in AppType::all() {
+    for app_type in AppType::all().filter(|app| !matches!(app, AppType::CodexDesktop)) {
         if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
             log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
             failures.push(format!("skill/{}: {e}", app_type.as_str()));
@@ -1565,15 +1611,17 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 /// Read current live settings for an app type
 pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
     match app_type {
-        AppType::Codex => {
-            let mut result = crate::codex_config::read_codex_live_settings()?;
+        AppType::Codex | AppType::CodexDesktop => {
+            let target = crate::codex_config::CodexTarget::from_app(&app_type)
+                .expect("Codex app type must map to a live target");
+            let mut result = crate::codex_config::read_codex_live_settings_for(target)?;
             // `modelCatalog` is a cc-switch private field that lives only in
             // the DB SSOT plus the `cc-switch-model-catalog.json` projection
             // file — it is never inlined into `auth.json` or `config.toml`.
             // Reverse-parse the projection so the edit form for the active
             // Codex provider doesn't see an empty mapping table.
             if let Ok(Some(model_catalog)) =
-                crate::codex_config::read_codex_model_catalog_simplified_from_live()
+                crate::codex_config::read_codex_model_catalog_simplified_from_live_for(target)
             {
                 if let Some(obj) = result.as_object_mut() {
                     obj.insert("modelCatalog".to_string(), model_catalog);
@@ -1704,9 +1752,10 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     // 它会成为 current provider（SSOT），后续"无备份恢复"路径会把占位符
     // 当真实配置写回 Live，永久卡在已失效的本地代理上。
     // 典型触发场景：代理接管开启时切换 app_config_dir 并重启，新数据库首启导入。
-    if state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(&app_type)
+    if app_type.supports_local_proxy()
+        && state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&app_type)
     {
         return Err(AppError::localized(
             "provider.import.live_taken_over",
@@ -1716,7 +1765,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     }
 
     let settings_config = match app_type {
-        AppType::Codex => crate::codex_config::read_codex_live_settings()?,
+        AppType::Codex | AppType::CodexDesktop => {
+            let target = crate::codex_config::CodexTarget::from_app(&app_type)
+                .expect("Codex app type must map to a live target");
+            crate::codex_config::read_codex_live_settings_for(target)?
+        }
         AppType::GrokBuild => {
             let mut settings = crate::grok_config::read_grok_live_settings()?;
             let config = settings
@@ -1798,7 +1851,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         None,
     );
     provider.category = Some(
-        if matches!(app_type, AppType::Codex) {
+        if matches!(app_type, AppType::Codex | AppType::CodexDesktop) {
             let config_text = provider
                 .settings_config
                 .get("config")
@@ -1856,7 +1909,11 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() {
+    // Codex Desktop is initialized once from the Codex CLI namespace. Its live
+    // files may already contain a derived local-gateway projection, which must
+    // never win over that one-time copy during startup. Manual import remains
+    // available for users who explicitly want to adopt Desktop live settings.
+    if app_type.is_additive_mode() || matches!(app_type, AppType::CodexDesktop) {
         return Ok(false);
     }
 
@@ -3110,6 +3167,38 @@ base_url = "https://a.example/v1"
             result.get("modelCatalog"),
             live_settings.get("modelCatalog"),
             "backfill must keep the Live-reconstructed catalog when the DB has none"
+        );
+    }
+
+    #[test]
+    fn codex_desktop_proxy_backfill_keeps_original_provider_settings() {
+        let mut provider = Provider::with_id(
+            "desktop-proxy".to_string(),
+            "Desktop Proxy".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "upstream-key" },
+                "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nbase_url = \"https://upstream.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            codex_desktop_mode: Some(crate::provider::CodexDesktopMode::Proxy),
+            ..Default::default()
+        });
+
+        let live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "ccs-gateway-token" },
+            "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nbase_url = \"http://127.0.0.1:15721/codex-desktop/v1\"\nwire_api = \"chat\"\n"
+        });
+        let result = restore_live_settings_for_provider_backfill(
+            &AppType::CodexDesktop,
+            &provider,
+            live_settings,
+        );
+
+        assert_eq!(
+            result, provider.settings_config,
+            "Desktop gateway credentials and route must never be saved as provider settings"
         );
     }
 

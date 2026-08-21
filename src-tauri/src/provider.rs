@@ -163,7 +163,7 @@ impl Provider {
         let (base_url, api_key) = match app_type {
             // Codex keeps its key in `auth.OPENAI_API_KEY` and its base URL
             // inside a TOML `config` string, not in an `env` map.
-            AppType::Codex => {
+            AppType::Codex | AppType::CodexDesktop => {
                 let auth = settings.get("auth");
                 let config_text = settings.get("config").and_then(|v| v.as_str());
                 let api_key = crate::codex_config::extract_codex_api_key(auth, config_text)
@@ -374,6 +374,14 @@ pub enum ClaudeDesktopMode {
     Proxy,
 }
 
+/// Codex Desktop provider write mode.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CodexDesktopMode {
+    Direct,
+    Proxy,
+}
+
 /// Claude Desktop 本地路由模式下暴露给 Desktop 的安全模型路由。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -451,6 +459,10 @@ pub struct ProviderMeta {
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
+    /// Codex Desktop writes either directly to a native Responses endpoint or
+    /// through the shared CC Switch gateway for protocol/auth translation.
+    #[serde(rename = "codexDesktopMode", skip_serializing_if = "Option::is_none")]
+    pub codex_desktop_mode: Option<CodexDesktopMode>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,

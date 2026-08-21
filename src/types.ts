@@ -179,6 +179,8 @@ export interface ProviderMeta {
   commonConfigEnabled?: boolean;
   // Claude Desktop 3P 配置写入模式
   claudeDesktopMode?: "direct" | "proxy";
+  // Codex Desktop 配置写入模式
+  codexDesktopMode?: "direct" | "proxy";
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
   claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
   // 用量查询脚本配置
@@ -292,6 +294,7 @@ export interface VisibleApps {
   claude: boolean;
   "claude-desktop": boolean;
   codex: boolean;
+  "codex-desktop": boolean;
   gemini: boolean;
   grokbuild: boolean;
   opencode: boolean;
@@ -407,6 +410,8 @@ export interface Settings {
   claudeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）
   codexConfigDir?: string;
+  // 覆盖 Codex Desktop 配置目录（必须与 Codex CLI 目录不同）
+  codexDesktopConfigDir?: string;
   // 覆盖 Gemini 配置目录（可选）
   geminiConfigDir?: string;
   // 覆盖 Grok Build 配置目录（可选）
@@ -427,6 +432,8 @@ export interface Settings {
   currentProviderClaudeDesktop?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
   currentProviderCodex?: string;
+  // 当前 Codex Desktop 供应商 ID（独立于 Codex CLI）
+  currentProviderCodexDesktop?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
 
