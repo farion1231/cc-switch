@@ -1160,6 +1160,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "TokenRouter",
+    websiteUrl: "https://tokenrouter.com",
+    apiKeyUrl: "https://tokenrouter.com",
+    category: "aggregator",
+    baseUrl: "https://api.tokenrouter.com",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-opus-5",
+      "anthropic/claude-haiku-4.5",
+      true,
+    ),
+    endpointCandidates: ["https://api.tokenrouter.com"],
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",
