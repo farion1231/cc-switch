@@ -85,6 +85,8 @@ fn detect_from_env() -> Option<String> {
 /// - `http=host:port;https=host:port;socks=host:1080` (多协议)
 ///
 /// 多协议时优先返回 HTTP 段;无 HTTP 段时返回第一个可用段。
+// 仅 Windows 注册表路径使用；非 Windows 下仅被测试引用，避免 -D warnings 误报死代码。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn parse_proxy_server_value(value: &str) -> Option<String> {
     let v = value.trim();
     if v.is_empty() {
