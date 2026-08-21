@@ -1128,4 +1128,87 @@ describe("UnifiedSkillsPanel", () => {
       screen.queryByText("skills.unsavedChanges.title"),
     ).not.toBeInTheDocument();
   });
+
+  it("drops undo entries for a Skill that was uninstalled", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "first-id" }),
+      makeInstalledSkill({ id: "second-id", name: "Beta Skill" }),
+    ];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["first-id", "second-id"],
+      failed: [],
+    });
+    uninstallSkillMock.mockResolvedValueOnce({ backupPath: undefined });
+    const proceed = vi.fn();
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1),
+    );
+
+    await user.click(screen.getAllByTitle("skills.uninstall")[1]);
+    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+    await waitFor(() =>
+      expect(uninstallSkillMock).toHaveBeenCalledWith("second-id"),
+    );
+
+    act(() => {
+      ref.current!.confirmLeave(proceed);
+    });
+    await user.click(
+      screen.getByRole("button", { name: "skills.unsavedChanges.discard" }),
+    );
+
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenLastCalledWith({
+        ids: ["first-id"],
+        app: "claude",
+        enabled: false,
+      });
+      expect(proceed).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("stops confirming once the only toggled Skill is uninstalled", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "first-id" })];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["first-id"],
+      failed: [],
+    });
+    uninstallSkillMock.mockResolvedValueOnce({ backupPath: undefined });
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await waitFor(() =>
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1),
+    );
+
+    await user.click(screen.getByTitle("skills.uninstall"));
+    await user.click(screen.getByRole("button", { name: "common.confirm" }));
+    await waitFor(() =>
+      expect(uninstallSkillMock).toHaveBeenCalledWith("first-id"),
+    );
+
+    expect(ref.current?.confirmLeave(vi.fn())).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "skills.undo", hidden: true }),
+    ).toBeDisabled();
+  });
 });

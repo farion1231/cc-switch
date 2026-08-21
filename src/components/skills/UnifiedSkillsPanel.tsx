@@ -288,6 +288,17 @@ const UnifiedSkillsPanel = React.forwardRef<
     setUndoSteps((steps) => [...steps, step]);
   };
 
+  const forgetUndoTarget = (id: string) => {
+    setUndoSteps((steps) =>
+      steps
+        .map((step) => ({
+          ...step,
+          ids: step.ids.filter((stepId) => stepId !== id),
+        }))
+        .filter((step) => step.ids.length > 0),
+    );
+  };
+
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     if (!beginWrite()) return;
 
@@ -439,6 +450,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         if (!beginWrite(true)) return;
         try {
           const result = await uninstallMutation.mutateAsync(skill.id);
+          forgetUndoTarget(skill.id);
           setConfirmDialog(null);
           const piCleanupIncomplete =
             result.piCleanupIncomplete || Boolean(result.preservedPiPath);
