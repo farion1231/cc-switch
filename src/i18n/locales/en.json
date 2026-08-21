@@ -244,6 +244,7 @@
   },
   "notifications": {
     "providerAdded": "Provider added",
+    "officialProviderExists": "This official provider already exists — no need to add it again",
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",

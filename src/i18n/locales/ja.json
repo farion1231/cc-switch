@@ -244,6 +244,7 @@
   },
   "notifications": {
     "providerAdded": "プロバイダーを追加しました",
+    "officialProviderExists": "この公式プロバイダーは既に存在します。再度追加する必要はありません",
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
