@@ -213,21 +213,33 @@ pub fn anthropic_to_openai_with_reasoning_content(
     }
 
     // 转换 tools (过滤 BatchTool)
+    //
+    // Anthropic 服务端托管 web_search 工具（versioned type，如
+    // `web_search_20260318`）无法用 Chat Completions 协议表达：上游只接受
+    // `{"type":"function",...}`，若硬转成同名 function，模型发出的伪函数调用
+    // 没有任何一方能执行，且强制 tool_choice 会被上游在 thinking 模式下 400
+    // 拒绝（#6367）。非强制场景直接不向模型提供该工具，强制场景在下方
+    // tool_choice 处理中 fail-closed。
+    let mut dropped_hosted_web_search = false;
+    let mut openai_tools: Vec<Value> = Vec::new();
     if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
-        let openai_tools: Vec<Value> = tools
-            .iter()
-            .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
-                        "description": t.get("description"),
-                        "parameters": clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})))
-                    }
-                })
-            })
-            .collect();
+        for t in tools {
+            if t.get("type").and_then(|v| v.as_str()) == Some("BatchTool") {
+                continue;
+            }
+            if is_anthropic_web_search_tool(t) {
+                dropped_hosted_web_search = true;
+                continue;
+            }
+            openai_tools.push(json!({
+                "type": "function",
+                "function": {
+                    "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                    "description": t.get("description"),
+                    "parameters": clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})))
+                }
+            }));
+        }
 
         if !openai_tools.is_empty() {
             result["tools"] = json!(openai_tools);
@@ -235,7 +247,29 @@ pub fn anthropic_to_openai_with_reasoning_content(
     }
 
     if let Some(v) = body.get("tool_choice") {
-        result["tool_choice"] = map_tool_choice_to_chat(v);
+        if dropped_hosted_web_search {
+            // 强制选择托管 web_search 工具时不能静默降级：悄悄丢弃会让模型
+            // 在未执行任何搜索的情况下直接作答，语义被削弱。返回清晰错误
+            // 更符合 fail-closed 原则，并与 transform_responses.rs 对托管
+            // web_search 的处理相呼应（#6367）。
+            if forced_tool_choice_matches_hosted_web_search(v, body.get("tools")) {
+                return Err(ProxyError::InvalidRequest(format!(
+                    "Claude Code's built-in WebSearch (server tool `{}`) cannot be served by a \
+                     Chat Completions provider: hosted web_search is only executable on \
+                     Responses-compatible gateways, and the forced tool_choice is rejected \
+                     upstream with a 400 while thinking is enabled. Switch this provider's \
+                     API format to openai_responses or use WebFetch instead.",
+                    v.get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("web_search")
+                )));
+            }
+        }
+        // 全部工具都被剥离后，继续透传 tool_choice 会让严格上游报错；与
+        // Codex→Anthropic 路径的既有约定保持一致，此时丢弃 tool_choice。
+        if !openai_tools.is_empty() || !dropped_hosted_web_search {
+            result["tool_choice"] = map_tool_choice_to_chat(v);
+        }
     }
 
     Ok(result)
@@ -303,6 +337,42 @@ fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
         },
         _ => tool_choice.clone(),
     }
+}
+
+/// 识别 Anthropic 服务端托管 web_search 工具声明。
+///
+/// Messages API 以带版本的 type（`web_search`、`web_search_20250305`、
+/// `web_search_20260209`、`web_search_20260318`...）暴露该工具。用户自定义
+/// function 工具的 type 为 `custom`/缺失，即使同名 "web_search" 也不会被误判，
+/// 因此带版本的 type 前缀是唯一权威信号（与 transform_responses.rs 中的同名
+/// 助手保持一致）。
+fn is_anthropic_web_search_tool(tool: &Value) -> bool {
+    matches!(
+        tool.get("type").and_then(Value::as_str),
+        Some(t) if t.starts_with("web_search_") || t == "web_search"
+    )
+}
+
+/// 判断 Anthropic `tool_choice` 是否强制指向服务端托管 web_search 工具。
+///
+/// 仅当原始 `tools` 数组中确实声明了同名（`name == "web_search"`）的托管
+/// 工具（versioned `web_search_*` type）时才成立；强制选择用户自定义的同名
+/// function 工具不受影响。
+fn forced_tool_choice_matches_hosted_web_search(
+    tool_choice: &Value,
+    tools: Option<&Value>,
+) -> bool {
+    if tool_choice.get("type").and_then(Value::as_str) != Some("tool") {
+        return false;
+    }
+    let Some(name) = tool_choice.get("name").and_then(Value::as_str) else {
+        return false;
+    };
+    tools.and_then(|t| t.as_array()).is_some_and(|arr| {
+        arr.iter().any(|t| {
+            t.get("name").and_then(Value::as_str) == Some(name) && is_anthropic_web_search_tool(t)
+        })
+    })
 }
 
 fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
@@ -917,6 +987,150 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         let parameters = &result["tools"][0]["function"]["parameters"];
         assert_eq!(parameters, &json!({"type": "object", "properties": {}}));
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_hosted_web_search_tool() {
+        // Chat Completions 无法表达服务端托管 web_search，必须整体剥离，
+        // 而不是硬转成同名 function（硬转会导致上游 thinking 模式下对强制
+        // tool_choice 400，见 #6367）。
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [{
+                "type": "web_search_20260318",
+                "name": "web_search",
+                "max_uses": 8
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert!(result.get("tools").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_bare_and_versioned_hosted_web_search_tools() {
+        // 裸 `web_search` type 与带日期后缀的 versioned type 都识别为托管工具。
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [
+                {"type": "web_search", "name": "web_search"},
+                {"type": "web_search_20250305", "name": "web_search"}
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert!(result.get("tools").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_keeps_user_function_named_web_search() {
+        // 用户自定义 function 工具（type 缺失）即便名叫 web_search 也不是托管
+        // 工具，必须保持 function 声明。
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Use my tool"}],
+            "tools": [{
+                "name": "web_search",
+                "description": "custom wrapper",
+                "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}}
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["tools"][0]["type"], "function");
+        assert_eq!(result["tools"][0]["function"]["name"], "web_search");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_mixed_hosted_web_search_and_function_tools() {
+        // 混合请求中托管 web_search 被剥离，普通 function 工具保留。
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Do both"}],
+            "tools": [
+                {"type": "web_search_20260209", "name": "web_search"},
+                {
+                    "name": "get_weather",
+                    "description": "Get weather info",
+                    "input_schema": {"type": "object", "properties": {"location": {"type": "string"}}}
+                }
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_forced_hosted_web_search_fails_closed() {
+        // 强制选择托管 web_search 工具时 fail-closed：静默丢弃会让模型在未
+        // 搜索的情况下作答，语义被悄悄削弱。
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [{"type": "web_search_20260318", "name": "web_search"}],
+            "tool_choice": {"type": "tool", "name": "web_search"}
+        });
+
+        match anthropic_to_openai(input) {
+            Err(ProxyError::InvalidRequest(msg)) => {
+                assert!(msg.contains("WebSearch"), "unexpected message: {msg}");
+                assert!(
+                    msg.contains("openai_responses"),
+                    "unexpected message: {msg}"
+                );
+            }
+            other => panic!("expected InvalidRequest error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_forced_custom_web_search_function_still_maps() {
+        // 强制选择用户自定义的同名 function 工具不受托管工具处理影响。
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Use my tool"}],
+            "tools": [{
+                "name": "web_search",
+                "description": "custom wrapper",
+                "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}}
+            }],
+            "tool_choice": {"type": "tool", "name": "web_search"}
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["tools"][0]["function"]["name"], "web_search");
+        assert_eq!(
+            result["tool_choice"],
+            json!({"type": "function", "function": {"name": "web_search"}})
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_drops_tool_choice_when_only_hosted_web_search_stripped() {
+        // 全部工具都是托管 web_search 且非强制选择时，剥离后不得继续透传
+        // tool_choice（严格上游会报错）。
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [{"type": "web_search_20260318", "name": "web_search"}],
+            "tool_choice": "auto"
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert!(result.get("tools").is_none());
+        assert!(result.get("tool_choice").is_none());
     }
 
     #[test]
