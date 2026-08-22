@@ -1606,6 +1606,28 @@ impl RequestForwarder {
             );
         }
 
+        // Same native-Responses path: Codex 0.147+ emits a private `functions`
+        // namespace tool carrier with `"description": ""` inside the
+        // `additional_tools` input item (openai/codex `default_namespace_description`
+        // still returns "" for "functions" on main as of 2026-08). The official
+        // Responses schema requires namespace `description` to be a non-empty
+        // string, and strict OpenAI-compatible gateways enforce `minLength: 1`,
+        // rejecting the whole request with HTTP 400 (issue #6580). Normalize
+        // those empty fields recursively: namespace tools get the same non-empty
+        // fallback text upstream Codex uses, optional function-tool descriptions
+        // are dropped. Applied to every native passthrough so strict third-party
+        // gateways are covered regardless of provider type.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && normalize_empty_tool_descriptions(&mut request_body)
+        {
+            log::debug!(
+                "[Codex] Normalized empty tool description fields for native Responses upstream (provider={})",
+                provider.id
+            );
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }
@@ -3567,6 +3589,101 @@ fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
     )
 }
 
+/// Normalize empty/whitespace-only `description` fields on tool declarations
+/// in a Codex Responses request body.
+///
+/// Codex 0.147+ emits a private `functions` namespace tool carrier with
+/// `"description": ""` inside the `additional_tools` input item
+/// (`default_namespace_description("functions")` returns `""` in
+/// openai/codex, still unfixed on `main` as of 2026-08). The official
+/// Responses schema marks namespace `description` as a required non-empty
+/// string, and strict OpenAI-compatible gateways enforce `minLength: 1`,
+/// rejecting the whole request with HTTP 400 (issue #6580). Function-tool
+/// `description` is optional, so:
+/// - namespace tools get a non-empty fallback (`Tools in the <name>
+///   namespace.`, or the bounded `Tools in this namespace.` when the name is
+///   missing/blank/over-long — the same contract Vekil documents for its
+///   Responses rewrite), because the field is required and cannot simply be
+///   dropped;
+/// - function/custom tools get their empty `description` removed, since the
+///   field is optional there and dropping it avoids injecting text the model
+///   would otherwise read.
+///
+/// Only tool declarations are touched: traversal follows the top-level
+/// `tools` array and `additional_tools` input carriers (plus nested namespace
+/// child tools), so unrelated payload data — e.g. `metadata` or JSON-schema
+/// `description` fields inside `parameters` — is left exactly as sent.
+/// Returns `true` when at least one empty `description` was changed.
+fn normalize_empty_tool_descriptions(body: &mut Value) -> bool {
+    fn normalize_tool(tool: &mut Value) -> bool {
+        let Value::Object(map) = tool else {
+            return false;
+        };
+        let mut changed = false;
+        let tool_type = map.get("type").and_then(Value::as_str);
+        let is_namespace = tool_type == Some("namespace");
+        if matches!(tool_type, Some("namespace" | "function" | "custom")) {
+            if let Some(Value::String(description)) = map.get("description") {
+                if description.trim().is_empty() {
+                    if is_namespace {
+                        let name = map
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty() && name.len() <= 256);
+                        let fallback = match name {
+                            Some(name) => format!("Tools in the {name} namespace."),
+                            None => "Tools in this namespace.".to_string(),
+                        };
+                        map.insert("description".to_string(), Value::String(fallback));
+                    } else {
+                        map.remove("description");
+                    }
+                    changed = true;
+                }
+            }
+        }
+        // Only follow recognized tool collections: a namespace's child tools
+        // (and any further nested namespaces). JSON-schema `description` inside
+        // `parameters` is not a tool declaration and stays untouched.
+        if is_namespace {
+            if let Some(Value::Array(tools)) = map.get_mut("tools") {
+                for child in tools.iter_mut() {
+                    changed |= normalize_tool(child);
+                }
+            }
+        }
+        changed
+    }
+
+    fn normalize_tools_array(tools: &mut [Value]) -> bool {
+        let mut changed = false;
+        for tool in tools.iter_mut() {
+            changed |= normalize_tool(tool);
+        }
+        changed
+    }
+
+    let mut changed = false;
+    if let Some(Value::Array(tools)) = body.get_mut("tools") {
+        changed |= normalize_tools_array(tools);
+    }
+    if let Some(Value::Array(input)) = body.get_mut("input") {
+        for item in input.iter_mut() {
+            let Value::Object(map) = item else {
+                continue;
+            };
+            if map.get("type").and_then(Value::as_str) != Some("additional_tools") {
+                continue;
+            }
+            if let Some(Value::Array(tools)) = map.get_mut("tools") {
+                changed |= normalize_tools_array(tools);
+            }
+        }
+    }
+    changed
+}
+
 fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
@@ -3858,6 +3975,272 @@ mod tests {
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
         );
+    }
+
+    #[test]
+    fn normalize_empty_tool_descriptions_fixes_nested_namespace_empty_only() {
+        // Reproduces issue #6580: the empty description sits on a namespace
+        // tool inside an `additional_tools` input carrier, while child tools
+        // carry valid descriptions. Namespace description is required, so it
+        // must be replaced with a non-empty fallback rather than dropped.
+        let mut body = json!({
+            "model": "m",
+            "stream": true,
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "description": "",
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "wait",
+                                    "description": "waits",
+                                    "parameters": {"type": "object", "properties": {}}
+                                }
+                            ]
+                        },
+                        {
+                            "type": "namespace",
+                            "name": "collaboration",
+                            "description": "Tools for spawning and managing sub-agents.",
+                            "tools": []
+                        }
+                    ]
+                },
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "say OK"}]}
+            ],
+            "tools": [
+                {"type": "function", "name": "keep", "description": "keep me"}
+            ]
+        });
+
+        assert!(normalize_empty_tool_descriptions(&mut body));
+
+        let tools = &body["input"][0]["tools"];
+        assert_eq!(tools[0]["description"], "Tools in the functions namespace.");
+        assert_eq!(tools[0]["tools"][0]["description"], "waits");
+        assert_eq!(
+            tools[1]["description"],
+            "Tools for spawning and managing sub-agents."
+        );
+        assert_eq!(body["tools"][0]["description"], "keep me");
+        assert_eq!(body["input"][1]["type"], "message");
+    }
+
+    #[test]
+    fn normalize_empty_tool_descriptions_drops_optional_function_empty_and_reports_clean() {
+        let mut body = json!({
+            "tools": [
+                {"type": "function", "name": "a", "description": "   "}
+            ]
+        });
+        assert!(normalize_empty_tool_descriptions(&mut body));
+        assert!(body["tools"][0].get("description").is_none());
+
+        let mut clean = json!({
+            "tools": [
+                {"type": "function", "name": "a", "description": "real"}
+            ],
+            "input": []
+        });
+        assert!(!normalize_empty_tool_descriptions(&mut clean));
+        assert_eq!(clean["tools"][0]["description"], "real");
+    }
+
+    #[test]
+    fn normalize_empty_tool_descriptions_namespace_fallback_handles_name_edge_cases() {
+        // Mirrors the bounded contract Vekil documents for its Responses
+        // rewrite: blank/missing/over-long namespace names fall back to a
+        // generic non-empty description instead of embedding a bad name.
+        let long_name = "n".repeat(300);
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {"type": "namespace", "name": "   ", "description": "  ", "tools": []},
+                        {"type": "namespace", "name": long_name.clone(), "description": "", "tools": []},
+                        {"type": "namespace", "description": "", "tools": []}
+                    ]
+                }
+            ]
+        });
+
+        assert!(normalize_empty_tool_descriptions(&mut body));
+
+        let tools = &body["input"][0]["tools"];
+        assert_eq!(tools[0]["description"], "Tools in this namespace.");
+        assert_eq!(tools[1]["description"], "Tools in this namespace.");
+        assert_eq!(tools[2]["description"], "Tools in this namespace.");
+
+        // A valid, bounded name keeps the named fallback.
+        let mut named = json!({
+            "input": [{
+                "type": "additional_tools",
+                "role": "developer",
+                "tools": [
+                    {"type": "namespace", "name": "functions", "description": "", "tools": []}
+                ]
+            }]
+        });
+        assert!(normalize_empty_tool_descriptions(&mut named));
+        assert_eq!(
+            named["input"][0]["tools"][0]["description"],
+            "Tools in the functions namespace."
+        );
+    }
+
+    #[test]
+    fn normalize_empty_tool_descriptions_scoped_to_tool_declarations() {
+        let mut body = json!({
+            "model": "",
+            "instructions": "",
+            "input": "",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "",
+                    "description": "",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string", "description": ""}
+                        }
+                    }
+                }
+            ],
+            "extra": {"description": "  ", "content": ""}
+        });
+
+        assert!(normalize_empty_tool_descriptions(&mut body));
+
+        // The function tool's own blank description is dropped...
+        assert!(body["tools"][0].get("description").is_none());
+        // ...but non-tool data is left exactly as sent: JSON-schema
+        // `description` inside `parameters` and arbitrary top-level objects
+        // are not tool declarations and must not be rewritten.
+        assert_eq!(
+            body["tools"][0]["parameters"]["properties"]["content"]["description"],
+            ""
+        );
+        assert_eq!(body["extra"]["description"], "  ");
+        // Unrelated empty strings are untouched, preserving minimality.
+        assert_eq!(body["model"], "");
+        assert_eq!(body["instructions"], "");
+        assert_eq!(body["input"], "");
+        assert_eq!(body["tools"][0]["name"], "");
+        assert_eq!(body["extra"]["content"], "");
+    }
+
+    #[test]
+    fn normalize_empty_tool_descriptions_leaves_non_tool_metadata_untouched() {
+        let mut body = json!({
+            "model": "m",
+            "metadata": {"description": "", "note": ""},
+            "tools": [
+                {"type": "function", "name": "a", "description": "   "}
+            ],
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        assert!(normalize_empty_tool_descriptions(&mut body));
+
+        // Only the function tool's blank description was dropped; `metadata`
+        // and message content are passthrough data and stay unchanged.
+        assert!(body["tools"][0].get("description").is_none());
+        assert_eq!(body["metadata"], json!({"description": "", "note": ""}));
+        assert_eq!(body["input"][0]["type"], "message");
+    }
+
+    #[test]
+    fn normalize_empty_tool_descriptions_handles_top_level_namespace_tools() {
+        // Non-Responses-Lite path: namespace tools can also appear directly in
+        // the top-level `tools` array (create_tools_json_for_responses_api).
+        let mut body = json!({
+            "model": "m",
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "functions",
+                    "description": "",
+                    "tools": [
+                        {"type": "function", "name": "exec", "description": "Run code"}
+                    ]
+                },
+                {"type": "custom", "name": "my_tool", "description": "   "},
+                {"type": "function", "name": "keep", "description": "real"}
+            ]
+        });
+
+        assert!(normalize_empty_tool_descriptions(&mut body));
+
+        let tools = &body["tools"];
+        assert_eq!(tools[0]["description"], "Tools in the functions namespace.");
+        assert_eq!(tools[0]["tools"][0]["description"], "Run code");
+        assert!(tools[1].get("description").is_none());
+        assert_eq!(tools[2]["description"], "real");
+    }
+
+    #[test]
+    fn normalize_empty_tool_descriptions_recurse_nested_namespaces() {
+        let mut body = json!({
+            "input": [{
+                "type": "additional_tools",
+                "role": "developer",
+                "tools": [
+                    {
+                        "type": "namespace",
+                        "name": "outer",
+                        "description": "",
+                        "tools": [
+                            {
+                                "type": "namespace",
+                                "name": "inner",
+                                "description": "",
+                                "tools": [
+                                    {"type": "function", "name": "deep", "description": "   "}
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }]
+        });
+
+        assert!(normalize_empty_tool_descriptions(&mut body));
+
+        let tools = &body["input"][0]["tools"];
+        assert_eq!(tools[0]["description"], "Tools in the outer namespace.");
+        assert_eq!(
+            tools[0]["tools"][0]["description"],
+            "Tools in the inner namespace."
+        );
+        assert!(tools[0]["tools"][0]["tools"][0]
+            .get("description")
+            .is_none());
+    }
+
+    #[test]
+    fn normalize_empty_tool_descriptions_tolerates_malformed_collections() {
+        // `tools`/`input` present but not arrays must be left untouched without
+        // panicking.
+        let mut body = json!({
+            "model": "m",
+            "tools": "not-an-array",
+            "input": {"type": "additional_tools"}
+        });
+
+        assert!(!normalize_empty_tool_descriptions(&mut body));
+        assert_eq!(body["tools"], "not-an-array");
+        assert_eq!(body["input"]["type"], "additional_tools");
     }
 
     #[test]
