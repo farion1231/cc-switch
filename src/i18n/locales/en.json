@@ -910,7 +910,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "dsh": "DSH"
   },
   "pi": {
     "empty": {
@@ -1716,7 +1717,8 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "dsh": "DSH"
     },
     "rawInputLabel": "Raw",
     "rebuildCodex": {
