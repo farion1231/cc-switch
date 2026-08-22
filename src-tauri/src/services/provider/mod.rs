@@ -864,6 +864,35 @@ mod tests {
     }
 
     #[test]
+    fn validate_grok_provider_settings_accepts_models_endpoint_base_url() {
+        let provider = Provider::with_id(
+            "packycode".into(),
+            "PackyCode".into(),
+            json!({
+                "config": r#"[models]
+default = "grok-4.5"
+web_search = "grok-4.5"
+
+[endpoints]
+models_base_url = "https://endpoint.example/v1"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+name = "PackyCode"
+api_key = "secret"
+api_backend = "responses"
+context_window = 500000
+supports_backend_search = false
+"#
+            }),
+            None,
+        );
+
+        ProviderService::validate_provider_settings(&AppType::GrokBuild, &provider)
+            .expect("models endpoint configuration should be accepted on provider update");
+    }
+
+    #[test]
     fn extract_gemini_common_config_strips_credentials_keeps_shareable() {
         // Gemini 的共享片段会被 deep-merge 回**其它** Gemini 供应商的 env
         // (live.rs::apply_common_config_to_settings)，因此任何凭据都不得进入片段。

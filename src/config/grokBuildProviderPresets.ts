@@ -23,7 +23,10 @@
  */
 import type { ProviderCategory } from "../types";
 import type { CodexApiFormat } from "../types";
-import { GROK_BUILD_DEFAULT_MODEL } from "../utils/grokBuildConfig";
+import {
+  GROK_BUILD_DEFAULT_MODEL,
+  type GrokBuildConfigOptions,
+} from "../utils/grokBuildConfig";
 
 export interface GrokBuildProviderPreset {
   name: string;
@@ -40,6 +43,7 @@ export interface GrokBuildProviderPreset {
   icon?: string;
   iconColor?: string;
   apiFormat?: CodexApiFormat;
+  configOptions?: GrokBuildConfigOptions;
 }
 
 // 官方条目与后端 seed（providers_seed.rs 的 "Grok Official"）对应：
@@ -55,6 +59,47 @@ export const grokBuildOfficialPreset: GrokBuildProviderPreset = {
   icon: "grok",
   iconColor: "currentColor",
 };
+
+const normalizeEndpointUrl = (url: string): string =>
+  url.trim().replace(/\/+$/, "");
+
+const findGrokBuildPresetByPromotionKey = (key: string) =>
+  grokBuildProviderPresets.find((preset) => preset.partnerPromotionKey === key);
+
+/** Exact known Packy Grok endpoints, ignoring only trailing slashes. */
+export function isKnownPackyCodeEndpoint(url?: string): boolean {
+  const current = url ? normalizeEndpointUrl(url) : "";
+  if (!current) return false;
+  const packy = findGrokBuildPresetByPromotionKey("packycode");
+  return (packy?.endpointCandidates ?? []).some(
+    (candidate) => normalizeEndpointUrl(candidate) === current,
+  );
+}
+
+/**
+ * Resolve Grok Build writer options for a saved or in-progress provider.
+ *
+ * Prefer `partnerPromotionKey`. Providers edited before that field was
+ * persisted can lose it; fall back only for partner records whose endpoint
+ * is an exact known Packy URL.
+ */
+export function resolveGrokBuildConfigOptions(params: {
+  partnerPromotionKey?: string;
+  isPartner?: boolean;
+  baseUrl?: string;
+}): GrokBuildConfigOptions | undefined {
+  const key = params.partnerPromotionKey?.trim();
+  if (key) {
+    const byKey = findGrokBuildPresetByPromotionKey(key)?.configOptions;
+    if (byKey) return byKey;
+  }
+
+  if (params.isPartner && isKnownPackyCodeEndpoint(params.baseUrl)) {
+    return findGrokBuildPresetByPromotionKey("packycode")?.configOptions;
+  }
+
+  return undefined;
+}
 
 /** OpenRouter 系命名空间路由站的 Grok 模型 id */
 const OPENROUTER_STYLE_GROK_MODEL = "x-ai/grok-4.5";
@@ -86,6 +131,11 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     auth: grokAuth(),
     config: grokPresetConfig("PackyCode", "https://www.packyapi.ai/v1"),
+    configOptions: {
+      baseUrlMode: "models_endpoint",
+      webSearchModel: GROK_BUILD_DEFAULT_MODEL,
+      supportsBackendSearch: false,
+    },
     endpointCandidates: [
       "https://www.packyapi.ai/v1",
       "https://cf.api.fan/v1",
