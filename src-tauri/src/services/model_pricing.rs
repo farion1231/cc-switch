@@ -9,6 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 const MODEL_PRICING_FILE_NAME: &str = "model-pricing.json";
 const MODEL_PRICING_FILE_VERSION: u32 = 1;
@@ -471,6 +472,70 @@ pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppErro
     Ok(())
 }
 
+const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
+const MODELS_DEV_FETCH_TIMEOUT_SECS: u64 = 15;
+/// 响应大小上限：models.dev api.json 实际几 MB，超限视为异常响应
+const MODELS_DEV_MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+
+/// 校验 models.dev 响应大小是否超限
+fn is_models_dev_response_too_large(len: usize) -> bool {
+    len > MODELS_DEV_MAX_RESPONSE_BYTES
+}
+
+/// 拉取 models.dev 定价数据（api.json）
+///
+/// 使用全局代理感知 HTTP 客户端，WebView 直连在代理环境下会超时。
+/// 返回原始 JSON 字符串，由前端解析为 ModelsDevResponse。
+pub async fn fetch_models_dev_pricing() -> Result<String, String> {
+    let client = crate::proxy::http_client::get();
+    let mut response = client
+        .get(MODELS_DEV_API_URL)
+        .timeout(Duration::from_secs(MODELS_DEV_FETCH_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| format!("Request to models.dev failed: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("models.dev returned HTTP {status}"));
+    }
+
+    if let Some(len) = response.content_length() {
+        if is_models_dev_response_too_large(len as usize) {
+            return Err(format!(
+                "models.dev response too large: {len} bytes (max {MODELS_DEV_MAX_RESPONSE_BYTES})"
+            ));
+        }
+    }
+
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to read models.dev response: {e}"))?
+    {
+        if append_models_dev_chunk(&mut buf, &chunk).is_err() {
+            return Err(format!(
+                "models.dev response too large: {} bytes (max {MODELS_DEV_MAX_RESPONSE_BYTES})",
+                buf.len()
+            ));
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// 追加一个 chunk 并判断累计大小是否超限（读取过程中即时生效，避免 chunked 响应被整体缓冲）
+fn append_models_dev_chunk(buf: &mut Vec<u8>, chunk: &[u8]) -> Result<(), ()> {
+    if buf.len() > MODELS_DEV_MAX_RESPONSE_BYTES || chunk.len() > MODELS_DEV_MAX_RESPONSE_BYTES - buf.len() {
+        // 超限时仍追加 chunk，便于调用方报告真实累计字节数
+        buf.extend_from_slice(chunk);
+        return Err(());
+    }
+    buf.extend_from_slice(chunk);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -757,5 +822,39 @@ mod tests {
             assert_eq!(state.config.last_sync_at, Some(456));
             assert_eq!(state.config.last_sync_error.as_deref(), Some("offline"));
         });
+    }
+
+    #[test]
+    fn response_size_limit_rejects_oversized_payloads() {
+        assert!(!is_models_dev_response_too_large(0));
+        assert!(!is_models_dev_response_too_large(
+            MODELS_DEV_MAX_RESPONSE_BYTES
+        ));
+        assert!(is_models_dev_response_too_large(
+            MODELS_DEV_MAX_RESPONSE_BYTES + 1
+        ));
+    }
+
+    #[test]
+    fn append_chunk_accumulates_within_limit() {
+        let mut buf = Vec::new();
+        append_models_dev_chunk(&mut buf, b"hello").expect("within limit");
+        append_models_dev_chunk(&mut buf, b" world").expect("within limit");
+        assert_eq!(buf, b"hello world");
+    }
+
+    #[test]
+    fn append_chunk_accepts_exactly_limit() {
+        let mut buf = vec![0u8; MODELS_DEV_MAX_RESPONSE_BYTES - 1];
+        append_models_dev_chunk(&mut buf, &[1u8])
+            .expect("exactly at limit should not overflow");
+        assert_eq!(buf.len(), MODELS_DEV_MAX_RESPONSE_BYTES);
+    }
+
+    #[test]
+    fn append_chunk_rejects_over_limit() {
+        let mut buf = vec![0u8; MODELS_DEV_MAX_RESPONSE_BYTES];
+        assert!(append_models_dev_chunk(&mut buf, &[1u8; 1024]).is_err());
+        assert_eq!(buf.len(), MODELS_DEV_MAX_RESPONSE_BYTES + 1024);
     }
 }

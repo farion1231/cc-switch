@@ -1,9 +1,9 @@
+import { invoke } from "@tauri-apps/api/core";
+
 import type { ModelPricing, ModelsDevSyncConfig } from "@/types/usage";
 
-export const MODELS_DEV_API_URL = "https://models.dev/api.json";
 export const MODELS_DEV_QUERY_KEY = ["models-dev-pricing"] as const;
 export const MODELS_DEV_STALE_TIME_MS = 60 * 60 * 1000;
-const MODELS_DEV_FETCH_TIMEOUT_MS = 15_000;
 
 export interface ModelsDevCost {
   input?: number;
@@ -139,22 +139,9 @@ export function flattenModels(data: ModelsDevResponse): ModelsDevEntry[] {
 }
 
 export async function fetchModelsDevPricing(): Promise<ModelsDevResponse> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    MODELS_DEV_FETCH_TIMEOUT_MS,
-  );
-  try {
-    const response = await fetch(MODELS_DEV_API_URL, {
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    return (await response.json()) as ModelsDevResponse;
-  } finally {
-    window.clearTimeout(timeout);
-  }
+  // WebView 不读终端代理环境变量，改走 Rust 后端的全局代理感知 HTTP 客户端
+  const raw = await invoke<string>("fetch_models_dev_pricing");
+  return JSON.parse(raw) as ModelsDevResponse;
 }
 
 const COMMON_MODEL_LIMIT_PER_FAMILY = 6;
