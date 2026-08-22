@@ -1,8 +1,9 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, read_json_file, update_settings, write_codex_live_atomic, AppError,
+    AppSettings, AppType, McpApps, McpServer, MultiAppConfig, Provider, ProviderMeta,
+    ProviderService,
 };
 
 #[path = "support.rs"]
@@ -703,6 +704,223 @@ wire_api = "responses"
         !restored_config.contains("PROXY_MANAGED"),
         "restored live config must not keep the proxy placeholder"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[allow(
+    clippy::await_holding_lock,
+    reason = "this integration-style test must serialize global test HOME and settings mutations across async takeover calls"
+)]
+async fn codex_official_takeover_reprojects_live_when_unified_history_toggles() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let initial_oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "oauth-access-initial",
+            "id_token": "oauth-id-initial",
+            "refresh_token": "oauth-refresh-initial"
+        }
+    });
+    write_codex_live_atomic(&initial_oauth_auth, Some(""))
+        .expect("seed official Codex OAuth live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "codex-official".to_string();
+        let mut official_provider = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": initial_oauth_auth,
+                "config": ""
+            }),
+            None,
+        );
+        official_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("codex-official".to_string(), official_provider);
+    }
+
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        current_provider_codex: Some("codex-official".to_string()),
+        ..Default::default()
+    })
+    .expect("seed settings with unified history disabled");
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
+    proxy_config.listen_port = 0;
+    state
+        .db
+        .update_proxy_config(proxy_config)
+        .await
+        .expect("use ephemeral proxy port");
+    state
+        .proxy_service
+        .set_takeover_for_app("codex", true)
+        .await
+        .expect("enable official Codex takeover");
+
+    let dedicated_live =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live");
+    assert!(dedicated_live.contains("model_provider = \"cc-switch-official\""));
+    let refreshed_oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "oauth-access-refreshed",
+            "id_token": "oauth-id-refreshed",
+            "refresh_token": "oauth-refresh-refreshed"
+        }
+    });
+    write_codex_live_atomic(&refreshed_oauth_auth, Some(&dedicated_live))
+        .expect("simulate Codex rotating OAuth tokens during takeover");
+
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        unify_codex_session_history: true,
+        current_provider_codex: Some("codex-official".to_string()),
+        ..Default::default()
+    })
+    .expect("enable unified history setting");
+    assert!(cc_switch_lib::reapply_current_codex_official_live(&state)
+        .expect("reproject active official takeover into shared bucket"));
+
+    let unified_live =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live");
+    assert!(unified_live.contains("model_provider = \"custom\""));
+    assert!(unified_live.contains("[model_providers.cc-switch-official]"));
+    assert!(unified_live.contains("http://127.0.0.1:"));
+    let unified_backup = state
+        .db
+        .get_live_backup("codex")
+        .await
+        .expect("read unified backup")
+        .expect("unified backup exists");
+    let unified_backup: serde_json::Value =
+        serde_json::from_str(&unified_backup.original_config).expect("parse unified backup");
+    assert!(
+        unified_backup.get("auth").is_none(),
+        "official OAuth must remain live-only during takeover"
+    );
+    let unified_backup_config = unified_backup
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    assert!(unified_backup_config.contains("model_provider = \"custom\""));
+    assert!(!unified_backup_config.contains("cc-switch-official"));
+
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        current_provider_codex: Some("codex-official".to_string()),
+        ..Default::default()
+    })
+    .expect("disable unified history setting");
+    assert!(cc_switch_lib::reapply_current_codex_official_live(&state)
+        .expect("reproject active official takeover into dedicated bucket"));
+
+    let dedicated_live_after_toggle =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live");
+    assert!(dedicated_live_after_toggle.contains("model_provider = \"cc-switch-official\""));
+    assert!(!dedicated_live_after_toggle.contains("model_provider = \"custom\""));
+    let dedicated_backup = state
+        .db
+        .get_live_backup("codex")
+        .await
+        .expect("read dedicated backup")
+        .expect("dedicated backup exists");
+    let dedicated_backup: serde_json::Value =
+        serde_json::from_str(&dedicated_backup.original_config).expect("parse dedicated backup");
+    assert!(
+        dedicated_backup.get("auth").is_none(),
+        "official OAuth must remain live-only after history reprojection"
+    );
+    let dedicated_backup_config = dedicated_backup
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    assert!(dedicated_backup_config.trim().is_empty());
+    assert!(!dedicated_backup_config.contains("cc-switch-official"));
+
+    state
+        .proxy_service
+        .set_takeover_for_app("codex", false)
+        .await
+        .expect("disable official Codex takeover");
+    let restored_auth: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read restored auth");
+    assert_eq!(restored_auth, refreshed_oauth_auth);
+}
+
+#[test]
+fn reapply_codex_official_live_preserves_refreshed_live_oauth() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let stored_oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "oauth-access-stored",
+            "id_token": "oauth-id-stored",
+            "refresh_token": "oauth-refresh-stored"
+        }
+    });
+    let refreshed_oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "oauth-access-refreshed",
+            "id_token": "oauth-id-refreshed",
+            "refresh_token": "oauth-refresh-refreshed"
+        }
+    });
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "codex-official".to_string();
+        let mut official_provider = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": stored_oauth_auth,
+                "config": ""
+            }),
+            None,
+        );
+        official_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("codex-official".to_string(), official_provider);
+    }
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        unify_codex_session_history: true,
+        current_provider_codex: Some("codex-official".to_string()),
+        ..Default::default()
+    })
+    .expect("enable unified history setting");
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+    write_codex_live_atomic(&refreshed_oauth_auth, Some(""))
+        .expect("simulate Codex rotating OAuth tokens before reapply");
+
+    assert!(cc_switch_lib::reapply_current_codex_official_live(&state)
+        .expect("reapply official live config"));
+
+    let live_auth: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read live auth");
+    assert_eq!(live_auth, refreshed_oauth_auth);
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live config");
+    assert!(live_config.contains("model_provider = \"custom\""));
 }
 
 #[test]
