@@ -1087,6 +1087,23 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "XuanShu API",
+    websiteUrl: "https://www.xuanshuapi.com",
+    apiKeyUrl: "https://www.xuanshuapi.com/keys",
+    settingsConfig: {
+      name: "xuanshu",
+      // Anthropic Messages 兼容层在根路径，不带 /v1
+      base_url: "https://www.xuanshuapi.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [{ id: "claude-opus-4-7", name: "Claude Opus 4.7" }],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-4-7", provider: "xuanshu" },
+    },
+  },
+  {
     name: "OpenRouter",
     nameKey: "providerForm.presets.openrouter",
     websiteUrl: "https://openrouter.ai",

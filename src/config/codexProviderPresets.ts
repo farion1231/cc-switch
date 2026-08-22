@@ -2011,6 +2011,27 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "pipellm",
   },
   {
+    name: "XuanShu API",
+    websiteUrl: "https://www.xuanshuapi.com",
+    apiKeyUrl: "https://www.xuanshuapi.com/keys",
+    auth: generateThirdPartyAuth(""),
+    // 官方教程使用 requires_openai_auth = false 并注入 actor header，
+    // 与 generateThirdPartyConfig 的默认值不同，故手写 TOML。
+    config: `model_provider = "xuanshu"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.xuanshu]
+name = "xuanshu"
+base_url = "https://www.xuanshuapi.com/v1"
+wire_api = "responses"
+requires_openai_auth = false
+http_headers = { "x-openai-actor-authorization" = "xuanshuapi.com" }`,
+    endpointCandidates: ["https://www.xuanshuapi.com/v1"],
+    category: "aggregator",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
