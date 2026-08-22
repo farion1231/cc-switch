@@ -9,6 +9,7 @@ mod codex_history_migration;
 mod codex_state_db;
 mod commands;
 mod config;
+mod cursor_config;
 mod database;
 mod deeplink;
 mod error;
@@ -51,10 +52,11 @@ pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkIm
 pub use error::AppError;
 pub use grok_config::get_grok_config_path;
 pub use mcp::{
-    import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
-    remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
-    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
-    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
+    import_from_claude, import_from_codex, import_from_cursor, import_from_gemini,
+    import_from_grokbuild, remove_server_from_claude, remove_server_from_codex,
+    remove_server_from_cursor, remove_server_from_gemini, remove_server_from_grokbuild,
+    sync_enabled_to_claude, sync_enabled_to_codex, sync_enabled_to_cursor, sync_enabled_to_gemini,
+    sync_single_server_to_claude, sync_single_server_to_codex, sync_single_server_to_cursor,
     sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
@@ -1394,6 +1396,10 @@ pub fn run() {
             commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,
+            commands::shared_memory_get_settings,
+            commands::shared_memory_save_settings,
+            commands::shared_memory_fetch,
+            commands::shared_memory_push,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,

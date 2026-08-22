@@ -910,7 +910,18 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "cursor": "Cursor"
+  },
+  "agents": {
+    "title": "Agent 技能",
+    "description": "~/.agents/skills 中的技能默认由所有 agent 共享。按应用逐个启用，让专属技能只进入指定应用（包括 Cursor）。",
+    "import": "导入所选",
+    "empty": "~/.agents/skills 中没有找到未托管的技能。",
+    "refresh": "刷新",
+    "importSuccess": "已导入 {{count}} 个 Agent 技能",
+    "perApp": "启用目标应用（专属选择）",
+    "source": "来源："
   },
   "pi": {
     "empty": {
@@ -2013,7 +2024,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -3245,5 +3257,28 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "sharedMemory": {
+    "title": "共享记忆",
+    "endpoint": "云端地址",
+    "token": "访问令牌",
+    "tokenPlaceholder": "推送时需要令牌",
+    "hint": "CC Switch 作为跨平台共享记忆的统一读写通道：拉取 = 从云端加载，推送 = 保存到云端（覆盖）。查看无需令牌，推送需要令牌。",
+    "openWeb": "打开网页编辑器",
+    "openWebFailed": "打开网页编辑器失败",
+    "settingsSaved": "设置已保存",
+    "settingsSaveFailed": "保存设置失败",
+    "loadSettingsFailed": "读取设置失败",
+    "fetch": "拉取",
+    "push": "推送",
+    "fetchSuccess": "已从云端拉取",
+    "fetchFailed": "拉取失败",
+    "pushSuccess": "已推送到云端",
+    "pushFailed": "推送失败",
+    "lastUpdated": "更新于 {{time}}",
+    "neverUpdated": "从未更新",
+    "bytes": "大小 {{count}} 字节",
+    "notSynced": "尚未同步",
+    "charCount": "{{count}} 字符"
   }
 }

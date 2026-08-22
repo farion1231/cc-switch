@@ -911,7 +911,18 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "cursor": "Cursor"
+  },
+  "agents": {
+    "title": "Agent 技能",
+    "description": "~/.agents/skills 中的技能預設由所有 agent 共用。按應用逐一啟用，讓專屬技能只進入指定應用（包括 Cursor）。",
+    "import": "匯入所選",
+    "empty": "在 ~/.agents/skills 中沒有找到未受管技能。",
+    "refresh": "重新整理",
+    "importSuccess": "已匯入 {{count}} 個 Agent 技能",
+    "perApp": "啟用目標應用（專屬選擇）",
+    "source": "來源："
   },
   "pi": {
     "empty": {
@@ -2014,7 +2025,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",
@@ -3246,5 +3258,28 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "sharedMemory": {
+    "title": "共享記憶",
+    "endpoint": "雲端位址",
+    "token": "存取權杖",
+    "tokenPlaceholder": "推送時需要權杖",
+    "hint": "CC Switch 作為跨平台共享記憶的統一讀寫通道：拉取 = 從雲端載入，推送 = 儲存到雲端（覆寫）。檢視不需權杖，推送需要權杖。",
+    "openWeb": "開啟網頁編輯器",
+    "openWebFailed": "開啟網頁編輯器失敗",
+    "settingsSaved": "設定已儲存",
+    "settingsSaveFailed": "儲存設定失敗",
+    "loadSettingsFailed": "讀取設定失敗",
+    "fetch": "拉取",
+    "push": "推送",
+    "fetchSuccess": "已從雲端拉取",
+    "fetchFailed": "拉取失敗",
+    "pushSuccess": "已推送到雲端",
+    "pushFailed": "推送失敗",
+    "lastUpdated": "更新於 {{time}}",
+    "neverUpdated": "從未更新",
+    "bytes": "大小 {{count}} 位元組",
+    "notSynced": "尚未同步",
+    "charCount": "{{count}} 字元"
   }
 }

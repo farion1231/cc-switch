@@ -910,7 +910,18 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "cursor": "Cursor"
+  },
+  "agents": {
+    "title": "Agent スキル",
+    "description": "~/.agents/skills のスキルは既定ですべての agent で共有されます。アプリごとに有効化して、専用スキルを選択したアプリ（Cursor 含む）だけに届けます。",
+    "import": "選択をインポート",
+    "empty": "~/.agents/skills に未管理のスキルはありません。",
+    "refresh": "更新",
+    "importSuccess": "{{count}} 個の Agent スキルをインポートしました",
+    "perApp": "有効化するアプリ（専用選択）",
+    "source": "ソース："
   },
   "pi": {
     "empty": {
@@ -2013,7 +2024,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -3245,5 +3257,28 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "sharedMemory": {
+    "title": "共有メモリ",
+    "endpoint": "クラウド URL",
+    "token": "アクセストークン",
+    "tokenPlaceholder": "プッシュ時に必要",
+    "hint": "CC Switch はクロスプラットフォーム共有メモリの統一読み書きチャネルです：Pull = クラウドから読込、Push = クラウドへ保存（上書き）。閲覧はトークン不要、プッシュにはトークンが必要です。",
+    "openWeb": "Web エディタを開く",
+    "openWebFailed": "Web エディタを開けませんでした",
+    "settingsSaved": "設定を保存しました",
+    "settingsSaveFailed": "設定の保存に失敗しました",
+    "loadSettingsFailed": "設定の読込に失敗しました",
+    "fetch": "Pull",
+    "push": "Push",
+    "fetchSuccess": "クラウドから取得しました",
+    "fetchFailed": "取得に失敗しました",
+    "pushSuccess": "クラウドに保存しました",
+    "pushFailed": "保存に失敗しました",
+    "lastUpdated": "更新: {{time}}",
+    "neverUpdated": "未更新",
+    "bytes": "{{count}} バイト",
+    "notSynced": "未同期",
+    "charCount": "{{count}} 文字"
   }
 }

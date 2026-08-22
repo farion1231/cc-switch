@@ -314,6 +314,7 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
                     apps: McpApps {
                         claude: false,
                         codex: false,
+                        cursor: false,
                         gemini: false,
                         grokbuild: false,
                         opencode: false,
