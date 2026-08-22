@@ -392,43 +392,47 @@ impl ProfileService {
             }
 
             // 3. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
-            if let Some(Some(target_ids)) = payload.mcp.get(app) {
-                let servers = state.db.get_all_mcp_servers()?;
-                let current: Vec<(String, bool)> = servers
-                    .values()
-                    .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
-                    .collect();
-                let (toggles, dangling) = plan_toggles(&current, target_ids);
-                for id in dangling {
-                    warnings.push(format!("[{app_str}] MCP '{id}' no longer exists, skipped"));
-                }
-                for (id, enabled) in toggles {
-                    if let Err(e) = McpService::toggle_app(state, &id, app.clone(), enabled) {
-                        warnings.push(format!(
-                            "[{app_str}] toggle MCP '{id}' -> {enabled} failed: {e}"
-                        ));
+            if crate::settings::mcp_management_enabled() {
+                if let Some(Some(target_ids)) = payload.mcp.get(app) {
+                    let servers = state.db.get_all_mcp_servers()?;
+                    let current: Vec<(String, bool)> = servers
+                        .values()
+                        .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
+                        .collect();
+                    let (toggles, dangling) = plan_toggles(&current, target_ids);
+                    for id in dangling {
+                        warnings.push(format!("[{app_str}] MCP '{id}' no longer exists, skipped"));
+                    }
+                    for (id, enabled) in toggles {
+                        if let Err(e) = McpService::toggle_app(state, &id, app.clone(), enabled) {
+                            warnings.push(format!(
+                                "[{app_str}] toggle MCP '{id}' -> {enabled} failed: {e}"
+                            ));
+                        }
                     }
                 }
             }
 
             // 4. Skills diff（SkillService 返回 anyhow::Result，收进 warning）
-            if let Some(Some(target_ids)) = payload.skills.get(app) {
-                let skills = state.db.get_all_installed_skills()?;
-                let current: Vec<(String, bool)> = skills
-                    .values()
-                    .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
-                    .collect();
-                let (toggles, dangling) = plan_toggles(&current, target_ids);
-                for id in dangling {
-                    warnings.push(format!(
-                        "[{app_str}] skill '{id}' no longer exists, skipped"
-                    ));
-                }
-                for (id, enabled) in toggles {
-                    if let Err(e) = SkillService::toggle_app(&state.db, &id, app, enabled) {
+            if crate::settings::skills_management_enabled() {
+                if let Some(Some(target_ids)) = payload.skills.get(app) {
+                    let skills = state.db.get_all_installed_skills()?;
+                    let current: Vec<(String, bool)> = skills
+                        .values()
+                        .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
+                        .collect();
+                    let (toggles, dangling) = plan_toggles(&current, target_ids);
+                    for id in dangling {
                         warnings.push(format!(
-                            "[{app_str}] toggle skill '{id}' -> {enabled} failed: {e}"
+                            "[{app_str}] skill '{id}' no longer exists, skipped"
                         ));
+                    }
+                    for (id, enabled) in toggles {
+                        if let Err(e) = SkillService::toggle_app(&state.db, &id, app, enabled) {
+                            warnings.push(format!(
+                                "[{app_str}] toggle skill '{id}' -> {enabled} failed: {e}"
+                            ));
+                        }
                     }
                 }
             }

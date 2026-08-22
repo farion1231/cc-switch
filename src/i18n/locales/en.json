@@ -721,6 +721,17 @@
       "showProfileSwitcher": "Show project switcher",
       "showProfileSwitcherDescription": "Show the project switcher in the main page header"
     },
+    "managementScope": {
+      "title": "Management Scope",
+      "providersOnly": "Manage providers only",
+      "providersOnlyDescription": "When enabled, CC Switch will not scan, import, sync, or rewrite MCP, Skills, or session data",
+      "mcp": "Manage MCP",
+      "mcpDescription": "Allow CC Switch to import, enable, disable, and sync MCP configuration",
+      "skills": "Manage Skills",
+      "skillsDescription": "Allow CC Switch to install, migrate, sync, and back up Skills",
+      "sessions": "Manage sessions",
+      "sessionsDescription": "Allow CC Switch to scan, resume, delete sessions, and import session usage"
+    },
     "skillStorage": {
       "title": "Skill Storage Location",
       "description": "Choose where CC Switch stores the master copies of your skills",

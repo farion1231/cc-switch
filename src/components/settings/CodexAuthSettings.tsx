@@ -105,13 +105,15 @@ export function CodexAuthSettings({
         }
       />
 
-      <ToggleRow
-        icon={<History className="h-4 w-4 text-sky-500" />}
-        title={t("settings.unifyCodexSessionHistory")}
-        description={t("settings.unifyCodexSessionHistoryDescription")}
-        checked={settings.unifyCodexSessionHistory ?? false}
-        onCheckedChange={handleUnifyHistoryChange}
-      />
+      {(settings.managementScope?.sessions ?? true) && (
+        <ToggleRow
+          icon={<History className="h-4 w-4 text-sky-500" />}
+          title={t("settings.unifyCodexSessionHistory")}
+          description={t("settings.unifyCodexSessionHistoryDescription")}
+          checked={settings.unifyCodexSessionHistory ?? false}
+          onCheckedChange={handleUnifyHistoryChange}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={showEnableConfirm}

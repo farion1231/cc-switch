@@ -1545,10 +1545,13 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     }
 
     // Skill sync
-    for app_type in AppType::all() {
-        if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
-            log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
-            failures.push(format!("skill/{}: {e}", app_type.as_str()));
+    if crate::settings::skills_management_enabled() {
+        for app_type in AppType::all() {
+            if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type)
+            {
+                log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
+                failures.push(format!("skill/{}: {e}", app_type.as_str()));
+            }
         }
     }
 
@@ -1895,8 +1898,19 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
             if let (Some(merged_obj), Some(config_obj)) =
                 (merged.as_object_mut(), config_value.as_object())
             {
+                let live_mcp_servers = merged_obj.get("mcpServers").cloned();
                 for (k, v) in config_obj {
                     merged_obj.insert(k.clone(), v.clone());
+                }
+                if !crate::settings::mcp_management_enabled() {
+                    match live_mcp_servers {
+                        Some(servers) => {
+                            merged_obj.insert("mcpServers".to_string(), servers);
+                        }
+                        None => {
+                            merged_obj.remove("mcpServers");
+                        }
+                    }
                 }
             }
             config_to_write = Some(merged);

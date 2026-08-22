@@ -721,6 +721,17 @@
       "showProfileSwitcher": "プロジェクト切り替えを表示",
       "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します"
     },
+    "managementScope": {
+      "title": "管理範囲",
+      "providersOnly": "プロバイダーのみ管理",
+      "providersOnlyDescription": "有効にすると、CC Switch は MCP、Skills、セッションデータをスキャン、インポート、同期、または書き換えません",
+      "mcp": "MCP を管理",
+      "mcpDescription": "CC Switch による MCP 設定のインポート、有効化、無効化、同期を許可します",
+      "skills": "Skills を管理",
+      "skillsDescription": "CC Switch による Skills のインストール、移行、同期、バックアップを許可します",
+      "sessions": "セッションを管理",
+      "sessionsDescription": "CC Switch によるセッションのスキャン、再開、削除、使用量の取り込みを許可します"
+    },
     "skillStorage": {
       "title": "スキル保存場所",
       "description": "CC Switch がスキルのマスターコピーを保存するディレクトリを選択します",

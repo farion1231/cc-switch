@@ -768,6 +768,15 @@ pub fn delete_codex_provider_config(
     Ok(())
 }
 
+fn preserve_live_mcp_when_unmanaged(incoming: &str) -> Result<String, AppError> {
+    if crate::settings::mcp_management_enabled() {
+        return Ok(incoming.to_string());
+    }
+
+    let current = read_codex_config_text()?;
+    crate::mcp::replace_toml_mcp_sections(&current, incoming)
+}
+
 /// 原子写 Codex 的 `auth.json` 与 `config.toml`，在第二步失败时回滚第一步
 pub fn write_codex_live_atomic(
     auth: &Value,
@@ -797,6 +806,7 @@ pub fn write_codex_live_atomic(
         Some(s) => s.to_string(),
         None => String::new(),
     };
+    let cfg_text = preserve_live_mcp_when_unmanaged(&cfg_text)?;
     if !cfg_text.trim().is_empty() {
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
     }
@@ -872,6 +882,7 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
         Some(config_text) => config_text.to_string(),
         None => String::new(),
     };
+    let cfg_text = preserve_live_mcp_when_unmanaged(&cfg_text)?;
 
     if !cfg_text.trim().is_empty() {
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
@@ -3107,6 +3118,68 @@ mod tests {
             catalog_bytes,
             marker_bytes,
         }
+    }
+
+    #[test]
+    fn unmanaged_mcp_sections_are_preserved_across_provider_config_rewrites() {
+        let current = r#"model = "before"
+
+[mcp_servers.crg]
+command = "crg"
+
+[mcp.servers.legacy]
+command = "legacy"
+"#;
+        let incoming = r#"model = "after"
+
+[mcp_servers.provider_owned]
+command = "replace-me"
+
+[mcp.servers.provider_legacy]
+command = "replace-me-too"
+"#;
+
+        let merged =
+            crate::mcp::replace_toml_mcp_sections(current, incoming).expect("preserve MCP");
+        let parsed: toml::Value = toml::from_str(&merged).expect("valid merged TOML");
+
+        assert_eq!(
+            parsed.get("model").and_then(toml::Value::as_str),
+            Some("after")
+        );
+        assert!(parsed
+            .get("mcp_servers")
+            .and_then(|value| value.get("crg"))
+            .is_some());
+        assert!(parsed
+            .get("mcp_servers")
+            .and_then(|value| value.get("provider_owned"))
+            .is_none());
+        assert!(parsed
+            .get("mcp")
+            .and_then(|value| value.get("servers"))
+            .and_then(|value| value.get("legacy"))
+            .is_some());
+        assert!(parsed
+            .get("mcp")
+            .and_then(|value| value.get("servers"))
+            .and_then(|value| value.get("provider_legacy"))
+            .is_none());
+    }
+
+    #[test]
+    fn unmanaged_mcp_sections_are_removed_when_live_config_has_none() {
+        let incoming = r#"model = "after"
+
+[mcp_servers.provider_owned]
+command = "replace-me"
+"#;
+
+        let merged =
+            crate::mcp::replace_toml_mcp_sections("", incoming).expect("preserve empty MCP state");
+        let parsed: toml::Value = toml::from_str(&merged).expect("valid merged TOML");
+
+        assert!(parsed.get("mcp_servers").is_none());
     }
 
     fn seed_rotated_managed_codex_live_state() -> CodexLiveTestState {

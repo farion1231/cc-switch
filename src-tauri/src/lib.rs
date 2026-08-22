@@ -657,18 +657,19 @@ pub fn run() {
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
             // ============================================================
 
-            // 1. 初始化默认 Skills 仓库（已有内置检查：表非空则跳过）
-            match app_state.db.init_default_skill_repos() {
-                Ok(count) if count > 0 => {
-                    log::info!("✓ Initialized {count} default skill repositories");
+            if crate::settings::skills_management_enabled() {
+                // 1. 初始化默认 Skills 仓库（已有内置检查：表非空则跳过）
+                match app_state.db.init_default_skill_repos() {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Initialized {count} default skill repositories");
+                    }
+                    Ok(_) => {} // 表非空，静默跳过
+                    Err(e) => log::warn!("✗ Failed to initialize default skill repos: {e}"),
                 }
-                Ok(_) => {} // 表非空，静默跳过
-                Err(e) => log::warn!("✗ Failed to initialize default skill repos: {e}"),
-            }
 
-            // 1.1. Skills 统一管理迁移：当数据库迁移到 v3 结构后，自动从各应用目录导入到 SSOT
-            // 触发条件由 schema 迁移设置 settings.skills_ssot_migration_pending = true 控制。
-            match app_state.db.get_setting("skills_ssot_migration_pending") {
+                // 1.1. Skills 统一管理迁移：当数据库迁移到 v3 结构后，自动从各应用目录导入到 SSOT
+                // 触发条件由 schema 迁移设置 settings.skills_ssot_migration_pending = true 控制。
+                match app_state.db.get_setting("skills_ssot_migration_pending") {
                 Ok(Some(flag)) if flag == "true" || flag == "1" => {
                     // 安全保护：如果用户已经有 v3 结构的 Skills 数据，就不要自动清空重建。
                     let has_existing = app_state
@@ -704,7 +705,10 @@ pub fn run() {
                     }
                 }
                 Ok(_) => {} // 未开启迁移标志，静默跳过
-                Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
+                    Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
+                }
+            } else {
+                log::info!("Skills management disabled; startup repository initialization and migration skipped");
             }
 
             // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
@@ -764,7 +768,7 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
-            {
+            if crate::settings::sessions_management_enabled() {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     match crate::codex_history_migration::maybe_migrate_codex_third_party_history_provider_bucket(
@@ -824,6 +828,8 @@ pub fn run() {
                         }
                     }
                 });
+            } else {
+                log::info!("Session management disabled; Codex history migrations skipped");
             }
 
             // 老用户 / 已确认的路径由 `fresh_install_at_startup` 自行拦截，这里不做写入。
@@ -923,7 +929,9 @@ pub fn run() {
             }
 
             // 3. 导入 MCP 服务器配置（表空时触发）
-            if app_state.db.is_mcp_table_empty().unwrap_or(false) {
+            if crate::settings::mcp_management_enabled()
+                && app_state.db.is_mcp_table_empty().unwrap_or(false)
+            {
                 log::info!("MCP table empty, importing from live configurations...");
 
                 match crate::services::mcp::McpService::import_from_claude(&app_state) {
@@ -1292,7 +1300,9 @@ pub fn run() {
                     }
 
                     // 首次同步（含费用回填）
-                    run_session_sync(db_for_session_sync.clone(), true).await;
+                    if crate::settings::sessions_management_enabled() {
+                        run_session_sync(db_for_session_sync.clone(), true).await;
+                    }
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1302,7 +1312,9 @@ pub fn run() {
                     interval.tick().await; // skip immediate first tick
                     loop {
                         interval.tick().await;
-                        run_session_sync(db_for_session_sync.clone(), false).await;
+                        if crate::settings::sessions_management_enabled() {
+                            run_session_sync(db_for_session_sync.clone(), false).await;
+                        }
                     }
                 });
             });
