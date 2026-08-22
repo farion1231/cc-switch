@@ -23,6 +23,7 @@ import _qiniu from "./qiniu.png";
 import _relaxcode from "./relaxcode.png";
 import _runapi from "./runapi.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
+import _sub2api from "./sub2api.svg?url";
 import _subrouter from "./subrouter.svg?url";
 import _sudocode from "./sudocode.png";
 import _sudocodeUs from "./sudocode-us.png";
@@ -131,6 +132,7 @@ export const iconUrls: Record<string, string> = {
   relaxcode: _relaxcode,
   runapi: _runapi,
   shengsuanyun: _shengsuanyun,
+  sub2api: _sub2api,
   subrouter: _subrouter,
   sudocode: _sudocode,
   "sudocode-us": _sudocodeUs,

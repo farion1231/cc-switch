@@ -647,6 +647,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["shengsuanyun", "shengsuanyun"],
     defaultColor: "currentColor",
   },
+  sub2api: {
+    name: "sub2api",
+    displayName: "Sub2API",
+    category: "ai-provider",
+    keywords: [
+      "sub2api",
+      "sub2",
+      "aggregator",
+      "relay",
+      "gateway",
+      "claude",
+      "codex",
+      "gemini",
+    ],
+    defaultColor: "#39D9E7",
+  },
   lioncc: {
     name: "lioncc",
     displayName: "LionCC",
