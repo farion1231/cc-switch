@@ -188,13 +188,15 @@ describe("CodexOAuthSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a disabled account prompt before a managed account is selected", () => {
+  it("shows one disabled prompt before a managed account is selected", async () => {
+    const user = userEvent.setup();
     render(
       <CodexOAuthSection
         mode="select"
         selectedAccountId={null}
         onAccountSelect={vi.fn()}
         allowUnboundSelection={false}
+        requireExplicitSelection
       />,
     );
 
@@ -204,6 +206,11 @@ describe("CodexOAuthSection", () => {
       "font-normal",
       "text-muted-foreground",
     );
+
+    await user.click(screen.getByRole("combobox"));
+    expect(
+      screen.getAllByRole("option", { name: "请选择登录方式" }),
+    ).toHaveLength(1);
   });
 
   it("does not default a new Official card to the current Codex login", async () => {
