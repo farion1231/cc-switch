@@ -14,6 +14,21 @@ export { proxyApi } from "./proxy";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
 export { workspaceApi } from "./workspace";
+export { dshApi } from "./dsh";
+export type {
+  DshCredentialInfo,
+  DshCredentialWrite,
+  DshCustomInput,
+  DshDefaultModel,
+  DshErrorPayload,
+  DshModel,
+  DshModelDiscoveryInput,
+  DshModelDiscoveryResult,
+  DshNativeInput,
+  DshProvider,
+  DshSnapshot,
+  DshUnsupportedWarning,
+} from "./dsh";
 export * as configApi from "./config";
 export * as authApi from "./auth";
 export * as copilotApi from "./copilot";

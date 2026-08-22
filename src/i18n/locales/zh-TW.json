@@ -789,6 +789,8 @@
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
     "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
+    "dshConfigDir": "DeepSeek Harness 設定目錄",
+    "dshConfigDirDescription": "覆寫 DeepSeek Harness 主目錄（settings.yaml 和 .credentials.yaml）。",
     "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
@@ -798,6 +800,7 @@
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
+    "browsePlaceholderDsh": "例如：/home/<您的帳號>/.dsh",
     "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
@@ -911,6 +914,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "dsh": "DeepSeek Harness",
     "pi": "Pi"
   },
   "pi": {
@@ -3224,6 +3228,137 @@
     },
     "suggestedDefaults": "套用建議預設設定",
     "suggestedDefaultsHint": "使用此預設推薦的預設模型設定"
+  },
+  "dsh": {
+    "description": "即時管理 DSH settings.yaml 與 credentials 檔案，不會匯入 cc-switch 資料庫。",
+    "home": "Home：{{path}}",
+    "loading": "正在讀取 DSH 設定…",
+    "actions": {
+      "openHome": "開啟資料夾",
+      "retry": "重試",
+      "addProvider": "新增 Provider",
+      "resetNative": "還原預設值"
+    },
+    "readOnly": {
+      "title": "唯讀設定",
+      "description": "目前的 DSH settings 或 credentials provider 無法寫入；可以檢視及重新整理，但儲存操作已停用。"
+    },
+    "unsupported": {
+      "title": "部分設定無法在此編輯",
+      "description": "此頁面只管理 native DeepSeek 及 OpenAI/Anthropic compatible routes；其他欄位會保持不變。",
+      "learnMore": "瞭解範圍"
+    },
+    "defaultModel": {
+      "title": "新 Agent 的預設模型",
+      "description": "只影響之後建立的 Agent；現有 session 會保留原本的選擇。",
+      "unavailable": "目前的預設模型已不在設定目錄中，請重新選擇。",
+      "providerPlaceholder": "選擇 Provider",
+      "modelPlaceholder": "選擇模型"
+    },
+    "providers": {
+      "defaultBadge": "預設 Provider",
+      "native": "原生",
+      "custom": "自訂",
+      "modelCount": "{{count}} 個模型",
+      "environmentKey": "環境 key",
+      "keyConfigured": "key 已設定",
+      "keyMissing": "未設定 key",
+      "readOnlySuffix": "（唯讀）",
+      "defaultModel": "預設模型：{{model}}"
+    },
+    "dialog": {
+      "nativeTitle": "DeepSeek Official 設定",
+      "addTitle": "新增 DSH Provider",
+      "editTitle": "編輯 {{name}}",
+      "description": "設定會直接寫入 DSH settings.yaml；cc-switch 不會儲存 Provider 或 API key。",
+      "readOnly": "目前的 DSH 設定為唯讀。可以檢視，但不能寫入。"
+    },
+    "fields": {
+      "provider": "Provider",
+      "model": "模型",
+      "providerId": "Provider ID",
+      "providerPlaceholder": "Provider",
+      "displayName": "顯示名稱（選填）",
+      "protocol": "協定",
+      "selectProtocol": "選擇協定",
+      "baseUrl": "Base URL",
+      "baseUrlOptional": "Base URL（選填）",
+      "apiKey": "API key（選填，僅在寫入時填寫）"
+    },
+    "credentials": {
+      "notConfigured": "未設定 API key",
+      "notConfiguredRef": "未設定（{{ref}}）",
+      "environmentRef": "由執行環境提供（{{ref}}）",
+      "configuredSource": "已設定（{{source}}）",
+      "managed": "受管理檔案",
+      "hide": "隱藏 API key",
+      "show": "顯示 API key",
+      "environmentReadOnly": "此 key 被回報為來自 DSH 執行環境，無法由 credentials 檔案覆寫。",
+      "remove": "移除 API key",
+      "removeConfirm": "確認移除",
+      "removeFailed": "移除 API key 失敗"
+    },
+    "models": {
+      "title": "模型目錄",
+      "description": "模型 ID 會原樣傳送給 DSH；容量欄位只描述 endpoint 能力。",
+      "discover": "從 endpoint 讀取",
+      "discovering": "讀取中…",
+      "add": "新增模型",
+      "empty": "請至少新增一個模型。Anthropic endpoint 不支援自動讀取，請手動填寫。",
+      "id": "模型 ID",
+      "displayName": "顯示名稱（選填）",
+      "remove": "刪除模型 {{index}}",
+      "contextWindow": "Context window（選填）",
+      "maxTokens": "Max output tokens（選填）"
+    },
+    "validation": {
+      "modelRequired": "請至少填寫一個模型",
+      "modelIdRequired": "模型 ID 不可為空",
+      "modelIdDuplicate": "模型 ID 不可重複",
+      "positiveInteger": "{{field}} 必須是正整數",
+      "fields": {
+        "contextWindow": "Context window",
+        "maxTokens": "Max output tokens"
+      },
+      "routeRequired": "Provider ID 不可為空",
+      "routeFormat": "Provider ID 必須以小寫字母開頭，且只能包含小寫字母、數字及連字號",
+      "apiKeyWhitespace": "API key 不可只包含空白字元",
+      "apiKeyQuoted": "請貼上未加引號的 API key",
+      "apiKeyFormat": "API key 含有無效字元或環境變數指派格式",
+      "baseUrlRequired": "Base URL 不可為空",
+      "discoveryFieldsRequired": "請先填寫 Base URL 並選擇協定"
+    },
+    "errors": {
+      "conflict": "設定在編輯期間已變更，請重新整理後再試；你的草稿未被覆蓋。",
+      "read": "讀取 DSH 設定失敗",
+      "readTitle": "無法讀取 DSH 設定",
+      "readHint": "請檢查 DSH Home、YAML 格式及檔案權限",
+      "defaultModelSave": "儲存預設模型失敗",
+      "defaultProviderDelete": "此 Provider 是新 Agent 的預設 Provider，請先選擇替代模型。",
+      "providerRemove": "移除 Provider 失敗",
+      "nativeReset": "還原預設設定失敗",
+      "modelDiscovery": "讀取模型失敗；請手動填寫模型",
+      "credentialSave": "Provider 已儲存，但 API key 寫入失敗",
+      "save": "儲存失敗"
+    },
+    "messages": {
+      "refreshed": "DSH 設定已重新整理",
+      "nativeSaved": "DeepSeek Official 已儲存",
+      "providerUpdated": "Provider 已更新",
+      "providerAdded": "Provider 已新增",
+      "providerRemoved": "Provider 已移除",
+      "nativeReset": "已還原 DeepSeek 預設設定",
+      "defaultModelSaved": "預設模型已儲存",
+      "profileSavedKeyFailed": "Provider 設定已儲存，但 API key 未寫入；請編輯已儲存的 Provider 後重試。",
+      "keyRemoved": "API key 已移除"
+    },
+    "deleteDialog": {
+      "ariaLabel": "確認刪除 Provider",
+      "title": "刪除 {{name}}？",
+      "description": "只會刪除 DSH route，不會自動刪除共用的 API key。若此 route 是預設 Provider，必須先選擇替代模型。",
+      "deleting": "刪除中…",
+      "confirm": "確認刪除"
+    }
   },
   "subscription": {
     "title": "訂閱額度",

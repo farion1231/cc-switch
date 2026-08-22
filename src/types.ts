@@ -297,6 +297,8 @@ export interface VisibleApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  /** DeepSeek Harness (live YAML settings, not the SQLite provider store). */
+  dsh: boolean;
   pi: boolean;
 }
 
@@ -417,6 +419,8 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 DeepSeek Harness 配置目录（可选）
+  dshConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
 

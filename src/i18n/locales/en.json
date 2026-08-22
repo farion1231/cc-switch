@@ -789,6 +789,8 @@
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
+    "dshConfigDir": "DeepSeek Harness Configuration Directory",
+    "dshConfigDirDescription": "Override the DeepSeek Harness home directory (settings.yaml and .credentials.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
@@ -798,6 +800,7 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderDsh": "e.g., /home/<your-username>/.dsh",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
@@ -910,6 +913,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "dsh": "DeepSeek Harness",
     "pi": "Pi"
   },
   "pi": {
@@ -3223,6 +3227,137 @@
     },
     "suggestedDefaults": "Apply Suggested Defaults",
     "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
+  },
+  "dsh": {
+    "description": "Manage the live DSH settings.yaml and credentials files without importing them into the cc-switch database.",
+    "home": "Home: {{path}}",
+    "loading": "Loading DSH configuration...",
+    "actions": {
+      "openHome": "Open folder",
+      "retry": "Retry",
+      "addProvider": "Add provider",
+      "resetNative": "Restore defaults"
+    },
+    "readOnly": {
+      "title": "Read-only configuration",
+      "description": "The current DSH settings or credentials provider is not writable. You can view and refresh it, but save actions are disabled."
+    },
+    "unsupported": {
+      "title": "Some configuration is not editable here",
+      "description": "This page manages native DeepSeek and OpenAI/Anthropic-compatible routes only. Other fields are preserved unchanged.",
+      "learnMore": "View scope"
+    },
+    "defaultModel": {
+      "title": "Default model for new agents",
+      "description": "This affects only agents created afterward. Existing sessions keep their selected model.",
+      "unavailable": "The current default model is no longer in the configured catalog. Select another model.",
+      "providerPlaceholder": "Select a provider",
+      "modelPlaceholder": "Select a model"
+    },
+    "providers": {
+      "defaultBadge": "Default provider",
+      "native": "Native",
+      "custom": "Custom",
+      "modelCount": "{{count}} model(s)",
+      "environmentKey": "environment key",
+      "keyConfigured": "key configured",
+      "keyMissing": "key not configured",
+      "readOnlySuffix": "(read-only)",
+      "defaultModel": "Default model: {{model}}"
+    },
+    "dialog": {
+      "nativeTitle": "DeepSeek Official settings",
+      "addTitle": "Add DSH provider",
+      "editTitle": "Edit {{name}}",
+      "description": "Changes are written directly to DSH settings.yaml. cc-switch does not store provider data or API keys.",
+      "readOnly": "The current DSH configuration is read-only. You can view it, but you cannot write changes."
+    },
+    "fields": {
+      "provider": "Provider",
+      "model": "Model",
+      "providerId": "Provider ID",
+      "providerPlaceholder": "Provider",
+      "displayName": "Display name (optional)",
+      "protocol": "Protocol",
+      "selectProtocol": "Select a protocol",
+      "baseUrl": "Base URL",
+      "baseUrlOptional": "Base URL (optional)",
+      "apiKey": "API key (optional, enter only to write)"
+    },
+    "credentials": {
+      "notConfigured": "API key not configured",
+      "notConfiguredRef": "Not configured ({{ref}})",
+      "environmentRef": "Provided by the runtime environment ({{ref}})",
+      "configuredSource": "Configured ({{source}})",
+      "managed": "managed",
+      "hide": "Hide API key",
+      "show": "Show API key",
+      "environmentReadOnly": "This key is reported as coming from the DSH runtime environment and cannot be overwritten by the credentials file.",
+      "remove": "Remove API key",
+      "removeConfirm": "Confirm removal",
+      "removeFailed": "Failed to remove the API key"
+    },
+    "models": {
+      "title": "Model catalog",
+      "description": "Model IDs are sent to DSH unchanged. Capacity fields describe endpoint capabilities only.",
+      "discover": "Load from endpoint",
+      "discovering": "Loading...",
+      "add": "Add model",
+      "empty": "Add at least one model. Anthropic endpoints do not support discovery; enter models manually.",
+      "id": "Model ID",
+      "displayName": "Display name (optional)",
+      "remove": "Remove model {{index}}",
+      "contextWindow": "Context window (optional)",
+      "maxTokens": "Max output tokens (optional)"
+    },
+    "validation": {
+      "modelRequired": "Add at least one model",
+      "modelIdRequired": "Model ID is required",
+      "modelIdDuplicate": "Model IDs must be unique",
+      "positiveInteger": "{{field}} must be a positive integer",
+      "fields": {
+        "contextWindow": "Context window",
+        "maxTokens": "Max output tokens"
+      },
+      "routeRequired": "Provider ID is required",
+      "routeFormat": "Provider ID must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens",
+      "apiKeyWhitespace": "API key cannot contain only whitespace",
+      "apiKeyQuoted": "Paste the API key without surrounding quotes",
+      "apiKeyFormat": "API key contains invalid characters or an environment-variable assignment",
+      "baseUrlRequired": "Base URL is required",
+      "discoveryFieldsRequired": "Enter a Base URL and select a protocol first"
+    },
+    "errors": {
+      "conflict": "The configuration changed while you were editing. Refresh and try again; your draft has been preserved.",
+      "read": "Failed to read DSH configuration",
+      "readTitle": "Unable to read DSH configuration",
+      "readHint": "Check the DSH Home path, YAML format, and file permissions",
+      "defaultModelSave": "Failed to save the default model",
+      "defaultProviderDelete": "This provider is the default for new agents. Select a replacement model first.",
+      "providerRemove": "Failed to remove the provider",
+      "nativeReset": "Failed to restore default settings",
+      "modelDiscovery": "Failed to load models. Enter them manually.",
+      "credentialSave": "The provider was saved, but its API key could not be written",
+      "save": "Save failed"
+    },
+    "messages": {
+      "refreshed": "DSH configuration refreshed",
+      "nativeSaved": "DeepSeek Official saved",
+      "providerUpdated": "Provider updated",
+      "providerAdded": "Provider added",
+      "providerRemoved": "Provider removed",
+      "nativeReset": "DeepSeek defaults restored",
+      "defaultModelSaved": "Default model saved",
+      "profileSavedKeyFailed": "Provider settings were saved, but the API key was not. Edit the saved provider to retry.",
+      "keyRemoved": "API key removed"
+    },
+    "deleteDialog": {
+      "ariaLabel": "Confirm provider deletion",
+      "title": "Delete {{name}}?",
+      "description": "This removes only the DSH route and does not delete a shared API key. If this route is the default provider, select a replacement model first.",
+      "deleting": "Deleting...",
+      "confirm": "Delete provider"
+    }
   },
   "subscription": {
     "title": "Subscription Quota",
