@@ -1653,6 +1653,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Modelsell",
+    websiteUrl: "https://modelsell.com",
+    apiKeyUrl: "https://modelsell.com/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Modelsell",
+      options: {
+        baseURL: "https://modelsell.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {},
+    },
+    category: "aggregator",
+    icon: "modelsell",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://modelsell.com/v1",
+        defaultValue: "https://modelsell.com/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "KAT-Coder",
     websiteUrl: "https://console.streamlake.ai",
     apiKeyUrl: "https://console.streamlake.ai/console/api-key",
