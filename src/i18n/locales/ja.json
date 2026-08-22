@@ -1056,10 +1056,8 @@
     "more": "その他のアプリ"
   },
   "grokBuild": {
-    "apiBackend": "API Backend",
     "contextWindow": "コンテキストウィンドウ",
     "contextWindowInvalid": "コンテキストウィンドウは正の整数で指定してください",
-    "profile": "クライアントモデルプロファイル",
     "rawConfig": "config.toml",
     "invalidToml": "config.toml の形式が不正です: {{error}}",
     "defaultModelPlaceholder": "例: grok-4.5",
@@ -1575,7 +1573,7 @@
     "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、Codex の reasoning.effort を上流の Chat パラメータに変換します。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
-    "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
+    "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions / Anthropic Messages プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
     "noCommonConfigToApply": "共通設定スニペットが空か、書き込む内容がありません"
   },
   "geminiConfig": {
