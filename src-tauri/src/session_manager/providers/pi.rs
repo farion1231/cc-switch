@@ -344,6 +344,7 @@ fn parse_session(path: &Path) -> Result<SessionMeta, String> {
     Ok(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: header.id,
+        parent_session_id: None,
         title,
         summary: summary_text,
         project_dir: (!header.cwd.trim().is_empty()).then(|| header.cwd.clone()),
