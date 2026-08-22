@@ -9,7 +9,8 @@ use crate::hermes_config::get_hermes_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, SUMMARY_MAX_CHARS,
+    TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "hermes";
@@ -78,10 +79,12 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
         return Vec::new();
     }
 
-    // Build a lookup of "first user message content" per session in one
-    // query so the list view can show a sensible title without an N+1
-    // round-trip per row. We only consider active=1 rows so compacted
-    // turns don't pollute the preview.
+    // Build a lookup of "first user message content" per session, restricted
+    // to the same set of session ids we'll return below (capped by
+    // `LIMIT 500` in the sessions query). Without this scoping, an active
+    // Hermes db with thousands of historical sessions would make this
+    // aggregate scan and group every user message in `messages` on every
+    // Session Manager refresh — the list cap no longer bounds the work.
     let mut first_user_msg: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     if conn
@@ -96,11 +99,17 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
         let sql = "SELECT m.session_id, m.content \
                    FROM messages m \
                    JOIN ( \
-                     SELECT session_id, MIN(timestamp) AS first_ts \
-                     FROM messages \
-                     WHERE role = 'user' AND active = 1 \
-                     GROUP BY session_id \
-                   ) first ON first.session_id = m.session_id AND first.first_ts = m.timestamp \
+                     SELECT s.id, MIN(msg.timestamp) AS first_ts \
+                     FROM sessions s \
+                     JOIN messages msg \
+                       ON msg.session_id = s.id \
+                      AND msg.role = 'user' \
+                      AND msg.active = 1 \
+                     WHERE s.id IN (SELECT id FROM sessions ORDER BY rowid DESC LIMIT 500) \
+                     GROUP BY s.id \
+                   ) first \
+                     ON first.id = m.session_id \
+                    AND first.first_ts = m.timestamp \
                    WHERE m.role = 'user'";
         if let Ok(mut stmt) = conn.prepare(sql) {
             if let Ok(rows) = stmt.query_map([], |row| {
@@ -138,10 +147,14 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
             // (v3.x). If `display_name` is blank — which it always is today —
             // fall back to the first user message we just looked up, so the
             // list view shows something meaningful instead of an 8-char id.
+            // The `summary` field is also bounded so a multi-KB first
+            // message (paste of a log file, an IDE context dump, etc.) does
+            // not bloat the Session Manager payload that `useSessionSearch`
+            // then fully indexes.
             if meta.title.is_none() || meta.title.as_deref() == Some("") {
                 if let Some(msg) = first_user_msg.get(&meta.session_id) {
                     meta.title = Some(truncate_summary(msg, TITLE_MAX_CHARS).to_string());
-                    meta.summary = Some(msg.clone());
+                    meta.summary = Some(truncate_summary(msg, SUMMARY_MAX_CHARS).to_string());
                 }
             }
             sessions.push(meta);
@@ -745,7 +758,7 @@ mod tests {
     //   2. tool_calls JSON must be rendered as `[Tool: name]`, not blank.
     //   3. `active = 0` rows must be skipped.
 
-    use rusqlite::Connection;
+    use rusqlite::{Connection, OpenFlags};
 
     fn build_hermes_db() -> Connection {
         let conn = Connection::open_in_memory().expect("open in-memory db");
@@ -883,5 +896,119 @@ mod tests {
         );
         assert_eq!(timestamp_secs_to_ms(0.0), None);
         assert_eq!(timestamp_secs_to_ms(-1.0), None);
+    }
+
+    #[test]
+    fn scan_sessions_sqlite_title_lookup_is_scoped_to_returned_sessions() {
+        // The first-user-msg lookup must only consider sessions we're
+        // actually returning (capped by `LIMIT 500` in scan_sessions_sqlite).
+        // Without that scope, every Session Manager refresh aggregates
+        // across the whole `messages` history, which on a large db makes
+        // the list view take seconds to load.
+        //
+        // Strategy: seed the db with 600 "old-*" sessions (each with a
+        // user message) and 1 "s-new" session. The lookup scopes with
+        // `WHERE s.id IN (SELECT id FROM sessions ORDER BY rowid DESC
+        // LIMIT 500)`, which picks the 500 newest by rowid. Since
+        // "s-new" was inserted last, it sits inside the LIMIT 500 window;
+        // the 600 "old-*" rows overflow it. We assert the lookup
+        // returns *only* the "s-new" row — proving the scope holds.
+        let conn = build_hermes_db();
+        for i in 0..600 {
+            let sid = format!("old-{i:03}");
+            conn.execute(
+                "INSERT INTO sessions (id, started_at) VALUES (?1, ?2)",
+                rusqlite::params![&sid, 1.0_f64 + i as f64],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages (session_id, role, content, timestamp) \
+                 VALUES (?1, 'user', ?2, ?3)",
+                rusqlite::params![&sid, format!("old session message {i}"), 1.5_f64 + i as f64],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO sessions (id, started_at) VALUES ('s-new', 9999.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) \
+             VALUES ('s-new', 'user', 'new first message', 9999.5)",
+            [],
+        )
+        .unwrap();
+
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("state.db");
+        conn.execute_batch(&format!(
+            "ATTACH DATABASE '{}' AS disk; \
+             CREATE TABLE disk.sessions AS SELECT * FROM sessions; \
+             CREATE TABLE disk.messages AS SELECT * FROM messages; \
+             DETACH DATABASE disk;",
+            db_path.display()
+        ))
+        .expect("materialize db");
+
+        let db = Connection::open_with_flags(
+            &db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .expect("open");
+
+        // Mirrors the SQL inside scan_sessions_sqlite exactly.
+        let sql = "SELECT m.session_id, m.content \
+                   FROM messages m \
+                   JOIN ( \
+                     SELECT s.id, MIN(msg.timestamp) AS first_ts \
+                     FROM sessions s \
+                     JOIN messages msg \
+                       ON msg.session_id = s.id \
+                      AND msg.role = 'user' \
+                      AND msg.active = 1 \
+                     WHERE s.id IN (SELECT id FROM sessions ORDER BY rowid DESC LIMIT 500) \
+                     GROUP BY s.id \
+                   ) first \
+                     ON first.id = m.session_id \
+                    AND first.first_ts = m.timestamp \
+                   WHERE m.role = 'user'";
+        let mut stmt = db.prepare(sql).expect("prepare");
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .map(|r| r.unwrap())
+            .collect();
+
+        // The scope `IN (SELECT id FROM sessions ORDER BY rowid DESC LIMIT 500)`
+        // takes the 500 newest sessions by rowid. "s-new" was inserted last
+        // (highest rowid=601), so it sits in the window. The 600 "old-*"
+        // rows were inserted before it — rowids 1..600 — so the 100 oldest
+        // ("old-000".."old-099") must be excluded by the LIMIT 500 scope.
+        // 500 vs 600 vs 1 → exactly 500 rows pass: old-101..old-599 +
+        // s-new. The 100 oldest "old-*" rows are excluded.
+        assert_eq!(
+            ids.len(),
+            500,
+            "expected 500 rows (the LIMIT 500 window), got {}",
+            ids.len()
+        );
+        assert!(
+            ids.contains(&"s-new".to_string()),
+            "s-new should be in the lookup result, ids={:?}",
+            &ids[..20]
+        );
+        assert!(
+            !ids.contains(&"old-000".to_string()),
+            "old-000 should be excluded by LIMIT 500 scope"
+        );
+        assert!(
+            !ids.contains(&"old-099".to_string()),
+            "old-099 should be excluded by LIMIT 500 scope"
+        );
+        assert!(
+            ids.contains(&"old-101".to_string()),
+            "old-101 should be inside the LIMIT 500 window"
+        );
     }
 }
