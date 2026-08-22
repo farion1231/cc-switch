@@ -4384,27 +4384,37 @@ fn escape_windows_batch_value(value: &str) -> String {
         .replace('(', "^(")
         .replace(')', "^)")
 }
-/// Windows: Run a start command with common error handling
+/// Windows: Run a start command with common error handling.
+///
+/// stdio must be pointed at NUL instead of captured with `output()`: `start`
+/// lets the spawned console inherit the wrapper's std handles, so a captured
+/// pipe stays open until that window (and everything running inside it)
+/// exits. Waiting for the pipe's EOF kept the calling Tauri command pending
+/// for the entire terminal session, so the frontend "Terminal opened" toast
+/// only fired when the window was closed (issue #6712). Waiting on the
+/// wrapper's exit status via `status()` still surfaces launch failures
+/// without tying this call to the window's lifetime.
 #[cfg(target_os = "windows")]
 fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
     let mut full_args = vec!["/C", "start"];
     full_args.extend(args);
 
-    let output = Command::new("cmd")
+    let status = Command::new("cmd")
         .args(&full_args)
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
+    if !status.success() {
         return Err(format!(
-            "{} 启动失败 (exit code: {:?}): {}",
+            "{} 启动失败 (exit code: {:?})",
             terminal_name,
-            output.status.code(),
-            stderr
+            status.code(),
         ));
     }
 
