@@ -247,6 +247,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     }
 
     if let Some(input) = body.get("input") {
+        collect_additional_tools(input, &mut context);
         collect_tool_search_output_tools(input, &mut context);
     }
 
@@ -771,6 +772,10 @@ fn append_responses_item_as_chat_message(
             // 到达时回溯附挂，见 attach_pending_reasoning_to_previous_assistant。
             append_pending_reasoning(pending_reasoning, responses_reasoning_item_text(item));
         }
+        // Responses Lite carries dynamically available tools as a structural
+        // input item. Its `role=developer` describes ownership, not a Chat
+        // message, and the item intentionally has no `content` field.
+        Some("additional_tools") => {}
         Some("input_text" | "input_image" | "input_file" | "input_audio") => {
             flush_pending_tool_calls(
                 messages,
@@ -910,10 +915,13 @@ fn responses_message_item_to_chat_message(
 ) -> Value {
     let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let chat_role = responses_role_to_chat_role(role);
-    let content = item
+    let mut content = item
         .get("content")
         .map(|value| responses_content_to_chat_content(chat_role, value))
         .unwrap_or(Value::Null);
+    if chat_role != "assistant" && content.is_null() {
+        content = Value::String(String::new());
+    }
 
     let mut message = json!({
         "role": chat_role,
@@ -1195,6 +1203,29 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
 
 fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
     chat_file_from_input_file(part)
+}
+
+fn collect_additional_tools(value: &Value, context: &mut CodexToolContext) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_additional_tools(item, context);
+            }
+        }
+        Value::Object(obj) => {
+            if obj.get("type").and_then(Value::as_str) == Some("additional_tools") {
+                if let Some(tools) = obj.get("tools").and_then(Value::as_array) {
+                    for tool in tools {
+                        context.add_response_tool(tool);
+                    }
+                }
+            }
+            for child in obj.values() {
+                collect_additional_tools(child, context);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
@@ -2991,6 +3022,139 @@ mod tests {
         assert!(head_content.contains("You are Codex."));
         assert!(head_content.contains("Permissions block"));
         assert!(head_content.contains("Collaboration Mode: Default"));
+    }
+
+    #[test]
+    fn responses_lite_additional_tools_preserves_tools_without_creating_a_message() {
+        let input = json!({
+            "model": "qwen3.6",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [{
+                        "type": "function",
+                        "name": "read_workspace_file",
+                        "description": "Read a file from the active workspace.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"]
+                        }
+                    }]
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": "You are Codex."}]
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let tools = result["tools"].as_array().expect("additional tools");
+
+        assert_eq!(
+            messages,
+            &vec![json!({
+                "role": "system",
+                "content": "You are Codex."
+            })]
+        );
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["function"]["name"], "read_workspace_file");
+    }
+
+    #[test]
+    fn responses_lite_additional_tools_reuses_custom_namespace_and_deduplication_rules() {
+        let input = json!({
+            "model": "qwen3.6",
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {"type": "object", "properties": {}}
+            }],
+            "input": [{
+                "type": "additional_tools",
+                "role": "developer",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "lookup",
+                        "parameters": {"type": "object", "properties": {}}
+                    },
+                    {
+                        "type": "custom",
+                        "name": "apply_patch",
+                        "description": "Apply a free-form patch."
+                    },
+                    {
+                        "type": "namespace",
+                        "name": "mcp__mail",
+                        "tools": [{
+                            "type": "function",
+                            "name": "search",
+                            "parameters": {"type": "object", "properties": {}}
+                        }]
+                    }
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None).unwrap();
+        let names = result["tools"]
+            .as_array()
+            .expect("converted tools")
+            .iter()
+            .filter_map(|tool| tool.pointer("/function/name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["lookup", "apply_patch", "mcp__mail__search"]);
+        assert_eq!(
+            result["tools"][1]["function"]["parameters"]["required"][0],
+            "input"
+        );
+    }
+
+    #[test]
+    fn responses_non_assistant_null_content_becomes_a_string_but_assistant_tool_call_stays_null() {
+        let input = json!({
+            "model": "qwen3.6",
+            "input": [
+                {"type": "message", "role": "system"},
+                {"type": "message", "role": "developer", "content": null},
+                {"type": "message", "role": "user"},
+                {"type": "message", "role": "user", "content": null},
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert!(messages
+            .iter()
+            .all(|message| { message["role"] == "assistant" || message["content"].is_string() }));
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message["role"] == "user")
+                .map(|message| message["content"].as_str())
+                .collect::<Vec<_>>(),
+            vec![Some(""), Some("")]
+        );
+        let assistant = messages
+            .iter()
+            .find(|message| message["role"] == "assistant")
+            .expect("synthetic assistant tool-call message");
+        assert!(assistant["content"].is_null());
+        assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
     }
 
     #[test]
