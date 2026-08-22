@@ -85,6 +85,29 @@ fn codex_top_level_model(config_text: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn codex_active_profile_value<'a>(doc: &'a toml::Value, key: &str) -> Option<&'a str> {
+    let profile = doc.get("profile").and_then(|value| value.as_str())?;
+    doc.get("profiles")
+        .and_then(|profiles| profiles.get(profile))
+        .and_then(|profile| profile.get(key))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+/// Model selected by the active profile, falling back to the top-level model.
+fn codex_active_model(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<toml::Value>().ok()?;
+    codex_active_profile_value(&doc, "model")
+        .or_else(|| {
+            doc.get("model")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(str::to_string)
+}
+
 /// Whether a native `/responses` provider's gateway is known to reject the Codex
 /// `web_search` hosted tool — by `base_url` host OR by the active model's brand
 /// (so an aggregator fronting a reject vendor's model is caught too). Driven by
@@ -919,6 +942,37 @@ pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// Resolve the base URL for catalog generation, including an active profile's
+/// `model_provider` override without changing general config extraction rules.
+fn extract_codex_catalog_base_url(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<toml::Value>().ok()?;
+    let profile_provider = codex_active_profile_value(&doc, "model_provider");
+    let active_provider = profile_provider.or_else(|| {
+        doc.get("model_provider")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    });
+
+    if let Some(base_url) = active_provider
+        .and_then(|provider| doc.get("model_providers")?.get(provider))
+        .and_then(|provider| provider.get("base_url"))
+        .and_then(|value| value.as_str())
+    {
+        return Some(base_url.to_string());
+    }
+
+    // A profile that explicitly changes provider must not inherit a top-level
+    // URL belonging to the provider it replaced.
+    if profile_provider.is_some() {
+        return None;
+    }
+
+    doc.get("base_url")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
 pub fn codex_auth_has_login_material(auth: &Value) -> bool {
     let Some(obj) = auth.as_object() else {
         return false;
@@ -1699,17 +1753,72 @@ fn codex_official_vendor_catalog_models(
     if profile != CodexCatalogToolProfile::NativeResponses {
         return None;
     }
-    let base_url = extract_codex_base_url(config_text)?.to_ascii_lowercase();
-    if CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS
-        .iter()
-        .any(|host| base_url.contains(host))
-    {
+    let base_url = extract_codex_catalog_base_url(config_text)?;
+    let hostname = url::Url::parse(&base_url)
+        .ok()?
+        .host_str()?
+        .to_ascii_lowercase();
+    let hostname = hostname.strip_suffix('.').unwrap_or(&hostname);
+    if CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS.iter().any(|host| {
+        hostname == *host
+            || hostname
+                .strip_suffix(*host)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    }) {
         let models = load_codex_deepseek_official_catalog_models();
         if !models.is_empty() {
             return Some(models);
         }
     }
     None
+}
+/// When a provider stores no `modelCatalog` rows (generic custom template, or a
+/// preset provider created before its modelCatalog was seeded) but its
+/// `config.toml` points at a vendor gateway that publishes an OFFICIAL Codex
+/// catalog, synthesize a single spec from the active `model` id so the official
+/// entry is mirrored and its real context window (e.g. DeepSeek's 1M) is
+/// declared instead of falling back to Codex's 128k default. Reuses the same
+/// host + profile gate as [`codex_official_vendor_catalog_models`], so the
+/// official grant is only made for the vendor's own native `/responses`
+/// endpoint. An unknown/absent model id falls back to the vendor's flagship
+/// entry (mirroring [`codex_vendor_catalog_model_entry`]'s unknown-slug rule).
+fn synthesize_official_catalog_specs(
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Vec<CodexCatalogModelSpec> {
+    let Some(vendor_models) = codex_official_vendor_catalog_models(config_text, profile) else {
+        return Vec::new();
+    };
+    let Some(model) = codex_active_model(config_text).or_else(|| {
+        vendor_models
+            .first()
+            .and_then(|entry| entry.get("slug"))
+            .and_then(|slug| slug.as_str())
+            .map(ToString::to_string)
+    }) else {
+        return Vec::new();
+    };
+    let display_name = vendor_models
+        .iter()
+        .find(|entry| {
+            entry
+                .get("slug")
+                .and_then(|slug| slug.as_str())
+                .is_some_and(|slug| slug.eq_ignore_ascii_case(&model))
+        })
+        .and_then(|entry| entry.get("display_name").and_then(|v| v.as_str()))
+        .map(str::to_string);
+    // No explicit context_window/display_name override: the vendor entry's
+    // own declarations (incl. the 1M window) survive verbatim, exactly as the
+    // official `model_catalog_json` setup does.
+    vec![CodexCatalogModelSpec {
+        model,
+        display_name,
+        context_window: None,
+        supports_parallel_tool_calls: None,
+        input_modalities: None,
+        base_instructions: None,
+    }]
 }
 
 /// Build one catalog entry from an official vendor catalog: match the user's
@@ -1886,7 +1995,23 @@ fn codex_model_catalog_from_settings(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Option<Value>, AppError> {
-    let specs = codex_catalog_model_specs(settings);
+    let raw_specs = codex_catalog_model_specs(settings);
+    let specs = if raw_specs.is_empty() {
+        // A custom/native Responses provider (generic template, or a preset
+        // provider created before its modelCatalog was seeded) may store no
+        // modelCatalog rows. For a DeepSeek-pointed native `/responses`
+        // gateway, the vendor publishes an OFFICIAL catalog whose 1M context
+        // window is load-bearing: without it Codex falls back to its 128k
+        // default, auto-compacts mid-session, and churns the prefix DeepSeek's
+        // disk cache matches on — every turn re-bills the full context at the
+        // uncached price (see issue #6192). Synthesize a spec from the active
+        // `model` so the official entry is mirrored and the real window is
+        // declared, mirroring the `model_catalog_json` the official setup
+        // writes. Non-DeepSeek providers are unaffected (host + profile gate).
+        synthesize_official_catalog_specs(config_text, profile)
+    } else {
+        raw_specs
+    };
     if specs.is_empty() {
         return Ok(None);
     }
@@ -4673,6 +4798,135 @@ wire_api = "responses"
     }
 
     #[test]
+    fn deepseek_native_provider_with_empty_model_catalog_synthesizes_official_window() {
+        // Regression for #6192: a DeepSeek-pointed native Responses provider
+        // that stores no modelCatalog rows (generic custom template, or a
+        // preset provider created before its modelCatalog was seeded) must
+        // still get the official 1M context window instead of Codex's 128k
+        // default — otherwise mid-session auto-compaction churns DeepSeek's
+        // disk prefix cache and re-bills the full context every turn.
+        let settings = json!({ "modelCatalog": { "models": [] } });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("synthesis should not error")
+        .expect("DeepSeek native provider must yield a catalog even with empty rows");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash"),
+            "spec is synthesized from the active `model` field"
+        );
+        assert_eq!(
+            entry.get("context_window").and_then(|v| v.as_u64()),
+            Some(1_048_576),
+            "the official 1M window must be declared, not the 128k fallback"
+        );
+        assert_eq!(
+            entry.get("apply_patch_tool_type").and_then(|v| v.as_str()),
+            Some("freeform"),
+            "official capability grant survives synthesis"
+        );
+    }
+
+    #[test]
+    fn deepseek_empty_catalog_uses_selected_profile_provider_and_model() {
+        let settings = json!({ "modelCatalog": { "models": [] } });
+        let config =
+            |top_provider: &str, top_model: &str, profile_provider: &str, profile_model: &str| {
+                format!(
+                    r#"profile = "work"
+model = "{top_model}"
+model_provider = "{top_provider}"
+
+[model_providers]
+deepseek = {{ base_url = "https://api.deepseek.com", wire_api = "responses" }}
+minimax = {{ base_url = "https://api.minimaxi.com/v1", wire_api = "responses" }}
+
+[profiles.work]
+model = "{profile_model}"
+model_provider = "{profile_provider}"
+"#
+                )
+            };
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            &config("minimax", "MiniMax-M3", "deepseek", "deepseek-v4-pro"),
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("synthesis should not error")
+        .expect("DeepSeek native provider must yield a catalog");
+
+        assert_eq!(
+            catalog["models"][0].get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-pro"),
+            "the selected profile provider and model must override top-level values"
+        );
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            &config("deepseek", "deepseek-v4-flash", "minimax", "MiniMax-M3"),
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("synthesis should not error");
+        assert!(
+            catalog.is_none(),
+            "a non-DeepSeek profile must not inherit DeepSeek catalog capabilities"
+        );
+    }
+
+    #[test]
+    fn empty_model_catalog_on_non_deepseek_native_stays_none() {
+        // Non-DeepSeek native Responses providers with empty modelCatalog
+        // must NOT be granted an official catalog — the host+profile gate
+        // keeps the grant narrow (issue #6192 fix must not bleed to others).
+        let settings = json!({ "modelCatalog": { "models": [] } });
+        let minimax_config = r#"model = "MiniMax-M3"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "minimax"
+base_url = "https://api.minimaxi.com/v1"
+wire_api = "responses"
+"#;
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            minimax_config,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("synthesis should not error");
+        assert!(
+            catalog.is_none(),
+            "non-DeepSeek native providers keep the empty-catalog behavior"
+        );
+    }
+
+    #[test]
+    fn empty_model_catalog_on_deepseek_chat_profile_stays_none() {
+        // The official mirror is gated to the NativeResponses profile. A
+        // DeepSeek-pointed provider routed through Chat Completions
+        // (ProxyChat profile) must NOT synthesize the official catalog — the
+        // proxy converter owns its own tool contract.
+        let settings = json!({ "modelCatalog": { "models": [] } });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::ProxyChat,
+        )
+        .expect("synthesis should not error");
+        assert!(
+            catalog.is_none(),
+            "ProxyChat profile must not synthesize the official NativeResponses catalog"
+        );
+    }
+
+    #[test]
     fn official_vendor_catalog_gated_by_native_profile_and_host() {
         // The official mirror is a capability GRANT, so the gate must be
         // narrow: native `/responses` profile AND the vendor's own host. Chat
@@ -4681,6 +4935,13 @@ wire_api = "responses"
         // model may reject freeform tools — all of them keep their templates.
         assert!(codex_official_vendor_catalog_models(
             DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses
+        )
+        .is_some_and(|models| !models.is_empty()));
+        let absolute_fqdn_config =
+            DEEPSEEK_NATIVE_CONFIG.replace("api.deepseek.com", "api.deepseek.com.");
+        assert!(codex_official_vendor_catalog_models(
+            &absolute_fqdn_config,
             CodexCatalogToolProfile::NativeResponses
         )
         .is_some_and(|models| !models.is_empty()));
@@ -4715,6 +4976,21 @@ wire_api = "responses"
             codex_official_vendor_catalog_models("", CodexCatalogToolProfile::NativeResponses)
                 .is_none()
         );
+
+        for base_url in [
+            "https://deepseek.com.evil.example/v1",
+            "https://relay.example/deepseek.com/v1",
+        ] {
+            let config = DEEPSEEK_NATIVE_CONFIG.replace("https://api.deepseek.com", base_url);
+            assert!(
+                codex_official_vendor_catalog_models(
+                    &config,
+                    CodexCatalogToolProfile::NativeResponses
+                )
+                .is_none(),
+                "non-DeepSeek hostname must not receive the official catalog: {base_url}"
+            );
+        }
     }
 
     #[test]
