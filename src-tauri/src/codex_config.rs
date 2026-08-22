@@ -1791,7 +1791,14 @@ fn codex_vendor_catalog_model_entry(
 /// field ..."). `base_instructions` is the other known required field; the
 /// templates always carry it and `codex_catalog_model_entry` handles it.
 /// When Codex requires a new field, add it here AND to the static templates.
-const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &["supports_reasoning_summaries"];
+/// `supports_parallel_tool_calls` was added to the required set after newer
+/// Codex builds started rejecting catalogs whose entries omit it (the very
+/// same `models_cache.json` drift scenario documented below for
+/// `supports_reasoning_summaries`).
+const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &[
+    "supports_reasoning_summaries",
+    "supports_parallel_tool_calls",
+];
 
 /// `models_cache.json` is shared by every Codex install on the machine (npm
 /// CLI, desktop-bundled binary, ...), and each version serializes its own
@@ -4072,6 +4079,15 @@ base_url = "https://production.api/v1"
         assert_eq!(
             catalog["models"][0]
                 .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        // Newer Codex (post-0.144.5 line) also requires
+        // `supports_parallel_tool_calls`; a stale dynamic template that omits it
+        // must be backfilled so the generated catalog parses at startup.
+        assert_eq!(
+            catalog["models"][0]
+                .get("supports_parallel_tool_calls")
                 .and_then(Value::as_bool),
             Some(true)
         );
