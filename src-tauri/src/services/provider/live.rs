@@ -852,8 +852,14 @@ fn get_codex_managed_oauth_live_auth_value(
                     )
                 })?;
 
+            let auth_account_id =
+                crate::proxy::providers::codex_oauth_auth::native_tokens_account_id(
+                    bundle.chatgpt_account_id.as_deref(),
+                    &account_id,
+                );
+
             Ok::<Value, String>(codex_managed_oauth_live_auth(
-                &account_id,
+                auth_account_id,
                 &bundle.access_token,
                 Some(id_token),
                 &bundle.refresh_token,

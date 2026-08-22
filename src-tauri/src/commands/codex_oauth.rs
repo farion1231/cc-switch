@@ -52,10 +52,12 @@ pub async fn get_codex_oauth_quota(
         }
     };
 
+    let chatgpt_account_id = manager.get_chatgpt_account_id_for_account(&id).await;
+
     // 瞬时传输失败以 Err 传播（前端 reject → retry + 保留上次成功值）。
     query_codex_quota(
         &token,
-        Some(&id),
+        chatgpt_account_id.as_deref(),
         "codex_oauth",
         "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",
     )
@@ -90,5 +92,11 @@ pub async fn get_codex_oauth_models(
         .await
         .map_err(|e| format!("Codex OAuth token unavailable: {e}"))?;
 
-    crate::services::codex_oauth_models::fetch_models_with_token(&token, &id).await
+    let chatgpt_account_id = manager.get_chatgpt_account_id_for_account(&id).await;
+
+    crate::services::codex_oauth_models::fetch_models_with_token(
+        &token,
+        chatgpt_account_id.as_deref(),
+    )
+    .await
 }

@@ -14,16 +14,21 @@ const CODEX_OAUTH_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub async fn fetch_models_with_token(
     token: &str,
-    account_id: &str,
+    account_id: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
     let client = crate::proxy::http_client::get();
-    let response = client
+    let mut req = client
         .get(CODEX_OAUTH_MODELS_URL)
         .query(&[("client_version", CODEX_OAUTH_CLIENT_VERSION)])
         .header("Authorization", format!("Bearer {token}"))
         .header("originator", "cc-switch")
-        .header("chatgpt-account-id", account_id)
-        .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS));
+
+    if let Some(id) = account_id.map(str::trim).filter(|s| !s.is_empty()) {
+        req = req.header("chatgpt-account-id", id);
+    }
+
+    let response = req
         .send()
         .await
         .map_err(|e| format!("Request failed: {e}"))?;
