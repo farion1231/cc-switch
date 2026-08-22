@@ -17,7 +17,7 @@ use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Default)]
 struct TextItemState {
@@ -26,6 +26,8 @@ struct TextItemState {
     text: String,
     added: bool,
     done: bool,
+    /// Chat `tool_calls` indexes that first appeared while this text item was open.
+    tools_started_after_text: BTreeSet<usize>,
 }
 
 #[derive(Debug, Default)]
@@ -158,6 +160,15 @@ impl ChatToResponsesState {
 
             if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                 events.extend(self.flush_inline_think_at_boundary());
+                if !tool_calls.is_empty() && self.text.added && !self.text.done {
+                    for tool_call in tool_calls {
+                        let chat_index =
+                            tool_call.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                        if !self.tools.contains_key(&chat_index) {
+                            self.text.tools_started_after_text.insert(chat_index);
+                        }
+                    }
+                }
                 let reasoning_for_tool_call = self.current_reasoning_text();
                 events.extend(self.finalize_reasoning());
                 for tool_call in tool_calls {
@@ -588,6 +599,21 @@ impl ChatToResponsesState {
         events
     }
 
+    fn text_item_phase(&self) -> Option<&'static str> {
+        let named_tool_after_text = self.text.tools_started_after_text.iter().any(|index| {
+            self.tools
+                .get(index)
+                .is_some_and(|tool| !tool.name.trim().is_empty())
+        });
+        if named_tool_after_text {
+            Some("commentary")
+        } else if self.finish_reason.as_deref() == Some("stop") {
+            Some("final_answer")
+        } else {
+            None
+        }
+    }
+
     fn finalize_text(&mut self) -> Vec<Bytes> {
         if !self.text.added || self.text.done {
             return Vec::new();
@@ -596,7 +622,8 @@ impl ChatToResponsesState {
         let output_index = self.text.output_index.unwrap_or(0);
         let item_id = self.text.item_id.clone();
         let text = self.text.text.clone();
-        let (events, item) = sse::message_close(output_index, &item_id, &text);
+        let (events, item) =
+            sse::message_close_with_phase(output_index, &item_id, &text, self.text_item_phase());
         self.output_items.push((output_index, item));
         self.text.done = true;
         events
@@ -1037,6 +1064,97 @@ mod tests {
         assert!(output.contains("event: response.function_call_arguments.done"));
         assert!(output.contains("\"type\":\"function_call\""));
         assert!(output.contains("\"call_id\":\"call_1\""));
+    }
+
+    fn message_done_item(events: &[Value]) -> &Value {
+        events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["type"] == "message"
+            })
+            .expect("message done event")
+    }
+
+    fn completed_output(events: &[Value]) -> &[Value] {
+        events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .and_then(|event| event["response"]["output"].as_array())
+            .map(Vec::as_slice)
+            .expect("completed output")
+    }
+
+    #[tokio::test]
+    async fn progress_text_then_named_tool_uses_commentary_phase() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_progress_then_tool\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Listing files in src next.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_progress_then_tool\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_ls_1\",\"type\":\"function\",\"function\":{\"name\":\"list_dir\",\"arguments\":\"{\\\"path\\\":\\\"src\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.added" && event["item"]["type"] == "message"
+            })
+            .expect("message added event");
+        assert_eq!(added["item"].get("phase"), None);
+
+        assert_eq!(message_done_item(&events)["item"]["phase"], "commentary");
+        let items = completed_output(&events);
+        assert_eq!(items[0]["content"][0]["text"], "Listing files in src next.");
+        assert_eq!(items[0]["phase"], "commentary");
+        assert_eq!(items[1]["name"], "list_dir");
+        assert_eq!(items[1].get("phase"), None);
+    }
+
+    #[tokio::test]
+    async fn stop_reason_plain_text_uses_final_answer_phase() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_plain_stop\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Ready to continue.\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        assert_eq!(message_done_item(&events)["item"]["phase"], "final_answer");
+        assert_eq!(completed_output(&events)[0]["phase"], "final_answer");
+    }
+
+    #[tokio::test]
+    async fn tool_opened_before_text_does_not_switch_to_commentary() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_tool_then_text\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_sh_9\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_then_text\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Command finished.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_then_text\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"}\"}}]},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_output(&events);
+        let message = items
+            .iter()
+            .find(|item| item["type"] == "message")
+            .expect("assistant message");
+        assert_eq!(message["content"][0]["text"], "Command finished.");
+        assert_eq!(message["phase"], "final_answer");
+    }
+
+    #[tokio::test]
+    async fn truncated_stream_does_not_set_a_message_phase() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Working on the patch\"},\"finish_reason\":\"length\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        assert_eq!(message_done_item(&events)["item"].get("phase"), None);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .expect("completed event");
+        assert_eq!(completed["response"]["status"], "incomplete");
+        assert_eq!(completed["response"]["output"][0].get("phase"), None);
     }
 
     #[tokio::test]

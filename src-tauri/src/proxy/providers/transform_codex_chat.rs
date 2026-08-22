@@ -1453,17 +1453,26 @@ pub(crate) fn chat_completion_to_response_with_context(
     let finish_reason = choice.get("finish_reason").and_then(|v| v.as_str());
 
     let reasoning = chat_reasoning_text(message);
+    let projected_tools =
+        chat_tool_calls_to_response_output_items(message, reasoning.as_deref(), tool_context);
+    let message_phase = if !projected_tools.items.is_empty() {
+        Some("commentary")
+    } else if finish_reason == Some("stop") {
+        Some("final_answer")
+    } else {
+        None
+    };
     let mut output = Vec::new();
     if let Some(reasoning_item) =
         chat_reasoning_to_response_output_item(reasoning.as_deref(), &response_id)
     {
         output.push(reasoning_item);
     }
-    if let Some(message_item) = chat_message_to_response_output_item(message, &response_id) {
+    if let Some(message_item) =
+        chat_message_to_response_output_item(message, &response_id, message_phase)
+    {
         output.push(message_item);
     }
-    let tool_calls =
-        chat_tool_calls_to_response_output_items(message, reasoning.as_deref(), tool_context);
 
     // 丢弃过工具调用、且最终一个工具调用都没剩下时，Codex 会收到一个
     // "status=completed 但 output 里没有任何工具调用" 的回合，agent loop 必然静默
@@ -1474,16 +1483,16 @@ pub(crate) fn chat_completion_to_response_with_context(
     // 是截断，工具调用缺 name 是截断的后果而非上游发了畸形数据，报成
     // tool_call_dropped 会给出错误的归因。
     if response_status_from_finish_reason(finish_reason) == "completed"
-        && tool_calls.dropped > 0
-        && tool_calls.items.is_empty()
+        && projected_tools.dropped > 0
+        && projected_tools.items.is_empty()
     {
         return Err(ProxyError::TransformError(format!(
             "Upstream returned {} tool call(s) without a function name, \
              leaving no usable tool call in this turn",
-            tool_calls.dropped
+            projected_tools.dropped
         )));
     }
-    output.extend(tool_calls.items);
+    output.extend(projected_tools.items);
 
     let mut response = json!({
         "id": response_id,
@@ -1537,7 +1546,11 @@ fn chat_reasoning_text(message: &Value) -> Option<String> {
     None
 }
 
-fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> Option<Value> {
+fn chat_message_to_response_output_item(
+    message: &Value,
+    response_id: &str,
+    phase: Option<&str>,
+) -> Option<Value> {
     let mut content = Vec::new();
 
     if let Some(text) = message.get("content").and_then(|v| v.as_str()) {
@@ -1594,13 +1607,17 @@ fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> O
         return None;
     }
 
-    Some(json!({
+    let mut item = json!({
         "id": format!("{response_id}_msg"),
         "type": "message",
         "status": "completed",
         "role": "assistant",
         "content": content
-    }))
+    });
+    if let Some(phase) = phase {
+        item["phase"] = Value::String(phase.to_string());
+    }
+    Some(item)
 }
 
 /// 非流式工具调用转换结果。`dropped` 记录因缺少合法函数名而被丢弃的条数，
@@ -4553,6 +4570,72 @@ mod tests {
 
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
+        assert_eq!(result["output"][0].get("phase"), None);
+    }
+
+    #[test]
+    fn only_stop_reason_assigns_final_answer_phase() {
+        let cases = [
+            ("stop", Some("final_answer")),
+            ("length", None),
+            ("content_filter", None),
+        ];
+        for (reason, expected) in cases {
+            let converted = chat_completion_to_response(json!({
+                "id": format!("chatcmpl_phase_{reason}"),
+                "model": "gpt-5.4",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "All finished."},
+                    "finish_reason": reason
+                }]
+            }))
+            .unwrap();
+            assert_eq!(converted["output"][0]["type"], "message");
+            assert_eq!(
+                converted["output"][0].get("phase").and_then(Value::as_str),
+                expected,
+                "finish_reason={reason}"
+            );
+        }
+
+        let missing_reason = chat_completion_to_response(json!({
+            "id": "chatcmpl_phase_missing",
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {"role": "assistant", "content": "All finished."}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(missing_reason["output"][0].get("phase"), None);
+    }
+
+    #[test]
+    fn text_and_tool_calls_share_commentary_phase() {
+        let converted = chat_completion_to_response(json!({
+            "id": "chatcmpl_text_and_tools",
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Opening the project tree.",
+                    "tool_calls": [{
+                        "id": "call_ls_1",
+                        "type": "function",
+                        "function": {
+                            "name": "list_dir",
+                            "arguments": "{\"path\":\"src\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        }))
+        .unwrap();
+        let items = converted["output"].as_array().unwrap();
+        assert_eq!(items[0]["content"][0]["text"], "Opening the project tree.");
+        assert_eq!(items[0]["phase"], "commentary");
+        assert_eq!(items[1]["name"], "list_dir");
+        assert_eq!(items[1].get("phase"), None);
     }
 
     #[test]
