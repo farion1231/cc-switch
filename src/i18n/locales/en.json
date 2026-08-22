@@ -1553,6 +1553,7 @@
     "defaultModelHint": "The model Codex requests by default; change it anytime without waiting for a preset update. If left empty while model mapping is configured, the first mapping row is used.",
     "defaultModelNotInCatalog": "This model is not in the model mapping, so the Codex /model menu won't list it (direct requests still work).",
     "addToModelMapping": "Add to mapping",
+    "replaceModelMapping": "Replace mapping",
     "modelMappingTitle": "Model Mapping",
     "modelMappingHint": "Generates Codex model_catalog_json so /model can show these third-party model names; entries are saved exactly as listed. Codex must be restarted to refresh the model list after changes.",
     "addCatalogModel": "Add Model",
