@@ -1130,6 +1130,9 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            // 某些平台首次通过 TrayIconBuilder 挂载的菜单会显示为空白；
+            // 在状态注册完成后显式重刷一次，确保初始菜单真正落到托盘上。
+            crate::tray::refresh_tray_menu(app.handle());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
