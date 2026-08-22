@@ -243,7 +243,296 @@ pub fn normalize_anthropic_messages_for_provider(
     let mut changed =
         normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
     changed |= normalize_deepseek_thinking_disabled_strip_effort(body, provider);
+    changed |= normalize_orphan_tool_pairing_for_non_official(body, provider, api_format);
     changed
+}
+
+const ORPHAN_TOOL_RESULT_PLACEHOLDER: &str =
+    "[tool execution was interrupted or its result is unavailable]";
+
+/// Strict Anthropic-compatible gateways (e.g. MiniMax, Kimi for Coding,
+/// DeepSeek's official `/anthropic` endpoint) internally convert messages to
+/// OpenAI format and reject broken tool_use/tool_result pairing with 400s such
+/// as "an assistant message with 'tool_calls' must be followed by tool messages
+/// responding to each 'tool_call_id'" or DeepSeek's "tool_use ids were found
+/// without tool_result blocks immediately after". This happens when the client
+/// persists an interrupted turn: an assistant tool_use (id like `repl:112` or
+/// DeepSeek's `call_00_...`) whose tool_result never arrived, or an orphan
+/// tool_result injected on resume.
+///
+/// For non-official endpoints, repair both directions:
+/// - orphan tool_use → inject a synthetic error tool_result into the following
+///   user message (creating one when the turn ends at the assistant message);
+/// - orphan tool_result → downgrade to a text block (dropped when empty).
+///
+/// tool_use/tool_result matching is count-based rather than set-based: each
+/// tool_result pairs with exactly one tool_use of the same id, so an assistant
+/// message with parallel/concurrent tool_uses that share an id (or whose
+/// results partially arrived) can still leave an orphan that a naive set
+/// membership check would hide. A synthetic result is injected for every
+/// unanswered tool_use.
+///
+/// Properly paired history and official api.anthropic.com traffic are untouched.
+pub fn normalize_orphan_tool_pairing_for_non_official(
+    body: &mut Value,
+    provider: &Provider,
+    api_format: &str,
+) -> bool {
+    if api_format.trim() != "anthropic" || is_anthropic_official_endpoint(provider) {
+        return false;
+    }
+
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+
+    // Pass 1: orphan tool_use — assistant tool_use with no matching tool_result
+    // in the following user message.
+    //
+    // Matching is count-based, not set-based: a tool_result pairs with exactly
+    // one tool_use of the same id. DeepSeek's strict validator pairs results
+    // one-for-one and rejects any leftover tool_use, so parallel/concurrent
+    // tool_uses whose results did not all arrive (or that share an id) must
+    // each get a synthetic result to cover the shortfall.
+    let mut i = 0;
+    while i < messages.len() {
+        if messages[i].get("role").and_then(Value::as_str) != Some("assistant") {
+            i += 1;
+            continue;
+        }
+
+        let mut tool_use_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut tool_use_order: Vec<String> = Vec::new();
+        if let Some(blocks) = messages[i].get("content").and_then(Value::as_array) {
+            for block in blocks {
+                if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                    if let Some(id) = block.get("id").and_then(Value::as_str) {
+                        let entry = tool_use_counts.entry(id.to_string()).or_insert(0);
+                        *entry += 1;
+                        if *entry == 1 {
+                            tool_use_order.push(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if tool_use_order.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        let next_is_user = messages
+            .get(i + 1)
+            .and_then(|m| m.get("role"))
+            .and_then(Value::as_str)
+            == Some("user");
+        let mut answered_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        if next_is_user {
+            if let Some(blocks) = messages[i + 1].get("content").and_then(Value::as_array) {
+                for block in blocks {
+                    if block.get("type").and_then(Value::as_str) == Some("tool_result") {
+                        if let Some(id) = block.get("tool_use_id").and_then(Value::as_str) {
+                            *answered_counts.entry(id.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Inject one synthetic error tool_result per unanswered tool_use
+        // (in emission order).
+        let mut synthetic: Vec<Value> = Vec::new();
+        for id in &tool_use_order {
+            let needed = tool_use_counts.get(id).copied().unwrap_or(0);
+            let answered = answered_counts.get(id).copied().unwrap_or(0);
+            let shortfall = needed.saturating_sub(answered);
+            for _ in 0..shortfall {
+                synthetic.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": id,
+                    "is_error": true,
+                    "content": ORPHAN_TOOL_RESULT_PLACEHOLDER
+                }));
+            }
+        }
+        if synthetic.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        if next_is_user {
+            let message = &mut messages[i + 1];
+            match message.get_mut("content") {
+                Some(Value::Array(content)) => {
+                    let mut merged = synthetic;
+                    merged.append(content);
+                    *content = merged;
+                }
+                Some(Value::String(_)) => {
+                    let text = message
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let mut merged = synthetic;
+                    merged.push(json!({ "type": "text", "text": text }));
+                    message["content"] = json!(merged);
+                }
+                _ => {
+                    message["content"] = json!(synthetic);
+                }
+            }
+        } else {
+            messages.insert(i + 1, json!({ "role": "user", "content": synthetic }));
+        }
+
+        changed = true;
+        i += 1;
+    }
+
+    // Pass 2: orphan tool_result — user tool_result with no matching tool_use
+    // in the immediately preceding assistant message (including tool_results
+    // injected into the first message on session resume).
+    //
+    // Matching is count-based, not set-based (mirrors pass 1): when a resumed
+    // history carries more tool_result blocks for an id than the immediately
+    // preceding assistant tool_use emits for the same id (e.g. a duplicated
+    // persisted result), the surplus must still be downgraded as an orphan so
+    // the strict gateway doesn't receive a tool_result with no tool_use.
+    for i in 0..messages.len() {
+        if messages[i].get("role").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+
+        let mut previous_tool_use_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        if i > 0 && messages[i - 1].get("role").and_then(Value::as_str) == Some("assistant") {
+            if let Some(blocks) = messages[i - 1].get("content").and_then(Value::as_array) {
+                for block in blocks {
+                    if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                        if let Some(id) = block.get("id").and_then(Value::as_str) {
+                            *previous_tool_use_counts.entry(id.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // Clone per-message so tool_results in this user message consume the
+        // available tool_use counts in order; any result beyond that supply
+        // (including duplicates of the same id) is treated as an orphan.
+        let mut remaining_tool_use_counts = previous_tool_use_counts;
+
+        let Some(content) = messages[i].get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+
+        let mut message_changed = false;
+        let mut rewritten = Vec::with_capacity(content.len());
+        for block in std::mem::take(content) {
+            let is_orphan = if block.get("type").and_then(Value::as_str) == Some("tool_result") {
+                match block.get("tool_use_id").and_then(Value::as_str) {
+                    Some(id) => match remaining_tool_use_counts.get_mut(id) {
+                        Some(remaining) if *remaining > 0 => {
+                            *remaining -= 1;
+                            false
+                        }
+                        _ => true,
+                    },
+                    None => true,
+                }
+            } else {
+                false
+            };
+            if is_orphan {
+                if let Some(text) = tool_result_content_text(&block) {
+                    rewritten.push(json!({ "type": "text", "text": text }));
+                }
+                message_changed = true;
+            } else {
+                rewritten.push(block);
+            }
+        }
+
+        if message_changed {
+            // Anthropic requires a non-empty content array; keep a placeholder
+            // when every block of the message was dropped.
+            if rewritten.is_empty() {
+                rewritten.push(json!({ "type": "text", "text": "(omitted orphan tool result)" }));
+            }
+            changed = true;
+        }
+        *content = rewritten;
+    }
+
+    changed
+}
+
+/// Anthropic official endpoint detection; requests without an explicit
+/// base_url also default to the official API.
+fn is_anthropic_official_endpoint(provider: &Provider) -> bool {
+    let settings = &provider.settings_config;
+    let base_url = settings
+        .get("env")
+        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+        .and_then(|v| v.as_str())
+        .or_else(|| settings.get("base_url").and_then(|v| v.as_str()))
+        .or_else(|| settings.get("baseURL").and_then(|v| v.as_str()))
+        .or_else(|| settings.get("apiEndpoint").and_then(|v| v.as_str()));
+
+    let Some(url) = base_url else {
+        return true;
+    };
+
+    let host = url
+        .trim()
+        .split("://")
+        .nth(1)
+        .unwrap_or_else(|| url.trim())
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+
+    host.eq_ignore_ascii_case("api.anthropic.com")
+}
+
+fn tool_result_content_text(block: &Value) -> Option<String> {
+    let content = block.get("content")?;
+    let mut parts: Vec<String> = Vec::new();
+    match content {
+        Value::Array(items) => {
+            for item in items {
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    parts.push(text.to_string());
+                    continue;
+                }
+                let title = item.get("title").and_then(Value::as_str);
+                let url = item.get("url").and_then(Value::as_str);
+                match (title, url) {
+                    (Some(t), Some(u)) => parts.push(format!("{t} ({u})")),
+                    (Some(t), None) => parts.push(t.to_string()),
+                    (None, Some(u)) => parts.push(u.to_string()),
+                    (None, None) => {}
+                }
+                if let Some(code) = item.get("error_code").and_then(Value::as_str) {
+                    parts.push(format!("[error: {code}]"));
+                }
+            }
+        }
+        Value::String(text) => parts.push(text.clone()),
+        _ => {}
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
 }
 
 fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
@@ -2682,5 +2971,229 @@ mod tests {
         assert!(changed);
         assert_eq!(body["thinking"]["type"], "disabled");
         assert!(body.get("output_config").is_none());
+    }
+
+    // DeepSeek's official /anthropic endpoint with deepseek-v4-flash: an
+    // interrupted turn leaves an assistant tool_use with no tool_result. The
+    // fix must inject a synthetic error tool_result so DeepSeek's strict
+    // validator ("tool_use ids were found without tool_result blocks
+    // immediately after") accepts the request.
+    #[test]
+    fn test_deepseek_orphan_tool_use_gets_synthetic_tool_result() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "thinking": { "type": "adaptive" },
+            "messages": [
+                { "role": "user", "content": "run the tests" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "thinking", "thinking": "Let me inspect the suite." },
+                        { "type": "text", "text": "I'll look at the tests." },
+                        { "type": "tool_use", "id": "call_00_EBDsyIFYN04p5DZdwZE33823", "name": "Bash", "input": { "command": "cargo test" } }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_anthropic_messages_for_provider(
+            &mut body,
+            &deepseek_official_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"][0]["type"], "tool_result");
+        assert_eq!(
+            messages[2]["content"][0]["tool_use_id"],
+            "call_00_EBDsyIFYN04p5DZdwZE33823"
+        );
+    }
+
+    // DeepSeek V4's parallel tool calling can emit two tool_use blocks that
+    // share the same id (`call_00_...`). A single matching tool_result pairs
+    // with only one of them; the second is orphaned. Count-based matching must
+    // inject a synthetic result for the shortfall.
+    #[test]
+    fn test_deepseek_duplicate_tool_use_id_shortfall_gets_synthetic_result() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                { "role": "user", "content": "run it" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_00_EBDsyIFYN04p5DZdwZE33823", "name": "Bash", "input": {} },
+                        { "type": "tool_use", "id": "call_00_EBDsyIFYN04p5DZdwZE33823", "name": "Bash", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_00_EBDsyIFYN04p5DZdwZE33823", "content": "ok" }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_orphan_tool_pairing_for_non_official(
+            &mut body,
+            &deepseek_official_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][2]["content"].as_array().unwrap();
+        // Synthetic shortfall result is prepended; the existing tool_result stays.
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["is_error"], true);
+        assert_eq!(content[0]["content"], ORPHAN_TOOL_RESULT_PLACEHOLDER);
+        assert_eq!(content[1]["type"], "tool_result");
+        assert_eq!(
+            content[1]["tool_use_id"],
+            "call_00_EBDsyIFYN04p5DZdwZE33823"
+        );
+        assert_eq!(content[1]["content"], "ok");
+    }
+
+    // DeepSeek V4 parallel tool calls with distinct ids where only one result
+    // arrived: the missing id must get a synthetic result too (the
+    // decolua/9router#2933 report listed both call_01_/call_02_ as orphaned).
+    #[test]
+    fn test_deepseek_parallel_tool_use_missing_result_gets_synthetic() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                { "role": "user", "content": "run both" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_01_c4cDbNGDKfywY7KKkSFJ8581", "name": "read", "input": {} },
+                        { "type": "tool_use", "id": "call_02_5yhf7FwnUJ2rhagI5Joh9513", "name": "grep", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_01_c4cDbNGDKfywY7KKkSFJ8581", "content": "file read" }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_orphan_tool_pairing_for_non_official(
+            &mut body,
+            &deepseek_official_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][2]["content"].as_array().unwrap();
+        // Synthetic for call_02 prepended, existing tool_result for call_01 kept.
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(
+            content[0]["tool_use_id"],
+            "call_02_5yhf7FwnUJ2rhagI5Joh9513"
+        );
+        assert_eq!(content[0]["is_error"], true);
+        assert_eq!(
+            content[1]["tool_use_id"],
+            "call_01_c4cDbNGDKfywY7KKkSFJ8581"
+        );
+    }
+
+    // Reverse direction of the count-based pairing repair: a single tool_use
+    // followed by two tool_result blocks for the same id (e.g. a duplicated
+    // persisted result on session resume) must downgrade the surplus result
+    // to a text block. A set-based membership check would let the duplicate
+    // slip through and the strict gateway would still receive an extra
+    // tool_result with no matching tool_use, returning 400.
+    #[test]
+    fn test_orphan_tool_result_duplicate_id_downgrades_surplus() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                { "role": "user", "content": "do it" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_dup_abc", "name": "read", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_dup_abc", "content": "first" },
+                        { "type": "tool_result", "tool_use_id": "call_dup_abc", "content": "second" }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_orphan_tool_pairing_for_non_official(
+            &mut body,
+            &deepseek_official_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][2]["content"].as_array().unwrap();
+        // First result stays paired with the single tool_use; the duplicate
+        // is downgraded to a text block carrying the original result text.
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_dup_abc");
+        assert_eq!(content[0]["content"], "first");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "second");
+    }
+
+    // Companion to the duplicate-id case: a tool_result with no matching
+    // tool_use at all (the previous assistant turn emitted a different id)
+    // is still downgraded, mirroring the existing single-id set behaviour.
+    #[test]
+    fn test_orphan_tool_result_unknown_id_still_downgraded() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                { "role": "user", "content": "go" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_real", "name": "read", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_orphan", "content": "leftover" }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_orphan_tool_pairing_for_non_official(
+            &mut body,
+            &deepseek_official_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][2]["content"].as_array().unwrap();
+        // Pass 1 injects a synthetic error result for the unanswered call_real,
+        // so the user message now carries [synthetic, downgraded_orphan].
+        // We only assert the orphan branch: the unknown-id result is downgraded
+        // to a text block carrying its content; the synthetic stays a tool_result.
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_real");
+        assert_eq!(content[0]["is_error"], true);
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "leftover");
     }
 }
