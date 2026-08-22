@@ -16,6 +16,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["aigocode", "aigo", "code", "third-party"],
     defaultColor: "#5B7FFF",
   },
+  antling: {
+    name: "antling",
+    displayName: "Ant Ling",
+    category: "ai-provider",
+    keywords: ["antling", "ant ling", "bailing", "百灵", "蚂蚁百灵"],
+    defaultColor: "#1677FF",
+  },
   apikeyfun: {
     name: "apikeyfun",
     displayName: "APIKEY.FUN",
