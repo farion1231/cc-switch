@@ -114,7 +114,6 @@
                         Name="{{product_name}}"
                         Description="Runs {{product_name}}"
                         Target="[!Path]"
-                        Icon="ProductIcon"
                         WorkingDirectory="INSTALLDIR">
                         <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
                     </Shortcut>
@@ -210,7 +209,6 @@
                     Name="{{product_name}}"
                     Description="Runs {{product_name}}"
                     Target="[!Path]"
-                    Icon="ProductIcon"
                     WorkingDirectory="INSTALLDIR">
                     <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
                 </Shortcut>
