@@ -58,41 +58,61 @@ export function ThemeProvider({
     }
 
     const root = window.document.documentElement;
-    root.classList.remove("light", "dark");
 
-    if (theme === "system") {
+    if (theme !== "system") {
+      root.classList.remove("light", "dark");
+      root.classList.add(theme);
+      return;
+    }
+
+    let isMounted = true;
+
+    const applyTheme = (isDark: boolean) => {
+      if (!isMounted) return;
+      root.classList.toggle("dark", isDark);
+      root.classList.toggle("light", !isDark);
+    };
+
+    const syncSystemTheme = async () => {
+      if (!isMounted) return;
+      try {
+        const sysTheme = await invoke<string | null>("get_system_theme");
+        if (sysTheme === "dark") {
+          applyTheme(true);
+          return;
+        } else if (sysTheme === "light") {
+          applyTheme(false);
+          return;
+        }
+      } catch (e) {
+        console.debug("Failed to read system theme via get_system_theme:", e);
+      }
+
+      // Fallback to matchMedia
       const isDark =
         window.matchMedia &&
         window.matchMedia("(prefers-color-scheme: dark)").matches;
-      root.classList.add(isDark ? "dark" : "light");
-      return;
-    }
-
-    root.classList.add(theme);
-  }, [theme]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = () => {
-      if (theme !== "system") {
-        return;
-      }
-
-      const root = window.document.documentElement;
-      root.classList.toggle("dark", mediaQuery.matches);
-      root.classList.toggle("light", !mediaQuery.matches);
+      applyTheme(isDark);
     };
 
-    if (theme === "system") {
-      handleChange();
-    }
+    // Initial sync
+    void syncSystemTheme();
 
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
+    const mediaQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const handleMediaChange = () => {
+      void syncSystemTheme();
+    };
+    mediaQuery?.addEventListener("change", handleMediaChange);
+
+    // Fallback periodic polling for Linux/KDE Portal theme changes
+    // which may not emit WebKit mediaQuery events.
+    const intervalId = setInterval(syncSystemTheme, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+      mediaQuery?.removeEventListener("change", handleMediaChange);
+    };
   }, [theme]);
 
   // Sync native window theme (Windows/macOS title bar)
