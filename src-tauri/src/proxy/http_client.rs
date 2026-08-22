@@ -215,7 +215,9 @@ pub fn refresh_system_proxy() -> bool {
 
     let info = resolve_proxy_info(None);
     let current = get_current_proxy_url();
-    if current == info.url {
+    let current_map = current_proxy_map();
+    let current_bypass = current_bypass();
+    if current == info.url && current_map == info.map && current_bypass == info.bypass {
         return false;
     }
 
