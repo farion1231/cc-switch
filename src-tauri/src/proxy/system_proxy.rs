@@ -140,6 +140,8 @@ fn parse_no_proxy_list(value: &str) -> Vec<String> {
 
 /// 解析 Windows 注册表 ProxyOverride（分号分隔，纯逻辑便于测试）。
 /// `<local>` 按 WinINET 语义展开为本机直连地址。
+// 仅 Windows 注册表路径使用；非 Windows 下仅被测试引用，避免 -D warnings 误报死代码。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn parse_proxy_override_list(value: &str) -> Vec<String> {
     let mut out = Vec::new();
     for part in value.split(';') {
