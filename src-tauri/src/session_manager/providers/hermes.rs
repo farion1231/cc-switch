@@ -234,14 +234,14 @@ fn row_to_json(row: &rusqlite::Row, columns: &[String]) -> Value {
 /// Load messages from the Hermes SQLite database.
 ///
 /// Hermes' `messages` table has these columns we care about:
-///   - role          : "user" | "assistant" | "tool" | "system"
-///   - content       : TEXT (assistant/user text or tool result JSON-as-text)
-///   - timestamp     : REAL Unix epoch seconds (with fractional part)
-///   - tool_calls    : JSON array of OpenAI-style function calls, present on
-///                     assistant turns when the model emitted one or more tool
-///                     invocations (e.g. `terminal`, `web_search`).
-///   - tool_name     : populated on tool-result rows (`role="tool"`).
-///   - active        : 0 = compacted/superseded (skip these).
+///   - role: `"user" | "assistant" | "tool" | "system"`
+///   - content: TEXT (assistant/user text or tool result JSON-as-text)
+///   - timestamp: REAL unix epoch seconds (with fractional part)
+///   - tool_calls: JSON array of OpenAI-style function calls, present on
+///     assistant turns when the model emitted one or more tool invocations
+///     (e.g. `terminal`, `web_search`).
+///   - tool_name: populated on tool-result rows (`role="tool"`).
+///   - active: 0 = compacted/superseded (skip these).
 ///
 /// We render tool calls the same way Codex does — assistant tool_use becomes
 /// `"[Tool: <name>]"` and tool result rows become their content string with
@@ -781,11 +781,13 @@ mod tests {
         conn.execute(
             "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params!["s1", "assistant", "second reply", 1000.5],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params!["s1", "user", "first question", 1000.0],
-        ).unwrap();
+        )
+        .unwrap();
 
         let tmp = tempdir().expect("tempdir");
         let db_path = tmp.path().join("state.db");
@@ -797,7 +799,11 @@ mod tests {
         let source = format!("sqlite:{}#s1", db_path.display());
         let msgs = load_messages_sqlite(&source).expect("load_messages_sqlite");
 
-        assert_eq!(msgs.len(), 2, "should load both rows from a `timestamp` column");
+        assert_eq!(
+            msgs.len(),
+            2,
+            "should load both rows from a `timestamp` column"
+        );
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].content, "first question");
         assert_eq!(msgs[0].ts, Some(1_000_000));
@@ -808,7 +814,8 @@ mod tests {
     #[test]
     fn load_messages_sqlite_renders_tool_calls_as_tool_markers() {
         let conn = build_hermes_db();
-        let tool_calls_json = r#"[{"id":"c1","function":{"name":"terminal","arguments":"{\"command\":\"ls\"}"}}]"#;
+        let tool_calls_json =
+            r#"[{"id":"c1","function":{"name":"terminal","arguments":"{\"command\":\"ls\"}"}}]"#;
         conn.execute(
             "INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params!["s2", "assistant", "let me check", tool_calls_json, 2000.0],
@@ -851,7 +858,8 @@ mod tests {
         conn.execute(
             "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params!["s3", "user", "live question", 3001.0],
-        ).unwrap();
+        )
+        .unwrap();
 
         let tmp = tempdir().expect("tempdir");
         let db_path = tmp.path().join("state.db");
@@ -869,7 +877,10 @@ mod tests {
 
     #[test]
     fn timestamp_secs_to_ms_handles_fractional_seconds() {
-        assert_eq!(timestamp_secs_to_ms(1_700_000_000.5), Some(1_700_000_000_500));
+        assert_eq!(
+            timestamp_secs_to_ms(1_700_000_000.5),
+            Some(1_700_000_000_500)
+        );
         assert_eq!(timestamp_secs_to_ms(0.0), None);
         assert_eq!(timestamp_secs_to_ms(-1.0), None);
     }
