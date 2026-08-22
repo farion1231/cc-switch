@@ -2793,6 +2793,8 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
 /// Official providers with usable login material own `auth.json`. Third-party
 /// providers only touch `config.toml` when the compatibility setting is enabled
 /// so the user's ChatGPT login cache survives provider switches.
+/// A material-less official write may also remove a non-null stale API key from
+/// an existing credential-bearing auth file while preserving those credentials.
 ///
 /// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
 /// （见 `inject_codex_unified_session_bucket`）。
@@ -2811,16 +2813,47 @@ pub fn write_codex_live_for_provider(
         };
     let config_text = unified_official_config.as_deref().or(config_text);
 
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
+    if category == Some("official") {
+        return write_codex_official_live_for_provider(auth, config_text);
+    }
 
-    if should_write_auth {
+    if !crate::settings::preserve_codex_official_auth_on_switch() {
         write_codex_live_atomic(auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
         write_codex_live_config_atomic(Some(&live_config))
     }
+}
+
+fn write_codex_official_live_for_provider(
+    auth: &Value,
+    config_text: Option<&str>,
+) -> Result<(), AppError> {
+    if codex_auth_has_login_material(auth) {
+        return write_codex_live_atomic(auth, config_text);
+    }
+
+    let auth_path = get_codex_auth_path();
+    if auth_path.exists() {
+        let mut live_auth: Value = read_json_file(&auth_path)?;
+        let has_stale_api_key = live_auth
+            .get("OPENAI_API_KEY")
+            .is_some_and(|value| !value.is_null());
+
+        // Keep pure third-party residue intact here. The normal switch flow
+        // deletes that file only after safely backfilling its key to the
+        // outgoing provider. Rewriting it as `{}` here would suppress that
+        // post-backfill cleanup and leave Codex in a broken empty-auth state.
+        if has_stale_api_key && codex_auth_has_credential_login_material(&live_auth) {
+            live_auth
+                .as_object_mut()
+                .expect("credential-bearing Codex auth must be an object")
+                .remove("OPENAI_API_KEY");
+            return write_codex_live_atomic(&live_auth, config_text);
+        }
+    }
+
+    write_codex_live_config_atomic(config_text)
 }
 
 /// Build the live Codex config for provider switching.
