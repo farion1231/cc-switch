@@ -4611,6 +4611,20 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
 }
 
+/// 读取当前系统的深浅色模式（Linux 上通过 XDG Desktop Portal 读取）
+#[tauri::command]
+pub fn get_system_theme() -> Result<Option<&'static str>, String> {
+    match dark_light::detect() {
+        Ok(dark_light::Mode::Dark) => Ok(Some("dark")),
+        Ok(dark_light::Mode::Light) => Ok(Some("light")),
+        Ok(dark_light::Mode::Unspecified) => Ok(None),
+        Err(e) => {
+            log::debug!("Failed to detect system theme via dark-light: {e}");
+            Ok(None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6953,5 +6967,14 @@ mod tests {
             command,
             "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
         );
+    }
+
+    #[test]
+    fn get_system_theme_returns_valid_variant() {
+        let res = get_system_theme();
+        assert!(res.is_ok());
+        if let Ok(Some(theme)) = res {
+            assert!(theme == "dark" || theme == "light");
+        }
     }
 }
