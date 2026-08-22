@@ -150,7 +150,21 @@ pub(crate) fn message_item(item_id: &str, text: &str) -> Value {
 /// Close an assistant message: emits `output_text.done` → `content_part.done` →
 /// `output_item.done`, and returns the completed item so the caller can record it.
 pub(crate) fn message_close(output_index: u32, item_id: &str, text: &str) -> (Vec<Bytes>, Value) {
-    let item = message_item(item_id, text);
+    message_close_with_phase(output_index, item_id, text, None)
+}
+
+/// Close an assistant message and optionally copy a Responses message `phase`
+/// (`commentary` / `final_answer`) onto the completed item.
+pub(crate) fn message_close_with_phase(
+    output_index: u32,
+    item_id: &str,
+    text: &str,
+    phase: Option<&str>,
+) -> (Vec<Bytes>, Value) {
+    let mut item = message_item(item_id, text);
+    if let Some(phase) = phase {
+        item["phase"] = Value::String(phase.to_string());
+    }
     let events = vec![
         sse_event(
             "response.output_text.done",
@@ -367,6 +381,16 @@ mod tests {
         assert_eq!(item["type"], "message");
         assert_eq!(item["status"], "completed");
         assert_eq!(item["content"][0]["text"], "hi");
+        assert!(item.get("phase").is_none());
+    }
+
+    #[test]
+    fn optional_phase_is_copied_onto_done_item() {
+        let (events, item) =
+            message_close_with_phase(1, "msg_phase", "listing", Some("commentary"));
+        assert_eq!(item["content"][0]["text"], "listing");
+        assert_eq!(item["phase"], "commentary");
+        assert!(body(&events[2]).contains("\"phase\":\"commentary\""));
     }
 
     #[test]
