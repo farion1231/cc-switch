@@ -3707,13 +3707,68 @@ pub async fn open_provider_terminal(
 
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
+    let mut env_vars = extract_env_vars_from_config(config, &app_type);
+    apply_claude_takeover_proxy_to_terminal_env(
+        state.inner(),
+        &app_type,
+        &providerId,
+        &mut env_vars,
+    )
+    .await?;
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
     launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
+}
+
+/// When Claude Live is routed through the local proxy, the provider-specific
+/// terminal must use the same local endpoint. Otherwise the temporary
+/// `--settings` file bypasses proxy takeover and sends Claude requests to the
+/// upstream provider directly.
+async fn apply_claude_takeover_proxy_to_terminal_env(
+    state: &crate::store::AppState,
+    app_type: &AppType,
+    provider_id: &str,
+    env_vars: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    if !matches!(app_type, AppType::Claude) {
+        return Ok(());
+    }
+
+    let takeover = state.proxy_service.get_takeover_status().await?;
+    if !takeover.claude {
+        return Ok(());
+    }
+
+    let current_provider_id = crate::settings::get_effective_current_provider(&state.db, app_type)
+        .map_err(|e| format!("获取 Claude 当前供应商失败: {e}"))?;
+    if current_provider_id.as_deref() != Some(provider_id) {
+        return Ok(());
+    }
+
+    let status = state.proxy_service.get_status().await?;
+    if !status.running || status.port == 0 {
+        return Ok(());
+    }
+
+    let host = match status.address.as_str() {
+        "" | "0.0.0.0" | "::" => "127.0.0.1".to_string(),
+        value if value.contains(':') && !value.starts_with('[') => format!("[{value}]"),
+        value => value.to_string(),
+    };
+    let proxy_url = format!("http://{host}:{}", status.port);
+    replace_env_value(env_vars, "ANTHROPIC_BASE_URL", proxy_url);
+    Ok(())
+}
+
+fn replace_env_value(env_vars: &mut Vec<(String, String)>, key: &str, value: String) {
+    if let Some((_, existing_value)) = env_vars.iter_mut().find(|(name, _)| name == key) {
+        *existing_value = value;
+    } else {
+        env_vars.push((key.to_string(), value));
+    }
 }
 
 /// 从提供商配置中提取环境变量
@@ -6952,6 +7007,56 @@ mod tests {
         assert_eq!(
             command,
             "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
+        );
+    }
+
+    #[test]
+    fn replace_env_value_updates_existing_base_url() {
+        let mut env_vars = vec![
+            (
+                "ANTHROPIC_BASE_URL".to_string(),
+                "https://upstream.test".to_string(),
+            ),
+            ("ANTHROPIC_MODEL".to_string(), "model-a".to_string()),
+        ];
+
+        replace_env_value(
+            &mut env_vars,
+            "ANTHROPIC_BASE_URL",
+            "http://127.0.0.1:15721".to_string(),
+        );
+
+        assert_eq!(
+            env_vars,
+            vec![
+                (
+                    "ANTHROPIC_BASE_URL".to_string(),
+                    "http://127.0.0.1:15721".to_string()
+                ),
+                ("ANTHROPIC_MODEL".to_string(), "model-a".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn replace_env_value_adds_missing_base_url() {
+        let mut env_vars = vec![("ANTHROPIC_MODEL".to_string(), "model-a".to_string())];
+
+        replace_env_value(
+            &mut env_vars,
+            "ANTHROPIC_BASE_URL",
+            "http://127.0.0.1:15721".to_string(),
+        );
+
+        assert_eq!(
+            env_vars,
+            vec![
+                ("ANTHROPIC_MODEL".to_string(), "model-a".to_string()),
+                (
+                    "ANTHROPIC_BASE_URL".to_string(),
+                    "http://127.0.0.1:15721".to_string()
+                ),
+            ]
         );
     }
 }
