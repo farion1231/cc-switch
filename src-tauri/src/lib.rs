@@ -2,6 +2,7 @@ mod app_config;
 mod app_store;
 mod auto_launch;
 mod claude_desktop_config;
+mod claude_desktop_data_migration;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
@@ -1370,6 +1371,11 @@ pub fn run() {
             commands::import_default_config,
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,
+            commands::audit_claude_desktop_data_migration,
+            commands::plan_claude_desktop_data_migration,
+            commands::apply_claude_desktop_data_migration,
+            commands::verify_claude_desktop_data_migration,
+            commands::restore_claude_desktop_data_migration,
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,
             commands::ensure_codex_official_provider,

@@ -13,7 +13,7 @@ import {
   type CSSProperties,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Search, X } from "lucide-react";
+import { AlertTriangle, FolderInput, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ import {
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { ClaudeDesktopMigrationDialog } from "@/components/providers/ClaudeDesktopMigrationDialog";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -200,6 +201,7 @@ export function ProviderList({
 
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isMigrationOpen, setIsMigrationOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
@@ -539,6 +541,38 @@ export function ProviderList({
           </ul>
         </div>
       )}
+      {appId === "claude-desktop" && (
+        <div className="rounded-lg border border-border bg-muted/40 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-start gap-2">
+              <FolderInput className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+              <div>
+                <div className="text-sm font-medium">
+                  {t("claudeDesktopMigration.entryTitle", {
+                    defaultValue: "Migrate official (1P) data to this account",
+                  })}
+                </div>
+                <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                  {t("claudeDesktopMigration.entryDescription", {
+                    defaultValue:
+                      "Import existing Claude Desktop Code sessions and Cowork tasks from the official account into this third-party account. Read-only preview, automatic backup, nothing is overwritten.",
+                  })}
+                </div>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setIsMigrationOpen(true)}
+            >
+              {t("claudeDesktopMigration.entryButton", {
+                defaultValue: "Review & migrate…",
+              })}
+            </Button>
+          </div>
+        </div>
+      )}
       <AnimatePresence>
         {isSearchOpen && (
           <motion.div
@@ -611,6 +645,12 @@ export function ProviderList({
         </div>
       ) : (
         renderProviderList()
+      )}
+      {appId === "claude-desktop" && (
+        <ClaudeDesktopMigrationDialog
+          isOpen={isMigrationOpen}
+          onClose={() => setIsMigrationOpen(false)}
+        />
       )}
     </div>
   );
