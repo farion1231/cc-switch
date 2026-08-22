@@ -736,6 +736,10 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
                         })
                         .flatten()
                 })
+                // 用户可以只配置一个模型，或删去不需要的角色。Claude Desktop 的
+                // 内部任务仍可能请求 Opus/Haiku 等角色；这时统一回退到列表第一条
+                // （主模型），避免因为 UI 中未展示的角色而失败。
+                .or_else(|| routes.first())
                 .map(|route| route.upstream_model.clone())
         })
         .ok_or_else(|| {
@@ -1040,6 +1044,11 @@ fn build_gateway_profile(
     if let Some(model_specs) = model_specs {
         profile["inferenceModels"] =
             Value::Array(model_specs.iter().map(inference_model_json).collect());
+        // CCSwitch 会完整重写此 profile。保留 Claude Desktop 的 1M 偏好，避免
+        // 用户每次保存供应商后都需要重新在客户端中手动开启它。
+        if model_specs.iter().any(|spec| spec.supports_1m) {
+            profile["modelPrefer1mContext"] = json!(true);
+        }
     }
 
     profile
@@ -1571,6 +1580,7 @@ mod tests {
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
+        assert_eq!(profile["modelPrefer1mContext"], json!(true));
         assert_ne!(profile["inferenceGatewayApiKey"], json!("test-token"));
         assert!(profile["inferenceGatewayApiKey"]
             .as_str()
@@ -1607,6 +1617,7 @@ mod tests {
                 profile["inferenceModels"],
                 json!([{ "name": "claude-sonnet-4-6", "labelOverride": "GPT-5.4" }])
             );
+            assert!(profile.get("modelPrefer1mContext").is_none());
         }
     }
 
@@ -1625,9 +1636,9 @@ mod tests {
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
 
-        let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
+        let err = map_proxy_request_model(json!({"model": "gpt-5"}), &provider)
             .expect_err("unknown route should fail");
-        assert!(err.to_string().contains("claude-opus-4-8"));
+        assert!(err.to_string().contains("gpt-5"));
     }
 
     #[test]
@@ -1739,8 +1750,8 @@ mod tests {
     }
 
     #[test]
-    fn claude_desktop_proxy_fable_without_opus_route_still_errors() {
-        // 没有 opus 档可回落时保持精确报错语义，不静默落到其他档。
+    fn claude_desktop_proxy_missing_role_falls_back_to_primary_route() {
+        // 用户只配置一个模型时，Desktop 的 Fable 等内部请求应回退到主模型。
         let mut provider = proxy_provider("proxy");
         provider
             .meta
@@ -1755,12 +1766,12 @@ mod tests {
             },
         )]);
 
-        let err = map_proxy_request_model(
+        let mapped = map_proxy_request_model(
             json!({"model": "claude-fable-5", "messages": []}),
             &provider,
         )
-        .expect_err("fable without an opus route should fail");
-        assert!(err.to_string().contains("claude-fable-5"));
+        .expect("fable without a dedicated route should use the primary model");
+        assert_eq!(mapped["model"], json!("upstream-sonnet"));
     }
 
     #[test]

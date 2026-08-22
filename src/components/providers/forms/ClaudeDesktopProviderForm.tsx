@@ -112,6 +112,54 @@ const ANTHROPIC_CLAUDE_ROUTE_PREFIX = "anthropic/claude-";
 const LEGACY_ONE_M_MARKER = "[1m]";
 const ROLE_ROUTE_IDS = CLAUDE_DESKTOP_ROLE_ROUTE_IDS;
 const ROLE_ORDER: RouteRole[] = ["sonnet", "opus", "fable", "haiku"];
+// 每个角色档暴露的 Claude Desktop 内置目录官方 ID（app.asar model catalog）。
+// 同一档的多个模型各占一个官方 ID 即可共存（如 Sonnet 档同时挂两个模型）；
+// 目录内 ID 才会显示思考等级菜单。列表同时是"添加模型"的默认槽位分配顺序。
+// `-r2` 等自定义别名不在目录内、没有思考等级菜单，仅在所有官方 ID 被占满时
+// 由 fallbackCatalogRouteId 自动生成兜底。
+// 核对版本：Claude Desktop 1.34493.1（2026-08）。
+const ROLE_CATALOG_IDS: Record<RouteRole, string[]> = {
+  sonnet: ["claude-sonnet-5", "claude-sonnet-4-6"],
+  opus: ["claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6"],
+  fable: ["claude-fable-5"],
+  haiku: ["claude-haiku-4-5"],
+};
+const CATALOG_ID_LABELS: Record<string, string> = {
+  "claude-sonnet-5": "Sonnet",
+  "claude-sonnet-4-6": "Sonnet 4.6",
+  "claude-opus-5": "Opus",
+  "claude-opus-4-8": "Opus 4.8",
+  "claude-opus-4-7": "Opus 4.7",
+  "claude-opus-4-6": "Opus 4.6",
+  "claude-fable-5": "Fable",
+  "claude-haiku-4-5": "Haiku",
+};
+
+type RoleOption = { value: string; label: string };
+
+function buildRoleOptions(rows: RouteRow[]): RoleOption[] {
+  const options: RoleOption[] = [];
+  for (const role of ROLE_ORDER) {
+    for (const routeId of ROLE_CATALOG_IDS[role]) {
+      options.push({
+        value: routeId,
+        label: `${CATALOG_ID_LABELS[routeId] ?? routeId} · ${routeId}`,
+      });
+    }
+  }
+
+  // 已保存的非标准路由（旧版遗留或自定义安全别名）追加为独立选项，
+  // 保证下拉框始终能显示当前值，不会被静默重置。
+  const known = new Set(options.map((option) => option.value));
+  for (const row of rows) {
+    const routeId = row.route.trim();
+    if (routeId && !known.has(routeId)) {
+      known.add(routeId);
+      options.push({ value: routeId, label: routeId });
+    }
+  }
+  return options;
+}
 
 function envString(
   settingsConfig: Record<string, unknown> | undefined,
@@ -130,15 +178,6 @@ function clonePlainRecord(value: unknown): Record<string, unknown> {
   return { ...(value as Record<string, unknown>) };
 }
 
-function routeRoleFromId(route: string): RouteRole {
-  const normalized = route.trim().toLowerCase();
-  // 与后端 claude_role_keyword 同序（opus → haiku → fable → sonnet）。
-  if (normalized.includes("opus")) return "opus";
-  if (normalized.includes("haiku")) return "haiku";
-  if (normalized.includes("fable")) return "fable";
-  return "sonnet";
-}
-
 function routeIdForRole(role: RouteRole, usedRoutes: Set<string>) {
   const baseRoute = ROLE_ROUTE_IDS[role];
   if (!usedRoutes.has(baseRoute)) return baseRoute;
@@ -151,11 +190,12 @@ function routeIdForRole(role: RouteRole, usedRoutes: Set<string>) {
 }
 
 function fallbackCatalogRouteId(usedRoutes: Set<string>) {
-  const role = ROLE_ORDER.find((candidate) => {
-    const route = ROLE_ROUTE_IDS[candidate];
-    return !usedRoutes.has(route);
-  });
-  return routeIdForRole(role ?? "sonnet", usedRoutes);
+  // 按档位顺序分配目录内官方 ID；全部占满后才退化为 -r2 别名（无思考等级菜单）。
+  for (const role of ROLE_ORDER) {
+    const free = ROLE_CATALOG_IDS[role].find((id) => !usedRoutes.has(id));
+    if (free) return free;
+  }
+  return routeIdForRole("sonnet", usedRoutes);
 }
 
 function createRouteRow(row: RouteRowValues): RouteRow {
@@ -189,20 +229,25 @@ function initialRouteRows(
   });
 }
 
-// Proxy 模式对齐 Claude Code：固定 Sonnet / Opus / Fable / Haiku 四档。
-// 把任意来源的 route 行按角色归类到固定四槽（缺档留空），保证 UI 永远四行、
-// 用户不会漏配某档导致子 agent 找不到模型。
-// （fable 自 Desktop 1.12603.1+ 起被 fail-all 校验放行，可作为独立档位。）
+// Proxy 模式保留每一条用户配置的路由。Claude Desktop 仅接受带角色前缀的
+// `claude-*` ID；无效或重复的旧路由会被映射为一个未占用的安全别名。这样模型
+// 列表可以自由增删，而不是被 Sonnet / Opus / Fable / Haiku 四个槽位截断。
 function normalizeProxyRows(rows: RouteRow[]): RouteRow[] {
-  return ROLE_ORDER.map((role) => {
-    const match = rows.find(
-      (row) => row.route.trim() && routeRoleFromId(row.route) === role,
-    );
+  const usedRoutes = new Set<string>();
+
+  return rows.map((row) => {
+    const requestedRoute = row.route.trim();
+    const route =
+      isClaudeSafeRoute(requestedRoute) && !usedRoutes.has(requestedRoute)
+        ? requestedRoute
+        : fallbackCatalogRouteId(usedRoutes);
+    usedRoutes.add(route);
+
     return createRouteRow({
-      route: ROLE_ROUTE_IDS[role],
-      model: match?.model ?? "",
-      labelOverride: match?.labelOverride ?? "",
-      supports1m: match?.supports1m ?? false,
+      route,
+      model: row.model,
+      labelOverride: row.labelOverride,
+      supports1m: row.supports1m,
     });
   });
 }
@@ -297,9 +342,7 @@ export function ClaudeDesktopProviderForm({
   });
   const [proxyRoutes, setProxyRoutes] = useState<RouteRow[]>(() => {
     const rows = initialRouteRows(initialData?.meta?.claudeDesktopModelRoutes);
-    // proxy 模式归一化成固定四档；但初始无任何 route 时保持空数组，交给 seed
-    // effect 用默认路由回填（默认 1M 声明、ANTHROPIC_MODEL 预填），避免过早
-    // normalize 成空四档把 routes.length 撑到 4、永久挡住 seed。
+    // 初始无路由时保持空数组，等待默认路由异步加载后再回填。
     return initialMode === "proxy" && rows.length > 0
       ? normalizeProxyRows(rows)
       : [];
@@ -396,6 +439,7 @@ export function ClaudeDesktopProviderForm({
   const needsModelMapping = effectiveMode === "proxy";
   const routes = needsModelMapping ? proxyRoutes : directRoutes;
   const setRoutes = needsModelMapping ? setProxyRoutes : setDirectRoutes;
+  const roleOptions = useMemo(() => buildRoleOptions(routes), [routes]);
 
   // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
   const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
@@ -502,11 +546,10 @@ export function ClaudeDesktopProviderForm({
     if (usesManagedOAuth) return;
     setMode(checked ? "proxy" : "direct");
     if (checked) {
-      // 切到 proxy：只恢复/初始化映射模式自己的固定四档，不复用直连模型列表。
+      // 切到 proxy：只恢复/初始化映射模式自己的路由列表，不复用直连模型列表。
       setProxyRoutes((current) => {
-        // 默认路由（默认 1M 声明、ANTHROPIC_MODEL 预填）异步加载完成前，若当前
-        // 无路由则保持空数组，交给 seed effect 在加载后回填；不要过早 normalize
-        // 成空四档（会把 routes.length 撑到 4、永久挡住 seed）。
+        // 默认路由异步加载完成前，若当前无路由则保持空数组，交给 seed effect
+        // 回填，避免过早创建一个不可保存的空路由。
         if (current.length === 0 && defaultProxyRouteRows.length === 0) {
           return current;
         }
@@ -702,11 +745,10 @@ export function ClaudeDesktopProviderForm({
       .filter((route) => route.route || route.model);
 
     if (effectiveMode === "proxy") {
-      // 固定四档（Sonnet / Opus / Fable / Haiku），route_id 由 UI 生成、恒合法，
-      // 因此只要求至少填一个实际请求模型；留空档继承第一个已填档（Sonnet 优先），
-      // 对齐 Claude Code 的兜底，保证落库四档齐全、子 agent 不会找不到模型。
-      const primary = routeEntries.find((route) => route.model);
-      if (!primary) {
+      // 路由别名由 UI 自动生成，只要求至少配置一个实际模型。后端会在 Claude
+      // Desktop 请求未配置角色时回退到第一条路由，因此不需要用重复模型填满四槽。
+      const configuredRoutes = routeEntries.filter((route) => route.model);
+      if (configuredRoutes.length === 0) {
         toast.error(
           t("claudeDesktop.routesRequired", {
             defaultValue: "至少填写一个模型映射",
@@ -714,19 +756,7 @@ export function ClaudeDesktopProviderForm({
         );
         return;
       }
-      for (const route of routeEntries) {
-        if (!route.model) {
-          route.model = primary.model;
-          if (!route.labelOverride) {
-            route.labelOverride = primary.labelOverride || primary.model;
-          }
-          // 回填的是同一个上游模型，1M 能力声明应与 primary 一致，
-          // 避免同模型在不同档声明不同 1M（除非该档用户已显式勾选）。
-          if (!route.supports1m) {
-            route.supports1m = primary.supports1m;
-          }
-        }
-      }
+      routeEntries.splice(0, routeEntries.length, ...configuredRoutes);
     } else {
       const invalid = routeEntries.find(
         (route) => !route.route || !isClaudeSafeRoute(route.route),
@@ -1058,41 +1088,71 @@ export function ClaudeDesktopProviderForm({
 
                   <div className="space-y-3">
                     <div className="space-y-1 border-t border-border-default pt-4">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <Label>
                           {t("claudeDesktop.routeMapTitle", {
-                            defaultValue: "模型映射",
+                            defaultValue: "模型列表",
                           })}
                         </Label>
-                        {!usesManagedOAuth && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={handleFetchModels}
-                            disabled={isFetchingModels}
-                            className="h-7 gap-1"
-                          >
-                            {isFetchingModels ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Download className="h-3.5 w-3.5" />
-                            )}
-                            {t("providerForm.fetchModels", {
-                              defaultValue: "获取模型",
-                            })}
-                          </Button>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {renderActionButtons(
+                            () =>
+                              setRoutes((current) => {
+                                const usedRoutes = new Set(
+                                  current
+                                    .map((route) => route.route.trim())
+                                    .filter(isClaudeSafeRoute),
+                                );
+                                return [
+                                  ...current,
+                                  createRouteRow({
+                                    route: fallbackCatalogRouteId(usedRoutes),
+                                    model: "",
+                                    labelOverride: "",
+                                    supports1m: true,
+                                  }),
+                                ];
+                              }),
+                            t("claudeDesktop.addModel", {
+                              defaultValue: "添加模型",
+                            }),
+                          )}
+                          {!usesManagedOAuth && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={handleFetchModels}
+                              disabled={isFetchingModels}
+                              className="h-7 gap-1"
+                            >
+                              {isFetchingModels ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Download className="h-3.5 w-3.5" />
+                              )}
+                              {t("providerForm.fetchModels", {
+                                defaultValue: "获取模型",
+                              })}
+                            </Button>
+                          )}
+                        </div>
                       </div>
                       <p className="text-xs leading-relaxed text-muted-foreground">
                         {t("claudeDesktop.routeMapHint", {
                           defaultValue:
-                            "为 Sonnet、Opus、Haiku 三档分别填写实际请求模型；菜单显示名可写 DeepSeek、Kimi 等品牌名。留空的档会自动沿用 Sonnet（或第一个已填档）的模型，确保子 agent 调用的 Haiku 始终可用。",
+                            "可自由添加或删除模型。每个模型自选一个 Claude 角色（Sonnet / Opus / Fable / Haiku）的官方 ID，同一档的多个模型各占一个官方 ID 即可共存；Claude Desktop 发往该 ID 的请求会转发给对应的实际模型，未被占用的 ID 请求回退到列表第一个模型。菜单显示名只影响 Claude Desktop 模型菜单中的显示。",
+                        })}
+                      </p>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {t("claudeDesktop.routeThinkingHint", {
+                          defaultValue:
+                            "注意：只有 Claude Desktop 内置目录中的官方 ID 才会显示思考等级（effort）菜单，上方角色下拉列出的均为目录内 ID。所有官方 ID 被占满后再添加模型时，会自动分配 Sonnet 2 形式的别名，该别名可正常路由但不显示思考等级菜单。",
                         })}
                       </p>
                     </div>
 
-                    <div className="hidden grid-cols-[140px_1fr_1fr_116px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                    <div className="hidden grid-cols-[220px_1fr_1fr_116px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                       <span>
                         {t("claudeDesktop.routeModelLabel", {
                           defaultValue: "模型角色",
@@ -1110,45 +1170,50 @@ export function ClaudeDesktopProviderForm({
                       </span>
                       <span>
                         {t("claudeDesktop.supports1mLabel", {
-                          defaultValue: "声明支持 1M",
+                          defaultValue: "1M 上下文",
                         })}
                       </span>
+                      <span aria-hidden="true" />
                     </div>
                     {routes.map((route, index) => {
-                      const role = routeRoleFromId(route.route);
-                      const roleLabel =
-                        role === "opus"
-                          ? t("claudeDesktop.routeRoleOpus", {
-                              defaultValue: "Opus",
-                            })
-                          : role === "haiku"
-                            ? t("claudeDesktop.routeRoleHaiku", {
-                                defaultValue: "Haiku",
-                              })
-                            : role === "fable"
-                              ? t("claudeDesktop.routeRoleFable", {
-                                  defaultValue: "Fable",
-                                })
-                              : t("claudeDesktop.routeRoleSonnet", {
-                                  defaultValue: "Sonnet",
-                                });
-                      // Haiku 档示范映射到轻量模型（flash），其余档映射到 pro；
-                      // 两列占位联动，保持每行「菜单显示名 ↔ 实际请求模型」品牌一致。
-                      const isHaikuRole = role === "haiku";
-                      const labelPlaceholder = isHaikuRole
-                        ? "DeepSeek V4 Flash"
-                        : "DeepSeek V4 Pro";
-                      const modelPlaceholder = isHaikuRole
-                        ? "deepseek-v4-flash"
-                        : "deepseek-v4-pro";
                       return (
                         <div
                           key={route.rowId}
-                          className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px]"
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[220px_1fr_1fr_116px_36px]"
                         >
-                          <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
-                            {roleLabel}
-                          </div>
+                          <Select
+                            value={route.route}
+                            onValueChange={(value) =>
+                              updateRoute(index, { route: value })
+                            }
+                          >
+                            <SelectTrigger
+                              className="h-9 w-full"
+                              aria-label={`${t("claudeDesktop.routeModelLabel", {
+                                defaultValue: "模型角色",
+                              })} ${index + 1}`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {roleOptions.map((option) => {
+                                const takenByOther = routes.some(
+                                  (other, otherIndex) =>
+                                    otherIndex !== index &&
+                                    other.route.trim() === option.value,
+                                );
+                                return (
+                                  <SelectItem
+                                    key={option.value}
+                                    value={option.value}
+                                    disabled={takenByOther}
+                                  >
+                                    {option.label}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
+                          </Select>
                           <Input
                             value={route.labelOverride}
                             onChange={(event) =>
@@ -1156,7 +1221,7 @@ export function ClaudeDesktopProviderForm({
                                 labelOverride: event.target.value,
                               })
                             }
-                            placeholder={labelPlaceholder}
+                            placeholder="DeepSeek V4 Pro"
                           />
                           <div className="flex gap-1">
                             <Input
@@ -1164,9 +1229,9 @@ export function ClaudeDesktopProviderForm({
                               onChange={(event) =>
                                 updateRoute(index, {
                                   model: event.target.value,
-                                })
-                              }
-                              placeholder={modelPlaceholder}
+                              })
+                            }
+                              placeholder="deepseek-v4-pro"
                               className="flex-1"
                             />
                             {fetchedModels.length > 0 && (
@@ -1194,6 +1259,21 @@ export function ClaudeDesktopProviderForm({
                               defaultValue: "1M",
                             })}
                           </label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() =>
+                              setRoutes((current) =>
+                                current.filter((_, i) => i !== index),
+                              )
+                            }
+                            aria-label={t("claudeDesktop.removeModel", {
+                              defaultValue: "删除模型",
+                            })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       );
                     })}
