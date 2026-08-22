@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   extractCodexPromptPreview,
   formatSessionMessagePreview,
+  getProviderIconName,
+  getProviderLabel,
   groupSessionsByProviderAndDirectory,
   shouldHideCodexMessageFromToc,
 } from "@/components/sessions/utils";
@@ -220,5 +222,34 @@ describe("session utils", () => {
     expect(
       groups[0].directories[0].sessions.map((session) => session.sessionId),
     ).toEqual(["newest", "oldest"]);
+  });
+
+  it("returns the registered icon name for every built-in provider", () => {
+    // Every provider id that's already wired into the SessionManager must
+    // resolve to a real icon entry under src/icons/extracted — if a future
+    // PR adds a new provider without registering its icon, the SessionItem
+    // would silently fall back to the initials circle instead of the
+    // provider logo. Locking the map here keeps the icon registry honest.
+    expect(getProviderIconName("codex")).toBe("openai");
+    expect(getProviderIconName("grokbuild")).toBe("grok");
+    expect(getProviderIconName("claude")).toBe("claude");
+    expect(getProviderIconName("opencode")).toBe("opencode");
+    expect(getProviderIconName("openclaw")).toBe("openclaw");
+    expect(getProviderIconName("hermes")).toBe("hermes");
+    // Unknown providers fall back to their own id (which the icon loader
+    // will then resolve to the first-letter chip if no icon exists).
+    expect(getProviderIconName("totally-made-up")).toBe("totally-made-up");
+  });
+
+  it("falls back to the raw providerId when no i18n label exists", () => {
+    const t = (key: string) => key;
+    expect(getProviderLabel("hermes", t)).toBe("hermes");
+    // When the lookup hits `apps.<id>` and that key resolves (i18n returns
+    // a real string), we should use the translated label.
+    const labeledT = (key: string) => {
+      if (key === "apps.hermes") return "Hermes Agent";
+      return key;
+    };
+    expect(getProviderLabel("hermes", labeledT)).toBe("Hermes Agent");
   });
 });

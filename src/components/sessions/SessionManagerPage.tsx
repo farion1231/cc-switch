@@ -1178,6 +1178,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 <span>Pi</span>
                               </div>
                             </SelectItem>
+                            <SelectItem value="hermes">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="hermes"
+                                  name="hermes"
+                                  size={14}
+                                />
+                                <span>Hermes Agent</span>
+                              </div>
+                            </SelectItem>
                           </SelectContent>
                         </Select>
 
