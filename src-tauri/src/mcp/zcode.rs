@@ -131,6 +131,7 @@ pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError>
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
 
     #[test]
     fn test_stdio_spec_passes_through_validation() {
@@ -158,25 +159,27 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_import_marks_new_server_with_only_zcode_enabled() {
         // Isolate from the real ~/.zcode by pointing the home dir at a temp
         // directory so import_from_zcode sees an empty cli/config.json.
-        let temp = std::env::temp_dir().join(format!(
-            "cc-switch-zcode-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&temp).unwrap();
-        std::env::set_var("CC_SWITCH_TEST_HOME", &temp);
+        // CC_SWITCH_TEST_HOME is process-global: without #[serial] this test
+        // runs in parallel with hermes_config's serial tests and its
+        // set/remove of the var can hijack their memory-path resolution
+        // mid-test (seen on windows-latest CI as
+        // write_then_read_memory_round_trip reading back "").
+        let temp = tempfile::tempdir().unwrap();
+        let old = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
 
         let mut config = MultiAppConfig::default();
         // With no ~/.zcode/cli/config.json present, import is a clean no-op.
         let count = import_from_zcode(&mut config).expect("empty import ok");
         assert_eq!(count, 0);
 
-        std::env::remove_var("CC_SWITCH_TEST_HOME");
-        let _ = std::fs::remove_dir_all(&temp);
+        match old {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
     }
 }
