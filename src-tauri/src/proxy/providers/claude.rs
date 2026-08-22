@@ -698,6 +698,34 @@ impl Default for ClaudeAdapter {
     }
 }
 
+/// 完整 API 端点路径后缀。`base_url` 以其中之一结尾时，说明用户粘贴的是完整
+/// 端点地址（即使 `isFullUrl` 开关未开启也可能发生）。`build_url` 必须先剥离
+/// 再拼接，否则会产出 `.../chat/completions/v1/messages` 一类的双重路径（404）。
+/// 必须小写；匹配时忽略大小写、尾部斜杠与 query/fragment。
+const FULL_ENDPOINT_SUFFIXES: [&str; 4] = [
+    "/v1/chat/completions",
+    "/chat/completions",
+    "/v1/messages",
+    "/claude/v1/messages",
+];
+
+/// 剥离 `base_url` 尾部的完整端点路径，返回可用于拼接的根地址。
+/// 未命中任何已知后缀时原样返回。
+fn strip_full_endpoint_suffix(base_url: &str) -> &str {
+    let path = base_url
+        .split_once(['?', '#'])
+        .map(|(head, _)| head)
+        .unwrap_or(base_url);
+    let trimmed = path.trim_end_matches('/');
+    let lower = trimmed.to_ascii_lowercase();
+    for suffix in FULL_ENDPOINT_SUFFIXES {
+        if lower.ends_with(suffix) {
+            return &trimmed[..trimmed.len() - suffix.len()];
+        }
+    }
+    base_url
+}
+
 impl ProviderAdapter for ClaudeAdapter {
     fn name(&self) -> &'static str {
         "Claude"
@@ -854,9 +882,11 @@ impl ProviderAdapter for ClaudeAdapter {
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
         //
+        // base_url 若已以完整端点路径结尾（如粘贴了 `.../v1/chat/completions`），
+        // 先剥离再拼接，避免双重路径（`.../chat/completions/v1/messages` → 404）。
         let mut base = format!(
             "{}/{}",
-            base_url.trim_end_matches('/'),
+            strip_full_endpoint_suffix(base_url).trim_end_matches('/'),
             endpoint.trim_start_matches('/')
         );
 
@@ -1531,6 +1561,69 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
         assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn build_url_strips_full_endpoint_suffix_in_base() {
+        let adapter = ClaudeAdapter::new();
+        // User pasted the full OpenAI endpoint but left the "full URL" switch off:
+        // the tail must be rewritten instead of double-appended.
+        assert_eq!(
+            adapter.build_url(
+                "https://opencode.ai/zen/go/v1/chat/completions",
+                "/v1/messages"
+            ),
+            "https://opencode.ai/zen/go/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://host.example/v1/chat/completions", "/v1/messages"),
+            "https://host.example/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://host.example/chat/completions", "/v1/messages"),
+            "https://host.example/v1/messages"
+        );
+        // A base already ending in /v1/messages stays identical (self-heal).
+        assert_eq!(
+            adapter.build_url("https://host.example/v1/messages", "/v1/messages"),
+            "https://host.example/v1/messages"
+        );
+        // Trailing slash variant.
+        assert_eq!(
+            adapter.build_url("https://host.example/v1/messages/", "/v1/messages"),
+            "https://host.example/v1/messages"
+        );
+        // Prefixed gateway keeps its prefix.
+        assert_eq!(
+            adapter.build_url("https://host.example/api/v1/messages", "/v1/messages"),
+            "https://host.example/api/v1/messages"
+        );
+        // OpenAI-format target from an OpenAI full endpoint stays put.
+        assert_eq!(
+            adapter.build_url(
+                "https://host.example/v1/chat/completions",
+                "/v1/chat/completions"
+            ),
+            "https://host.example/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn build_url_keeps_plain_version_root_behavior() {
+        let adapter = ClaudeAdapter::new();
+        // No endpoint suffix in the base → unchanged join, /v1/v1 dedupe still applies.
+        assert_eq!(
+            adapter.build_url("https://opencode.ai/zen/go/v1", "/v1/messages"),
+            "https://opencode.ai/zen/go/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://openrouter.ai/api", "/v1/messages"),
+            "https://openrouter.ai/api/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://host.example/v1", "/v1/messages"),
+            "https://host.example/v1/messages"
+        );
     }
 
     #[test]
