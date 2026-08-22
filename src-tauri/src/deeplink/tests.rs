@@ -235,6 +235,8 @@ fn test_build_gemini_provider_with_model() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
@@ -288,6 +290,8 @@ fn test_build_gemini_provider_without_model() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
@@ -334,6 +338,8 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -381,6 +387,8 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     }
 }
 
@@ -464,6 +472,8 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -512,6 +522,8 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -565,6 +577,8 @@ fn test_parse_and_merge_config_claude() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let merged = parse_and_merge_config(&request).unwrap();
@@ -688,6 +702,8 @@ fn test_parse_and_merge_config_url_override() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let merged = parse_and_merge_config(&request).unwrap();
@@ -751,6 +767,8 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -806,6 +824,8 @@ fn test_build_claude_provider_without_config_unchanged() {
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     };
 
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
@@ -991,5 +1011,92 @@ fn test_infer_homepage_from_endpoint_without_homepage() {
     assert_eq!(
         infer_homepage_from_endpoint("https://cubence.com"),
         Some("https://cubence.com".to_string())
+    );
+}
+
+#[test]
+fn test_grokbuild_passthrough_applies_url_overrides() {
+    use super::provider::build_provider_from_request;
+
+    // Native GrokBuild TOML carrying an unrelated custom key ([nested]) that
+    // must survive the override. Explicit apiKey/endpoint/model URL params
+    // differ from the embedded values and must be applied; before the fix the
+    // passthrough returned the TOML verbatim and silently ignored them.
+    let toml_str = "[models]\ndefault = \"grok-5\"\n\n[model.grok-5]\nmodel = \"grok-5\"\nbase_url = \"https://grok.example.com/v1\"\nname = \"Team Grok\"\napi_key = \"xai-key\"\napi_backend = \"anthropic\"\ncontext_window = 131072\n\n[nested]\ncustom_field = \"keep\"\n";
+    let config_json = serde_json::json!({ "config": toml_str }).to_string();
+    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("grokbuild".to_string()),
+        name: Some("Grok Relay".to_string()),
+        config: Some(config_b64),
+        config_format: Some("json".to_string()),
+        api_key: Some("new-key".to_string()),
+        endpoint: Some("https://new.example.com/v1".to_string()),
+        model: Some("grok-6".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).expect("merge");
+    // merge keeps the explicit URL params (they're already Some)
+    assert_eq!(merged.api_key.as_deref(), Some("new-key"));
+
+    let provider = build_provider_from_request(&AppType::GrokBuild, &merged).expect("build");
+    let toml_out = provider
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .expect("config string");
+
+    // Overrides applied to the selected profile
+    let cfg = crate::grok_config::extract_model_config(toml_out).expect("parse out");
+    assert_eq!(cfg.api_key.as_deref(), Some("new-key"));
+    assert_eq!(cfg.base_url, "https://new.example.com/v1");
+    assert_eq!(cfg.model, "grok-6");
+    // Unrelated custom key preserved (toml_edit keeps comments/ordering/keys)
+    assert!(
+        toml_out.contains("custom_field = \"keep\""),
+        "toml: {toml_out}"
+    );
+    // default profile name unchanged (only the model field was overridden)
+    assert!(
+        toml_out.contains("default = \"grok-5\""),
+        "toml: {toml_out}"
+    );
+}
+
+#[test]
+fn test_grokbuild_passthrough_no_override_is_verbatim() {
+    use super::provider::build_provider_from_request;
+
+    // Share-link shape: no explicit apiKey/endpoint/model params. merge
+    // backfills them from the TOML, so nothing differs and the passthrough
+    // must return the TOML verbatim.
+    let toml_str = "[models]\ndefault = \"grok-5\"\n\n[model.grok-5]\nmodel = \"grok-5\"\nbase_url = \"https://grok.example.com/v1\"\nname = \"Team Grok\"\napi_key = \"xai-key\"\napi_backend = \"anthropic\"\ncontext_window = 131072\n";
+    let config_json = serde_json::json!({ "config": toml_str }).to_string();
+    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("grokbuild".to_string()),
+        name: Some("Grok".to_string()),
+        config: Some(config_b64),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).expect("merge");
+    let provider = build_provider_from_request(&AppType::GrokBuild, &merged).expect("build");
+    let toml_out = provider
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .expect("config string");
+    assert_eq!(
+        toml_out, toml_str,
+        "TOML must be verbatim with no overrides"
     );
 }

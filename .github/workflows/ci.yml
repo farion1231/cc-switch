@@ -204,16 +204,40 @@ jobs:
           "CC_SWITCH_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Compile backend tests with native temp
-        # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
-        run: cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run
+        # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path,
+        # so the test binary is built here and its path is reused below. Cargo must not
+        # run again once TEMP is redirected, otherwise a relink would fail.
+        shell: pwsh
+        run: |
+          $artifacts = cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run --message-format json-render-diagnostics
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $executables = @(
+            $artifacts |
+              Where-Object { $_ -and $_.Trim().StartsWith('{') } |
+              ForEach-Object { ConvertFrom-Json $_ } |
+              Where-Object { $_.reason -eq 'compiler-artifact' -and $_.profile.test -and $_.executable } |
+              ForEach-Object { $_.executable }
+          )
+          if ($executables.Count -ne 1) {
+            throw "Expected exactly one lib test executable, got: $($executables -join ', ')"
+          }
+          "CC_SWITCH_WSL_TEST_BIN=$($executables[0])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $testBin = $env:CC_SWITCH_WSL_TEST_BIN
+          if (-not (Test-Path -LiteralPath $testBin)) {
+            throw "Prebuilt lib test executable is missing: $testBin"
+          }
+          # Mirror the search path cargo would set up for the test binary.
+          $env:PATH = "$(Split-Path -Parent $testBin);$env:PATH"
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = cargo test --lib --manifest-path src-tauri/Cargo.toml -- --ignored --list
+          $testList = & $testBin --ignored --list
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -221,7 +245,7 @@ jobs:
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
-          cargo test --lib --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
+          & $testBin $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
