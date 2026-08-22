@@ -386,8 +386,9 @@ fn upsert_mcp_server_table(
 /// None 导致删除**静默失效**——界面提示已移除，条目却还在文件里，Codex 下次启动照样
 /// 加载。这比 panic 更隐蔽，因为用户往往正是发现某个 MCP 有问题才来关它的。
 ///
-/// 与写入分离成纯 doc 级函数，使守卫可脱离真实 `~/.codex/config.toml` 单测。
-fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
+/// 与写入分离成纯 doc 级函数，使守卫可脱离真实 `~/.codex/config.toml` 单测，
+/// 也让代理接管备份里的同一张表复用同一套删除语义。
+pub(crate) fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
     if let Some(item) = doc.get_mut("mcp_servers") {
         // `Item::None` 是 toml_edit 的占位形态，不是用户写下的值——对它告警是噪音。
         // 必须在取可变借用之前算出来。

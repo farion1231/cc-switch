@@ -191,6 +191,14 @@ pub fn remove_server_from_grokbuild(id: &str) -> Result<(), AppError> {
             return Ok(());
         }
     };
+    remove_mcp_server_from_doc(&mut doc, id);
+    crate::config::write_text_file(&path, &doc.to_string())
+}
+
+/// 从 `[mcp_servers]` 中删除单个 MCP server。
+///
+/// 与写入分离成纯 doc 级函数，让代理接管备份里的同一张表复用同一套删除语义。
+pub(crate) fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
     // 与写入侧对称使用 as_table_like_mut：inline table 形态下 as_table_mut 返回
     // None，删除会静默失效——界面显示已移除，Grok Build 下次启动仍会加载它。
     if let Some(item) = doc.get_mut("mcp_servers") {
@@ -207,7 +215,6 @@ pub fn remove_server_from_grokbuild(id: &str) -> Result<(), AppError> {
             None => {}
         }
     }
-    crate::config::write_text_file(&path, &doc.to_string())
 }
 
 #[cfg(test)]

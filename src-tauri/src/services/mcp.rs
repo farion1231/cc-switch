@@ -159,6 +159,14 @@ impl McpService {
         // 从所有曾启用的应用中移除
         for app in server.apps.enabled_apps() {
             Self::remove_server_from_app(state, id, &app)?;
+            // 代理接管期间，接管前的整份 config.toml 快照存在 proxy_live_backup 里，
+            // 退出时原样写回。不同步摘掉这个条目，删除就会在退出后被撤销。
+            futures::executor::block_on(
+                state
+                    .proxy_service
+                    .remove_mcp_server_from_live_backup(&app, id),
+            )
+            .map_err(AppError::Message)?;
         }
         Ok(())
     }
