@@ -4576,7 +4576,9 @@ wire_api = "responses"
             .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
             .collect();
         assert_eq!(efforts, vec!["low", "high", "max"]);
-        assert_eq!(flash.get("supports_search_tool"), Some(&json!(true)));
+        // DeepSeek has no tool_search support; `true` makes Codex defer MCP
+        // tools behind tool search, so none can ever be called (#6647).
+        assert_eq!(flash.get("supports_search_tool"), Some(&json!(false)));
         assert_eq!(
             flash.get("web_search_tool_type").and_then(|v| v.as_str()),
             Some("text")
