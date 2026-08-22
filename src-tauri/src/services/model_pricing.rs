@@ -488,7 +488,7 @@ fn is_models_dev_response_too_large(len: usize) -> bool {
 /// 返回原始 JSON 字符串，由前端解析为 ModelsDevResponse。
 pub async fn fetch_models_dev_pricing() -> Result<String, String> {
     let client = crate::proxy::http_client::get();
-    let response = client
+    let mut response = client
         .get(MODELS_DEV_API_URL)
         .timeout(Duration::from_secs(MODELS_DEV_FETCH_TIMEOUT_SECS))
         .send()
@@ -508,18 +508,32 @@ pub async fn fetch_models_dev_pricing() -> Result<String, String> {
         }
     }
 
-    let body = response
-        .bytes()
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| format!("Failed to read models.dev response: {e}"))?;
-    if is_models_dev_response_too_large(body.len()) {
-        return Err(format!(
-            "models.dev response too large: {} bytes (max {MODELS_DEV_MAX_RESPONSE_BYTES})",
-            body.len()
-        ));
+        .map_err(|e| format!("Failed to read models.dev response: {e}"))?
+    {
+        if append_models_dev_chunk(&mut buf, &chunk).is_err() {
+            return Err(format!(
+                "models.dev response too large: {} bytes (max {MODELS_DEV_MAX_RESPONSE_BYTES})",
+                buf.len()
+            ));
+        }
     }
 
-    Ok(String::from_utf8_lossy(&body).into_owned())
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// 追加一个 chunk 并判断累计大小是否超限（读取过程中即时生效，避免 chunked 响应被整体缓冲）
+fn append_models_dev_chunk(buf: &mut Vec<u8>, chunk: &[u8]) -> Result<(), ()> {
+    if buf.len() > MODELS_DEV_MAX_RESPONSE_BYTES || chunk.len() > MODELS_DEV_MAX_RESPONSE_BYTES - buf.len() {
+        // 超限时仍追加 chunk，便于调用方报告真实累计字节数
+        buf.extend_from_slice(chunk);
+        return Err(());
+    }
+    buf.extend_from_slice(chunk);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -819,5 +833,28 @@ mod tests {
         assert!(is_models_dev_response_too_large(
             MODELS_DEV_MAX_RESPONSE_BYTES + 1
         ));
+    }
+
+    #[test]
+    fn append_chunk_accumulates_within_limit() {
+        let mut buf = Vec::new();
+        append_models_dev_chunk(&mut buf, b"hello").expect("within limit");
+        append_models_dev_chunk(&mut buf, b" world").expect("within limit");
+        assert_eq!(buf, b"hello world");
+    }
+
+    #[test]
+    fn append_chunk_accepts_exactly_limit() {
+        let mut buf = vec![0u8; MODELS_DEV_MAX_RESPONSE_BYTES - 1];
+        append_models_dev_chunk(&mut buf, &[1u8])
+            .expect("exactly at limit should not overflow");
+        assert_eq!(buf.len(), MODELS_DEV_MAX_RESPONSE_BYTES);
+    }
+
+    #[test]
+    fn append_chunk_rejects_over_limit() {
+        let mut buf = vec![0u8; MODELS_DEV_MAX_RESPONSE_BYTES];
+        assert!(append_models_dev_chunk(&mut buf, &[1u8; 1024]).is_err());
+        assert_eq!(buf.len(), MODELS_DEV_MAX_RESPONSE_BYTES + 1024);
     }
 }
