@@ -755,7 +755,7 @@ fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
+pub(crate) fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
     // Canonical parser lives in codex_config; keep this thin alias so the
     // proxy hot path and the usage-credential resolver share one implementation.
     crate::codex_config::extract_codex_base_url(config_text)
