@@ -265,7 +265,7 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(document.activeElement).toBe(currentInput);
   });
 
-  it("代理模式始终渲染 Sonnet / Opus / Fable / Haiku 四档（即使只配了一档）", () => {
+  it("代理模式保留超过四条的独立模型路由", () => {
     renderForm({
       name: "Proxy Provider",
       settingsConfig: {
@@ -277,23 +277,62 @@ describe("ClaudeDesktopProviderForm", () => {
       meta: {
         claudeDesktopMode: "proxy",
         claudeDesktopModelRoutes: {
-          "claude-sonnet-4-6": { model: "upstream-sonnet" },
+          "claude-sonnet-5": { model: "upstream-sonnet" },
+          "claude-opus-5": { model: "upstream-opus" },
+          "claude-fable-5": { model: "upstream-fable" },
+          "claude-haiku-4-5": { model: "upstream-haiku" },
+          "claude-sonnet-5-r2": { model: "upstream-extra" },
         },
       },
     });
 
-    // 固定四档：每档各一个「菜单显示名」输入框，无论初始只配了几档。
-    // Haiku 档的占位示例是 "DeepSeek V4 Flash"、其余三档是 "DeepSeek V4 Pro"
-    // （见组件的 role-consistent 占位逻辑），故用正则同时匹配两种占位、数满四档。
-    expect(
-      screen.getAllByPlaceholderText(/DeepSeek V4 (Pro|Flash)/),
-    ).toHaveLength(4);
+    expect(screen.getAllByPlaceholderText("DeepSeek V4 Pro")).toHaveLength(5);
   });
 
-  it("代理模式初始无路由且默认路由未就绪时不渲染空四档", () => {
+  it("调整模型角色后按新角色保存映射", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+            ANTHROPIC_AUTH_TOKEN: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-a", labelOverride: "A" },
+            "claude-sonnet-5-r2": { model: "upstream-b", labelOverride: "B" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    // 第二个模型（Sonnet 2）改选 Haiku 角色，保存后映射键应跟随角色变化。
+    await user.click(screen.getByRole("combobox", { name: "模型角色 2" }));
+    await user.click(
+      await screen.findByRole("option", { name: /Haiku · claude-haiku-4-5$/ }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(
+      Object.keys(onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes),
+    ).toEqual(["claude-sonnet-5", "claude-haiku-4-5"]);
+    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes).toEqual({
+      "claude-sonnet-5": { model: "upstream-a", labelOverride: "A" },
+      "claude-haiku-4-5": { model: "upstream-b", labelOverride: "B" },
+    });
+  });
+
+  it("代理模式初始无路由且默认路由未就绪时不渲染空模型", () => {
     // mock 的 getClaudeDesktopDefaultRoutes 返回 []，模拟默认路由尚未就绪。
-    // 修复前：normalizeProxyRows([]) 会渲染空行并把 routes.length 撑起来，
-    // 永久挡住 seed effect 的默认路由回填。修复后应保持空、等待 seed。
+    // 应保持空、等待 seed effect 的默认路由回填。
     renderForm({
       name: "Proxy Provider",
       settingsConfig: {
@@ -311,7 +350,7 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(screen.queryAllByPlaceholderText("DeepSeek V4 Pro")).toHaveLength(0);
   });
 
-  it("保存模型映射时补齐固定四档并把留空档回填为 Sonnet 模型", async () => {
+  it("保存模型映射时只保留已配置的模型", async () => {
     const onSubmit = vi.fn();
     renderForm(
       {
@@ -338,28 +377,16 @@ describe("ClaudeDesktopProviderForm", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0][0];
-    // claude-old 迁移到 Sonnet；留空的 Opus / Fable / Haiku 回填为 Sonnet 的
-    // 上游模型，保证落库四档齐全，子 agent 调用的各档始终可解析。
-    expect(submitted.meta.claudeDesktopModelRoutes).toMatchObject({
+    // 旧的非安全路由迁移到安全 Sonnet 别名，但不再伪造其它角色的重复模型。
+    expect(submitted.meta.claudeDesktopModelRoutes).toEqual({
       "claude-sonnet-5": {
         model: "upstream-old",
         labelOverride: "upstream-old",
       },
-      "claude-opus-5": { model: "upstream-old" },
-      "claude-fable-5": { model: "upstream-old" },
-      "claude-haiku-4-5": { model: "upstream-old" },
     });
-    expect(Object.keys(submitted.meta.claudeDesktopModelRoutes).sort()).toEqual(
-      [
-        "claude-fable-5",
-        "claude-haiku-4-5",
-        "claude-opus-5",
-        "claude-sonnet-5",
-      ],
-    );
   });
 
-  it("回填空档时继承 Sonnet 的 1M 声明", async () => {
+  it("保存单一 1M 模型时保留其 1M 声明", async () => {
     const onSubmit = vi.fn();
     renderForm(
       {
@@ -384,19 +411,13 @@ describe("ClaudeDesktopProviderForm", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const routes = onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes;
-    // 留空的 Opus / Haiku 回填同一上游模型，1M 声明应与 Sonnet 一致。
-    expect(routes["claude-sonnet-5"]).toMatchObject({
+    // 合法的 claude-* 别名（含旧版官方 ID）原样保留，不再复制模型到其它角色；
+    // 后端会把缺少角色的后台请求回退到此主模型。
+    expect(routes["claude-sonnet-4-6"]).toMatchObject({
       model: "deepseek-v4-pro",
       supports1m: true,
     });
-    expect(routes["claude-opus-5"]).toMatchObject({
-      model: "deepseek-v4-pro",
-      supports1m: true,
-    });
-    expect(routes["claude-haiku-4-5"]).toMatchObject({
-      model: "deepseek-v4-pro",
-      supports1m: true,
-    });
+    expect(Object.keys(routes)).toEqual(["claude-sonnet-4-6"]);
   });
 
   it("保存直连模型列表时不会保留旧 route 作为隐藏映射目标", async () => {
