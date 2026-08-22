@@ -3245,5 +3245,32 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "sessionRoutes": {
+    "title": "Session Routing",
+    "config": "Routing Config",
+    "enable": "Enable Session Routing",
+    "enableDesc": "Assign independent API providers per terminal session",
+    "strategy": "Strategy",
+    "strategyDesc": "How to assign providers for new sessions",
+    "roundRobin": "Round Robin",
+    "leastLoaded": "Least Loaded",
+    "ttl": "Session TTL",
+    "ttlDesc": "Auto-cleanup idle sessions after inactivity",
+    "seconds": "seconds",
+    "noConfig": "Unable to load config",
+    "configUpdated": "Configuration updated",
+    "providerLoad": "Provider Load",
+    "noLoadData": "No load data available",
+    "activeSessions": "Active Sessions",
+    "noSessions": "No active sessions",
+    "requests": "requests",
+    "failovers": "failovers",
+    "justNow": "just now",
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "cleanup": "Cleanup Expired",
+    "cleanedUp": "Cleaned up {{count}} expired sessions",
+    "providerAssigned": "Provider assigned for this session"
   }
 }

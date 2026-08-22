@@ -422,6 +422,50 @@ impl Database {
             [],
         );
 
+        // Session 路由表（v18 特性，但保持 SCHEMA_VERSION=16 与正式版兼容，
+        // 因此在 create_tables 无条件创建而非走版本迁移）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_routes (
+                session_id    TEXT NOT NULL,
+                app_type      TEXT NOT NULL,
+                provider_id   TEXT NOT NULL,
+                assigned_at   INTEGER NOT NULL,
+                last_used_at  INTEGER NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                failover_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_routes_last_used
+             ON session_routes(last_used_at)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_routes_provider
+             ON session_routes(app_type, provider_id)",
+            [],
+        );
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_routing_config (
+                app_type          TEXT PRIMARY KEY,
+                enabled           INTEGER NOT NULL DEFAULT 0,
+                strategy          TEXT NOT NULL DEFAULT 'round_robin',
+                session_ttl_seconds INTEGER NOT NULL DEFAULT 3600,
+                max_sessions_per_provider INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO session_routing_config (app_type)
+             VALUES ('claude'), ('codex'), ('gemini'), ('grokbuild')",
+            [],
+        );
+
         Ok(())
     }
 
@@ -535,6 +579,11 @@ impl Database {
                         log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（添加 Session 路由表）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1562,6 +1611,38 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
+    }
+
+    /// 迁移 v17 → v18：添加 Session 路由表
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_routes (
+                session_id    TEXT NOT NULL,
+                app_type      TEXT NOT NULL,
+                provider_id   TEXT NOT NULL,
+                assigned_at   INTEGER NOT NULL,
+                last_used_at  INTEGER NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                failover_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, app_type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_routes_last_used
+                ON session_routes(last_used_at);
+            CREATE INDEX IF NOT EXISTS idx_session_routes_provider
+                ON session_routes(app_type, provider_id);
+
+            CREATE TABLE IF NOT EXISTS session_routing_config (
+                app_type          TEXT PRIMARY KEY,
+                enabled           INTEGER NOT NULL DEFAULT 0,
+                strategy          TEXT NOT NULL DEFAULT 'round_robin',
+                session_ttl_seconds INTEGER NOT NULL DEFAULT 3600,
+                max_sessions_per_provider INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT OR IGNORE INTO session_routing_config (app_type)
+                VALUES ('claude'), ('codex'), ('gemini'), ('grokbuild');",
+        )
+        .map_err(|error| AppError::Database(format!("创建 Session 路由表失败: {error}")))?;
         Ok(())
     }
 

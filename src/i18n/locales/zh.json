@@ -3245,5 +3245,32 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "sessionRoutes": {
+    "title": "Session 路由",
+    "config": "路由配置",
+    "enable": "启用 Session 路由",
+    "enableDesc": "为每个终端会话分配独立的 API 供应商",
+    "strategy": "分配策略",
+    "strategyDesc": "新 session 分配供应商的方式",
+    "roundRobin": "轮转分配",
+    "leastLoaded": "最少负载",
+    "ttl": "会话过期时间",
+    "ttlDesc": "Session 无活动后自动清理",
+    "seconds": "秒",
+    "noConfig": "无法加载配置",
+    "configUpdated": "配置已更新",
+    "providerLoad": "供应商负载",
+    "noLoadData": "暂无负载数据",
+    "activeSessions": "活跃会话",
+    "noSessions": "暂无活跃会话",
+    "requests": "次请求",
+    "failovers": "次故障转移",
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "cleanup": "清理过期",
+    "cleanedUp": "已清理 {{count}} 个过期会话",
+    "providerAssigned": "已为该会话指定供应商"
   }
 }

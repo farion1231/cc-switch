@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   Loader2,
   RefreshCw,
+  Route,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -96,6 +97,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
+import { SessionRoutingPage } from "@/components/sessions/SessionRoutingPage";
 import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
@@ -123,6 +125,7 @@ type View =
   | "agents"
   | "universal"
   | "sessions"
+  | "sessionRouting"
   | "workspace"
   | "openclawEnv"
   | "openclawTools"
@@ -158,6 +161,7 @@ const VALID_VIEWS: View[] = [
   "agents",
   "universal",
   "sessions",
+  "sessionRouting",
   "workspace",
   "openclawEnv",
   "openclawTools",
@@ -1079,6 +1083,8 @@ function App() {
               appId={sharedFeatureApp}
             />
           );
+        case "sessionRouting":
+          return <SessionRoutingPage />;
         case "workspace":
           return <WorkspaceFilesPanel />;
         case "openclawEnv":
@@ -1312,6 +1318,7 @@ function App() {
                       defaultValue: "统一供应商",
                     })}
                   {currentView === "sessions" && t("sessionManager.title")}
+                  {currentView === "sessionRouting" && t("sessionRoutes.title")}
                   {currentView === "workspace" && t("workspace.title")}
                   {currentView === "openclawEnv" && t("openclaw.env.title")}
                   {currentView === "openclawTools" && t("openclaw.tools.title")}
@@ -1668,6 +1675,15 @@ function App() {
                               >
                                 <History className="w-4 h-4" />
                               </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("sessionRouting")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("sessionRoutes.title")}
+                              >
+                                <Route className="w-4 h-4" />
+                              </Button>
                             </>
                           ) : (
                             <>
@@ -1709,6 +1725,15 @@ function App() {
                                 title={t("sessionManager.title")}
                               >
                                 <History className="flex-shrink-0 w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("sessionRouting")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("sessionRoutes.title")}
+                              >
+                                <Route className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               {hasMcpSupport && (
                                 <Button

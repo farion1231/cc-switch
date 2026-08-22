@@ -1019,13 +1019,18 @@ mod tests {
     }
 
     fn build_state(db: Arc<Database>) -> ProxyState {
+        let provider_router = Arc::new(ProviderRouter::new(db.clone()));
         ProxyState {
             db: db.clone(),
             config: Arc::new(RwLock::new(ProxyConfig::default())),
             status: Arc::new(RwLock::new(ProxyStatus::default())),
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
-            provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            provider_router: provider_router.clone(),
+            session_router: Arc::new(crate::proxy::session_router::SessionRouter::new(
+                db.clone(),
+                provider_router,
+            )),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
