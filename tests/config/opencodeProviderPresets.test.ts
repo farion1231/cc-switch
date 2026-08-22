@@ -93,3 +93,46 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     }
   });
 });
+
+describe("OpenCode Go usage script", () => {
+  it("maps the official usage payload to three complete windows", () => {
+    const preset = opencodeProviderPresets.find(
+      (item) => item.name === "OpenCode Go",
+    );
+    expect(preset?.meta?.usage_script).toBeDefined();
+
+    const script = JSON.parse(preset!.meta!.usage_script!.code);
+    expect(script.request.url).toBe("{{baseUrl}}/usage");
+    expect(
+      script.request.url.replace(
+        "{{baseUrl}}",
+        preset!.settingsConfig.options.baseURL,
+      ),
+    ).toBe("https://opencode.ai/zen/go/v1/usage");
+
+    const extractor = new Function(`return (${script.extractor})`)();
+    const now = Date.now();
+    const response = {
+      usage: {
+        rolling: {
+          percent: 0,
+          resetsAt: new Date(now + 4 * 3600000 + 59 * 60000 + 30000),
+        },
+        weekly: {
+          percent: 19,
+          resetsAt: new Date(now + 6 * 86400000 + 3 * 3600000 + 1800000),
+        },
+        monthly: {
+          percent: 5,
+          resetsAt: new Date(now + 21 * 86400000 + 7 * 3600000 + 1800000),
+        },
+      },
+    };
+
+    expect(extractor(response)).toEqual({
+      isValid: true,
+      planName: "OpenCode Go",
+      extra: "5h:0%4h59m 7d:19%6d3h 30d:5%21d7h",
+    });
+  });
+});
