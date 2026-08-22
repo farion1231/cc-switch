@@ -2025,6 +2025,18 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     iconColor: "#6566F1",
   },
   {
+    name: "OrcaRouter",
+    websiteUrl: "https://www.orcarouter.ai",
+    apiKeyUrl: "https://www.orcarouter.ai",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "orcarouter",
+      "https://api.orcarouter.ai/v1",
+      "anthropic/claude-sonnet-5",
+    ),
+    category: "aggregator",
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",
