@@ -29,6 +29,38 @@ interface EditProviderDialogProps {
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
 
+const KIMI_MODEL_ENV_KEYS = [
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+] as const;
+
+const KIMI_CONTEXT_ENV_KEYS = [
+  "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+] as const;
+
+function getKimiInjectedContextDefault(
+  storedEnv: Record<string, unknown>,
+): "262144" | "1048576" {
+  let sawModel = false;
+  for (const key of KIMI_MODEL_ENV_KEYS) {
+    const value = storedEnv[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string") return "262144";
+
+    const model = value.trim();
+    if (!model) continue;
+    sawModel = true;
+    if (model.toLowerCase() !== "k3[1m]") return "262144";
+  }
+
+  return sawModel ? "1048576" : "262144";
+}
+
 export function EditProviderDialog({
   open,
   provider,
@@ -185,6 +217,48 @@ export function EditProviderDialog({
       string,
       unknown
     >;
+
+    const storedClaudeEnv =
+      provider?.settingsConfig?.env &&
+      typeof provider.settingsConfig.env === "object"
+        ? (provider.settingsConfig.env as Record<string, unknown>)
+        : undefined;
+    const isKimiCodingProvider =
+      appId === "claude" &&
+      typeof storedClaudeEnv?.ANTHROPIC_BASE_URL === "string" &&
+      storedClaudeEnv.ANTHROPIC_BASE_URL.trim().replace(/\/+$/, "") ===
+        "https://api.kimi.com/coding";
+
+    // Keep this derivation symmetric with the backend's Kimi injection logic.
+    // Only strip a live value proven to be generated: the provider did not
+    // store the key and the value exactly matches its model-specific default.
+    // Any other live value may be a manual edit and must survive round-trip.
+    if (
+      isKimiCodingProvider &&
+      liveSettings &&
+      provider?.settingsConfig &&
+      typeof provider.settingsConfig === "object"
+    ) {
+      const merged = { ...base };
+      const liveEnv =
+        base.env && typeof base.env === "object"
+          ? { ...(base.env as Record<string, unknown>) }
+          : {};
+      const storedEnv = storedClaudeEnv ?? {};
+      const injectedDefault = getKimiInjectedContextDefault(storedEnv);
+
+      for (const key of KIMI_CONTEXT_ENV_KEYS) {
+        if (
+          !Object.prototype.hasOwnProperty.call(storedEnv, key) &&
+          liveEnv[key] === injectedDefault
+        ) {
+          delete liveEnv[key];
+        }
+      }
+
+      merged.env = liveEnv;
+      return merged;
+    }
 
     // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
     // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
