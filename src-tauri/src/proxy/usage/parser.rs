@@ -191,15 +191,13 @@ impl TokenUsage {
                                 .and_then(|v| v.as_u64())
                                 .map(|v| v as u32);
 
-                            // 部分 Anthropic-compatible SSE provider 会在 message_start 上报完整上下文，
-                            // 但在 message_delta 上报修正后的 fresh input。遇到更小的正数 delta input
-                            // 时采用 delta；若同一 usage 块带有缓存计数，也同步采用以避免重复计数。
-                            // 若 delta 缺少缓存字段，则保留 start 中已有的缓存值作为 best-effort fallback。
+                            // 原生 Anthropic 语义下，非零 message_start input_tokens 是该请求的
+                            // 权威输入计数，不应仅因为后续 delta 值更小就被覆盖。
+                            // 仅当 start 未提供有效输入（0/缺失）时，才回退到 delta-only provider
+                            // 的 usage；一旦进入 delta 模式，后续 delta 仍可继续更新同一组计数。
                             if let Some(input) = delta_input {
-                                let should_use_delta_input = input > 0
-                                    && (usage.input_tokens == 0
-                                        || input < usage.input_tokens
-                                        || (input_from_delta && input <= usage.input_tokens));
+                                let should_use_delta_input =
+                                    input > 0 && (usage.input_tokens == 0 || input_from_delta);
 
                                 if should_use_delta_input {
                                     usage.input_tokens = input;
@@ -861,9 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_stream_prefers_smaller_delta_input_and_cache_pair() {
-        // 部分 Anthropic-compatible provider 会在 message_start 给出包含缓存的总上下文，
-        // 再在 message_delta 给出修正后的 fresh input，需要以 delta usage 为准。
+    fn test_claude_stream_keeps_nonzero_start_when_delta_input_is_smaller() {
         let events = vec![
             json!({
                 "type": "message_start",
@@ -888,33 +884,31 @@ mod tests {
         ];
 
         let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
-        assert_eq!(usage.input_tokens, 80_000);
+        assert_eq!(usage.input_tokens, 200_000);
         assert_eq!(usage.output_tokens, 1_000);
-        assert_eq!(usage.cache_read_tokens, 120_000);
-        assert_eq!(usage.cache_creation_tokens, 500);
+        assert_eq!(usage.cache_read_tokens, 180_000);
+        assert_eq!(usage.cache_creation_tokens, 2_000);
         assert_eq!(usage.model, Some("qwen-max".to_string()));
     }
 
     #[test]
-    fn test_claude_stream_updates_cache_pair_from_later_delta_input() {
-        // 有些 provider 会多次发送带 input 的 message_delta；一旦采用过 delta input，
-        // 后续相同/更小 input 的 delta 应继续更新同一块里的缓存计数。
+    fn test_claude_stream_updates_delta_only_usage_from_later_delta() {
         let events = vec![
             json!({
                 "type": "message_start",
                 "message": {
                     "model": "qwen-max",
                     "usage": {
-                        "input_tokens": 200_000,
-                        "cache_read_input_tokens": 180_000,
-                        "cache_creation_input_tokens": 2_000
+                        "input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
                     }
                 }
             }),
             json!({
                 "type": "message_delta",
                 "usage": {
-                    "input_tokens": 80_000,
+                    "input_tokens": 90_000,
                     "output_tokens": 100,
                     "cache_read_input_tokens": 110_000,
                     "cache_creation_input_tokens": 300
@@ -937,6 +931,34 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 120_000);
         assert_eq!(usage.cache_creation_tokens, 500);
         assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_preserves_start_usage_for_reported_regression() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "usage": {
+                        "input_tokens": 233_535,
+                        "cache_read_input_tokens": 10_240
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 89_828,
+                    "output_tokens": 176,
+                    "cache_read_input_tokens": 10_240
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 233_535);
+        assert_eq!(usage.output_tokens, 176);
+        assert_eq!(usage.cache_read_tokens, 10_240);
     }
 
     #[test]
