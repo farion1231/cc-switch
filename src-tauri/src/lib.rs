@@ -1200,6 +1200,9 @@ pub fn run() {
                 }
             }
 
+            // 启动系统代理监视器：运行期动态跟随系统代理 / 环境变量变化
+            crate::proxy::proxy_watcher::spawn();
+
             // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

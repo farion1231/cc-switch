@@ -2238,8 +2238,8 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 获取全局代理 URL
-        let upstream_proxy_url: Option<String> = super::http_client::get_current_proxy_url();
+        // 获取全局代理 URL（命中 NO_PROXY / ProxyOverride 绕过列表的本地/内网目标直接走直连）
+        let upstream_proxy_url: Option<String> = super::http_client::get_proxy_for_url(&url);
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
