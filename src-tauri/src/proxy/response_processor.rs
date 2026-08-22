@@ -13,7 +13,7 @@ use super::{
     usage::parser::TokenUsage,
     ProxyError,
 };
-use crate::database::PRICING_SOURCE_REQUEST;
+use crate::{app_config::AppType, database::PRICING_SOURCE_REQUEST};
 use axum::http::{header::HeaderMap, HeaderName};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -183,6 +183,12 @@ pub async fn handle_streaming(
 
     // 创建字节流
     let stream = response.bytes_stream();
+    let stream: std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
+        if matches!(ctx.app_type, AppType::Codex | AppType::GrokBuild) {
+            Box::pin(super::providers::codex_responses_sse::sanitize_capacity_shed_stream(stream))
+        } else {
+            Box::pin(stream)
+        };
 
     // 创建使用量收集器；关闭 usage logging 时不要在流式热路径上解析每个 SSE event。
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);

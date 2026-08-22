@@ -128,7 +128,8 @@ impl Database {
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
-            max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+            max_retries INTEGER NOT NULL DEFAULT 3, retry_rules_json TEXT NOT NULL DEFAULT '[]',
+            streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
             circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
             circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
@@ -535,6 +536,11 @@ impl Database {
                         log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（添加特定错误重试规则）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1562,6 +1568,20 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
+    }
+
+    /// v17 -> v18: persist per-app retry rules as JSON.
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "retry_rules_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
         Ok(())
     }
 
@@ -3407,6 +3427,30 @@ mod tests {
              VALUES ('pi_session', 'request', 'semantic', 1)",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_adds_retry_rules() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("ALTER TABLE proxy_config DROP COLUMN retry_rules_json", [])?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_config",
+            "retry_rules_json"
+        )?);
+        let value: String = conn.query_row(
+            "SELECT retry_rules_json FROM proxy_config WHERE app_type = 'codex'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(value, "[]");
         Ok(())
     }
 }
