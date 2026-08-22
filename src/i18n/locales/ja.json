@@ -1073,6 +1073,8 @@
     "subtitle": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
     "searchSessions": "セッションを検索",
+    "searchingContent": "セッション内容を検索中",
+    "jumpToMatch": "一致箇所へ移動",
     "providerFilterAll": "すべて",
     "providerFilterTooltip": "プロバイダーフィルター",
     "sessionList": "セッション一覧",
