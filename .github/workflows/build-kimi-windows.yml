@@ -1,0 +1,69 @@
+name: Build Windows MSI (Kimi fork)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/kimi-cli
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-kimi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate ephemeral updater signing key
+        shell: pwsh
+        run: |
+          pnpm exec tauri signer generate -w "$env:RUNNER_TEMP\updater.key" --password "" --force
+          $key = Get-Content "$env:RUNNER_TEMP\updater.key" -Raw
+          "TAURI_SIGNING_PRIVATE_KEY<<KEYEOF" >> $env:GITHUB_ENV
+          Add-Content $env:GITHUB_ENV $key
+          "KEYEOF" >> $env:GITHUB_ENV
+          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> $env:GITHUB_ENV
+
+      - name: Build Tauri app (Windows x64)
+        run: pnpm tauri build
+
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: cc-switch-kimi-windows-x64-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: cc-switch-kimi-windows-x64-nsis
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
