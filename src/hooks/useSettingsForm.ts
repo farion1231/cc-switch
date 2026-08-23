@@ -126,6 +126,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
       piConfigDir: sanitizeDir(data.piConfigDir),
+      kimiConfigDir: sanitizeDir(data.kimiConfigDir),
       // 补全可见性默认：旧配置缺失或字段被清空时，保存设置不会把
       // 新应用的可见性一起丢成 false/undefined（如 Kimi）
       visibleApps: {
@@ -208,6 +209,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
         openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
         piConfigDir: sanitizeDir(serverData.piConfigDir),
+        kimiConfigDir: sanitizeDir(serverData.kimiConfigDir),
         language: normalizedLanguage,
       };
 
