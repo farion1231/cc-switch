@@ -527,7 +527,9 @@ pub async fn fetch_models_dev_pricing() -> Result<String, String> {
 
 /// 追加一个 chunk 并判断累计大小是否超限（读取过程中即时生效，避免 chunked 响应被整体缓冲）
 fn append_models_dev_chunk(buf: &mut Vec<u8>, chunk: &[u8]) -> Result<(), ()> {
-    if buf.len() > MODELS_DEV_MAX_RESPONSE_BYTES || chunk.len() > MODELS_DEV_MAX_RESPONSE_BYTES - buf.len() {
+    if buf.len() > MODELS_DEV_MAX_RESPONSE_BYTES
+        || chunk.len() > MODELS_DEV_MAX_RESPONSE_BYTES - buf.len()
+    {
         // 超限时仍追加 chunk，便于调用方报告真实累计字节数
         buf.extend_from_slice(chunk);
         return Err(());
@@ -846,8 +848,7 @@ mod tests {
     #[test]
     fn append_chunk_accepts_exactly_limit() {
         let mut buf = vec![0u8; MODELS_DEV_MAX_RESPONSE_BYTES - 1];
-        append_models_dev_chunk(&mut buf, &[1u8])
-            .expect("exactly at limit should not overflow");
+        append_models_dev_chunk(&mut buf, &[1u8]).expect("exactly at limit should not overflow");
         assert_eq!(buf.len(), MODELS_DEV_MAX_RESPONSE_BYTES);
     }
 
