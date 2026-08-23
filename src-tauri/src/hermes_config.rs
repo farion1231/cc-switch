@@ -937,10 +937,17 @@ pub fn apply_switch_defaults(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
+    let new_base_url = settings_config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let current = get_model_config()?.unwrap_or_default();
     let merged = HermesModelConfig {
         default: first_model_id.or(current.default.clone()),
         provider: Some(provider_id.to_string()),
+        base_url: new_base_url.or(current.base_url),
         ..current
     };
     set_model_config(&merged)
@@ -2024,6 +2031,7 @@ custom_providers:
             let model = get_model_config().unwrap().unwrap();
             assert_eq!(model.default.as_deref(), Some("primary-model"));
             assert_eq!(model.provider.as_deref(), Some("demo"));
+            assert_eq!(model.base_url.as_deref(), Some("https://api.example.com/v1"));
         });
     }
 
