@@ -145,6 +145,7 @@ pub async fn get_config_status(
                 exists: config_path.exists(),
                 path,
             })
+        }
         AppType::Kimi => {
             let config_path = crate::kimi_config::get_kimi_config_path();
             let exists = config_path.exists();

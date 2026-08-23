@@ -171,6 +171,7 @@ impl SkillApps {
         }
         if self.pi {
             apps.push(AppType::Pi);
+        }
         if self.kimi {
             apps.push(AppType::Kimi);
         }
@@ -447,7 +448,7 @@ impl AppType {
         matches!(
             self,
             AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi
+            | AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi
         )
     }
 
@@ -484,15 +485,11 @@ impl FromStr for AppType {
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
-            other => Err(AppError::localized(
-                "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi."),
             "kimi" => Ok(AppType::Kimi),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, kimi。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, kimi."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, kimi。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, kimi."),
             )),
         }
     }
@@ -761,6 +758,10 @@ impl MultiAppConfig {
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
             AppType::Hermes => &self.mcp.hermes,
+            AppType::Pi => {
+                static EMPTY_MCP: std::sync::OnceLock<McpConfig> = std::sync::OnceLock::new();
+                EMPTY_MCP.get_or_init(McpConfig::default)
+            }
             AppType::Kimi => &self.mcp.kimi,
         }
     }
@@ -776,6 +777,8 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
             AppType::Hermes => &mut self.mcp.hermes,
+            // Pi core has no native MCP registry; no mutable config exists.
+            AppType::Pi => unreachable!("Pi has no native MCP registry"),
             AppType::Kimi => &mut self.mcp.kimi,
         }
     }

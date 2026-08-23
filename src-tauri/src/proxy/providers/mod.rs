@@ -207,14 +207,12 @@ impl ProviderType {
                 ProviderType::Gemini
             }
             AppType::GrokBuild => ProviderType::Codex,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
-            AppType::Pi => return None,
-        };
-        Some(provider_type)
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi => {
                 ProviderType::Codex
             }
-        }
+            AppType::Pi => return None,
+        };
+        Some(provider_type)
     }
 
     /// 转换为字符串表示
@@ -267,13 +265,11 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
-        AppType::Pi => return None,
-    })
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi => {
             Box::new(CodexAdapter::new())
         }
-    }
+        AppType::Pi => return None,
+    })
 }
 
 /// 根据 ProviderType 获取对应的适配器

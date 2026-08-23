@@ -59,7 +59,6 @@ interface ProviderActionsProps {
   isStateChangeProtected?: boolean;
   defaultModelOptions?: OpenClawDefaultModelOption[];
   onSetAsDefault?: (modelId?: string) => void;
-  onSetAsDefault?: () => void;
   /** 无可用模型（如 Kimi provider 未配置任何模型）：禁用"设为默认"并提示 */
   setAsDefaultDisabled?: boolean;
 }
@@ -358,10 +357,8 @@ export function ProviderActions({
                   ? undefined
                   : () => onSetAsDefault(defaultModelOptions[0]?.id)
               }
-              disabled={isDefaultModel}
-              className={defaultButtonClassName}
-              onClick={isDefaultModel ? undefined : onSetAsDefault}
               disabled={isDefaultModel || setAsDefaultDisabled}
+              className={defaultButtonClassName}
               title={
                 setAsDefaultDisabled
                   ? t("provider.setAsDefaultNoModels", {
@@ -369,12 +366,6 @@ export function ProviderActions({
                     })
                   : undefined
               }
-              className={cn(
-                "w-fit px-2.5",
-                isDefaultModel || setAsDefaultDisabled
-                  ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
-                  : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
-              )}
             >
               <Zap className="h-4 w-4" />
               {isDefaultModel ? activeLabel : inactiveLabel}

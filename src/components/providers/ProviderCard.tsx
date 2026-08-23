@@ -4,9 +4,6 @@ import {
   GripVertical,
   ChevronDown,
   ChevronUp,
-  GripVertical,
-  ChevronDown,
-  ChevronUp,
   TriangleAlert,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -84,7 +81,6 @@ interface ProviderCardProps {
   isRemovalProtected?: boolean;
   isStateChangeProtected?: boolean;
   onSetAsDefault?: (modelId?: string) => void;
-  onSetAsDefault?: () => void;
   /** 可选：显示在卡片上的模型名（如 Kimi 当前默认模型） */
   modelLabel?: string;
   /** 可选：无可用模型时禁用"设为默认"并在卡片上提示 */
@@ -606,7 +602,6 @@ export function ProviderCard({
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
             ) : null}
-            )}
 
             {modelLabel && (
               <div

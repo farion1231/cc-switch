@@ -4,8 +4,7 @@ pub mod terminal;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode, pi};
-use providers::{claude, codex, gemini, grokbuild, hermes, kimi, openclaw, opencode};
+use providers::{claude, codex, gemini, grokbuild, hermes, kimi, openclaw, opencode, pi};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

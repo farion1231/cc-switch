@@ -1403,6 +1403,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
             ));
+        }
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Kimi provider '{}' written to live config", provider.id);
@@ -1811,8 +1812,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi
+        | AppType::Kimi => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

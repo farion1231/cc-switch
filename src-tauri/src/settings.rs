@@ -632,6 +632,11 @@ impl AppSettings {
 
         self.pi_config_dir = self
             .pi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
         self.kimi_config_dir = self
             .kimi_config_dir
             .as_ref()
@@ -971,6 +976,8 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .pi_config_dir
         .as_ref()
         .map(|path| resolve_override_path(path))
+}
+
 pub fn get_kimi_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings

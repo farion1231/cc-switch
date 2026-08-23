@@ -11,8 +11,8 @@ export type AppType =
   | "opencode"
   | "openclaw"
   | "hermes"
-  | "pi";
-  | "kimi";
+  | "pi" |
+  "kimi";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {

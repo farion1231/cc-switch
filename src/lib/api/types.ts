@@ -8,5 +8,5 @@ export type AppId =
   | "opencode"
   | "openclaw"
   | "hermes"
-  | "pi";
-  | "kimi";
+  | "pi" |
+  "kimi";

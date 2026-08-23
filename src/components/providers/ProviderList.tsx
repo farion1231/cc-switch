@@ -469,6 +469,7 @@ export function ProviderList({
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
+            const isKimiActive = isKimiCurrent(provider.id);
             const isCurrent =
               appId === "pi"
                 ? false
@@ -478,8 +479,9 @@ export function ProviderList({
                     ? isOmoSlimCurrent
                     : appId === "hermes"
                       ? isHermesCurrent
-                      : provider.id === currentProviderId;
-            const isKimiActive = isKimiCurrent(provider.id);
+                      : appId === "kimi"
+                        ? isKimiActive
+                        : provider.id === currentProviderId;
             // Kimi: 卡片上显示该 provider 的默认模型（settings 或首个模型）
             const kimiModelLabel =
               appId === "kimi"
@@ -500,17 +502,6 @@ export function ProviderList({
                 key={provider.id}
                 provider={provider}
                 isCurrent={isCurrent}
-                isCurrent={
-                  isOmo
-                    ? isOmoCurrent
-                    : isOmoSlim
-                      ? isOmoSlimCurrent
-                      : appId === "hermes"
-                        ? isHermesCurrent
-                        : appId === "kimi"
-                          ? isKimiActive
-                          : provider.id === currentProviderId
-                }
                 appId={appId}
                 isInConfig={
                   appId === "pi"
@@ -544,7 +535,6 @@ export function ProviderList({
                 activeProviderId={
                   supportsFailover ? activeProviderId : undefined
                 }
-                activeProviderId={activeProviderId}
                 // OpenClaw: default model / Hermes: model.provider === provider.id / Kimi: default_model 归属
                 isDefaultModel={
                   appId === "hermes"
@@ -706,7 +696,6 @@ interface SortableProviderCardProps {
   isRemovalProtected?: boolean;
   isStateChangeProtected?: boolean;
   onSetAsDefault?: (modelId?: string) => void;
-  onSetAsDefault?: () => void;
   modelLabel?: string;
   setAsDefaultDisabled?: boolean;
 }

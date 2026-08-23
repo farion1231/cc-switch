@@ -217,29 +217,6 @@ function App() {
 
   const getFirstVisibleApp = (): AppId => {
     return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
-  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
-    claude: true,
-    "claude-desktop": true,
-    codex: true,
-    gemini: true,
-    grokbuild: true,
-    opencode: true,
-    openclaw: true,
-    hermes: true,
-    kimi: true,
-  };
-
-  const getFirstVisibleApp = (): AppId => {
-    if (visibleApps.claude) return "claude";
-    if (visibleApps["claude-desktop"]) return "claude-desktop";
-    if (visibleApps.codex) return "codex";
-    if (visibleApps.gemini) return "gemini";
-    if (visibleApps.grokbuild) return "grokbuild";
-    if (visibleApps.opencode) return "opencode";
-    if (visibleApps.openclaw) return "openclaw";
-    if (visibleApps.hermes) return "hermes";
-    if (visibleApps.kimi) return "kimi";
-    return "claude"; // fallback
   };
 
   useEffect(() => {
@@ -263,7 +240,7 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
-      sharedFeatureApp !== "pi"
+      sharedFeatureApp !== "pi" &&
       sharedFeatureApp !== "kimi"
     ) {
       setCurrentView("providers");
@@ -343,7 +320,6 @@ function App() {
     sharedFeatureApp === "hermes" ||
     sharedFeatureApp === "pi";
   const hasMcpSupport = sharedFeatureApp !== "pi";
-    sharedFeatureApp === "kimi";
 
   const {
     addProvider,
@@ -842,7 +818,7 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
       activeApp === "kimi"
     ) {
       let liveProviderIds: string[] = [];
@@ -1154,7 +1130,7 @@ function App() {
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
-                        activeApp === "pi"
+                        activeApp === "pi" ||
                         activeApp === "kimi"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
@@ -1399,7 +1375,7 @@ function App() {
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
-              (activeApp === "claude-desktop" || proxyAppId) && (
+              (activeApp === "claude-desktop" || proxyAppId) &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
               activeApp !== "hermes" &&

@@ -137,6 +137,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         opencode: data.visibleApps?.opencode ?? true,
         openclaw: data.visibleApps?.openclaw ?? true,
         hermes: data.visibleApps?.hermes ?? true,
+        pi: data.visibleApps?.pi ?? true,
         kimi: data.visibleApps?.kimi ?? true,
       },
       language: normalizedLanguage,

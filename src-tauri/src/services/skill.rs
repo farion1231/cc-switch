@@ -607,6 +607,7 @@ impl SkillService {
             }
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
+            }
             AppType::Kimi => {
                 if let Some(custom) = crate::settings::get_kimi_override_dir() {
                     return Ok(custom.join("skills"));

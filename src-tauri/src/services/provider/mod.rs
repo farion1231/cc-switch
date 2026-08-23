@@ -6352,6 +6352,7 @@ impl ProviderService {
             }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
+            }
             AppType::Kimi => {
                 crate::kimi_config::validate_kimi_settings(&provider.settings_config)?;
             }

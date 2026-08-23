@@ -534,8 +534,7 @@ impl Database {
                         Self::set_user_version(conn, 16)?;
                     }
                     16 => {
-                        log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
-                        log::info!("迁移数据库从 v16 到 v17（Skills/MCP 添加 Kimi 支持）");
+                        log::info!("迁移数据库从 v16 到 v17（会话去重账本 + Skills/MCP Kimi 支持）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
                     }
@@ -1565,8 +1564,8 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
-    /// v16 -> v17: persist Kimi enablement for unified Skills and MCP.
-    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+
+        // v16 -> v17: persist Kimi enablement for unified Skills and MCP.
         if Self::table_exists(conn, "mcp_servers")? {
             Self::add_column_if_missing(
                 conn,
@@ -1583,6 +1582,7 @@ impl Database {
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }
+
         Ok(())
     }
 

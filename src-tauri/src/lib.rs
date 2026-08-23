@@ -870,6 +870,8 @@ pub fn run() {
                 }
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
+            }
+
             match crate::services::provider::import_kimi_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Synced {count} Kimi provider(s) from live config");
