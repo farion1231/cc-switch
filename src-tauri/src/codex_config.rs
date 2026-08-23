@@ -2811,15 +2811,34 @@ pub fn write_codex_live_for_provider(
         };
     let config_text = unified_official_config.as_deref().or(config_text);
 
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
+    let is_official = category == Some("official");
+    let should_write_auth = (is_official && codex_auth_has_login_material(auth))
+        || (!is_official && !crate::settings::preserve_codex_official_auth_on_switch());
+
+    // Since Codex 0.149 (openai/codex#39214) custom providers no longer inherit
+    // ambient auth: with `requires_openai_auth = false` the CLI stops sending the
+    // `auth.json` `OPENAI_API_KEY` as a bearer token, so third-party providers
+    // that only wrote their key into `auth.json` fail with `401 Missing API key`.
+    // Always carry the API key as a provider-scoped `experimental_bearer_token`
+    // in `config.toml` for third-party writes; `auth.json` is still written when
+    // preservation is off so older Codex releases keep working.
+    let prepared_config = if is_official {
+        config_text.map(str::to_string)
+    } else {
+        match config_text {
+            // An empty config has no provider table to attach a token to; keep
+            // the historical behavior of writing it as-is.
+            Some(text) if !text.trim().is_empty() => {
+                Some(prepare_codex_provider_live_config(auth, text)?)
+            }
+            other => other.map(str::to_string),
+        }
+    };
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_live_atomic(auth, prepared_config.as_deref())
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
+        write_codex_live_config_atomic(prepared_config.as_deref())
     }
 }
 

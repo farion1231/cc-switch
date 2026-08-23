@@ -794,6 +794,69 @@ requires_openai_auth = true
 }
 
 #[test]
+fn provider_service_switch_codex_default_injects_bearer_token_into_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Preservation stays OFF (default). Since Codex 0.149 (openai/codex#39214)
+    // custom providers no longer inherit ambient auth, so the API key written
+    // into auth.json alone is not sent as a bearer token and the provider
+    // fails with `401 Missing API key`. The live config.toml must therefore
+    // carry the key as a provider-scoped `experimental_bearer_token` even on
+    // the auth-writing default path.
+    let _home = ensure_test_home();
+
+    let third_party_config = r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = false
+"#;
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "third-party".to_string(),
+            Provider::with_id(
+                "third-party".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "third-party-key"},
+                    "config": third_party_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "third-party")
+        .expect("switch to third-party provider should succeed");
+
+    let auth_value: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+    assert_eq!(
+        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
+        Some("third-party-key"),
+        "default (preservation off) keeps writing auth.json for older Codex releases"
+    );
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        live_config.contains("experimental_bearer_token = \"third-party-key\""),
+        "default switch must inject the API key into config.toml so Codex >= 0.149 \
+         custom providers authenticate (openai/codex#39214); got:\n{live_config}"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_supports_official_login_provider_without_auth_write() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
