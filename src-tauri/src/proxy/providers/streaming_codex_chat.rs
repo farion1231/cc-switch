@@ -162,8 +162,7 @@ impl ChatToResponsesState {
                 events.extend(self.flush_inline_think_at_boundary());
                 if !tool_calls.is_empty() && self.text.added && !self.text.done {
                     for tool_call in tool_calls {
-                        let chat_index =
-                            tool_call.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                        let chat_index = self.resolve_tool_key(tool_call);
                         if !self.tools.contains_key(&chat_index) {
                             self.text.tools_started_after_text.insert(chat_index);
                         }
@@ -353,6 +352,13 @@ impl ChatToResponsesState {
     /// 所以这里只在**能确证是新调用**时才分配新 key：delta 带非空 `id`，且该 id 与
     /// 所有已知调用都不同。其余情况一律归入最后一个已知 key（空 map 时为 0），保持
     /// 既有行为——宁可两个并行调用坍缩成一个，也不能把一个调用的续帧炸成多个 item。
+    fn resolve_tool_key(&self, tool_call: &Value) -> usize {
+        match tool_call.get("index").and_then(Value::as_u64) {
+            Some(index) => index as usize,
+            None => self.resolve_tool_key_without_index(tool_call),
+        }
+    }
+
     fn resolve_tool_key_without_index(&self, tool_call: &Value) -> usize {
         let last_key = self.tools.keys().next_back().copied();
 
@@ -379,10 +385,7 @@ impl ChatToResponsesState {
     }
 
     fn push_tool_call_delta(&mut self, tool_call: &Value, reasoning: Option<&str>) -> Vec<Bytes> {
-        let chat_index = match tool_call.get("index").and_then(|v| v.as_u64()) {
-            Some(index) => index as usize,
-            None => self.resolve_tool_key_without_index(tool_call),
-        };
+        let chat_index = self.resolve_tool_key(tool_call);
         let id_delta = tool_call
             .get("id")
             .and_then(|v| v.as_str())
@@ -1138,6 +1141,32 @@ mod tests {
             .expect("assistant message");
         assert_eq!(message["content"][0]["text"], "Command finished.");
         assert_eq!(message["phase"], "final_answer");
+    }
+
+    #[tokio::test]
+    async fn omitted_index_after_open_text_still_marks_commentary() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_omit_index\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_omit_index\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Listing files next.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_omit_index\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"list_dir\",\"arguments\":\"{\\\"path\\\":\\\"src\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let items = completed_output(&events);
+        let message = items
+            .iter()
+            .find(|item| item["type"] == "message")
+            .expect("assistant message");
+        assert_eq!(message["content"][0]["text"], "Listing files next.");
+        assert_eq!(message["phase"], "commentary");
+        let calls: Vec<&Value> = items
+            .iter()
+            .filter(|item| item["type"] == "function_call")
+            .collect();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["call_id"], "call_a");
+        assert_eq!(calls[1]["call_id"], "call_b");
     }
 
     #[tokio::test]
