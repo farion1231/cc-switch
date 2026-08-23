@@ -441,6 +441,7 @@ impl AppType {
         matches!(
             self,
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi
+            | AppType::Kimi
         )
     }
 
