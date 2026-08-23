@@ -298,6 +298,7 @@ export interface VisibleApps {
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;
+  kimi: boolean;
 }
 
 // WebDAV 同步状态
@@ -419,6 +420,8 @@ export interface Settings {
   hermesConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
+  // 覆盖 Kimi 配置目录（可选）
+  kimiConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -511,6 +514,7 @@ export interface McpApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  kimi: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -750,4 +754,30 @@ export interface HermesMemoryLimits {
   user: number;
   memoryEnabled: boolean;
   userEnabled: boolean;
+}
+
+// ============================================================================
+// Kimi Code CLI 专属配置
+// ============================================================================
+
+export interface KimiModelConfig {
+  id: string;
+  model?: string;
+  name?: string;
+  max_context_size?: number;
+  max_input_size?: number;
+  max_output_size?: number;
+  capabilities?: string[];
+  support_efforts?: string[];
+  default_effort?: string;
+}
+
+export interface KimiProviderConfig {
+  name?: string;
+  type?: string; // kimi / anthropic / openai / openai_responses / google-genai / vertexai
+  base_url?: string;
+  api_key?: string;
+  models?: KimiModelConfig[];
+  default_model?: string;
+  [key: string]: unknown;
 }

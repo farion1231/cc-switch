@@ -141,6 +141,8 @@ impl ConfigService {
             AppType::Pi => {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
+            AppType::Kimi => {
+                // Kimi uses additive mode, no live sync needed
             }
         }
 

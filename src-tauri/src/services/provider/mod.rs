@@ -23,8 +23,8 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_default_config, import_hermes_providers_from_live, import_kimi_providers_from_live,
+    import_openclaw_providers_from_live, import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
     update_toml_common_config_snippet,
 };
@@ -45,8 +45,8 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_hermes_provider_from_live, remove_kimi_provider_from_live,
+    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -4843,6 +4843,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::Kimi => remove_kimi_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -4911,6 +4912,9 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::Kimi => {
+                remove_kimi_provider_from_live(id)?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -5225,6 +5229,12 @@ impl ProviderService {
         // provider's first declared model. Without this, clicking "switch" would
         // only shuffle entries in custom_providers[] while Hermes keeps using
         // whatever `model.provider` was set before.
+
+        // Hermes and Kimi are additive, so "switching" doesn't overwrite a live config
+        // file — we instead update the top-level model selection (`model:` for Hermes,
+        // `default_model` for Kimi) to point at this provider's first declared model.
+        // Without this, clicking "switch" would only shuffle entries in the live file
+        // while the CLI keeps using whatever model was set before.
         if matches!(app_type, AppType::Hermes) {
             if let Err(e) =
                 crate::hermes_config::apply_switch_defaults(&provider.id, &provider.settings_config)
@@ -5236,6 +5246,19 @@ impl ProviderService {
                 result
                     .warnings
                     .push(format!("hermes_model_defaults_failed:{}", provider.id));
+            }
+        }
+        if matches!(app_type, AppType::Kimi) {
+            if let Err(e) =
+                crate::kimi_config::apply_switch_defaults(&provider.id, &provider.settings_config)
+            {
+                log::warn!(
+                    "Failed to update Kimi model defaults after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("kimi_model_defaults_failed:{}", provider.id));
             }
         }
 
@@ -5254,6 +5277,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::Kimi => remove_kimi_provider_from_live(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -5541,6 +5565,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::Kimi => Ok(String::new()),   // Kimi doesn't use common config snippets
         }
     }
 
@@ -5559,6 +5584,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::Kimi => Ok(String::new()),   // Kimi doesn't use common config snippets
         }
     }
 
@@ -6326,6 +6352,8 @@ impl ProviderService {
             }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
+            AppType::Kimi => {
+                crate::kimi_config::validate_kimi_settings(&provider.settings_config)?;
             }
         }
 
@@ -6553,6 +6581,19 @@ impl ProviderService {
                     .unwrap_or("")
                     .to_string();
 
+                Ok((api_key, base_url))
+            }
+            AppType::Kimi => {
+                // Kimi uses snake_case keys directly on the object (config.toml style)
+                let (base_url, api_key) =
+                    crate::kimi_config::extract_kimi_credentials(&provider.settings_config);
+                if api_key.is_empty() {
+                    return Err(AppError::localized(
+                        "provider.kimi.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    ));
+                }
                 Ok((api_key, base_url))
             }
         }

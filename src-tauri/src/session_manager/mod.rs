@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode, pi};
+use providers::{claude, codex, gemini, grokbuild, hermes, kimi, openclaw, opencode};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +66,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         let h6 = s.spawn(hermes::scan_sessions);
         let h7 = s.spawn(grokbuild::scan_sessions);
         let h8 = s.spawn(pi::scan_sessions);
+        let h8 = s.spawn(kimi::scan_sessions);
         (
             h1.join().unwrap_or_default(),
             h2.join().unwrap_or_default(),
@@ -115,6 +117,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "grokbuild" => grokbuild::load_messages(path),
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
+        "kimi" => kimi::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -178,6 +181,7 @@ fn delete_session_with_roots(
                 }
                 "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
                 "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
+                "kimi" => kimi::delete_session(&validated_root, &validated_source, session_id),
                 _ => Err(format!("Unsupported provider: {provider_id}")),
             };
         }
@@ -209,6 +213,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "grokbuild" => grokbuild::session_roots(),
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
+        "kimi" => kimi::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

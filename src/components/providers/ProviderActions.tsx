@@ -59,6 +59,9 @@ interface ProviderActionsProps {
   isStateChangeProtected?: boolean;
   defaultModelOptions?: OpenClawDefaultModelOption[];
   onSetAsDefault?: (modelId?: string) => void;
+  onSetAsDefault?: () => void;
+  /** 无可用模型（如 Kimi provider 未配置任何模型）：禁用"设为默认"并提示 */
+  setAsDefaultDisabled?: boolean;
 }
 
 // 主按钮的呈现状态。title 用于 disabled 态向用户解释为何不可点击；
@@ -100,6 +103,7 @@ export function ProviderActions({
   isStateChangeProtected = false,
   defaultModelOptions = [],
   onSetAsDefault,
+  setAsDefaultDisabled,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
@@ -278,7 +282,7 @@ export function ProviderActions({
 
   return (
     <div className="flex items-center gap-1.5">
-      {(appId === "openclaw" || appId === "hermes") &&
+      {(appId === "openclaw" || appId === "hermes" || appId === "kimi") &&
         isInConfig &&
         onSetAsDefault &&
         (() => {
@@ -356,6 +360,21 @@ export function ProviderActions({
               }
               disabled={isDefaultModel}
               className={defaultButtonClassName}
+              onClick={isDefaultModel ? undefined : onSetAsDefault}
+              disabled={isDefaultModel || setAsDefaultDisabled}
+              title={
+                setAsDefaultDisabled
+                  ? t("provider.setAsDefaultNoModels", {
+                      defaultValue: "该供应商未配置模型，无法设为默认",
+                    })
+                  : undefined
+              }
+              className={cn(
+                "w-fit px-2.5",
+                isDefaultModel || setAsDefaultDisabled
+                  ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
+                  : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+              )}
             >
               <Zap className="h-4 w-4" />
               {isDefaultModel ? activeLabel : inactiveLabel}

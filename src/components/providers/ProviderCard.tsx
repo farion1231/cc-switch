@@ -4,6 +4,10 @@ import {
   GripVertical,
   ChevronDown,
   ChevronUp,
+  GripVertical,
+  ChevronDown,
+  ChevronUp,
+  TriangleAlert,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
@@ -80,6 +84,11 @@ interface ProviderCardProps {
   isRemovalProtected?: boolean;
   isStateChangeProtected?: boolean;
   onSetAsDefault?: (modelId?: string) => void;
+  onSetAsDefault?: () => void;
+  /** 可选：显示在卡片上的模型名（如 Kimi 当前默认模型） */
+  modelLabel?: string;
+  /** 可选：无可用模型时禁用"设为默认"并在卡片上提示 */
+  setAsDefaultDisabled?: boolean;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -197,6 +206,8 @@ export function ProviderCard({
   isRemovalProtected,
   isStateChangeProtected,
   onSetAsDefault,
+  modelLabel,
+  setAsDefaultDisabled,
 }: ProviderCardProps) {
   const { t } = useTranslation();
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
@@ -595,6 +606,32 @@ export function ProviderCard({
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
             ) : null}
+            )}
+
+            {modelLabel && (
+              <div
+                className="inline-flex max-w-full items-center overflow-hidden text-xs text-muted-foreground"
+                title={modelLabel}
+              >
+                <span className="min-w-0 truncate">
+                  {t("provider.currentModelLabel", {
+                    defaultValue: "模型",
+                  })}
+                  : {modelLabel}
+                </span>
+              </div>
+            )}
+
+            {setAsDefaultDisabled && (
+              <div className="inline-flex max-w-full items-center gap-1 overflow-hidden text-xs text-amber-600 dark:text-amber-400">
+                <TriangleAlert className="h-3 w-3 shrink-0" />
+                <span className="min-w-0 truncate">
+                  {t("provider.noModelsWarning", {
+                    defaultValue: "未配置模型",
+                  })}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -732,6 +769,7 @@ export function ProviderCard({
               isStateChangeProtected={isStateChangeProtected}
               defaultModelOptions={openclawDefaultModelOptions}
               onSetAsDefault={onSetAsDefault}
+              setAsDefaultDisabled={setAsDefaultDisabled}
             />
           </div>
         </div>

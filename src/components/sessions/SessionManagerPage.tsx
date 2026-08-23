@@ -92,6 +92,7 @@ type ProviderFilter =
   | "gemini"
   | "hermes"
   | "pi";
+  | "kimi";
 
 type SessionListViewMode = "flat" | "grouped";
 

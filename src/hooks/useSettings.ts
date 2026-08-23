@@ -119,6 +119,7 @@ export function useSettings(): UseSettingsResult {
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
+      kimi: sanitizeDir(data?.kimiConfigDir),
     });
     setRequiresRestart(false);
   }, [
