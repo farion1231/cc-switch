@@ -225,6 +225,11 @@ const COMMON_FAMILY_RULES: CommonFamilyRule[] = [
     providers: new Set(["zai"]),
     matches: (modelId) => modelId.startsWith("glm-"),
   },
+  {
+    id: "step",
+    providers: new Set(["stepfun"]),
+    matches: (modelId) => modelId.startsWith("step-"),
+  },
 ];
 
 /** Pick a bounded, canonical set of recent chat/coding models per family. */
