@@ -63,12 +63,12 @@ impl ProxySchemeMap {
 /// Windows: 优先注册表（ProxyEnable/ProxyServer），无则回退环境变量；
 /// 其他平台: 环境变量。
 pub fn detect_map() -> ProxySchemeMap {
-    #[cfg(target_os = "windows")]
-    {
-        let registry = detect_registry_map();
-        if registry.representative().is_some() {
-            return registry;
-        }
+    // 无条件调用注册表探测：Windows 实现真实读取（禁用/读不到时返回空），
+    // 非 Windows 实现返回空进而走环境变量。保持非 Windows 构建不存在
+    // 「唯一调用点被 cfg 移除」的死代码问题。
+    let registry = detect_registry_map();
+    if registry.representative().is_some() {
+        return registry;
     }
     detect_from_env_map()
 }
