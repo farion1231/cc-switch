@@ -328,6 +328,10 @@ describe("ClaudeDesktopProviderForm", () => {
       "claude-sonnet-5": { model: "upstream-a", labelOverride: "A" },
       "claude-haiku-4-5": { model: "upstream-b", labelOverride: "B" },
     });
+    // 主路由显式持久化为第一行,供后端缺失角色回退使用。
+    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopPrimaryRoute).toBe(
+      "claude-sonnet-5",
+    );
   });
 
   it("代理模式初始无路由且默认路由未就绪时不渲染空模型", () => {

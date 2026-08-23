@@ -813,6 +813,10 @@ export function ClaudeDesktopProviderForm({
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
+    // 显式持久化主路由（第一个已配置的行）。后端缺失角色回退时优先使用它，
+    // 避免路由表按字母序排序后回退到非用户主模型（如 opus 排在 sonnet 前）。
+    meta.claudeDesktopPrimaryRoute =
+      effectiveMode === "proxy" ? routeEntries[0]?.route : undefined;
     meta.providerType = activeProviderType;
     meta.authBinding =
       activeProviderType === "github_copilot"
