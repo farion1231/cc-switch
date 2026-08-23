@@ -163,7 +163,7 @@ pub(crate) fn attach_optional_google_thought_signature(
 ) -> bool {
     if !matches!(
         item.get("type").and_then(Value::as_str),
-        Some("function_call" | "function")
+        Some("function_call" | "function" | "custom_tool_call" | "tool_search_call")
     ) {
         return false;
     }
