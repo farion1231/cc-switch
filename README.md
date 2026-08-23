@@ -328,6 +328,8 @@ If you launch from a desktop icon, add it to the `.desktop` `Exec=` line (e.g. `
 
 For detailed guides on every feature, check out the **[User Manual](docs/user-manual/en/README.md)** — covering provider management, MCP/Prompts/Skills, proxy & failover, and more.
 
+Phone spectator for the desktop coding-agent host (not a CC Switch replacement): [Build Remote Agent](docs/gbr.md) (`gbr/1`, attach `http://127.0.0.1:8788` or `gbr-mcp`). Independent product — not affiliated with xAI or SpaceX.
+
 ## Quick Start
 
 ### Basic Usage
