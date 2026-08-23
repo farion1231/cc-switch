@@ -44,12 +44,12 @@ jobs:
       - name: Generate ephemeral updater signing key
         shell: pwsh
         run: |
-          pnpm exec tauri signer generate -w "$env:RUNNER_TEMP\updater.key" --password "" --force
+          pnpm exec tauri signer generate -w "$env:RUNNER_TEMP\updater.key" --password ephemeral --force
           $key = Get-Content "$env:RUNNER_TEMP\updater.key" -Raw
           "TAURI_SIGNING_PRIVATE_KEY<<KEYEOF" >> $env:GITHUB_ENV
           Add-Content $env:GITHUB_ENV $key
           "KEYEOF" >> $env:GITHUB_ENV
-          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> $env:GITHUB_ENV
+          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=ephemeral" >> $env:GITHUB_ENV
 
       - name: Build Tauri app (Windows x64)
         run: pnpm tauri build
