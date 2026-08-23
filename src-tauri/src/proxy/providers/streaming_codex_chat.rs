@@ -3,7 +3,8 @@
 use super::codex_responses_sse as sse;
 use super::{
     codex_chat_common::{
-        extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
+        attach_optional_google_thought_signature, extract_reasoning_field_text,
+        google_thought_signature, split_leading_think_block, strip_leading_think_open_tag,
     },
     transform_codex_chat::{
         chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
@@ -58,6 +59,7 @@ struct ToolCallState {
     call_id: String,
     name: String,
     arguments: String,
+    thought_signature: Option<String>,
     reasoning_content: String,
     added: bool,
     done: bool,
@@ -386,6 +388,7 @@ impl ChatToResponsesState {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let thought_signature_delta = google_thought_signature(tool_call).map(str::to_string);
 
         let mut output_index = None;
         let mut item_id = String::new();
@@ -405,6 +408,9 @@ impl ChatToResponsesState {
             }
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
+            }
+            if let Some(signature) = thought_signature_delta {
+                state.thought_signature = Some(signature);
             }
             if state.reasoning_content.is_empty() {
                 if let Some(reasoning) = reasoning.map(str::trim).filter(|value| !value.is_empty())
@@ -466,7 +472,7 @@ impl ChatToResponsesState {
                 &self.tool_context,
             );
 
-            let item = response_tool_call_item_from_chat_name(
+            let mut item = response_tool_call_item_from_chat_name(
                 &state.item_id,
                 "in_progress",
                 &state.call_id,
@@ -475,6 +481,7 @@ impl ChatToResponsesState {
                 Some(&state.reasoning_content),
                 &self.tool_context,
             );
+            attach_optional_google_thought_signature(&mut item, state.thought_signature.as_deref());
 
             events.push(sse::output_item_added(assigned, &item));
 
@@ -666,7 +673,7 @@ impl ChatToResponsesState {
                     &state.name,
                     &self.tool_context,
                 );
-                let item = response_tool_call_item_from_chat_name(
+                let mut item = response_tool_call_item_from_chat_name(
                     &state.item_id,
                     "in_progress",
                     &state.call_id,
@@ -674,6 +681,10 @@ impl ChatToResponsesState {
                     "",
                     Some(&state.reasoning_content),
                     &self.tool_context,
+                );
+                attach_optional_google_thought_signature(
+                    &mut item,
+                    state.thought_signature.as_deref(),
                 );
                 add_event = Some(sse::output_item_added(assigned, &item));
             }
@@ -688,7 +699,7 @@ impl ChatToResponsesState {
             let output_index = state.output_index.unwrap_or(0);
             let arguments = canonicalize_tool_arguments_str(&state.arguments);
             let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
-            let item = response_tool_call_item_from_chat_name(
+            let mut item = response_tool_call_item_from_chat_name(
                 &state.item_id,
                 "completed",
                 &state.call_id,
@@ -697,6 +708,7 @@ impl ChatToResponsesState {
                 Some(&state.reasoning_content),
                 &self.tool_context,
             );
+            attach_optional_google_thought_signature(&mut item, state.thought_signature.as_deref());
             state.done = true;
             self.output_items.push((output_index, item.clone()));
 
@@ -1423,6 +1435,84 @@ mod tests {
         assert!(output.contains("\"execution\":\"client\""));
         assert!(output.contains("\"call_id\":\"call_tool_search_1\""));
         assert!(output.contains("\"query\":\"Gmail search emails\""));
+    }
+
+    #[tokio::test]
+    async fn preserves_google_thought_signature_across_streaming_sequential_tool_call() {
+        let signature = "gemini-stream-thought-signature";
+        let first_chunk = json!({
+            "id": "chatcmpl_gemini_stream",
+            "model": "gemini-3.7-flash",
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_gemini_stream",
+                        "type": "function",
+                        "function": {"name": "read_file"},
+                        "extra_content": {
+                            "google": {"thought_signature": signature}
+                        }
+                    }]
+                }
+            }]
+        });
+        let second_chunk = json!({
+            "id": "chatcmpl_gemini_stream",
+            "model": "gemini-3.7-flash",
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {
+                            "arguments": "{\"path\":\"README.md\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+        let upstream = stream::iter(vec![
+            Ok::<Bytes, std::io::Error>(Bytes::from(format!("data: {first_chunk}\n\n"))),
+            Ok(Bytes::from(format!("data: {second_chunk}\n\n"))),
+            Ok(Bytes::from_static(b"data: [DONE]\n\n")),
+        ]);
+        let history =
+            std::sync::Arc::new(super::super::codex_chat_history::CodexChatHistoryStore::default());
+        let converted = create_responses_sse_stream_from_chat(upstream);
+        let recorded = super::super::codex_chat_history::record_responses_sse_stream(
+            converted,
+            history.clone(),
+        );
+        let bytes: Vec<Bytes> = recorded.map(|item| item.unwrap()).collect().await;
+        let output = String::from_utf8(bytes.concat()).unwrap();
+        let completed = parse_sse_events(&output)
+            .into_iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(
+            completed["response"]["output"][0]["extra_content"]["google"]["thought_signature"],
+            signature
+        );
+
+        let mut follow_up = json!({
+            "previous_response_id": completed["response"]["id"].clone(),
+            "model": "gemini-3.7-flash",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_gemini_stream",
+                "output": "ok"
+            }]
+        });
+        assert_eq!(history.enrich_request(&mut follow_up).await, 1);
+
+        let rebuilt_chat =
+            super::super::transform_codex_chat::responses_to_chat_completions(follow_up).unwrap();
+        assert_eq!(
+            rebuilt_chat["messages"][0]["tool_calls"][0]["extra_content"]["google"]
+                ["thought_signature"],
+            signature
+        );
     }
 
     #[tokio::test]
