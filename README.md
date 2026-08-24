@@ -18,6 +18,46 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_
 
 </div>
 
+## Ubuntu 20.04: Install and Run via Flatpak
+
+If AppImage or `.deb` cannot run on Ubuntu 20.04 due to glibc/library version issues, use the Flatpak package from the [Releases](https://github.com/suwenqiang/cc-switch-Ubuntu20.04/releases) page.
+
+```bash
+# 0) (Optional) check whether Flatpak is already installed
+flatpak --version
+
+# 1) Install Flatpak (if command above is missing)
+sudo apt update
+sudo apt install -y flatpak
+
+# 2) Add Flathub remote (one-time)
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+# 3) Install required runtime (one-time)
+flatpak install --user flathub org.gnome.Platform//49 org.gnome.Sdk//49
+
+# 4) Download and install CC Switch Flatpak package
+#    Replace the filename with the one you downloaded from Releases
+flatpak install --user CC-Switch-v3.20.0-Linux-x86_64.flatpak
+
+# 5) Run
+flatpak run com.ccswitch.desktop
+
+# 6) (Optional) Run in background without terminal output
+flatpak run com.ccswitch.desktop >/dev/null 2>&1 &
+disown
+
+# 7) (Optional) Upgrade by reinstalling a newer .flatpak
+flatpak install --user CC-Switch-vX.X.X-Linux-x86_64.flatpak
+
+# 8) (Optional) Uninstall
+flatpak uninstall com.ccswitch.desktop
+```
+
+> **Why Flatpak?** The native AppImage/`.deb` requires GLIBC 2.32+, but Ubuntu 20.04 only ships with GLIBC 2.31. Flatpak bundles its own GNOME 49 runtime with all required libraries, fully isolated from the host system.
+>
+> For more details see [UBUNTU_20.04_INSTALLATION.md](UBUNTU_20.04_INSTALLATION.md).
+
 ## ❤️Sponsor
 
 > [Want to appear here?](mailto:farion1231@gmail.com)
