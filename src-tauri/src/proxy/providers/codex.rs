@@ -571,6 +571,23 @@ fn infer_codex_chat_reasoning_config(
     }
 
     if haystack.contains("qwen") || haystack.contains("dashscope") || haystack.contains("bailian") {
+        // qwen ≥3.8 are thinking-ONLY models with reasoning_effort tiers
+        // (low/medium/xhigh). Must precede the generic qwen block below.
+        // thinking_param is "none": enable_thinking must NEVER be emitted —
+        // the vendor errors on enable_thinking:false and rejects it alongside
+        // reasoning_effort. Disable intents map to tier "low" in
+        // apply_reasoning_options via the "qwen" effort_value_mode.
+        if super::transform::is_qwen_reasoning_effort_model(&model) {
+            return Some(CodexChatReasoningConfig {
+                supports_thinking: Some(false),
+                supports_effort: Some(true),
+                thinking_param: Some("none".to_string()),
+                effort_param: Some("reasoning_effort".to_string()),
+                effort_value_mode: Some("qwen".to_string()),
+                output_format: Some("reasoning_content".to_string()),
+                effort_levels: None,
+            });
+        }
         return Some(CodexChatReasoningConfig {
             supports_thinking: Some(true),
             supports_effort: Some(false),
@@ -606,6 +623,30 @@ fn infer_codex_chat_reasoning_config(
         });
     }
 
+    None
+}
+
+/// 聚合 / 托管平台类型：reasoning 接口由平台而非模型厂商定义。chat 路径的配置推断
+/// （`infer_aggregator_platform_config`）与 native Responses 直通路径的 vendor
+/// sanitizer gating（forwarder 的 `sanitize_native_responses_vendor_reasoning`）
+/// 共用这一检测，保证两条路径对"平台优先"的判定一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AggregatorPlatform {
+    OpenRouter,
+    SiliconFlow,
+}
+
+/// 平台优先检测：仅以平台标识（name / base_url）判定，绝不掺入 model 名——
+/// model 名属于模型厂商，会把托管平台（如 OpenRouter 托管 `qwen/qwen3.8-*`）
+/// 误判成模型官方接口。大小写不敏感。
+pub fn detect_aggregator_platform(name: &str, base_url: &str) -> Option<AggregatorPlatform> {
+    let platform = format!("{name} {base_url}").to_ascii_lowercase();
+    if platform.contains("openrouter") {
+        return Some(AggregatorPlatform::OpenRouter);
+    }
+    if platform.contains("siliconflow") {
+        return Some(AggregatorPlatform::SiliconFlow);
+    }
     None
 }
 
@@ -1808,6 +1849,38 @@ wire_api = "chat"
     }
 
     #[test]
+    fn detect_aggregator_platform_matches_name_or_url_case_insensitively() {
+        // base_url 命中
+        assert_eq!(
+            detect_aggregator_platform("anything", "https://openrouter.ai/api/v1"),
+            Some(AggregatorPlatform::OpenRouter)
+        );
+        // 仅 name 命中（自建镜像用中性 URL，但供应商名表明平台）
+        assert_eq!(
+            detect_aggregator_platform("My OpenRouter Mirror", "https://gw.internal.example/v1"),
+            Some(AggregatorPlatform::OpenRouter)
+        );
+        // 大小写不敏感
+        assert_eq!(
+            detect_aggregator_platform("UPPER", "https://OPENROUTER.AI/api/v1"),
+            Some(AggregatorPlatform::OpenRouter)
+        );
+        assert_eq!(
+            detect_aggregator_platform("sf", "https://api.siliconflow.cn/v1"),
+            Some(AggregatorPlatform::SiliconFlow)
+        );
+        // 厂商直连网关不命中
+        assert_eq!(
+            detect_aggregator_platform(
+                "DashScope",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            ),
+            None
+        );
+        assert_eq!(detect_aggregator_platform("Bailian", ""), None);
+    }
+
+    #[test]
     fn test_resolve_codex_chat_reasoning_modelscope_platform_overrides_glm() {
         let provider = create_provider(json!({
             "config": r#"
@@ -1830,6 +1903,84 @@ wire_api = "chat"
         assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_qwen38_uses_reasoning_effort() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "bailian"
+model = "qwen3.8-max-preview"
+
+[model_providers.bailian]
+name = "Bailian"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+wire_api = "chat"
+"#
+        }));
+
+        let config = resolve_codex_chat_reasoning_config(
+            &provider,
+            &json!({ "model": "qwen3.8-max-preview" }),
+        )
+        .unwrap();
+
+        // qwen ≥3.8：仅思考模型，发 reasoning_effort 档位，绝不发 enable_thinking
+        assert_eq!(config.supports_effort, Some(true));
+        assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
+        assert_eq!(config.effort_value_mode.as_deref(), Some("qwen"));
+        assert_eq!(config.thinking_param.as_deref(), Some("none"));
+        assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_pre_qwen38_keeps_enable_thinking() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "bailian"
+model = "qwen3.7-max"
+
+[model_providers.bailian]
+name = "Bailian"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+wire_api = "chat"
+"#
+        }));
+
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "qwen3.7-max" }))
+                .unwrap();
+
+        // qwen <3.8：旧行为不变（enable_thinking 布尔，无 effort）
+        assert_eq!(config.supports_thinking, Some(true));
+        assert_eq!(config.supports_effort, Some(false));
+        assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
+        assert_eq!(config.effort_param.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_openrouter_overrides_qwen38() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "openrouter"
+model = "qwen/qwen3.8-max-preview"
+
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // 平台优先：OpenRouter 上托管的 qwen3.8 走平台 reasoning.effort 规则
+        let config = resolve_codex_chat_reasoning_config(
+            &provider,
+            &json!({ "model": "qwen/qwen3.8-max-preview" }),
+        )
+        .unwrap();
+
+        assert_eq!(config.effort_param.as_deref(), Some("reasoning.effort"));
+        assert_eq!(config.effort_value_mode.as_deref(), Some("openrouter"));
     }
 
     #[test]

@@ -782,7 +782,7 @@ pub fn create_tray_menu(
                         provider,
                     );
                 let label = if is_official_blocked {
-                    format!("{} \u{26D4}", &provider.name) // ⛔ emoji
+                    format!("{} \u{26D4}", provider.name) // ⛔ emoji
                 } else {
                     provider.name.clone()
                 };

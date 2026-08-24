@@ -1824,7 +1824,17 @@ pub fn anthropic_to_responses(
     // Map Anthropic thinking → OpenAI Responses reasoning.effort
     if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
         if super::transform::supports_reasoning_effort(model_name) {
-            if let Some(effort) = super::transform::resolve_reasoning_effort(&body) {
+            // qwen ≥3.8 uses its own tier resolver: disable signals map to
+            // "low" (thinking-only model) and high/max clamp to xhigh. Assumes
+            // qwen ≥3.8 accepts the same low/medium/xhigh domain inside
+            // reasoning.effort as Chat Completions (product direction), not
+            // the generic Responses enum (none/minimal/low/medium/high).
+            let effort = if super::transform::is_qwen_reasoning_effort_model(model_name) {
+                super::transform::qwen_reasoning_effort_from_anthropic_body(&body)
+            } else {
+                super::transform::resolve_reasoning_effort(&body)
+            };
+            if let Some(effort) = effort {
                 result["reasoning"] = json!({ "effort": effort });
             }
         }
@@ -4883,6 +4893,73 @@ mod tests {
             "model": "gpt-4o",
             "max_tokens": 1024,
             "thinking": {"type": "enabled", "budget_tokens": 2048},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert!(result.get("reasoning").is_none());
+    }
+
+    // ==================== qwen ≥3.8 reasoning tiers ====================
+
+    #[test]
+    fn test_responses_qwen38_disabled_maps_to_low() {
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_tokens": 1024,
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn test_responses_qwen38_budget_tiers() {
+        for (budget, expected) in [(2048, "low"), (10000, "medium"), (30000, "xhigh")] {
+            let input = json!({
+                "model": "qwen3.8-max-preview",
+                "max_tokens": 1024,
+                "thinking": {"type": "enabled", "budget_tokens": budget},
+                "messages": [{"role": "user", "content": "Hello"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["reasoning"]["effort"], expected, "budget={budget}");
+        }
+    }
+
+    #[test]
+    fn test_responses_qwen38_output_config_high_clamps_to_xhigh() {
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_tokens": 1024,
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_qwen38_no_signal_no_reasoning() {
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert!(result.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn test_responses_pre_qwen38_no_reasoning() {
+        let input = json!({
+            "model": "qwen3.7-max",
+            "max_tokens": 1024,
+            "thinking": {"type": "enabled", "budget_tokens": 8000},
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
