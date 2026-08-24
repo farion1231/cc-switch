@@ -14,6 +14,12 @@ const DEFAULT_COMMON_CONFIG_SNIPPET = `{
 
 interface UseCommonConfigSnippetProps {
   settingsConfig: string;
+  /**
+   * 现读当前配置。`settingsConfig` 是调用方渲染期取的快照，而写 settingsConfig
+   * 不触发重渲染，勾选/取消"使用公共配置"或改片段时若基于旧快照重建整份配置，
+   * 会把 JSON 编辑器里刚输入的内容覆盖掉。
+   */
+  getSettingsConfig?: () => string;
   onConfigChange: (config: string) => void;
   initialData?: {
     settingsConfig?: Record<string, unknown>;
@@ -30,6 +36,7 @@ interface UseCommonConfigSnippetProps {
  */
 export function useCommonConfigSnippet({
   settingsConfig,
+  getSettingsConfig,
   onConfigChange,
   initialData,
   initialEnabled,
@@ -203,7 +210,7 @@ export function useCommonConfigSnippet({
   const handleCommonConfigToggle = useCallback(
     (checked: boolean) => {
       const { updatedConfig, error: snippetError } = updateCommonConfigSnippet(
-        settingsConfig,
+        getSettingsConfig?.() ?? settingsConfig,
         commonConfigSnippet,
         checked,
       );
@@ -224,7 +231,7 @@ export function useCommonConfigSnippet({
         isUpdatingFromCommonConfig.current = false;
       }, 0);
     },
-    [settingsConfig, commonConfigSnippet, onConfigChange],
+    [getSettingsConfig, settingsConfig, commonConfigSnippet, onConfigChange],
   );
 
   // 处理通用配置片段变化
@@ -247,7 +254,7 @@ export function useCommonConfigSnippet({
 
         if (useCommonConfig) {
           const { updatedConfig } = updateCommonConfigSnippet(
-            settingsConfig,
+            getSettingsConfig?.() ?? settingsConfig,
             previousSnippet,
             false,
           );
@@ -277,7 +284,7 @@ export function useCommonConfigSnippet({
       // 若当前启用通用配置且格式正确，需要替换为最新片段
       if (useCommonConfig && !validationError) {
         const removeResult = updateCommonConfigSnippet(
-          settingsConfig,
+          getSettingsConfig?.() ?? settingsConfig,
           previousSnippet,
           false,
         );
@@ -305,7 +312,13 @@ export function useCommonConfigSnippet({
         }, 0);
       }
     },
-    [commonConfigSnippet, settingsConfig, useCommonConfig, onConfigChange],
+    [
+      commonConfigSnippet,
+      getSettingsConfig,
+      settingsConfig,
+      useCommonConfig,
+      onConfigChange,
+    ],
   );
 
   // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）

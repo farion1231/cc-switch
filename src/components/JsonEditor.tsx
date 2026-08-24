@@ -3,13 +3,16 @@ import { EditorView, basicSetup } from "codemirror";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { EditorSelection, EditorState } from "@codemirror/state";
+import { Annotation, EditorSelection, EditorState } from "@codemirror/state";
 import { placeholder } from "@codemirror/view";
 import { linter, Diagnostic } from "@codemirror/lint";
 import { useTranslation } from "react-i18next";
 import { Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatJSON } from "@/utils/formatters";
+
+/** 标记把 value 属性推进编辑器的事务，避免回吐为 onChange。 */
+const ExternalSync = Annotation.define<boolean>();
 
 interface JsonEditorProps {
   id?: string;
@@ -210,8 +213,13 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       ),
       EditorView.updateListener.of((update) => {
         if (!readOnly && update.docChanged) {
-          const newValue = update.state.doc.toString();
-          onChangeRef.current(newValue);
+          // CodeMirror 会把外部同步 dispatch 也标记为 docChanged。只有当
+          // 本次 ViewUpdate 中的事务全部来自外部同步时才跳过；使用 every
+          // 保证与用户输入合并的更新不会被误吞。
+          if (update.transactions.every((tr) => tr.annotation(ExternalSync))) {
+            return;
+          }
+          onChangeRef.current(update.state.doc.toString());
         }
       }),
     ];
@@ -316,6 +324,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
           contextualRanges,
           viewRef.current.state.selection.mainIndex,
         ),
+        annotations: ExternalSync.of(true),
       });
       viewRef.current.dispatch(transaction);
     }
