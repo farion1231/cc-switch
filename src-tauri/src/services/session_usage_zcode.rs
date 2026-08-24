@@ -168,7 +168,8 @@ fn load_zcode_records(conn: &rusqlite::Connection) -> Result<Vec<ZcodeUsageRecor
                     started_at, duration_ms, time_to_first_token_ms,
                     input_tokens, output_tokens,
                     cache_read_input_tokens, cache_creation_input_tokens
-             FROM model_usage",
+             FROM model_usage
+             WHERE status != 'running'",
         )
         .map_err(|error| AppError::Database(format!("准备 ZCode model_usage 查询失败: {error}")))?;
 
@@ -188,7 +189,10 @@ fn load_zcode_records(conn: &rusqlite::Connection) -> Result<Vec<ZcodeUsageRecor
             let cache_read_input_tokens: i64 = row.get(11)?;
             let cache_creation_input_tokens: i64 = row.get(12)?;
 
-            // completed → 200; everything else (error, cancelled, running) → 500.
+            // completed → 200; everything else (error, cancelled) → 500.
+            // `running` rows are excluded by the WHERE clause so that a
+            // still-active request is not prematurely imported with
+            // incomplete counters and locked into the dedup ledger.
             let status_code = if status == "completed" { 200 } else { 500 };
 
             let created_at = started_at
@@ -798,6 +802,76 @@ mod tests {
             )
             .expect("read cancel row");
         assert_eq!(cancel_row, 500);
+        Ok(())
+    }
+
+    #[test]
+    fn running_rows_are_skipped_until_terminal() -> Result<(), AppError> {
+        // A `running` row has incomplete counters and must not be imported,
+        // otherwise the dedup ledger would lock it as status 500 forever.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = create_fixture_db(temp.path());
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open fixture");
+            insert_usage_row(
+                &conn,
+                "row-running",
+                "sess-run",
+                "builtin:zai-start-plan",
+                "GLM-5.3",
+                "running",
+                1_787_362_690_000,
+                None,
+                None,
+                10,
+                0,
+                0,
+                0,
+                None,
+            );
+        }
+
+        let db = Database::memory().expect("memory db");
+
+        // First sync: running row is excluded.
+        let first = sync_zcode_usage_from_path(&db, &db_path).expect("sync 1");
+        assert_eq!(first.imported, 0);
+        assert_eq!(first.skipped, 0);
+
+        let count: i64 = lock_conn!(db.conn)
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'zcode_session'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 0);
+
+        // Simulate ZCode completing the row.
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open fixture");
+            conn.execute(
+                "UPDATE model_usage SET status = 'completed', duration_ms = 5000,
+                         output_tokens = 42
+                  WHERE id = 'row-running'",
+                [],
+            )
+            .expect("update to completed");
+        }
+
+        // Second sync: the now-completed row is imported fresh.
+        let second = sync_zcode_usage_from_path(&db, &db_path).expect("sync 2");
+        assert_eq!(second.imported, 1);
+
+        let status: i64 = lock_conn!(db.conn)
+            .query_row(
+                "SELECT status_code FROM proxy_request_logs
+                 WHERE request_id = 'zcode:row-running'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read status");
+        assert_eq!(status, 200);
         Ok(())
     }
 }
