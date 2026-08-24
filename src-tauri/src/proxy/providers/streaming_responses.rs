@@ -286,6 +286,18 @@ struct StreamedTextPart {
     discarded: bool,
 }
 
+fn compatible_terminal_suffix<'a>(streamed: &str, terminal: &'a str) -> Option<&'a str> {
+    terminal
+        .strip_prefix(streamed)
+        .or_else(|| streamed.starts_with(terminal).then_some(""))
+}
+
+enum CompatiblePartMatch {
+    None,
+    Unique(usize),
+    Ambiguous,
+}
+
 #[derive(Default)]
 struct StreamedTextState {
     parts: Vec<StreamedTextPart>,
@@ -456,6 +468,26 @@ impl StreamedTextState {
                 && (self.unkeyed.starts_with(full_text) || full_text.starts_with(&self.unkeyed)))
     }
 
+    fn compatible_part_match(&self, full_text: &str) -> CompatiblePartMatch {
+        let mut candidates = self.parts.iter().enumerate().filter(|(_, part)| {
+            !part.discarded
+                && !part.text.is_empty()
+                && compatible_terminal_suffix(&part.text, full_text).is_some()
+        });
+        let Some((index, part)) = candidates.next() else {
+            return CompatiblePartMatch::None;
+        };
+        let suffix = compatible_terminal_suffix(&part.text, full_text)
+            .expect("compatible candidates must have a terminal suffix");
+        if candidates.any(|(_, candidate)| {
+            compatible_terminal_suffix(&candidate.text, full_text) != Some(suffix)
+        }) {
+            CompatiblePartMatch::Ambiguous
+        } else {
+            CompatiblePartMatch::Unique(index)
+        }
+    }
+
     fn record_delta(&mut self, data: &Value, delta: &str) {
         if delta.is_empty() {
             return;
@@ -517,7 +549,19 @@ impl StreamedTextState {
         if self.key_pair_conflicts(output_key, item_key.as_ref()) {
             return String::new();
         }
-        let keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        let mut keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        if keyed_index.is_none() && self.unkeyed.is_empty() {
+            match self.compatible_part_match(full_text) {
+                CompatiblePartMatch::Unique(index) => keyed_index = Some(index),
+                CompatiblePartMatch::Ambiguous => {
+                    log::warn!(
+                        "[Claude/Responses] Multiple streamed text parts match terminal text after identity drift; avoiding duplicate replay"
+                    );
+                    return String::new();
+                }
+                CompatiblePartMatch::None => {}
+            }
+        }
         let emitted = keyed_index.map(|index| self.parts[index].text.clone());
 
         let missing = if !self.unkeyed.is_empty() {
@@ -921,6 +965,28 @@ impl BufferedCitationTextState {
 
     fn snapshot_matches(part: &BufferedCitationPart, text: &str) -> bool {
         part.text.is_empty() || part.text.starts_with(text) || text.starts_with(&part.text)
+    }
+
+    fn compatible_streamed_part_match(&self, text: &str) -> CompatiblePartMatch {
+        let mut candidates = self.parts.iter().enumerate().filter(|(_, part)| {
+            !part.discarded
+                && part.received_delta
+                && !part.originated_unkeyed
+                && !part.text.is_empty()
+                && Self::snapshot_matches(part, text)
+        });
+        let Some((index, part)) = candidates.next() else {
+            return CompatiblePartMatch::None;
+        };
+        let suffix = compatible_terminal_suffix(&part.text, text)
+            .expect("compatible candidates must have a terminal suffix");
+        if candidates
+            .any(|(_, candidate)| compatible_terminal_suffix(&candidate.text, text) != Some(suffix))
+        {
+            CompatiblePartMatch::Ambiguous
+        } else {
+            CompatiblePartMatch::Unique(index)
+        }
     }
 
     fn keys_allow_open_part_adoption(
@@ -1603,11 +1669,26 @@ impl BufferedCitationTextState {
         if self.key_pair_conflicts(output_key, item_key.as_ref()) {
             return None;
         }
-        let keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        let mut keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
         let text = part
             .get("text")
             .and_then(Value::as_str)
             .filter(|text| !text.is_empty())?;
+        if keyed_index.is_none() {
+            match self.compatible_streamed_part_match(text) {
+                CompatiblePartMatch::Unique(index) => {
+                    self.bind_keys(index, output_key, item_key.clone());
+                    keyed_index = Some(index);
+                }
+                CompatiblePartMatch::Ambiguous => {
+                    log::warn!(
+                        "[Claude/Responses] Multiple buffered text parts match terminal text after identity drift; avoiding duplicate replay"
+                    );
+                    return None;
+                }
+                CompatiblePartMatch::None => {}
+            }
+        }
         if let Some(index) = keyed_index.filter(|index| {
             Self::has_pending_output(&self.parts[*index])
                 && Self::snapshot_matches(&self.parts[*index], text)
@@ -4673,6 +4754,241 @@ mod tests {
     }
 
     #[test]
+    fn test_streamed_text_reconciles_unique_terminal_identity_drift() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Already streamed.",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Already streamed.", Some(0), Some("msg_terminal"), 0),
+            ""
+        );
+        assert_eq!(
+            state.missing_suffix("Already streamed.", Some(0), Some("msg_terminal"), 0),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_returns_suffix_after_unique_terminal_identity_drift() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Already streamed",
+        );
+
+        assert_eq!(
+            state.missing_suffix(
+                "Already streamed and completed.",
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            " and completed."
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_returns_shared_suffix_for_equivalent_drift_candidates() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "Same",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 2, "content_index": 0}),
+            "Same",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Same!", Some(0), Some("msg_terminal"), 0),
+            "!"
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_does_not_guess_between_conflicting_drift_candidates() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "Same",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 2, "content_index": 0}),
+            "Same!",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Same! tail", Some(0), Some("msg_terminal"), 0),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_preserves_distinct_identical_keyed_parts() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 0, "content_index": 0}),
+            "Same.",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 1, "content_index": 0}),
+            "Same.",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Same.", Some(0), Some("msg_first"), 0),
+            ""
+        );
+        assert_eq!(
+            state.missing_suffix("Same.", Some(1), Some("msg_second"), 0),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_refusal_reconciles_unique_terminal_identity_drift() {
+        let mut streamed = StreamedTextState::default();
+        streamed.record_delta(
+            &json!({
+                "item_id": "refusal_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Cannot comply.",
+        );
+        let item = json!({
+            "id": "refusal_terminal",
+            "type": "message",
+            "content": [{"type": "refusal", "refusal": "Cannot comply."}]
+        });
+
+        assert!(missing_message_text_parts(&item, Some(0), &mut streamed, None).is_empty());
+    }
+
+    #[test]
+    fn test_terminal_only_refusal_is_emitted_once() {
+        let mut streamed = StreamedTextState::default();
+        let item = json!({
+            "id": "refusal_terminal",
+            "type": "message",
+            "content": [{"type": "refusal", "refusal": "Cannot comply."}]
+        });
+
+        assert_eq!(
+            missing_message_text_parts(&item, Some(0), &mut streamed, None),
+            vec!["Cannot comply."]
+        );
+        assert!(missing_message_text_parts(&item, Some(0), &mut streamed, None).is_empty());
+    }
+
+    #[test]
+    fn test_buffered_citations_reconcile_unique_terminal_identity_drift() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Already streamed.",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Already streamed."]);
+
+        assert_eq!(
+            state.render_message_part(
+                &json!({"text": "Already streamed.", "annotations": []}),
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_return_suffix_after_unique_terminal_identity_drift() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Already streamed",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Already streamed"]);
+
+        assert_eq!(
+            state.render_message_part(
+                &json!({"text": "Already streamed and completed.", "annotations": []}),
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            Some(" and completed.".to_string())
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_return_shared_suffix_for_equivalent_drift_candidates() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "Same",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 2, "content_index": 0}),
+            "Same",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Same", "Same"]);
+
+        assert_eq!(
+            state.render_message_part(
+                &json!({"text": "Same!", "annotations": []}),
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            Some("!".to_string())
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_do_not_guess_between_conflicting_drift_candidates() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "Same",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 2, "content_index": 0}),
+            "Same!",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Same", "Same!"]);
+
+        assert_eq!(
+            state.render_message_part(
+                &json!({"text": "Same! tail", "annotations": []}),
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn test_unkeyed_streamed_text_reconciles_with_later_terminal_keys() {
         let mut streamed = StreamedTextState::default();
         streamed.record_delta(&json!({}), "Before search.");
@@ -6445,6 +6761,41 @@ mod tests {
             "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_text\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed.\",\"annotations\":[]}]}}\n\n",
             "event: response.completed\n",
             "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_text\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"msg_text\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Already streamed."]);
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_terminal_identity_drift_does_not_duplicate_streamed_text() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_text_drift\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_stream\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_stream\",\"output_index\":1,\"content_index\":0,\"delta\":\"Already streamed.\"}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_stream\",\"output_index\":1,\"content_index\":0,\"text\":\"Already streamed.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_stream\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_text_drift\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"msg_terminal\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed.\",\"annotations\":[]}] }]}}\n\n"
         );
 
         let merged = convert_stream_text(input).await;
