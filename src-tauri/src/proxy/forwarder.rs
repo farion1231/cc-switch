@@ -4251,10 +4251,7 @@ mod tests {
         // Copilot's chat endpoint lives at the origin root (no /v1); the plain
         // concatenation must not let CodexAdapter's /v1 auto-prefix leak in.
         assert_eq!(
-            build_codex_copilot_url(
-                "https://api.githubcopilot.com",
-                "/chat/completions"
-            ),
+            build_codex_copilot_url("https://api.githubcopilot.com", "/chat/completions"),
             "https://api.githubcopilot.com/chat/completions"
         );
         // Enterprise dynamic endpoints and trailing slashes stay correct.
