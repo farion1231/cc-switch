@@ -174,7 +174,28 @@ export function useProviderActions(
             stalePrefixes.push(`${originalId}/`);
           }
 
-          const existingCatalog = (await openclawApi.getModelCatalog()) || {};
+          // Only sync when this provider actually lives in the config,
+          // mirroring the backend's database-only behavior: writing catalog
+          // entries for a provider absent from models.providers would create
+          // selectable refs that cannot resolve.
+          await queryClient.invalidateQueries({
+            queryKey: openclawKeys.liveProviderIds,
+          });
+          const liveProviderIds = await queryClient.ensureQueryData({
+            queryKey: openclawKeys.liveProviderIds,
+            queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+          });
+          if (!liveProviderIds.includes(providerKey)) {
+            return;
+          }
+
+          // Preserve an unset global allowlist: seeding a new catalog from
+          // only this provider's models would hide every other live
+          // provider's models from /model.
+          const existingCatalog = await openclawApi.getModelCatalog();
+          if (!existingCatalog) {
+            return;
+          }
           const modelIds = new Set(
             (config.models ?? [])
               .map((m) => m.id?.trim())
