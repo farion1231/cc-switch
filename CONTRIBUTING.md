@@ -125,7 +125,7 @@ CC Switch supports four languages. When modifying user-facing text:
    - `src/i18n/locales/zh.json`
    - `src/i18n/locales/zh-TW.json`
    - `src/i18n/locales/ja.json`
-2. A parity test enforces the required key paths — `tests/config/managementListLocales.test.ts` enumerates the keys every locale file must provide.
+2. Locale parity is enforced by slice tests, not a whole-file guard — e.g. `tests/config/managementListLocales.test.ts` enumerates the management-list key paths every locale file must provide; keys outside such lists are not automatically checked.
 3. Use the `t()` function from i18next for all UI text.
 4. Never hardcode user-facing strings.
 
@@ -261,7 +261,7 @@ CC Switch 支持四种语言。修改用户可见文本时：
    - `src/i18n/locales/zh.json`
    - `src/i18n/locales/zh-TW.json`
    - `src/i18n/locales/ja.json`
-2. 必需键路径由 parity 测试强制——`tests/config/managementListLocales.test.ts` 枚举每个 locale 文件必须提供的键路径。
+2. locale parity 由分片测试强制，并非全量守卫——例如 `tests/config/managementListLocales.test.ts` 枚举每个 locale 文件必须提供的 management 列表键路径；此类清单之外的键不会被自动检查。
 3. 所有 UI 文本使用 i18next 的 `t()` 函数。
 4. 不要硬编码用户可见的字符串。
 
