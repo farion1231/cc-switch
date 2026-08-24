@@ -9,6 +9,11 @@ import {
 interface UseApiKeyStateProps {
   initialConfig?: string;
   onConfigChange: (config: string) => void;
+  /**
+   * 现读当前配置。`initialConfig` 是调用方渲染期取的快照，而写 settingsConfig
+   * 不触发重渲染，改 API Key 时若基于旧快照重建整份 JSON 会覆盖别处的改动。
+   */
+  getConfig?: () => string;
   selectedPresetId: string | null;
   category?: ProviderCategory;
   appType?: string;
@@ -22,6 +27,7 @@ interface UseApiKeyStateProps {
 export function useApiKeyState({
   initialConfig,
   onConfigChange,
+  getConfig,
   selectedPresetId,
   category,
   appType,
@@ -57,7 +63,7 @@ export function useApiKeyState({
       setApiKey(key);
 
       const configString = setApiKeyInConfig(
-        initialConfig || "{}",
+        getConfig?.() || initialConfig || "{}",
         key.trim(),
         {
           // 最佳实践：仅在"非官方/非云厂商类别"时补齐缺失字段
@@ -74,6 +80,7 @@ export function useApiKeyState({
       onConfigChange(configString);
     },
     [
+      getConfig,
       initialConfig,
       selectedPresetId,
       category,
