@@ -625,6 +625,23 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
 
     let mut t = Table::new();
     let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
+    // Repair legacy malformed specs: url-only servers misclassified as stdio
+    // by the old import default should be projected as http.
+    let has_command = spec
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let has_url = spec
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let typ = if typ == "stdio" && !has_command && has_url {
+        "http"
+    } else {
+        typ
+    };
     t["type"] = toml_edit::value(typ);
 
     // 定义核心字段（已在下方处理，跳过通用转换）
@@ -891,6 +908,49 @@ mod tests {
         assert!(
             table.get("command").is_none(),
             "must not write command = \"\" when command is absent"
+        );
+    }
+
+    #[test]
+    fn legacy_stdio_url_only_spec_is_repaired_to_http() {
+        // Legacy DB records created by the old import default stored url-only
+        // servers as {"type":"stdio","url":"..."}. The write path must repair
+        // these to http so the projected config is valid.
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "url": "https://mcp.example.com/docs"
+        }))
+        .expect("table");
+        assert_eq!(
+            table.get("type").and_then(|i| i.as_str()),
+            Some("http"),
+            "legacy stdio+url spec must be repaired to http"
+        );
+        assert_eq!(
+            table.get("url").and_then(|i| i.as_str()),
+            Some("https://mcp.example.com/docs"),
+            "url must be preserved"
+        );
+        assert!(table.get("command").is_none());
+    }
+
+    #[test]
+    fn explicit_stdio_with_command_is_not_repaired() {
+        // A genuine stdio server with a command must not be reclassified.
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "command": "npx",
+            "url": "https://mcp.example.com/docs"
+        }))
+        .expect("table");
+        assert_eq!(
+            table.get("type").and_then(|i| i.as_str()),
+            Some("stdio"),
+            "explicit stdio with command must stay stdio"
+        );
+        assert_eq!(
+            table.get("command").and_then(|i| i.as_str()),
+            Some("npx")
         );
     }
 
