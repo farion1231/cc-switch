@@ -1310,6 +1310,8 @@ mod tests {
             resets_at: None,
             used_value_usd: None,
             max_value_usd: None,
+            used_credits: None,
+            max_credits: None,
         }
     }
 

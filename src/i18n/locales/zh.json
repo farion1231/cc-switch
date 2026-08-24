@@ -3239,6 +3239,8 @@
     "credits": "额度",
     "copilotPremium": "高级请求",
     "utilization": "{{value}}%",
+    "creditsUnit": "积分",
+    "creditUsage": "{{used}}/{{total}} {{unit}}",
     "resetsIn": "{{time}}后重置",
     "extraUsage": "超额用量",
     "expired": "会话已过期",

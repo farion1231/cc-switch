@@ -10,6 +10,11 @@ export interface QuotaTier {
   resetsAt: string | null;
   usedValueUsd?: number | null;
   maxValueUsd?: number | null;
+  /** 智谱 V3 积分套餐：已用积分（对应上游 currentValue）。
+   * 仅当 limits 条目 type=CREDIT_LIMIT 时填充，前端据此切换为积分展示。 */
+  usedCredits?: number | null;
+  /** 智谱 V3 积分套餐：总积分（对应上游 usage）。 */
+  maxCredits?: number | null;
   planLabel?: string | null;
 }
 

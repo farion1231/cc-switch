@@ -38,6 +38,14 @@ pub struct QuotaTier {
     /// ZenMux: 窗口上限（USD）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_value_usd: Option<f64>,
+    /// 智谱 V3 积分套餐：已用积分（对应上游 `currentValue`）。
+    /// 仅当 limits 条目 `type=CREDIT_LIMIT` 时填充，其他套餐保持 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used_credits: Option<f64>,
+    /// 智谱 V3 积分套餐：总积分（对应上游 `usage`）。
+    /// 仅当 limits 条目 `type=CREDIT_LIMIT` 时填充。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_credits: Option<f64>,
 }
 
 /// 超额使用信息
@@ -406,6 +414,8 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
                         resets_at: w.resets_at,
                         used_value_usd: None,
                         max_value_usd: None,
+                        used_credits: None,
+                        max_credits: None,
                     });
                 }
             }
@@ -426,6 +436,8 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
                         resets_at: w.resets_at,
                         used_value_usd: None,
                         max_value_usd: None,
+                        used_credits: None,
+                        max_credits: None,
                     });
                 }
             }
@@ -749,6 +761,8 @@ pub(crate) async fn query_codex_quota(
                     resets_at: window.reset_at.and_then(unix_ts_to_iso),
                     used_value_usd: None,
                     max_value_usd: None,
+                    used_credits: None,
+                    max_credits: None,
                 });
             }
         }
@@ -1212,6 +1226,8 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
             resets_at: reset_time,
             used_value_usd: None,
             max_value_usd: None,
+            used_credits: None,
+            max_credits: None,
         })
         .collect();
 

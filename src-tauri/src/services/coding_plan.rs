@@ -170,6 +170,8 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
                     resets_at,
                     used_value_usd: None,
                     max_value_usd: None,
+                    used_credits: None,
+                    max_credits: None,
                 });
             }
         }
@@ -193,6 +195,8 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
             resets_at,
             used_value_usd: None,
             max_value_usd: None,
+            used_credits: None,
+            max_credits: None,
         });
     }
 
@@ -242,10 +246,20 @@ fn classify_zhipu_window(item: &serde_json::Value) -> Option<ZhipuWindow> {
 ///    five_hour（5 小时桶在 0% 等状态下可能没有 reset），其余按 reset 升序
 ///    依次填入仍空缺的槽位。
 ///
-/// 老套餐（2026-02-12 前订阅）只回 1 条
-/// `TOKENS_LIMIT`，自然降级为仅展示 `five_hour`；新套餐回 2 条。
+/// 套餐代次（按智谱官网前端常量区分）：
+/// - V1（老套餐，2026-02-12 前）：仅 1 条 `TOKENS_LIMIT`（unit=3，5 小时）。
+/// - V2（新套餐）：2 条 `TOKENS_LIMIT`（unit=3 五小时 + unit=6 每周），按 Token
+///   计费，前端展示百分比。
+/// - V3（积分套餐）：2 条 `CREDIT_LIMIT`（unit=3 五小时 + unit=6 每周），按积分
+///   计费。除 `percentage` 外还携带 `currentValue`（已用积分）与 `usage`（总
+///   积分），官网以 "currentValue / usage 积分" 形式展示；本函数将其填入
+///   `used_credits` / `max_credits`，前端据此切换为积分绝对值展示。
+///
+/// `TOKENS_LIMIT` 与 `CREDIT_LIMIT` 不会在同一响应中混出现，故两代次共用同一对
+/// 槽位（five_hour / weekly）。
 fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
-    type Entry = (Option<i64>, f64, Option<String>);
+    // (reset_ms, percentage, reset_iso, used_credits, max_credits)
+    type Entry = (Option<i64>, f64, Option<String>, Option<f64>, Option<f64>);
     let mut five_hour: Option<Entry> = None;
     let mut weekly: Option<Entry> = None;
     let mut unclassified: Vec<Entry> = Vec::new();
@@ -268,7 +282,12 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 .unwrap_or(0.0);
             let reset_ms = limit_item.get("nextResetTime").and_then(|v| v.as_i64());
             let reset_iso = reset_ms.and_then(millis_to_iso8601);
-            let entry = (reset_ms, percentage, reset_iso);
+            // V3 积分套餐特有：currentValue（已用积分）/ usage（总积分）。
+            // 仅 CREDIT_LIMIT 条目携带，TOKENS_LIMIT 条目这两个字段缺失 → None。
+            // 字段名与上游 JSON 一致（驼峰）。
+            let used_credits = limit_item.get("currentValue").and_then(|v| v.as_f64());
+            let max_credits = limit_item.get("usage").and_then(|v| v.as_f64());
+            let entry = (reset_ms, percentage, reset_iso, used_credits, max_credits);
             match classify_zhipu_window(limit_item) {
                 Some(ZhipuWindow::FiveHour) if five_hour.is_none() => five_hour = Some(entry),
                 Some(ZhipuWindow::Weekly) if weekly.is_none() => weekly = Some(entry),
@@ -277,25 +296,27 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
         }
     }
 
-    unclassified.sort_by_key(|(reset, _, _)| (reset.is_some(), reset.unwrap_or(i64::MIN)));
+    unclassified.sort_by_key(|(reset, _, _, _, _)| (reset.is_some(), reset.unwrap_or(i64::MIN)));
     for entry in unclassified {
         if five_hour.is_none() {
             five_hour = Some(entry);
         } else if weekly.is_none() {
             weekly = Some(entry);
         }
-        // 智谱当前最多两条 TOKENS_LIMIT，多余的忽略
+        // 智谱当前最多两条 TOKENS_LIMIT/CREDIT_LIMIT，多余的忽略
     }
 
     let mut tiers = Vec::new();
     for (name, slot) in [(TIER_FIVE_HOUR, five_hour), (TIER_WEEKLY_LIMIT, weekly)] {
-        if let Some((_, percentage, resets_at)) = slot {
+        if let Some((_, percentage, resets_at, used_credits, max_credits)) = slot {
             tiers.push(QuotaTier {
                 name: name.to_string(),
                 utilization: percentage,
                 resets_at,
                 used_value_usd: None,
                 max_value_usd: None,
+                used_credits,
+                max_credits,
             });
         }
     }
@@ -577,6 +598,8 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
             resets_at,
             used_value_usd: used_usd,
             max_value_usd: max_usd,
+            used_credits: None,
+            max_credits: None,
         });
     }
 
@@ -598,6 +621,8 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
             resets_at,
             used_value_usd: used_usd,
             max_value_usd: max_usd,
+            used_credits: None,
+            max_credits: None,
         });
     }
 
@@ -673,6 +698,8 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
             resets_at,
             used_value_usd: None,
             max_value_usd: None,
+            used_credits: None,
+            max_credits: None,
         });
     }
 
@@ -692,6 +719,8 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
                 resets_at,
                 used_value_usd: None,
                 max_value_usd: None,
+                used_credits: None,
+                max_credits: None,
             });
         }
     }
@@ -1009,6 +1038,8 @@ fn parse_afp_tiers(result: &serde_json::Value) -> Vec<QuotaTier> {
             resets_at,
             used_value_usd: None,
             max_value_usd: None,
+            used_credits: None,
+            max_credits: None,
         });
     }
     tiers
@@ -1068,6 +1099,8 @@ fn parse_coding_plan_tiers(result: &serde_json::Value) -> Vec<QuotaTier> {
             resets_at,
             used_value_usd: None,
             max_value_usd: None,
+            used_credits: None,
+            max_credits: None,
         });
     }
     tiers
@@ -1565,6 +1598,81 @@ mod tests {
         assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
         assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+    }
+
+    // ── 智谱 V3 积分套餐（CREDIT_LIMIT）──
+    // V3 用 type=CREDIT_LIMIT 区分于 V2 的 TOKENS_LIMIT，
+    // 携带 currentValue（已用积分）与 usage（总积分），前端据此切换为积分展示。
+
+    #[test]
+    fn zhipu_v3_credit_plan_extracts_credits() {
+        // V3 积分套餐：5 小时 + 每周均为 CREDIT_LIMIT，带 currentValue/usage。
+        let data = json!({
+            "limits": [
+                { "type": "CREDIT_LIMIT", "unit": 3, "percentage": 30.0, "currentValue": 300, "usage": 1000, "nextResetTime": 1_000_000_000_000_i64 },
+                { "type": "CREDIT_LIMIT", "unit": 6, "percentage": 12.0, "currentValue": 600, "usage": 5000, "nextResetTime": 2_000_000_000_000_i64 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 30.0);
+        assert_eq!(tiers[0].used_credits, Some(300.0));
+        assert_eq!(tiers[0].max_credits, Some(1000.0));
+        assert!(tiers[0].resets_at.is_some());
+
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 12.0);
+        assert_eq!(tiers[1].used_credits, Some(600.0));
+        assert_eq!(tiers[1].max_credits, Some(5000.0));
+        assert!(tiers[1].resets_at.is_some());
+    }
+
+    #[test]
+    fn zhipu_v2_tokens_plan_has_no_credits() {
+        // V2 Token 套餐：TOKENS_LIMIT 不带 currentValue/usage，积分字段必须为 None。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 44.0, "nextResetTime": 1_000_000_000_000_i64 },
+                { "type": "TOKENS_LIMIT", "unit": 6, "percentage": 53.0, "nextResetTime": 2_000_000_000_000_i64 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].used_credits, None);
+        assert_eq!(tiers[0].max_credits, None);
+        assert_eq!(tiers[1].used_credits, None);
+        assert_eq!(tiers[1].max_credits, None);
+    }
+
+    #[test]
+    fn zhipu_v3_credit_plan_case_insensitive() {
+        // 上游若把 CREDIT_LIMIT 改成小写，依然能识别并提取积分。
+        let data = json!({
+            "limits": [
+                { "type": "credit_limit", "unit": 3, "percentage": 5.0, "currentValue": 50, "usage": 1000 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].used_credits, Some(50.0));
+        assert_eq!(tiers[0].max_credits, Some(1000.0));
+    }
+
+    #[test]
+    fn zhipu_v3_credit_plan_missing_values_defaults_to_none() {
+        // 积分值字段缺失时降级为 None（不 panic，前端回退到百分比展示）。
+        let data = json!({
+            "limits": [
+                { "type": "CREDIT_LIMIT", "unit": 3, "percentage": 10.0 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].used_credits, None);
+        assert_eq!(tiers[0].max_credits, None);
     }
 
     // ── MiniMax ──
