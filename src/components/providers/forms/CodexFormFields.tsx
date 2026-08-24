@@ -51,7 +51,10 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import { copilotGetModels, copilotGetModelsForAccount } from "@/lib/api/copilot";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+} from "@/lib/api/copilot";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
