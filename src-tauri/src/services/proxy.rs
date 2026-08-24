@@ -6387,7 +6387,9 @@ wire_api = "responses"
         let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
             .expect("read live config");
         assert!(
-            live_config.contains(&format!("experimental_bearer_token = \"{PROXY_TOKEN_PLACEHOLDER}\"")),
+            live_config.contains(&format!(
+                "experimental_bearer_token = \"{PROXY_TOKEN_PLACEHOLDER}\""
+            )),
             "since Codex 0.149 (openai/codex#39214) custom providers no longer read \
              auth.json keys, so the placeholder token must be carried in config.toml"
         );
