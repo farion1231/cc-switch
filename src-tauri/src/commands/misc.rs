@@ -6758,8 +6758,7 @@ mod tests {
         let tool_dir = base.path().join("cc-switch-工具目录");
         std::fs::create_dir_all(&tool_dir).expect("non-ascii tool dir should be created");
         let npm = tool_dir.join("npm.cmd");
-        std::fs::write(&npm, "@echo off\r\nexit /b 0\r\n")
-            .expect("fake npm.cmd should be written");
+        std::fs::write(&npm, "@echo off\r\nexit /b 0\r\n").expect("fake npm.cmd should be written");
 
         let command_line = format!(
             "{header}\r\ncall \"{npm}\"\r\nif errorlevel 1 exit /b %errorlevel%",
