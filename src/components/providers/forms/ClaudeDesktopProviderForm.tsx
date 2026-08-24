@@ -120,7 +120,12 @@ const ROLE_ORDER: RouteRole[] = ["sonnet", "opus", "fable", "haiku"];
 // 核对版本：Claude Desktop 1.34493.1（2026-08）。
 const ROLE_CATALOG_IDS: Record<RouteRole, string[]> = {
   sonnet: ["claude-sonnet-5", "claude-sonnet-4-6"],
-  opus: ["claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6"],
+  opus: [
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+  ],
   fable: ["claude-fable-5"],
   haiku: ["claude-haiku-4-5"],
 };
@@ -1193,9 +1198,12 @@ export function ClaudeDesktopProviderForm({
                           >
                             <SelectTrigger
                               className="h-9 w-full"
-                              aria-label={`${t("claudeDesktop.routeModelLabel", {
-                                defaultValue: "模型角色",
-                              })} ${index + 1}`}
+                              aria-label={`${t(
+                                "claudeDesktop.routeModelLabel",
+                                {
+                                  defaultValue: "模型角色",
+                                },
+                              )} ${index + 1}`}
                             >
                               <SelectValue />
                             </SelectTrigger>
@@ -1233,8 +1241,8 @@ export function ClaudeDesktopProviderForm({
                               onChange={(event) =>
                                 updateRoute(index, {
                                   model: event.target.value,
-                              })
-                            }
+                                })
+                              }
                               placeholder="deepseek-v4-pro"
                               className="flex-1"
                             />

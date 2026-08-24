@@ -743,9 +743,7 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
                 // 因此优先使用显式主路由；旧配置没有该字段时才退回排序首条。
                 .or_else(|| {
                     primary_route_id(provider)
-                        .and_then(|primary| {
-                            routes.iter().find(|route| route.route_id == primary)
-                        })
+                        .and_then(|primary| routes.iter().find(|route| route.route_id == primary))
                         .or_else(|| routes.first())
                 })
                 .map(|route| route.upstream_model.clone())
