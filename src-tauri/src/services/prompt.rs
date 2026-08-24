@@ -243,7 +243,10 @@ impl PromptService {
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
         // Pi derives activation from its native AGENTS.md; its persisted prompt
         // rows are intentionally disabled and must not drive generic projection.
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        if matches!(
+            app,
+            AppType::ClaudeDesktop | AppType::CodexDesktop | AppType::Pi
+        ) {
             return Ok(());
         }
 
@@ -259,7 +262,7 @@ impl PromptService {
     pub fn sync_all_to_live(state: &AppState) -> Result<(), AppError> {
         let mut failures = Vec::new();
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop | AppType::CodexDesktop) {
                 continue;
             }
             if let Err(error) = Self::sync_to_live(state, app.clone()) {
@@ -489,9 +492,13 @@ fn delete_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::project_prompt_set_to_path;
+    use super::{project_prompt_set_to_path, PromptService};
+    use crate::app_config::AppType;
+    use crate::database::Database;
     use crate::prompt::Prompt;
+    use crate::store::AppState;
     use indexmap::IndexMap;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn prompt(id: &str, content: &str, enabled: bool) -> Prompt {
@@ -550,6 +557,20 @@ mod tests {
             std::fs::read_to_string(path).expect("read prompt"),
             "first body"
         );
+    }
+
+    #[test]
+    fn codex_desktop_prompt_projection_uses_the_shared_cli_scope() {
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        db.conn
+            .lock()
+            .expect("lock database")
+            .execute("DROP TABLE prompts", [])
+            .expect("remove prompt table");
+        let state = AppState::new(db);
+
+        PromptService::sync_to_live(&state, AppType::CodexDesktop)
+            .expect("Desktop projection must not read an independent prompt namespace");
     }
 }
 

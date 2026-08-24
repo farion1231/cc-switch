@@ -17,6 +17,8 @@ const APP_BADGE_ICON: Partial<
 > = {
   claude: { icon: Terminal },
   "claude-desktop": { icon: Monitor, offsetY: 0.5 },
+  codex: { icon: Terminal },
+  "codex-desktop": { icon: Monitor, offsetY: 0.5 },
 };
 
 interface AppSwitcherProps {
@@ -31,6 +33,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   claude: "claude",
   "claude-desktop": "claude",
   codex: "openai",
+  "codex-desktop": "openai",
   gemini: "gemini",
   grokbuild: "grok",
   opencode: "opencode",
@@ -42,7 +45,8 @@ const APP_ICON_NAME: Record<AppId, string> = {
 const APP_DISPLAY_NAME: Record<AppId, string> = {
   claude: "Claude Code",
   "claude-desktop": "Claude Desktop",
-  codex: "Codex",
+  codex: "Codex CLI",
+  "codex-desktop": "Codex Desktop",
   gemini: "Gemini",
   grokbuild: "Grok Build",
   opencode: "OpenCode",
@@ -56,7 +60,10 @@ function AppGlyph({ app, isActive }: { app: AppId; isActive: boolean }) {
   const badgeConfig = APP_BADGE_ICON[app];
   const BadgeIcon = badgeConfig?.icon;
   return (
-    <span className="relative inline-flex shrink-0">
+    <span
+      className="relative inline-flex shrink-0 pointer-events-none"
+      aria-hidden="true"
+    >
       <ProviderIcon
         icon={APP_ICON_NAME[app]}
         name={APP_DISPLAY_NAME[app]}

@@ -1223,6 +1223,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_codex_desktop_inherits_codex_global_defaults() -> Result<(), AppError> {
+        use crate::proxy::usage::logger::UsageLogger;
+
+        let db = Arc::new(Database::memory()?);
+        db.set_default_cost_multiplier("codex", "1.75").await?;
+        db.set_pricing_model_source("codex", "request").await?;
+
+        let logger = UsageLogger::new(&db);
+        let (multiplier, source) = logger
+            .resolve_pricing_config("nonexistent-provider", "codex-desktop")
+            .await;
+
+        assert_eq!(multiplier, Decimal::from_str("1.75").unwrap());
+        assert_eq!(source, "request");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_log_usage_falls_back_to_global_defaults() -> Result<(), AppError> {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";

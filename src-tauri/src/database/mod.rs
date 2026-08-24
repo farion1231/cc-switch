@@ -53,7 +53,11 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 17;
+pub(crate) const SCHEMA_VERSION: i32 = 16;
+
+/// Temporary compatibility marker for databases written by the upstream Pi
+/// usage-statistics release before the schema version was restored to v16.
+pub(crate) const LEGACY_V17_SCHEMA_VERSION: i32 = 17;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -179,7 +183,8 @@ impl Database {
         }
         let conn = Connection::open(db_path).map_err(|e| AppError::Database(e.to_string()))?;
         let version = Self::get_user_version(&conn)?;
-        Ok((version > SCHEMA_VERSION).then_some(version))
+        let known_legacy_v17 = Self::is_known_legacy_v17_database(&conn, version)?;
+        Ok((version > SCHEMA_VERSION && !known_legacy_v17).then_some(version))
     }
 
     /// 创建内存数据库（用于测试）

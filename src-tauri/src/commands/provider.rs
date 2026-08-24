@@ -224,6 +224,15 @@ pub async fn get_claude_desktop_status(
 }
 
 #[tauri::command]
+pub async fn get_codex_desktop_status(
+    state: State<'_, AppState>,
+) -> Result<crate::codex_desktop_config::CodexDesktopStatus, String> {
+    let proxy_running = state.proxy_service.is_running().await;
+    crate::codex_desktop_config::get_status(state.db.as_ref(), proxy_running)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_claude_desktop_default_routes(
 ) -> Vec<crate::claude_desktop_config::ClaudeDesktopDefaultRoute> {
     crate::claude_desktop_config::default_proxy_routes()
@@ -299,6 +308,17 @@ pub fn ensure_codex_official_provider(state: State<'_, AppState>) -> Result<bool
     state
         .db
         .ensure_official_seed_by_id(crate::database::CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn ensure_codex_desktop_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .ensure_official_seed_by_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+            AppType::CodexDesktop,
+        )
         .map_err(|e| e.to_string())
 }
 

@@ -90,6 +90,16 @@ fn path_eq_lexical(left: &Path, right: &Path) -> bool {
     comparable_path_key(left) == comparable_path_key(right)
 }
 
+pub(crate) fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    if path_eq_lexical(left, right) {
+        return true;
+    }
+    matches!(
+        (left.canonicalize(), right.canonicalize()),
+        (Ok(left), Ok(right)) if path_eq_lexical(&left, &right)
+    )
+}
+
 /// Returns true when `path` is lexically contained within `base`.
 ///
 /// Both paths are normalized lexically (without hitting the filesystem), so

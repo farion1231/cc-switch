@@ -199,19 +199,95 @@ fn schema_migration_sets_user_version_when_missing() {
         Database::get_user_version(&conn).expect("read version after"),
         SCHEMA_VERSION
     );
+    assert!(Database::table_exists(&conn, "session_usage_dedup").expect("dedup ledger exists"));
 }
 
 #[test]
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
-    Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
+    Database::set_user_version(&conn, SCHEMA_VERSION + 2).expect("set future version");
 
     let err =
         Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject higher version");
     assert!(
         err.to_string().contains("数据库版本过新"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn schema_migration_rejects_unrecognized_legacy_v17_database() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute("DROP TABLE session_usage_dedup", [])
+        .expect("remove legacy marker table");
+    Database::set_user_version(&conn, LEGACY_V17_SCHEMA_VERSION).expect("set legacy v17");
+
+    // Match the startup/restore order: table creation must not manufacture the
+    // compatibility marker before the migration check runs.
+    Database::create_tables_on_conn(&conn).expect("create remaining tables");
+    assert!(!Database::table_exists(&conn, "session_usage_dedup").expect("check marker table"));
+
+    let err = Database::apply_schema_migrations_on_conn(&conn)
+        .expect_err("unknown v17 database must be rejected");
+    assert!(
+        err.to_string().contains("数据库版本过新"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn schema_migration_rejects_legacy_v17_with_unknown_ledger_shape() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute("DROP TABLE session_usage_dedup", [])
+        .expect("remove legacy marker table");
+    conn.execute(
+        "CREATE TABLE session_usage_dedup (
+            data_source TEXT,
+            request_id TEXT,
+            semantic_id TEXT,
+            has_entry_id INTEGER
+        )",
+        [],
+    )
+    .expect("create incompatible marker table");
+    Database::set_user_version(&conn, LEGACY_V17_SCHEMA_VERSION).expect("set legacy v17");
+
+    Database::create_tables_on_conn(&conn).expect("create remaining tables");
+    let err = Database::apply_schema_migrations_on_conn(&conn)
+        .expect_err("incompatible v17 database must be rejected");
+    assert!(
+        err.to_string().contains("数据库版本过新"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn stored_user_version_allows_only_known_legacy_v17_database() {
+    let temp = NamedTempFile::new().expect("create temporary database");
+
+    {
+        let conn = Connection::open(temp.path()).expect("open temporary database");
+        Database::create_tables_on_conn(&conn).expect("create tables");
+        Database::set_user_version(&conn, LEGACY_V17_SCHEMA_VERSION).expect("set legacy v17");
+    }
+    assert_eq!(
+        Database::stored_user_version_exceeds_supported(temp.path())
+            .expect("preflight known legacy v17"),
+        None
+    );
+
+    {
+        let conn = Connection::open(temp.path()).expect("reopen temporary database");
+        conn.execute("DROP TABLE session_usage_dedup", [])
+            .expect("remove legacy marker table");
+    }
+    assert_eq!(
+        Database::stored_user_version_exceeds_supported(temp.path())
+            .expect("preflight unknown legacy v17"),
+        Some(LEGACY_V17_SCHEMA_VERSION)
     );
 }
 

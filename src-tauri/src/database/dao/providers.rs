@@ -5,6 +5,10 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension};
 use std::collections::{HashMap, HashSet};
 
+const CODEX_DESKTOP_PROVIDERS_INITIALIZED_KEY: &str = "codex_desktop_providers_initialized_v1";
+const CODEX_APP_TYPE: &str = "codex";
+const CODEX_DESKTOP_APP_TYPE: &str = "codex-desktop";
+
 type OmoProviderRow = (
     String,
     String,
@@ -749,6 +753,84 @@ impl Database {
         Ok(inserted)
     }
 
+    /// Initialize the Codex Desktop provider namespace from the existing Codex
+    /// namespace exactly once.
+    ///
+    /// The copy only runs while the destination namespace is empty. This keeps
+    /// pre-existing Desktop data authoritative and prevents a later user-driven
+    /// deletion from being silently repopulated. Provider health, usage data,
+    /// proxy backups, and failover state are intentionally not copied.
+    pub fn initialize_codex_desktop_providers_once(&self) -> Result<usize, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let already_initialized: bool = tx
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM settings
+                    WHERE key = ?1 AND value IN ('true', '1')
+                )",
+                params![CODEX_DESKTOP_PROVIDERS_INITIALIZED_KEY],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if already_initialized {
+            tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+            return Ok(0);
+        }
+
+        let destination_has_providers: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM providers WHERE app_type = ?1)",
+                params![CODEX_DESKTOP_APP_TYPE],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let copied = if destination_has_providers {
+            0
+        } else {
+            let copied = tx
+                .execute(
+                    "INSERT INTO providers (
+                        id, app_type, name, settings_config, website_url, category,
+                        created_at, sort_index, notes, icon, icon_color, meta,
+                        is_current, in_failover_queue
+                    )
+                    SELECT
+                        id, ?1, name, settings_config, website_url, category,
+                        created_at, sort_index, notes, icon, icon_color, meta,
+                        is_current, 0
+                    FROM providers
+                    WHERE app_type = ?2",
+                    params![CODEX_DESKTOP_APP_TYPE, CODEX_APP_TYPE],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            tx.execute(
+                "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+                 SELECT provider_id, ?1, url, added_at
+                 FROM provider_endpoints
+                 WHERE app_type = ?2",
+                params![CODEX_DESKTOP_APP_TYPE, CODEX_APP_TYPE],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+            copied
+        };
+
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, 'true')",
+            params![CODEX_DESKTOP_PROVIDERS_INITIALIZED_KEY],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(copied)
+    }
+
     /// 按 id 兜底插入单条 official seed（仅当目标表中该 id 不存在时插入）。
     ///
     /// 与 `init_default_official_providers` 不同：
@@ -764,9 +846,19 @@ impl Database {
     ) -> Result<bool, AppError> {
         use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
 
+        // Codex Desktop intentionally does not participate in the global seed
+        // pass: its namespace is initialized from Codex CLI first. On-demand
+        // recreation reuses the same official template in the Desktop namespace.
+        let seed_app_type = if seed_id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
+            && app_type == crate::app_config::AppType::CodexDesktop
+        {
+            crate::app_config::AppType::Codex
+        } else {
+            app_type.clone()
+        };
         let seed = OFFICIAL_SEEDS
             .iter()
-            .find(|s| s.id == seed_id && s.app_type == app_type)
+            .find(|s| s.id == seed_id && s.app_type == seed_app_type)
             .ok_or_else(|| {
                 AppError::Database(format!(
                     "unknown official seed: id={seed_id}, app_type={}",
@@ -774,7 +866,7 @@ impl Database {
                 ))
             })?;
 
-        let app_type_str = seed.app_type.as_str();
+        let app_type_str = app_type.as_str();
 
         if self.get_provider_by_id(seed_id, app_type_str)?.is_some() {
             return Ok(false);
@@ -891,6 +983,26 @@ mod ensure_official_seed_tests {
     }
 
     #[test]
+    fn ensure_recreates_codex_official_seed_in_desktop_namespace() {
+        let db = Database::memory().expect("memory db");
+
+        let inserted = db
+            .ensure_official_seed_by_id(CODEX_OFFICIAL_PROVIDER_ID, AppType::CodexDesktop)
+            .expect("ensure Codex Desktop official");
+        assert!(inserted);
+        let provider = db
+            .get_provider_by_id(CODEX_OFFICIAL_PROVIDER_ID, AppType::CodexDesktop.as_str())
+            .expect("query")
+            .expect("Codex Desktop official created");
+        assert_eq!(provider.category.as_deref(), Some("official"));
+        assert_eq!(provider.settings_config["auth"], serde_json::json!({}));
+        assert!(db
+            .get_provider_by_id(CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex.as_str())
+            .expect("query CLI namespace")
+            .is_none());
+    }
+
+    #[test]
     fn ensure_recreates_grokbuild_official_seed_after_deletion() {
         let db = Database::memory().expect("memory db");
         db.init_default_official_providers().expect("seed");
@@ -923,5 +1035,204 @@ mod ensure_official_seed_tests {
         let result =
             db.ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::Claude);
         assert!(result.is_err(), "(id, app_type) mismatch should be Err");
+    }
+}
+
+#[cfg(test)]
+mod codex_desktop_provider_init_tests {
+    use super::{CODEX_APP_TYPE, CODEX_DESKTOP_APP_TYPE, CODEX_DESKTOP_PROVIDERS_INITIALIZED_KEY};
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use rusqlite::params;
+    use serde_json::json;
+
+    fn save_source_provider(db: &Database, id: &str, current: bool) {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            format!("Provider {id}"),
+            json!({
+                "auth": { "OPENAI_API_KEY": format!("key-{id}") },
+                "config": format!("model = \"{id}\"")
+            }),
+            Some(format!("https://{id}.example.com")),
+        );
+        provider.category = Some("custom".to_string());
+        provider.created_at = Some(1_700_000_000_000);
+        provider.sort_index = Some(7);
+        provider.notes = Some("keep this note".to_string());
+        provider.icon = Some("openai".to_string());
+        provider.icon_color = Some("#123456".to_string());
+        provider.in_failover_queue = true;
+        db.save_provider(CODEX_APP_TYPE, &provider)
+            .expect("save source provider");
+        db.add_custom_endpoint(CODEX_APP_TYPE, id, &format!("https://{id}.example.com/v1"))
+            .expect("save source endpoint");
+        if current {
+            db.set_current_provider(CODEX_APP_TYPE, id)
+                .expect("set source current");
+        }
+    }
+
+    fn count_rows(db: &Database, table: &str, app_type: &str) -> i64 {
+        let conn = db.conn.lock().expect("lock database");
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE app_type = ?1"),
+            params![app_type],
+            |row| row.get(0),
+        )
+        .expect("count rows")
+    }
+
+    #[test]
+    fn initializes_empty_desktop_namespace_from_codex_once() {
+        let db = Database::memory().expect("memory db");
+        save_source_provider(&db, "source", true);
+
+        {
+            let conn = db.conn.lock().expect("lock database");
+            conn.execute(
+                "INSERT INTO provider_health (
+                    provider_id, app_type, is_healthy, consecutive_failures, updated_at
+                 ) VALUES (?1, ?2, 0, 3, '2026-01-01T00:00:00Z')",
+                params!["source", CODEX_APP_TYPE],
+            )
+            .expect("seed source health");
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, latency_ms,
+                    status_code, created_at
+                 ) VALUES ('request-1', ?1, ?2, 'gpt-test', 10, 200, 1)",
+                params!["source", CODEX_APP_TYPE],
+            )
+            .expect("seed source usage");
+            conn.execute(
+                "INSERT INTO proxy_live_backup (app_type, original_config, backed_up_at)
+                 VALUES (?1, '{}', '2026-01-01T00:00:00Z')",
+                params![CODEX_APP_TYPE],
+            )
+            .expect("seed source backup");
+        }
+
+        let copied = db
+            .initialize_codex_desktop_providers_once()
+            .expect("initialize Desktop providers");
+        assert_eq!(copied, 1);
+        assert!(db
+            .get_bool_flag(CODEX_DESKTOP_PROVIDERS_INITIALIZED_KEY)
+            .expect("read marker"));
+
+        let copied_provider = db
+            .get_provider_by_id("source", CODEX_DESKTOP_APP_TYPE)
+            .expect("query Desktop provider")
+            .expect("Desktop provider copied");
+        assert_eq!(copied_provider.name, "Provider source");
+        assert_eq!(copied_provider.category.as_deref(), Some("custom"));
+        assert_eq!(copied_provider.created_at, Some(1_700_000_000_000));
+        assert_eq!(copied_provider.sort_index, Some(7));
+        assert_eq!(copied_provider.notes.as_deref(), Some("keep this note"));
+        assert_eq!(copied_provider.icon.as_deref(), Some("openai"));
+        assert_eq!(copied_provider.icon_color.as_deref(), Some("#123456"));
+        assert_eq!(
+            copied_provider.settings_config["auth"]["OPENAI_API_KEY"],
+            json!("key-source")
+        );
+        assert!(!copied_provider.in_failover_queue);
+        assert_eq!(
+            db.get_current_provider(CODEX_DESKTOP_APP_TYPE)
+                .expect("query Desktop current")
+                .as_deref(),
+            Some("source")
+        );
+        let source_with_endpoints = db
+            .get_all_providers(CODEX_APP_TYPE)
+            .expect("query source providers")
+            .get("source")
+            .cloned()
+            .expect("source provider");
+        let desktop_with_endpoints = db
+            .get_all_providers(CODEX_DESKTOP_APP_TYPE)
+            .expect("query Desktop providers")
+            .get("source")
+            .cloned()
+            .expect("Desktop provider");
+        let endpoint_url = "https://source.example.com/v1";
+        let source_endpoint = source_with_endpoints
+            .meta
+            .expect("source provider meta")
+            .custom_endpoints
+            .remove(endpoint_url)
+            .expect("source endpoint");
+        let desktop_endpoint = desktop_with_endpoints
+            .meta
+            .expect("Desktop provider meta")
+            .custom_endpoints
+            .remove(endpoint_url)
+            .expect("Desktop endpoint");
+        assert_eq!(desktop_endpoint.url, source_endpoint.url);
+        assert_eq!(desktop_endpoint.added_at, source_endpoint.added_at);
+
+        assert_eq!(
+            count_rows(&db, "provider_health", CODEX_DESKTOP_APP_TYPE),
+            0
+        );
+        assert_eq!(
+            count_rows(&db, "proxy_request_logs", CODEX_DESKTOP_APP_TYPE),
+            0
+        );
+        assert_eq!(
+            count_rows(&db, "proxy_live_backup", CODEX_DESKTOP_APP_TYPE),
+            0
+        );
+    }
+
+    #[test]
+    fn marker_makes_initialization_idempotent() {
+        let db = Database::memory().expect("memory db");
+        save_source_provider(&db, "first", false);
+        assert_eq!(
+            db.initialize_codex_desktop_providers_once()
+                .expect("first initialization"),
+            1
+        );
+
+        save_source_provider(&db, "added-later", false);
+        assert_eq!(
+            db.initialize_codex_desktop_providers_once()
+                .expect("repeat initialization"),
+            0
+        );
+        assert!(db
+            .get_provider_by_id("added-later", CODEX_DESKTOP_APP_TYPE)
+            .expect("query Desktop provider")
+            .is_none());
+    }
+
+    #[test]
+    fn existing_desktop_namespace_is_preserved_and_marked_initialized() {
+        let db = Database::memory().expect("memory db");
+        save_source_provider(&db, "source", false);
+
+        let existing = Provider::with_id(
+            "desktop-only".to_string(),
+            "Desktop only".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        db.save_provider(CODEX_DESKTOP_APP_TYPE, &existing)
+            .expect("save existing Desktop provider");
+
+        assert_eq!(
+            db.initialize_codex_desktop_providers_once()
+                .expect("initialize non-empty namespace"),
+            0
+        );
+        assert!(db
+            .get_bool_flag(CODEX_DESKTOP_PROVIDERS_INITIALIZED_KEY)
+            .expect("read marker"));
+        assert!(db
+            .get_provider_by_id("source", CODEX_DESKTOP_APP_TYPE)
+            .expect("query source copy")
+            .is_none());
+        assert_eq!(count_rows(&db, "providers", CODEX_DESKTOP_APP_TYPE), 1);
     }
 }

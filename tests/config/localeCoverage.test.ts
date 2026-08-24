@@ -51,8 +51,26 @@ const locales = [
   ["ja", ja],
   ["zh-TW", zhTW],
 ] as const;
+const allLocales = [["en", en], ...locales] as const;
 
 describe("locale coverage", () => {
+  it.each(allLocales)(
+    "contains Codex Desktop profile copy in %s",
+    (_name, tree) => {
+      const translations = flattenStrings(tree as TranslationTree);
+
+      expect(
+        translations.get("profiles.switcherTooltip.codex-desktop"),
+      ).toBeTruthy();
+      expect(
+        translations.get("profiles.createDescription.codex-desktop"),
+      ).toBeTruthy();
+      expect(
+        translations.get("codexDesktop.followCodexLoginDescription"),
+      ).toBeTruthy();
+    },
+  );
+
   it.each(locales)("covers every Pi translation key in %s", (_name, tree) => {
     const translations = flattenStrings(tree as TranslationTree);
     const missing = [...piReference.keys()].filter(

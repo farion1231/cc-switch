@@ -51,6 +51,9 @@ import {
 
 const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
 
+const sharedSkillsApp = (app: AppId): Exclude<AppId, "codex-desktop"> =>
+  app === "codex-desktop" ? "codex" : app;
+
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
   currentApp: AppId;
@@ -212,10 +215,11 @@ const UnifiedSkillsPanel = React.forwardRef<
   }, [applicableSkillUpdates]);
 
   const enabledCounts = useMemo(() => {
-    const counts = {
+    const counts: Record<AppId, number> = {
       claude: 0,
       "claude-desktop": 0,
       codex: 0,
+      "codex-desktop": 0,
       gemini: 0,
       grokbuild: 0,
       opencode: 0,
@@ -226,7 +230,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     if (!skills) return counts;
     skills.forEach((skill) => {
       for (const app of SKILLS_APP_IDS) {
-        if (skill.apps[app]) {
+        if (skill.apps[sharedSkillsApp(app)]) {
           counts[app]++;
         }
       }
@@ -269,7 +273,11 @@ const UnifiedSkillsPanel = React.forwardRef<
     if (!beginWrite()) return;
 
     try {
-      await toggleAppMutation.mutateAsync({ id, app, enabled });
+      await toggleAppMutation.mutateAsync({
+        id,
+        app: sharedSkillsApp(app),
+        enabled,
+      });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     } finally {
@@ -280,8 +288,10 @@ const UnifiedSkillsPanel = React.forwardRef<
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
     if (!skills || !beginWrite()) return;
 
+    const targetApp = sharedSkillsApp(app);
+
     const ids = skills
-      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+      .filter((skill) => Boolean(skill.apps[targetApp]) !== enabled)
       .map((skill) => skill.id);
     if (ids.length === 0) {
       endWrite();
@@ -291,7 +301,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     try {
       const result = await bulkToggleAppMutation.mutateAsync({
         ids,
-        app,
+        app: targetApp,
         enabled,
       });
       if (result.failed.length > 0) {

@@ -5,9 +5,11 @@
 //! - 托盘菜单更新
 //! - 前端事件发射
 
+use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
@@ -78,6 +80,11 @@ impl FailoverSwitchManager {
         provider_id: &str,
         provider_name: &str,
     ) -> Result<bool, AppError> {
+        let app = AppType::from_str(app_type)?;
+        if !app.supports_local_proxy() {
+            return Ok(false);
+        }
+
         // 检查该应用是否已被代理接管（enabled=true）
         // 只有被接管的应用才允许执行故障转移切换
         let app_enabled = match self.db.get_proxy_config_for_app(app_type).await {
@@ -131,5 +138,30 @@ impl FailoverSwitchManager {
         }
 
         Ok(switched)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FailoverSwitchManager;
+    use crate::database::Database;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn codex_desktop_switch_never_reads_proxy_config() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DROP TABLE proxy_config", [])
+            .expect("drop proxy_config");
+
+        let manager = FailoverSwitchManager::new(db);
+        let switched = manager
+            .try_switch(None, "codex-desktop", "provider", "Provider")
+            .await
+            .expect("Desktop must not depend on proxy_config");
+
+        assert!(!switched);
     }
 }

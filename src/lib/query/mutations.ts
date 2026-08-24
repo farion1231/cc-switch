@@ -94,6 +94,11 @@ export const useAddProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "codex-desktop") {
+        await queryClient.invalidateQueries({
+          queryKey: ["codexDesktopStatus"],
+        });
+      }
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -177,6 +182,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onSuccess: async (provider, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "codex-desktop") {
+        await queryClient.invalidateQueries({
+          queryKey: ["codexDesktopStatus"],
+        });
+      }
       await queryClient.invalidateQueries({
         queryKey: usageKeys.script(provider.id, appId),
       });
@@ -235,6 +245,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "codex-desktop") {
+        await queryClient.invalidateQueries({
+          queryKey: ["codexDesktopStatus"],
+        });
+      }
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -315,6 +330,12 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
         await queryClient.invalidateQueries({
           queryKey: ["claudeDesktopStatus"],
+        });
+      }
+      if (appId === "codex-desktop") {
+        await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+        await queryClient.invalidateQueries({
+          queryKey: ["codexDesktopStatus"],
         });
       }
 

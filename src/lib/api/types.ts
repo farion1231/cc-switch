@@ -3,9 +3,16 @@ export type AppId =
   | "claude"
   | "claude-desktop"
   | "codex"
+  | "codex-desktop"
   | "gemini"
   | "grokbuild"
   | "opencode"
   | "openclaw"
   | "hermes"
   | "pi";
+
+export type CodexAppId = Extract<AppId, "codex" | "codex-desktop">;
+
+export function isCodexAppId(appId: string): appId is CodexAppId {
+  return appId === "codex" || appId === "codex-desktop";
+}

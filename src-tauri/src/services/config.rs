@@ -87,6 +87,7 @@ impl ConfigService {
     pub fn sync_current_providers_to_live(config: &mut MultiAppConfig) -> Result<(), AppError> {
         Self::sync_current_provider_for_app(config, &AppType::Claude)?;
         Self::sync_current_provider_for_app(config, &AppType::Codex)?;
+        Self::sync_current_provider_for_app(config, &AppType::CodexDesktop)?;
         Self::sync_current_provider_for_app(config, &AppType::Gemini)?;
         Self::sync_current_provider_for_app(config, &AppType::GrokBuild)?;
         Ok(())
@@ -120,10 +121,33 @@ impl ConfigService {
         };
 
         match app_type {
-            AppType::Codex => Self::sync_codex_live(config, &current_id, &provider)?,
+            AppType::Codex => Self::sync_codex_live(
+                config,
+                &AppType::Codex,
+                crate::codex_config::CodexTarget::Cli,
+                &current_id,
+                &provider,
+            )?,
             AppType::Claude => Self::sync_claude_live(config, &current_id, &provider)?,
             AppType::ClaudeDesktop => {
                 // Claude Desktop 3P profiles are managed by claude_desktop_config.
+            }
+            AppType::CodexDesktop => {
+                // The legacy config object has no database-backed gateway
+                // token or proxy port. Keep direct Desktop providers working,
+                // but leave proxy providers to the AppState-aware path.
+                if !matches!(
+                    crate::codex_desktop_config::provider_mode(&provider),
+                    crate::provider::CodexDesktopMode::Proxy
+                ) {
+                    Self::sync_codex_live(
+                        config,
+                        &AppType::CodexDesktop,
+                        crate::codex_config::CodexTarget::Desktop,
+                        &current_id,
+                        &provider,
+                    )?;
+                }
             }
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
             AppType::GrokBuild => crate::grok_config::write_grok_provider_live(&provider)?,
@@ -149,6 +173,8 @@ impl ConfigService {
 
     fn sync_codex_live(
         config: &mut MultiAppConfig,
+        app_type: &AppType,
+        target: crate::codex_config::CodexTarget,
         provider_id: &str,
         provider: &Provider,
     ) -> Result<(), AppError> {
@@ -167,7 +193,8 @@ impl ConfigService {
 
         let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
-        crate::codex_config::write_codex_provider_live_with_catalog(
+        crate::codex_config::write_codex_provider_live_with_catalog_for(
+            target,
             &provider.settings_config,
             provider.category.as_deref(),
             auth,
@@ -178,8 +205,8 @@ impl ConfigService {
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空
         // MCP 的启用/禁用应通过 McpService::toggle_app 进行
 
-        let cfg_text_after = crate::codex_config::read_and_validate_codex_config_text()?;
-        if let Some(manager) = config.get_manager_mut(&AppType::Codex) {
+        let cfg_text_after = crate::codex_config::read_and_validate_codex_config_text_for(target)?;
+        if let Some(manager) = config.get_manager_mut(app_type) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 if let Some(obj) = target.settings_config.as_object_mut() {
                     let mut restored = serde_json::json!({

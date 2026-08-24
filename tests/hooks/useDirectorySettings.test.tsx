@@ -68,6 +68,7 @@ describe("useDirectorySettings", () => {
     getConfigDirMock.mockImplementation(async (app: string) => {
       if (app === "claude") return "/remote/claude";
       if (app === "codex") return "/remote/codex";
+      if (app === "codex-desktop") return "/remote/codex-desktop";
       if (app === "gemini") return "/remote/gemini";
       if (app === "grokbuild") return "/remote/grok";
       if (app === "opencode") return "/remote/opencode";
@@ -92,6 +93,7 @@ describe("useDirectorySettings", () => {
       appConfig: "/override/app",
       claude: "/remote/claude",
       codex: "/remote/codex",
+      codexDesktop: "/remote/codex-desktop",
       gemini: "/remote/gemini",
       grokbuild: "/remote/grok",
       opencode: "/remote/opencode",

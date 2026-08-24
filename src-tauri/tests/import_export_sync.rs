@@ -3,8 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, AppError, AppType, ConfigService, MultiAppConfig,
-    Provider, ProviderMeta,
+    get_claude_settings_path, read_json_file, update_settings, AppError, AppSettings, AppType,
+    ConfigService, MultiAppConfig, Provider, ProviderMeta, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -141,6 +141,119 @@ fn sync_codex_provider_writes_config_without_touching_auth() {
     assert!(
         toml_text.contains("experimental_bearer_token"),
         "live config should include generated bearer token"
+    );
+}
+
+#[test]
+fn global_sync_writes_current_codex_desktop_provider_to_its_own_directory() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let cli_dir = home.join("codex-cli");
+    let desktop_dir = home.join("codex-desktop");
+    update_settings(AppSettings {
+        codex_config_dir: Some(cli_dir.to_string_lossy().to_string()),
+        codex_desktop_config_dir: Some(desktop_dir.to_string_lossy().to_string()),
+        ..Default::default()
+    })
+    .expect("set isolated Codex directories");
+
+    let state = create_test_state().expect("create test state");
+    let mut provider = Provider::with_id(
+        "desktop-native".to_string(),
+        "Desktop Native".to_string(),
+        json!({
+            "auth": { "OPENAI_API_KEY": "desktop-key" },
+            "config": "model_provider = \"desktop-native\"\nmodel = \"desktop-model\"\n\n[model_providers.desktop-native]\nbase_url = \"https://desktop.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+            "modelCatalog": {
+                "models": [{ "model": "desktop-model", "displayName": "Desktop Model" }]
+            }
+        }),
+        None,
+    );
+    provider.meta = Some(ProviderMeta {
+        api_format: Some("openai_responses".to_string()),
+        ..Default::default()
+    });
+    state
+        .db
+        .save_provider(AppType::CodexDesktop.as_str(), &provider)
+        .expect("save Codex Desktop provider");
+    state
+        .db
+        .set_current_provider(AppType::CodexDesktop.as_str(), &provider.id)
+        .expect("set current Codex Desktop provider");
+
+    ProviderService::sync_current_to_live(&state).expect("sync current providers to live");
+
+    let desktop_auth: serde_json::Value =
+        read_json_file(&desktop_dir.join("auth.json")).expect("read Desktop auth.json");
+    assert_eq!(
+        desktop_auth
+            .pointer("/OPENAI_API_KEY")
+            .and_then(|v| v.as_str()),
+        Some("desktop-key")
+    );
+    let desktop_config =
+        fs::read_to_string(desktop_dir.join("config.toml")).expect("read Desktop config.toml");
+    assert!(desktop_config.contains("https://desktop.example/v1"));
+    assert!(desktop_config.contains("desktop-model"));
+    let desktop_catalog = fs::read_to_string(desktop_dir.join("cc-switch-model-catalog.json"))
+        .expect("read Desktop model catalog");
+    assert!(desktop_catalog.contains("desktop-model"));
+    assert!(
+        !cli_dir.exists(),
+        "Desktop synchronization must not write into the Codex CLI directory"
+    );
+}
+
+#[test]
+fn legacy_config_sync_does_not_overwrite_codex_desktop_gateway_live_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let desktop_dir = home.join("codex-desktop");
+    update_settings(AppSettings {
+        codex_config_dir: Some(home.join("codex-cli").to_string_lossy().to_string()),
+        codex_desktop_config_dir: Some(desktop_dir.to_string_lossy().to_string()),
+        ..Default::default()
+    })
+    .expect("set isolated Codex directories");
+    fs::create_dir_all(&desktop_dir).expect("create Desktop config directory");
+    let desktop_config = desktop_dir.join("config.toml");
+    let existing_live_config = "model_provider = \"cc-switch-codex-desktop\"\n";
+    fs::write(&desktop_config, existing_live_config).expect("seed Desktop gateway config");
+
+    let mut config = MultiAppConfig::default();
+    let mut provider = Provider::with_id(
+        "desktop-proxy".to_string(),
+        "Desktop Proxy".to_string(),
+        json!({
+            "auth": { "OPENAI_API_KEY": "upstream-key" },
+            "config": "model_provider = \"upstream\"\n\n[model_providers.upstream]\nbase_url = \"https://upstream.example/v1\"\nwire_api = \"chat\"\n"
+        }),
+        None,
+    );
+    provider.meta = Some(
+        serde_json::from_value(json!({
+            "apiFormat": "openai_chat",
+            "codexDesktopMode": "proxy"
+        }))
+        .expect("construct Codex Desktop gateway metadata"),
+    );
+    let manager = config
+        .get_manager_mut(&AppType::CodexDesktop)
+        .expect("Codex Desktop manager");
+    manager.providers.insert(provider.id.clone(), provider);
+    manager.current = "desktop-proxy".to_string();
+
+    ConfigService::sync_current_providers_to_live(&mut config)
+        .expect("legacy config sync should skip the Codex Desktop proxy provider");
+
+    assert_eq!(
+        fs::read_to_string(desktop_config).expect("read preserved Desktop config"),
+        existing_live_config,
+        "legacy config sync lacks gateway state and must not replace Desktop live config"
     );
 }
 

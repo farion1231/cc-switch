@@ -46,6 +46,18 @@ export interface ClaudeDesktopDefaultRoute {
   supports1m: boolean;
 }
 
+export interface CodexDesktopStatus {
+  configured: boolean;
+  directoryConflict: boolean;
+  cliConfigDir: string;
+  desktopConfigDir: string;
+  mode?: "direct" | "proxy" | null;
+  expectedBaseUrl?: string | null;
+  actualBaseUrl?: string | null;
+  proxyRunning: boolean;
+  gatewayTokenConfigured: boolean;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -107,12 +119,20 @@ export const providersApi = {
     return await invoke("ensure_codex_official_provider");
   },
 
+  async ensureCodexDesktopOfficialProvider(): Promise<boolean> {
+    return await invoke("ensure_codex_desktop_official_provider");
+  },
+
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {
     return await invoke("ensure_grokbuild_official_provider");
   },
 
   async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
     return await invoke("get_claude_desktop_status");
+  },
+
+  async getCodexDesktopStatus(): Promise<CodexDesktopStatus> {
+    return await invoke("get_codex_desktop_status");
   },
 
   async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {

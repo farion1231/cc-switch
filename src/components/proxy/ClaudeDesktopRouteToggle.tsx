@@ -7,10 +7,12 @@ import { cn } from "@/lib/utils";
 
 interface ClaudeDesktopRouteToggleProps {
   className?: string;
+  target?: "claude" | "codex";
 }
 
 export function ClaudeDesktopRouteToggle({
   className,
+  target = "claude",
 }: ClaudeDesktopRouteToggleProps) {
   const { t } = useTranslation();
   const {
@@ -53,20 +55,23 @@ export function ClaudeDesktopRouteToggle({
 
       await stopProxyServer();
     } catch (error) {
-      console.error("[ClaudeDesktopRouteToggle] Toggle route failed:", error);
+      console.error("[DesktopRouteToggle] Toggle route failed:", error);
     }
   };
 
+  const routeKey =
+    target === "codex" ? "codexDesktop.route" : "claudeDesktop.route";
+  const desktopName = target === "codex" ? "Codex Desktop" : "Claude Desktop";
   const tooltipText = isRunning
-    ? t("claudeDesktop.route.tooltip.active", {
+    ? t(`${routeKey}.tooltip.active`, {
         address: routeAddress,
         port: routePort,
-        defaultValue: `Claude Desktop 本地路由已开启 - ${routeAddress}:${routePort}`,
+        defaultValue: `${desktopName} 本地路由已开启 - ${routeAddress}:${routePort}`,
       })
-    : t("claudeDesktop.route.tooltip.inactive", {
+    : t(`${routeKey}.tooltip.inactive`, {
         address: routeAddress,
         port: routePort,
-        defaultValue: `开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：${routeAddress}:${routePort}`,
+        defaultValue: `开启 ${desktopName} 本地路由，用于需要格式转换或动态认证的供应商。当前配置地址：${routeAddress}:${routePort}`,
       });
 
   return (

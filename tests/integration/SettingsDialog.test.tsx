@@ -249,6 +249,24 @@ describe("SettingsPage integration", () => {
 
     fireEvent.click(resetButtons[1]);
     await waitFor(() => expect(claudeInput.value).toBe("/home/mock/.claude"));
+
+    const codexDesktopInput = (await screen.findByPlaceholderText(
+      "settings.browsePlaceholderCodexDesktop",
+    )) as HTMLInputElement;
+    expect(codexDesktopInput.value).toBe("/default/codex");
+    expect(
+      screen.getByText("settings.codexDesktopConfigDirConflict"),
+    ).toBeInTheDocument();
+
+    fireEvent.change(codexDesktopInput, {
+      target: { value: "/custom/codex-desktop" },
+    });
+    await waitFor(() =>
+      expect(codexDesktopInput.value).toBe("/custom/codex-desktop"),
+    );
+    expect(
+      screen.queryByText("settings.codexDesktopConfigDirConflict"),
+    ).not.toBeInTheDocument();
   });
 
   it("notifies when export fails", async () => {

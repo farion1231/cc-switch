@@ -69,6 +69,45 @@ fn import_default_config_claude_persists_provider() {
 }
 
 #[test]
+fn import_default_config_codex_desktop_classifies_native_login_as_official() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let desktop_dir = home.join(".codex-desktop");
+    update_settings(AppSettings {
+        codex_desktop_config_dir: Some(desktop_dir.to_string_lossy().to_string()),
+        ..Default::default()
+    })
+    .expect("set isolated Codex Desktop directory");
+    fs::create_dir_all(&desktop_dir).expect("create Codex Desktop directory");
+    fs::write(
+        desktop_dir.join("auth.json"),
+        serde_json::to_string_pretty(&json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "desktop-oauth-token",
+                "account_id": "desktop-account"
+            }
+        }))
+        .expect("serialize Codex Desktop auth"),
+    )
+    .expect("seed Codex Desktop auth.json");
+    fs::write(desktop_dir.join("config.toml"), "").expect("seed Codex Desktop config.toml");
+
+    let state = create_test_state().expect("create test state");
+    let imported = import_default_config_test_hook(&state, AppType::CodexDesktop)
+        .expect("import Codex Desktop live config");
+    assert!(imported);
+
+    let provider = state
+        .db
+        .get_provider_by_id("default", AppType::CodexDesktop.as_str())
+        .expect("read imported Codex Desktop provider")
+        .expect("imported provider exists");
+    assert_eq!(provider.category.as_deref(), Some("official"));
+}
+
+#[test]
 fn import_default_config_grokbuild_seeds_official_alongside_default() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
