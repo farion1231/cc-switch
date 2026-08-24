@@ -13,9 +13,10 @@
 //! ## 多账号支持
 //! - 每个 ChatGPT 账号独立存储 refresh_token
 //! - Provider 通过 meta.authBinding 关联账号（auth_provider = "codex_oauth"）
-//! - 通过 JWT id_token 提取 chatgpt_account_id 作为账号唯一标识
+//! - 通过 JWT 提取 chatgpt_user_id / email 作为账号唯一标识
+//! - chatgpt_account_id 是工作区 ID，同一 Team 成员共享，不能作为存储键
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use crate::codex_oauth_identity::extract_identity_from_oauth_tokens;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -137,31 +138,6 @@ struct OAuthTokenResponse {
     expires_in: Option<i64>,
 }
 
-/// 解析后的 JWT claims（仅关心 chatgpt_account_id 等字段）
-#[derive(Debug, Clone, Default, Deserialize)]
-struct IdTokenClaims {
-    #[serde(default)]
-    chatgpt_account_id: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
-    #[serde(default)]
-    organizations: Vec<OrgClaim>,
-    #[serde(default, rename = "https://api.openai.com/auth")]
-    openai_auth: Option<OpenAiAuthClaim>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct OrgClaim {
-    #[serde(default)]
-    id: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct OpenAiAuthClaim {
-    #[serde(default)]
-    chatgpt_account_id: Option<String>,
-}
-
 /// 缓存的 access_token（含过期时间）
 #[derive(Debug, Clone)]
 struct CachedAccessToken {
@@ -231,7 +207,7 @@ struct PendingDeviceCode {
 /// 持久化的账号数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CodexAccountData {
-    /// chatgpt_account_id（同时作为 HashMap 的 key）
+    /// 用户级账号 ID（同时作为 HashMap 的 key）。不是 Team 工作区 ID。
     pub account_id: String,
     /// 账号邮箱（如果可获取）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1133,6 +1109,27 @@ impl CodexOAuthManager {
         self.resolve_default_account_id().await
     }
 
+    /// Workspace id for `ChatGPT-Account-Id`. Team members share this value.
+    pub async fn workspace_id_for_account(&self, account_id: &str) -> Option<String> {
+        let (id_token, fallback) = {
+            let accounts = self.accounts.read().await;
+            let account = accounts.get(account_id)?;
+            (account.id_token.clone(), account.account_id.clone())
+        };
+        let access_token = self
+            .access_tokens
+            .read()
+            .await
+            .get(account_id)
+            .map(|cached| cached.token.clone());
+        let workspace_id = crate::codex_oauth_identity::workspace_id_from_tokens(
+            id_token.as_deref(),
+            access_token.as_deref(),
+            &fallback,
+        );
+        (!workspace_id.is_empty()).then_some(workspace_id)
+    }
+
     // ==================== 多账号管理 ====================
 
     pub async fn list_accounts(&self) -> Vec<GitHubAccount> {
@@ -1600,56 +1597,12 @@ fn extract_refresh_error_code(body: &str) -> Option<String> {
         .map(|code| code.to_ascii_lowercase())
 }
 
-/// 解析 JWT 中的 claims
-fn parse_jwt_claims(token: &str) -> Option<IdTokenClaims> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let decoded = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
-    serde_json::from_slice(&decoded).ok()
-}
-
-/// 从 token 响应中提取 (account_id, email)
+/// 从 token 响应中提取用户级 (account_id, email)。
+/// 不会把同一 Team 共享的 workspace / org id 当成账号键。
 fn extract_identity_from_tokens(tokens: &OAuthTokenResponse) -> (Option<String>, Option<String>) {
-    let mut account_id: Option<String> = None;
-    let mut email: Option<String> = None;
-
-    if let Some(id_token) = tokens.id_token.as_deref() {
-        if let Some(claims) = parse_jwt_claims(id_token) {
-            account_id = claims
-                .chatgpt_account_id
-                .clone()
-                .or_else(|| {
-                    claims
-                        .openai_auth
-                        .as_ref()
-                        .and_then(|a| a.chatgpt_account_id.clone())
-                })
-                .or_else(|| claims.organizations.first().and_then(|o| o.id.clone()));
-            email = claims.email.clone();
-        }
-    }
-
-    if account_id.is_none() {
-        if let Some(claims) = parse_jwt_claims(&tokens.access_token) {
-            account_id = claims
-                .chatgpt_account_id
-                .clone()
-                .or_else(|| {
-                    claims
-                        .openai_auth
-                        .as_ref()
-                        .and_then(|a| a.chatgpt_account_id.clone())
-                })
-                .or_else(|| claims.organizations.first().and_then(|o| o.id.clone()));
-            if email.is_none() {
-                email = claims.email.clone();
-            }
-        }
-    }
-
-    (account_id, email)
+    extract_identity_from_oauth_tokens(tokens.id_token.as_deref(), &tokens.access_token)
+        .map(|identity| (Some(identity.storage_id), identity.email))
+        .unwrap_or((None, None))
 }
 
 #[cfg(test)]
@@ -1716,40 +1669,99 @@ mod tests {
         assert!(!valid.is_expiring_soon());
     }
 
-    #[test]
-    fn test_parse_jwt_claims_invalid() {
-        assert!(parse_jwt_claims("not-a-jwt").is_none());
-        assert!(parse_jwt_claims("only.two").is_none());
+    fn unsigned_jwt(payload: &str) -> String {
+        crate::codex_oauth_identity::encode_unsigned_jwt(payload)
     }
 
     #[test]
-    fn test_parse_jwt_claims_valid() {
-        // Header: {"alg":"none"}
-        // Payload: {"chatgpt_account_id":"acc-123","email":"test@example.com"}
-        // Signature: empty
-        let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"none\"}");
-        let payload = URL_SAFE_NO_PAD
-            .encode(b"{\"chatgpt_account_id\":\"acc-123\",\"email\":\"test@example.com\"}");
-        let jwt = format!("{header}.{payload}.");
-        let claims = parse_jwt_claims(&jwt).unwrap();
-        assert_eq!(claims.chatgpt_account_id.as_deref(), Some("acc-123"));
-        assert_eq!(claims.email.as_deref(), Some("test@example.com"));
-    }
-
-    #[test]
-    fn test_parse_jwt_claims_organizations_fallback() {
-        let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"none\"}");
-        let payload = URL_SAFE_NO_PAD.encode(b"{\"organizations\":[{\"id\":\"org-456\"}]}");
-        let jwt = format!("{header}.{payload}.");
-        let claims = parse_jwt_claims(&jwt).unwrap();
-        assert_eq!(
-            claims
-                .organizations
-                .first()
-                .and_then(|o| o.id.clone())
-                .as_deref(),
-            Some("org-456")
+    fn extract_identity_prefers_user_id_over_shared_workspace() {
+        let jwt = unsigned_jwt(
+            r#"{"chatgpt_account_id":"org-team","chatgpt_user_id":"user-a","email":"a@example.com"}"#,
         );
+        let tokens = OAuthTokenResponse {
+            access_token: jwt,
+            refresh_token: Some("rt".into()),
+            id_token: None,
+            expires_in: None,
+        };
+        let (account_id, email) = extract_identity_from_tokens(&tokens);
+        assert_eq!(account_id.as_deref(), Some("user-a"));
+        assert_eq!(email.as_deref(), Some("a@example.com"));
+    }
+
+    #[test]
+    fn extract_identity_keeps_same_team_members_distinct() {
+        let workspace = r#"https://api.openai.com/auth"#;
+        let jwt_a = unsigned_jwt(&format!(
+            r#"{{"{workspace}":{{"chatgpt_account_id":"org-team","chatgpt_user_id":"user-a"}},"email":"a@example.com"}}"#
+        ));
+        let jwt_b = unsigned_jwt(&format!(
+            r#"{{"{workspace}":{{"chatgpt_account_id":"org-team","chatgpt_user_id":"user-b"}},"email":"b@example.com"}}"#
+        ));
+        let id_a = extract_identity_from_tokens(&OAuthTokenResponse {
+            access_token: jwt_a,
+            refresh_token: Some("rt-a".into()),
+            id_token: None,
+            expires_in: None,
+        })
+        .0;
+        let id_b = extract_identity_from_tokens(&OAuthTokenResponse {
+            access_token: jwt_b,
+            refresh_token: Some("rt-b".into()),
+            id_token: None,
+            expires_in: None,
+        })
+        .0;
+        assert_eq!(id_a.as_deref(), Some("user-a"));
+        assert_eq!(id_b.as_deref(), Some("user-b"));
+        assert_ne!(id_a, id_b);
+    }
+
+    #[test]
+    fn extract_identity_does_not_key_accounts_by_organization_id() {
+        let jwt = unsigned_jwt(r#"{"organizations":[{"id":"org-456"}]}"#);
+        let tokens = OAuthTokenResponse {
+            access_token: jwt,
+            refresh_token: Some("rt".into()),
+            id_token: None,
+            expires_in: None,
+        };
+        let (account_id, email) = extract_identity_from_tokens(&tokens);
+        assert_eq!(account_id, None);
+        assert_eq!(email, None);
+    }
+
+    #[tokio::test]
+    async fn same_team_members_are_stored_as_separate_accounts() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        manager
+            .add_account_internal(
+                "user-a".into(),
+                "rt-a".into(),
+                Some("a@example.com".into()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        manager
+            .add_account_internal(
+                "user-b".into(),
+                "rt-b".into(),
+                Some("b@example.com".into()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let accounts = manager.list_accounts().await;
+        assert_eq!(accounts.len(), 2);
+        let mut ids: Vec<_> = accounts.iter().map(|account| account.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["user-a", "user-b"]);
     }
 
     #[tokio::test]

@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::codex_oauth_identity::{
+    extract_identity_from_jwt, live_auth_matches_managed_account, workspace_id_from_tokens,
+};
 use crate::config::{
     atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
     sanitize_provider_name, write_json_file, write_text_file,
@@ -283,12 +286,23 @@ impl CodexLiveStateSnapshot {
         if auth.get("auth_mode").and_then(Value::as_str) != Some("chatgpt") {
             return None;
         }
-        let account_id = auth
-            .pointer("/tokens/account_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|account_id| !account_id.is_empty())?
-            .to_string();
+        let tokens = auth.get("tokens")?;
+        let account_id = ["id_token", "access_token"]
+            .into_iter()
+            .filter_map(|key| tokens.get(key).and_then(Value::as_str))
+            .find_map(|token| {
+                extract_identity_from_jwt(token)
+                    .map(|identity| identity.storage_id)
+                    .filter(|id| !id.is_empty())
+            })
+            .or_else(|| {
+                tokens
+                    .get("account_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string)
+            })?;
         let last_refresh_ms = auth
             .get("last_refresh")
             .and_then(Value::as_str)
@@ -413,18 +427,31 @@ fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
         return None;
     }
 
-    let account_id = tokens
-        .get("account_id")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|id| !id.is_empty())?;
     tokens
         .get("access_token")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|token| !token.is_empty())?;
 
-    Some(account_id.to_string())
+    // Prefer the user-scoped JWT identity. `tokens.account_id` is the Team
+    // workspace id and would collapse every member onto one marker key.
+    for token in ["id_token", "access_token"]
+        .into_iter()
+        .filter_map(|key| tokens.get(key).and_then(Value::as_str))
+    {
+        if let Some(identity) = extract_identity_from_jwt(token) {
+            if !identity.storage_id.is_empty() {
+                return Some(identity.storage_id);
+            }
+        }
+    }
+
+    tokens
+        .get("account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
 }
 
 /// Build the native-shaped ChatGPT auth bundle shared by cc-switch and Codex CLI.
@@ -449,7 +476,11 @@ pub fn codex_managed_oauth_auth_value(
     );
     tokens.insert(
         "account_id".to_string(),
-        Value::String(account_id.to_string()),
+        Value::String(workspace_id_from_tokens(
+            id_token,
+            Some(access_token),
+            account_id,
+        )),
     );
     json!({
         "auth_mode": "chatgpt",
@@ -633,12 +664,7 @@ pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) 
     if !api_key_clearable {
         return false;
     }
-    obj.get("tokens")
-        .and_then(|tokens| tokens.as_object())
-        .and_then(|tokens| tokens.get("account_id"))
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        == Some(account_id)
+    live_auth_matches_managed_account(auth, account_id)
 }
 
 /// 读回 Codex CLI 当前 `~/.codex/auth.json` 中属于 `account_id` 的 refresh_token /

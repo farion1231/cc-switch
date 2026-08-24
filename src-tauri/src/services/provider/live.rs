@@ -2661,6 +2661,25 @@ base_url = "https://a.example/v1"
     }
 
     #[test]
+    fn codex_managed_oauth_live_auth_writes_workspace_id_not_user_key() {
+        let id_token = crate::codex_oauth_identity::encode_unsigned_jwt(
+            r#"{"chatgpt_account_id":"org-team","chatgpt_user_id":"user-a"}"#,
+        );
+        let auth = codex_managed_oauth_live_auth(
+            "user-a",
+            "access-token",
+            Some(&id_token),
+            "refresh-token",
+            "2026-01-02T03:04:05.000000000Z",
+        );
+        assert_eq!(
+            auth.pointer("/tokens/account_id").and_then(|v| v.as_str()),
+            Some("org-team"),
+            "auth.json must keep the official Codex workspace id"
+        );
+    }
+
+    #[test]
     fn codex_managed_oauth_live_auth_matches_codex_cli_shape() {
         assert_eq!(
             codex_managed_oauth_live_auth(

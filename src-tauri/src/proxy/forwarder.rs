@@ -27,6 +27,7 @@ use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
     app_config::AppType,
+    codex_oauth_identity::extract_identity_from_jwt,
     provider::{LocalProxyRequestOverrides, Provider},
 };
 use bytes::Bytes;
@@ -54,7 +55,7 @@ fn validate_codex_official_authorization(
         Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
             "已切换到 OpenAI 官方供应商，请重启 Codex 或新建会话以加载官方登录配置".to_string(),
         )),
-        Some(_) => {
+        Some(value) => {
             let expected_account_id = provider
                 .meta
                 .as_ref()
@@ -62,12 +63,34 @@ fn validate_codex_official_authorization(
                 .map(|account_id| account_id.trim().to_string())
                 .filter(|account_id| !account_id.is_empty());
             if let Some(expected_account_id) = expected_account_id {
-                let request_account_id = headers
-                    .get("chatgpt-account-id")
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::trim)
-                    .filter(|account_id| !account_id.is_empty());
-                if request_account_id != Some(expected_account_id.as_str()) {
+                // ChatGPT-Account-Id is the Team workspace id. Same-team members
+                // share it, so official-session matching prefers the JWT user id.
+                // Legacy bindings still store that workspace id and must keep working.
+                let bearer = value
+                    .strip_prefix("Bearer ")
+                    .or_else(|| value.strip_prefix("bearer "))
+                    .unwrap_or(value)
+                    .trim();
+                let identity = extract_identity_from_jwt(bearer);
+                let request_user_id = identity
+                    .as_ref()
+                    .map(|id| id.storage_id.as_str())
+                    .filter(|id| !id.is_empty());
+                let request_workspace_id = identity
+                    .as_ref()
+                    .and_then(|id| id.workspace_id.as_deref())
+                    .filter(|id| !id.is_empty())
+                    .or_else(|| {
+                        headers
+                            .get("chatgpt-account-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::trim)
+                            .filter(|id| !id.is_empty())
+                    });
+                let matches_selected_account = request_user_id
+                    == Some(expected_account_id.as_str())
+                    || request_workspace_id == Some(expected_account_id.as_str());
+                if !matches_selected_account {
                     return Err(ProxyError::AuthError(
                         "当前 Codex 会话未加载所选 ChatGPT 账号，请重启 Codex 或新建会话后重试"
                             .to_string(),
@@ -1733,10 +1756,14 @@ impl RequestForwarder {
                         Ok(token) => {
                             auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
                             should_send_codex_oauth_session_headers = true;
-                            // 解析使用的 account_id（用于注入 ChatGPT-Account-Id header）
-                            codex_oauth_account_id = match account_id {
+                            // ChatGPT-Account-Id is the workspace id, not the user key.
+                            let storage_id = match account_id {
                                 Some(id) => Some(id),
                                 None => codex_auth.default_account_id().await,
+                            };
+                            codex_oauth_account_id = match storage_id.as_deref() {
+                                Some(id) => codex_auth.workspace_id_for_account(id).await,
+                                None => None,
                             };
                             log::debug!(
                                 "[CodexOAuth] 成功获取 access_token (account={})",
@@ -4557,20 +4584,30 @@ mod tests {
             Some(crate::provider::AuthBinding {
                 source: crate::provider::AuthBindingSource::ManagedAccount,
                 auth_provider: Some("codex_oauth".to_string()),
-                account_id: Some("account-b".to_string()),
+                account_id: Some("user-b".to_string()),
             });
 
+        let token_a = crate::codex_oauth_identity::encode_unsigned_jwt(
+            r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"org-team","chatgpt_user_id":"user-a"}}"#,
+        );
+        let token_b = crate::codex_oauth_identity::encode_unsigned_jwt(
+            r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"org-team","chatgpt_user_id":"user-b"}}"#,
+        );
         let mut headers = HeaderMap::new();
         headers.insert(
             http::header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer account-a-token"),
+            HeaderValue::from_str(&format!("Bearer {token_a}")).unwrap(),
         );
-        headers.insert("chatgpt-account-id", HeaderValue::from_static("account-a"));
+        // Team members share the workspace header; the JWT user must still match.
+        headers.insert("chatgpt-account-id", HeaderValue::from_static("org-team"));
         let error = validate_codex_official_authorization(&headers, &provider)
             .expect_err("a stale Codex session must not cross the account boundary");
         assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
 
-        headers.insert("chatgpt-account-id", HeaderValue::from_static("account-b"));
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token_b}")).unwrap(),
+        );
         validate_codex_official_authorization(&headers, &provider)
             .expect("the selected account may pass through");
     }
