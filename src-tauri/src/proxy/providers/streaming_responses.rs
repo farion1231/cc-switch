@@ -27,6 +27,12 @@ fn response_object_from_event(data: &Value) -> &Value {
     data.get("response").unwrap_or(data)
 }
 
+fn anthropic_message_id(response_id: &str) -> String {
+    response_id
+        .strip_prefix("resp_")
+        .map_or_else(|| response_id.to_string(), |suffix| format!("msg_{suffix}"))
+}
+
 fn anthropic_sse(event_name: &str, payload: &Value) -> Bytes {
     Bytes::from(format!(
         "event: {event_name}\ndata: {}\n\n",
@@ -92,12 +98,17 @@ fn responses_json_to_anthropic_sse(
     let usage = message.get("usage").cloned().unwrap_or_else(|| json!({}));
     let mut start_usage = usage.clone();
     start_usage["output_tokens"] = json!(0);
+    let message_id = message
+        .get("id")
+        .and_then(Value::as_str)
+        .map(anthropic_message_id)
+        .unwrap_or_default();
     let mut events = vec![anthropic_sse(
         "message_start",
         &json!({
             "type": "message_start",
             "message": {
-                "id": message.get("id").cloned().unwrap_or_else(|| json!("")),
+                "id": message_id,
                 "type": "message",
                 "role": "assistant",
                 "model": message.get("model").cloned().unwrap_or_else(|| json!("")),
@@ -2522,7 +2533,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             "response.created" => {
                                 let response_obj = response_object_from_event(&data);
                                 if let Some(id) = response_obj.get("id").and_then(|i| i.as_str()) {
-                                    message_id = Some(id.to_string());
+                                    message_id = Some(anthropic_message_id(id));
                                 }
                                 if let Some(model) =
                                     response_obj.get("model").and_then(|m| m.as_str())
@@ -3490,7 +3501,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                 }
                                 if !has_sent_message_start {
                                     if let Some(id) = response_obj.get("id").and_then(Value::as_str) {
-                                        message_id = Some(id.to_string());
+                                        message_id = Some(anthropic_message_id(id));
                                     }
                                     if let Some(model) =
                                         response_obj.get("model").and_then(Value::as_str)
@@ -4572,6 +4583,17 @@ mod tests {
     use futures::stream;
     use futures::StreamExt;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_anthropic_message_id_rewrites_only_response_namespace() {
+        for (response_id, expected) in [
+            ("resp_example", "msg_example"),
+            ("msg_example", "msg_example"),
+            ("gateway_resp_example", "gateway_resp_example"),
+        ] {
+            assert_eq!(anthropic_message_id(response_id), expected);
+        }
+    }
 
     async fn convert_stream_text(input: impl Into<Bytes>) -> String {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
@@ -6426,6 +6448,7 @@ mod tests {
             text_deltas,
             vec!["Combined [answer](https://example.com/result)."]
         );
+        assert!(merged.contains("\"id\":\"msg_multi_fallback\""));
         assert!(merged.contains("\"web_search_requests\":2"));
         assert!(merged.contains("event: message_stop"));
     }
@@ -6462,6 +6485,7 @@ mod tests {
             .collect();
 
         assert_eq!(text_deltas, vec!["Already streamed."]);
+        assert!(merged.contains("\"id\":\"msg_text\""));
         assert!(merged.contains("event: message_stop"));
     }
 
@@ -6582,6 +6606,7 @@ mod tests {
 
         let merged = convert_stream_text(input).await;
         assert!(merged.contains("event: message_start"));
+        assert!(merged.contains("\"id\":\"msg_json\""));
         assert!(merged.contains("\"text\":\"hello\""));
         assert!(merged.contains("event: message_stop"));
     }
@@ -6628,7 +6653,7 @@ mod tests {
             .collect::<String>();
 
         assert!(merged.contains("\"type\":\"message_start\""));
-        assert!(merged.contains("\"id\":\"resp_1\""));
+        assert!(merged.contains("\"id\":\"msg_1\""));
         assert!(merged.contains("\"model\":\"gpt-4o\""));
         assert!(merged.contains("\"type\":\"tool_use\""));
         assert!(merged.contains("\"name\":\"get_weather\""));
