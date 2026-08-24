@@ -149,6 +149,23 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
                     crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
                     AppType::GrokBuild,
                 )?;
+                if let Some(auth) = settings.get("auth") {
+                    if crate::grok_config::grok_auth_has_login_material(auth) {
+                        if let Some(mut official) = state.db.get_provider_by_id(
+                            crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+                            AppType::GrokBuild.as_str(),
+                        )? {
+                            let mut next = official.settings_config.clone();
+                            if let Some(object) = next.as_object_mut() {
+                                object.insert("auth".to_string(), auth.clone());
+                            }
+                            official.settings_config = next;
+                            state
+                                .db
+                                .save_provider(AppType::GrokBuild.as_str(), &official)?;
+                        }
+                    }
+                }
                 state.db.set_current_provider(
                     app_type.as_str(),
                     crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,

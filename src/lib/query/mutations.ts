@@ -15,7 +15,6 @@ import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
-import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -34,7 +33,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         providerKey: _providerKey,
         addToLive,
         ensureClaudeDesktopOfficialSeed,
-        ensureGrokBuildOfficialSeed,
+        ensureGrokBuildOfficialSeed: _ensureGrokBuildOfficialSeed,
         ...rest
       } = providerInput;
 
@@ -48,15 +47,9 @@ export const useAddProviderMutation = (appId: AppId) => {
         return officialProvider;
       }
 
-      if (appId === "grokbuild" && ensureGrokBuildOfficialSeed) {
-        await providersApi.ensureGrokBuildOfficialProvider();
-        const providers = await providersApi.getAll(appId);
-        const officialProvider = providers[GROKBUILD_OFFICIAL_PROVIDER_ID];
-        if (!officialProvider) {
-          throw new Error("Grok Build official provider was not created");
-        }
-        return officialProvider;
-      }
+      // Grok Official is a regular add (new UUID card) so each account can
+      // keep its own auth.json. The grokbuild-official seed is created at
+      // startup; ensureGrokBuildOfficialSeed is ignored to match Codex.
 
       let id: string;
 

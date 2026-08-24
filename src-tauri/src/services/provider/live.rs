@@ -1029,6 +1029,14 @@ fn restore_live_settings_for_provider_backfill(
                 provider.id
             );
         }
+        // Official cards own ~/.grok/auth.json. Third-party cards use api_key in
+        // config.toml; persisting a session token into them would leak one
+        // account into another provider and, on the next switch, resurrect it.
+        if provider.category.as_deref() != Some("official") {
+            if let Some(object) = settings.as_object_mut() {
+                object.remove("auth");
+            }
+        }
         return settings;
     }
     if !matches!(app_type, AppType::Codex) {
@@ -1730,6 +1738,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             // （`import_default_config_internal`）。
             crate::grok_config::validate_config_toml(config)?;
             crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings)?;
+            // Custom import is a relay card. Drop live OAuth so the imported
+            // default does not carry a Grok Official session that would win
+            // over the relay api_key.
+            if let Some(object) = settings.as_object_mut() {
+                object.remove("auth");
+            }
             settings
         }
         AppType::Claude => {
