@@ -45,7 +45,7 @@ use crate::services::usage_stats::{
 };
 use rust_decimal::Decimal;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -57,6 +57,67 @@ use std::time::SystemTime;
 /// 能看到已落库的代理行，竞态从源头消除。代价：官方态用量最多延迟约一个
 /// 窗口 + 一次后台同步周期（60s）上屏。
 const SETTLE_WINDOW_SECONDS: i64 = SESSION_PROXY_DEDUP_WINDOW_SECONDS;
+
+/// Upper bound for one JSONL record. `BufRead::lines()` allocates until it
+/// finds a newline, so a corrupt/newline-free record could otherwise bypass
+/// the removed file-size guard and grow without bound. Real Grok usage events
+/// are much smaller; oversized records are discarded and scanning continues.
+const MAX_GROK_RECORD_BYTES: usize = 4 * 1024 * 1024;
+
+enum GrokLineRead {
+    Eof,
+    Complete,
+    Oversized,
+}
+
+/// Read one JSONL record without ever buffering more than
+/// `MAX_GROK_RECORD_BYTES` bytes.
+///
+/// `BufRead::read_until` is not sufficient here: its delimiter search still
+/// appends an entire delimiter-free record to the destination buffer. Consume
+/// the reader in chunks instead, dropping an oversized record as soon as the
+/// cap is crossed and continuing through its newline (if any).
+fn read_bounded_grok_line<R: BufRead>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> io::Result<GrokLineRead> {
+    line.clear();
+    let mut oversized = false;
+
+    loop {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
+            return Ok(if oversized {
+                GrokLineRead::Oversized
+            } else if line.is_empty() {
+                GrokLineRead::Eof
+            } else {
+                GrokLineRead::Complete
+            });
+        }
+
+        let newline = chunk.iter().position(|byte| *byte == b'\n');
+        let content_len = newline.unwrap_or(chunk.len());
+        if !oversized {
+            if line.len().saturating_add(content_len) <= MAX_GROK_RECORD_BYTES {
+                line.extend_from_slice(&chunk[..content_len]);
+            } else {
+                line.clear();
+                oversized = true;
+            }
+        }
+
+        let consumed = newline.map_or(chunk.len(), |index| index + 1);
+        reader.consume(consumed);
+        if newline.is_some() {
+            return Ok(if oversized {
+                GrokLineRead::Oversized
+            } else {
+                GrokLineRead::Complete
+            });
+        }
+    }
+}
 
 /// 单个模型的本轮用量（从 `modelUsage` 或顶层 usage 提取，均为逐轮口径）
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -203,16 +264,30 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
     let mut result = SessionSyncResult::default();
     let mut deferred = false;
     let mut event_count = 0i64;
+    let mut oversized_records = 0u64;
 
     // 文件变更时全量重读：UPSERT 幂等使重读无害，且沉降窗延后的事件本就
     // 依赖下一轮重读补入。逐行读取避免把持续增长的 updates.jsonl 整体
     // 分配到内存；单行通常只有几 KiB，内存占用与文件总大小无关。
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
-    let reader = BufReader::new(file);
-    for line_result in reader.lines() {
-        let line = line_result.map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
-        let Some(event) = parse_grok_usage_event(&line) else {
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::with_capacity(8 * 1024);
+    loop {
+        match read_bounded_grok_line(&mut reader, &mut line)
+            .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?
+        {
+            GrokLineRead::Eof => break,
+            GrokLineRead::Oversized => {
+                oversized_records += 1;
+                continue;
+            }
+            GrokLineRead::Complete => {}
+        }
+
+        let line = std::str::from_utf8(&line)
+            .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
+        let Some(event) = parse_grok_usage_event(line) else {
             continue;
         };
         let idx = event_count;
@@ -277,6 +352,15 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
                 }
             }
         }
+    }
+
+    if oversized_records > 0 {
+        log::warn!(
+            "[GROK-SYNC] 跳过 {} 条超过 {} 字节的 JSONL 记录: {}",
+            oversized_records,
+            MAX_GROK_RECORD_BYTES,
+            file_path.display()
+        );
     }
 
     if deferred {
@@ -565,7 +649,7 @@ fn insert_grok_session_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::{Cursor, Seek, SeekFrom, Write};
     use tempfile::tempdir;
 
     /// 早于沉降窗的固定基准时刻（2023-11-14T22:13:20Z）
@@ -701,6 +785,33 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].per_model[0].0, "unknown");
         assert_eq!(events[0].per_model[0].1.input, 100);
+    }
+
+    #[test]
+    fn bounded_line_reader_discards_oversized_records_and_reaches_next_line() {
+        let mut input = Vec::with_capacity(MAX_GROK_RECORD_BYTES + 16);
+        let chunk = [b'x'; 8192];
+        let full_chunks = MAX_GROK_RECORD_BYTES / chunk.len();
+        for _ in 0..=full_chunks {
+            input.extend_from_slice(&chunk);
+        }
+        input.extend_from_slice(b"\nvalid\n");
+
+        let mut reader = BufReader::new(Cursor::new(input));
+        let mut line = Vec::new();
+        assert!(matches!(
+            read_bounded_grok_line(&mut reader, &mut line).expect("read oversized record"),
+            GrokLineRead::Oversized
+        ));
+        assert!(matches!(
+            read_bounded_grok_line(&mut reader, &mut line).expect("read valid record"),
+            GrokLineRead::Complete
+        ));
+        assert_eq!(line, b"valid");
+        assert!(matches!(
+            read_bounded_grok_line(&mut reader, &mut line).expect("read eof"),
+            GrokLineRead::Eof
+        ));
     }
 
     #[test]
@@ -1217,6 +1328,39 @@ mod tests {
         assert_eq!(result.skipped, 0);
         assert_eq!(result.deferred_files, 0);
         assert_eq!(query_rows(&db)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_jsonl_record_is_skipped_and_later_event_is_imported() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let path = write_session_file(temp.path(), "sess-record-limit", &[]);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .expect("open");
+
+        // Simulate a corrupt/newline-free tool payload without constructing a
+        // second in-memory String of the whole record.
+        let chunk = [b'x'; 8192];
+        let full_chunks = MAX_GROK_RECORD_BYTES / chunk.len();
+        for _ in 0..=full_chunks {
+            file.write_all(&chunk).expect("write oversized record");
+        }
+        writeln!(file).expect("terminate oversized record");
+        let valid = usage_event_line(
+            OLD_EPOCH,
+            "p1",
+            &model_counters("grok-4.5-build", 100, 10, 0, 1),
+        );
+        writeln!(file, "{valid}").expect("write valid event");
+        drop(file);
+
+        let result = sync_single_grok_file(&db, &path)?;
+        assert_eq!(result.imported, 1);
+        assert_eq!(query_rows(&db)?.len(), 1);
         Ok(())
     }
 
