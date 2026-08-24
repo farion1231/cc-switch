@@ -85,10 +85,15 @@ export function formatTokensShort(
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 萬`;
     return value.toLocaleString("zh-TW");
   }
-  if (normalizedLang.startsWith("zh") || normalizedLang.startsWith("ja")) {
+  if (normalizedLang.startsWith("ja")) {
+    if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 億`;
+    if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 万`;
+    return value.toLocaleString("ja-JP");
+  }
+  if (normalizedLang.startsWith("zh")) {
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 亿`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 万`;
-    return value.toLocaleString();
+    return value.toLocaleString("zh-CN");
   }
   if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
   if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
