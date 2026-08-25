@@ -14,6 +14,8 @@ use crate::proxy::{
 use serde_json::{json, Value};
 
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
+const ANTHROPIC_TOTAL_TOKENS_OPEN_TAG: &str = "<total_tokens>";
+const ANTHROPIC_TOTAL_TOKENS_CLOSE_TAG: &str = "</total_tokens>";
 
 /// Strip only a leading Claude Code attribution line from system text.
 ///
@@ -51,6 +53,45 @@ pub(crate) fn strip_leading_anthropic_billing_header(text: &str) -> &str {
     } else {
         rest
     }
+}
+
+/// Strip Claude Code's per-turn context-budget marker from system text.
+///
+/// Claude Code sends this marker as a standalone Anthropic `system` message
+/// during multi-turn conversations. OpenAI-compatible endpoints do not use it,
+/// and merging the changing marker into the first system message prevents
+/// stable prompt-prefix caching (#6789). Only callers handling system text
+/// should use this helper; user and assistant content must remain untouched.
+fn strip_anthropic_total_tokens_marker(text: &mut String) {
+    if !text.contains(ANTHROPIC_TOTAL_TOKENS_OPEN_TAG) {
+        return;
+    }
+
+    let original = text.clone();
+    let mut stripped = String::with_capacity(original.len());
+    let mut remaining = original.as_str();
+
+    loop {
+        let Some(open_offset) = remaining.find(ANTHROPIC_TOTAL_TOKENS_OPEN_TAG) else {
+            stripped.push_str(remaining);
+            break;
+        };
+
+        stripped.push_str(&remaining[..open_offset]);
+        let content_start = open_offset + ANTHROPIC_TOTAL_TOKENS_OPEN_TAG.len();
+        let Some(close_offset) = remaining[content_start..].find(ANTHROPIC_TOTAL_TOKENS_CLOSE_TAG)
+        else {
+            // Preserve an unterminated marker rather than deleting the rest of
+            // the prompt when the input is malformed or user-authored.
+            stripped.push_str(&remaining[open_offset..]);
+            break;
+        };
+
+        remaining =
+            &remaining[content_start + close_offset + ANTHROPIC_TOTAL_TOKENS_CLOSE_TAG.len()..];
+    }
+
+    *text = stripped;
 }
 
 /// Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)
@@ -306,6 +347,56 @@ fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
 }
 
 fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
+    for message in messages.iter_mut() {
+        if message.get("role").and_then(|value| value.as_str()) != Some("system") {
+            continue;
+        }
+
+        let Some(content) = message.get_mut("content") else {
+            continue;
+        };
+
+        match content {
+            Value::String(text) => {
+                strip_anthropic_total_tokens_marker(text);
+            }
+            Value::Array(content_parts) => {
+                content_parts.retain_mut(|part| {
+                    let Some(Value::String(text)) = part.get_mut("text") else {
+                        return true;
+                    };
+
+                    let had_marker = text.contains(ANTHROPIC_TOTAL_TOKENS_OPEN_TAG);
+                    strip_anthropic_total_tokens_marker(text);
+                    !(had_marker && text.trim().is_empty())
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // Removing a marker can leave only the line breaks that surrounded it.
+    // Drop those system messages before counting them, otherwise their number
+    // would still grow with every turn and change the cached prefix.
+    messages.retain(|message| {
+        if message.get("role").and_then(|value| value.as_str()) != Some("system") {
+            return true;
+        }
+
+        match message.get("content") {
+            Some(Value::String(text)) => !text.trim().is_empty(),
+            Some(Value::Array(content_parts)) => {
+                !content_parts.is_empty()
+                    && !content_parts.iter().all(|part| {
+                        part.get("text")
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| text.trim().is_empty())
+                    })
+            }
+            _ => true,
+        }
+    });
+
     let system_count = messages
         .iter()
         .filter(|message| message.get("role").and_then(|value| value.as_str()) == Some("system"))
@@ -334,14 +425,14 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
         }
 
         match message.get("content") {
-            Some(Value::String(text)) if !text.is_empty() => parts.push(text.clone()),
+            Some(Value::String(text)) if !text.trim().is_empty() => parts.push(text.clone()),
             Some(Value::Array(content_parts)) => {
                 let text = content_parts
                     .iter()
                     .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
                     .collect::<Vec<_>>()
                     .join("\n");
-                if !text.is_empty() {
+                if !text.trim().is_empty() {
                     parts.push(text);
                 }
             }
@@ -854,6 +945,101 @@ mod tests {
         assert_eq!(
             result["messages"][0]["content"],
             "Keep this literal:\nx-anthropic-billing-header: example"
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_total_tokens_from_merged_system_messages() {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "system": [{"type": "text", "text": "Stable system prompt"}],
+            "messages": [
+                {"role": "user", "content": "First question"},
+                {"role": "system", "content": "\n<total_tokens>15000000 tokens left</total_tokens>\n"},
+                {"role": "assistant", "content": "First answer"},
+                {"role": "user", "content": "Second question"},
+                {"role": "system", "content": "\n<total_tokens>15000000 tokens left</total_tokens>\n"}
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "Stable system prompt");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[3]["role"], "user");
+        assert!(messages
+            .iter()
+            .all(|message| !message.to_string().contains("<total_tokens>")));
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_total_tokens_from_system_content_without_touching_user_text()
+    {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "system": "Stable system <total_tokens>15000000 tokens left</total_tokens>",
+            "messages": [{
+                "role": "user",
+                "content": "Keep this literal: <total_tokens>15000000 tokens left</total_tokens>"
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        assert_eq!(result["messages"][0]["content"], "Stable system ");
+        assert_eq!(
+            result["messages"][1]["content"],
+            "Keep this literal: <total_tokens>15000000 tokens left</total_tokens>"
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_total_tokens_from_system_content_array() {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [
+                        {"type": "text", "text": "Stable system prompt"},
+                        {"type": "text", "text": "\n<total_tokens>15000000 tokens left</total_tokens>\n"}
+                    ]
+                },
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "Stable system prompt"}])
+        );
+        assert_eq!(result["messages"][1]["role"], "user");
+        assert!(!result.to_string().contains("<total_tokens>"));
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_preserves_unterminated_total_tokens_text() {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "system": "Keep this literal: <total_tokens>unfinished",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Keep this literal: <total_tokens>unfinished"
         );
     }
 
