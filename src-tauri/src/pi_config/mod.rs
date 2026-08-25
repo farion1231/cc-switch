@@ -1,11 +1,12 @@
 //! Thin adapter for Pi's native files.
 //!
 //! Pi owns account login and the active provider/model in `settings.json`.
-//! CC Switch only manages explicit provider entries in `models.json`.
+//! CC Switch manages explicit provider entries in `models.json` and reads only
+//! provider ids from `auth.json` to mirror `/login` channels as read-only.
 
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -16,6 +17,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 
 const MAX_PI_FILE_BYTES: u64 = 1024 * 1024;
 const MISSING_MODELS_REVISION: &str = "missing";
+pub(crate) const PI_LOGIN_PROVIDER_TYPE: &str = "pi_login";
 static MODELS_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 #[cfg(test)]
 static TEST_AGENT_DIR: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
@@ -80,6 +82,10 @@ pub(crate) fn get_pi_settings_path() -> Result<PathBuf, AppError> {
     Ok(get_pi_agent_dir()?.join("settings.json"))
 }
 
+pub(crate) fn get_pi_auth_path() -> Result<PathBuf, AppError> {
+    Ok(get_pi_agent_dir()?.join("auth.json"))
+}
+
 pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
     let path = get_pi_settings_path()?;
     if !path.exists() {
@@ -97,6 +103,69 @@ pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
         default_model: optional_string(object, "defaultModel", &path)?,
         session_dir: optional_string(object, "sessionDir", &path)?,
     })
+}
+
+/// Read only the provider ids Pi has stored in `auth.json`.
+///
+/// Credential payloads remain owned by Pi and are intentionally discarded at
+/// this adapter boundary. CC Switch uses the ids only to surface providers
+/// configured through Pi's `/login` flow.
+pub(crate) fn read_pi_auth_provider_ids() -> Result<IndexSet<String>, AppError> {
+    let path = get_pi_auth_path()?;
+    if !path.exists() {
+        return Ok(IndexSet::new());
+    }
+    let value = read_json5_value(&path, "Pi auth")?;
+    let object = value.as_object().ok_or_else(|| {
+        AppError::Config(format!(
+            "Pi auth root must be an object: {}",
+            path.display()
+        ))
+    })?;
+    Ok(object.keys().cloned().collect())
+}
+
+pub(crate) fn pi_provider_display_name(provider_id: &str) -> &str {
+    match provider_id {
+        "anthropic" => "Anthropic",
+        "ant-ling" => "Ant Ling",
+        "azure-openai-responses" => "Azure OpenAI Responses",
+        "openai" => "OpenAI",
+        "openai-codex" | "codex" => "OpenAI Codex",
+        "deepseek" => "DeepSeek",
+        "nvidia" => "NVIDIA NIM",
+        "google" => "Google Gemini",
+        "google-vertex" => "Google Vertex",
+        "amazon-bedrock" => "Amazon Bedrock",
+        "mistral" => "Mistral",
+        "groq" => "Groq",
+        "cerebras" => "Cerebras",
+        "cloudflare-ai-gateway" => "Cloudflare AI Gateway",
+        "cloudflare-workers-ai" => "Cloudflare Workers AI",
+        "xai" => "xAI",
+        "openrouter" => "OpenRouter",
+        "vercel-ai-gateway" => "Vercel AI Gateway",
+        "zai" => "ZAI Coding Plan (Global)",
+        "zai-coding-cn" => "ZAI Coding Plan (China)",
+        "opencode" => "OpenCode Zen",
+        "opencode-go" => "OpenCode Go",
+        "radius" => "Radius",
+        "huggingface" => "Hugging Face",
+        "fireworks" => "Fireworks",
+        "together" => "Together AI",
+        "baseten" => "Baseten",
+        "kimi-coding" => "Kimi For Coding",
+        "minimax" => "MiniMax",
+        "minimax-cn" => "MiniMax (China)",
+        "qwen-token-plan" => "Qwen Token Plan",
+        "qwen-token-plan-individual" => "Qwen Token Plan (Individual)",
+        "qwen-token-plan-cn" => "Qwen Token Plan (China)",
+        "xiaomi" => "Xiaomi MiMo",
+        "xiaomi-token-plan-cn" => "Xiaomi MiMo Token Plan (China)",
+        "xiaomi-token-plan-ams" => "Xiaomi MiMo Token Plan (Amsterdam)",
+        "xiaomi-token-plan-sgp" => "Xiaomi MiMo Token Plan (Singapore)",
+        _ => provider_id,
+    }
 }
 
 pub(crate) fn read_pi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
@@ -244,7 +313,8 @@ pub(crate) fn restore_pi_provider_if_missing(
 ///
 /// Provider ownership is intentionally source-based: every explicit object in
 /// `models.json.providers` is manageable, including keys also built into Pi.
-/// Pi's `/login` credentials live in `auth.json` and are never read here.
+/// Pi's `/login` credentials remain owned by `auth.json`; only their provider
+/// ids are projected into CC Switch as read-only entries.
 pub(crate) fn validate_provider_node(provider_key: &str, config: &Value) -> Result<(), AppError> {
     if provider_key.trim().is_empty() {
         return Err(AppError::InvalidInput(

@@ -455,6 +455,54 @@ describe("ProviderList Component", () => {
     });
   });
 
+  it("shows a Pi /login provider in the ordinary list as read-only", async () => {
+    const provider = createProvider({
+      id: "deepseek",
+      name: "DeepSeek",
+      settingsConfig: { name: "DeepSeek", source: "pi-login" },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: [],
+          loginProviderIds: ["deepseek"],
+          defaultProviderId: "deepseek",
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="pi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const latestCardProps = providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === provider.id)
+        .at(-1);
+      expect(latestCardProps).toMatchObject({
+        isCurrent: false,
+        isInConfig: true,
+        isReadOnly: true,
+        isStateChangeProtected: true,
+      });
+    });
+  });
+
   it("sets an inactive Pi provider through the ordinary provider action", async () => {
     const provider = createProvider({
       id: "inactive-pi",
