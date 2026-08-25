@@ -150,10 +150,9 @@ fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Opt
         }
     }
 
-    // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
+    // Extract last_active_at and summary from tail lines (reverse order)
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
-    let mut custom_title: Option<String> = None;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
@@ -162,16 +161,6 @@ fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Opt
         };
         if last_active_at.is_none() {
             last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
-        }
-        // Look for custom-title entry (take the last one, i.e. first in reverse)
-        if custom_title.is_none()
-            && value.get("type").and_then(Value::as_str) == Some("custom-title")
-        {
-            custom_title = value
-                .get("customTitle")
-                .and_then(Value::as_str)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
         }
         if summary.is_none() {
             if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
@@ -184,10 +173,14 @@ fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Opt
                 }
             }
         }
-        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
+        if last_active_at.is_some() && summary.is_some() {
             break;
         }
     }
+
+    // Claude Code appends custom-title entries inline at rename time, so they
+    // can sit far above the tail window sampled above; scan the whole file.
+    let custom_title = scan_last_custom_title(path);
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
@@ -223,6 +216,45 @@ fn is_agent_session(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| name.starts_with("agent-") || name == "journal.jsonl")
         .unwrap_or(false)
+}
+
+/// Return the last non-empty `custom-title` entry anywhere in the session file.
+///
+/// Title events are appended inline wherever the rename happened, so unlike
+/// head/tail metadata they have no guaranteed position; only a full scan can
+/// find the latest one. The substring prefilter keeps JSON parsing limited to
+/// candidate title lines.
+fn scan_last_custom_title(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut last_title: Option<String> = None;
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(value) => value,
+            Err(_) => break,
+        };
+        if !line.contains("\"custom-title\"") {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        if value.get("type").and_then(Value::as_str) != Some("custom-title") {
+            continue;
+        }
+        if let Some(title) = value
+            .get("customTitle")
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            last_title = Some(title);
+        }
+    }
+
+    last_title
 }
 
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
@@ -1850,6 +1882,27 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("fix-login-bug"));
+    }
+
+    #[test]
+    fn parse_session_prefers_the_latest_custom_title_above_the_tail_window() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-multi-title.jsonl");
+        let mut lines = String::new();
+        lines.push_str("{\"sessionId\":\"session-multi-title\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n");
+        lines.push_str("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"first message\"},\"sessionId\":\"session-multi-title\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n");
+        lines.push_str("{\"type\":\"custom-title\",\"customTitle\":\"old name\",\"sessionId\":\"session-multi-title\"}\n");
+        lines.push_str("{\"type\":\"custom-title\",\"customTitle\":\"latest name\",\"sessionId\":\"session-multi-title\"}\n");
+        for i in 0..40 {
+            lines.push_str(&format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":\"filler {i}\"}},\"timestamp\":\"2026-03-06T11:{:02}:{i:02}Z\"}}\n",
+                i / 60
+            ));
+        }
+        std::fs::write(&path, lines).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("latest name"));
     }
 
     #[test]
