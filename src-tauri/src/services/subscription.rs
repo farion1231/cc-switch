@@ -3,6 +3,7 @@
 //! 读取 CLI 工具的已有 OAuth 凭据，查询官方订阅额度。
 //! 第一层：仅读取凭据，不实现登录/刷新。
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -51,6 +52,46 @@ pub struct ExtraUsage {
     pub currency: Option<String>,
 }
 
+/// 一张可用的 Codex 限速重置卡（仅包含展示所需字段）。
+///
+/// 刻意不向前端暴露 credit id，避免只读额度界面意外演变为消费接口。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimitResetCredit {
+    #[serde(default)]
+    pub granted_at: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Codex 限速重置卡摘要。
+///
+/// `credits = None` 表示明细接口不可用，但 `available_count` 仍来自额度接口；
+/// `credits = Some([])` 表示明细接口成功且没有可展示的可用卡。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimitResetCredits {
+    pub available_count: i64,
+    #[serde(default)]
+    pub credits: Option<Vec<RateLimitResetCredit>>,
+}
+
+/// Codex / ChatGPT 当前订阅周期。
+///
+/// 这与 OAuth/JWT `exp`、额度窗口 `reset_at`、重置卡 `expires_at` 都是不同概念。
+/// `active_until` 来自 OpenAI 签发的专用订阅 claim，或同账号的 ChatGPT 订阅元数据。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexMembership {
+    pub active_until: String,
+    #[serde(default)]
+    pub will_renew: Option<bool>,
+}
+
 /// 订阅额度查询结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +102,15 @@ pub struct SubscriptionQuota {
     pub success: bool,
     pub tiers: Vec<QuotaTier>,
     pub extra_usage: Option<ExtraUsage>,
+    /// Codex / ChatGPT 当前套餐类型。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    /// Codex / ChatGPT 当前订阅周期；私有订阅元数据不可用时保持为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership: Option<CodexMembership>,
+    /// Codex 限速重置卡；其他工具与旧响应保持无此字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_reset_credits: Option<RateLimitResetCredits>,
     pub error: Option<String>,
     pub queried_at: Option<i64>,
 }
@@ -74,6 +124,9 @@ impl SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            plan_type: None,
+            membership: None,
+            rate_limit_reset_credits: None,
             error: None,
             queried_at: None,
         }
@@ -87,6 +140,9 @@ impl SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            plan_type: None,
+            membership: None,
+            rate_limit_reset_credits: None,
             error: Some(message),
             queried_at: Some(now_millis()),
         }
@@ -452,6 +508,9 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         success: true,
         tiers,
         extra_usage,
+        plan_type: None,
+        membership: None,
+        rate_limit_reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -469,11 +528,13 @@ struct CodexAuthJson {
 #[derive(Deserialize)]
 struct CodexTokens {
     access_token: Option<String>,
+    id_token: Option<String>,
     account_id: Option<String>,
 }
 
-/// (access_token, account_id, status, message)
+/// (access_token, id_token, account_id, status, message)
 type CodexCredentials = (
+    Option<String>,
     Option<String>,
     Option<String>,
     CredentialStatus,
@@ -524,13 +585,14 @@ fn read_codex_credentials_from_file() -> CodexCredentials {
     let auth_path = crate::codex_config::get_codex_auth_path();
 
     if !auth_path.exists() {
-        return (None, None, CredentialStatus::NotFound, None);
+        return (None, None, None, CredentialStatus::NotFound, None);
     }
 
     let content = match std::fs::read_to_string(&auth_path) {
         Ok(c) => c,
         Err(e) => {
             return (
+                None,
                 None,
                 None,
                 CredentialStatus::ParseError,
@@ -550,6 +612,7 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
             return (
                 None,
                 None,
+                None,
                 CredentialStatus::ParseError,
                 Some(format!("Failed to parse Codex auth JSON: {e}")),
             );
@@ -561,6 +624,7 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
         return (
             None,
             None,
+            None,
             CredentialStatus::NotFound,
             Some("Codex not using OAuth mode".to_string()),
         );
@@ -570,6 +634,7 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
         Some(t) => t,
         None => {
             return (
+                None,
                 None,
                 None,
                 CredentialStatus::ParseError,
@@ -584,6 +649,7 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
             return (
                 None,
                 None,
+                None,
                 CredentialStatus::ParseError,
                 Some("access_token is empty or missing".to_string()),
             );
@@ -595,6 +661,7 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
         if is_codex_token_stale(last_refresh) {
             return (
                 Some(access_token),
+                tokens.id_token,
                 tokens.account_id,
                 CredentialStatus::Expired,
                 Some("Codex token may be stale (>8 days since last refresh)".to_string()),
@@ -604,6 +671,7 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
 
     (
         Some(access_token),
+        tokens.id_token,
         tokens.account_id,
         CredentialStatus::Valid,
         None,
@@ -627,6 +695,28 @@ fn is_codex_token_stale(last_refresh: &str) -> bool {
 
 // ── Codex API 查询 ──────────────────────────────────────
 
+const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const CODEX_RESET_CREDITS_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+const CODEX_SUBSCRIPTIONS_URL: &str = "https://chatgpt.com/backend-api/subscriptions";
+
+fn codex_authenticated_get(
+    client: &reqwest::Client,
+    url: &str,
+    access_token: &str,
+    account_id: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let mut request = client
+        .get(url)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("User-Agent", "codex-cli")
+        .header("Accept", "application/json");
+    if let Some(id) = account_id {
+        request = request.header("ChatGPT-Account-Id", id);
+    }
+    request
+}
+
 #[derive(Deserialize)]
 struct CodexRateLimitWindow {
     used_percent: Option<f64>,
@@ -641,8 +731,309 @@ struct CodexRateLimit {
 }
 
 #[derive(Deserialize)]
+struct CodexRateLimitResetCreditsSummary {
+    available_count: i64,
+}
+
+#[derive(Deserialize)]
+struct CodexRateLimitResetCreditsDetails {
+    #[serde(default)]
+    credits: Vec<CodexRateLimitResetCreditDetails>,
+    #[serde(default)]
+    available_count: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct CodexRateLimitResetCreditDetails {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default, alias = "type")]
+    reset_type: Option<String>,
+    granted_at: Option<serde_json::Value>,
+    expires_at: Option<serde_json::Value>,
+    title: Option<String>,
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct CodexUsageResponse {
     rate_limit: Option<CodexRateLimit>,
+}
+
+fn codex_timestamp_to_iso(value: Option<&serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+                return Some(parsed.to_rfc3339());
+            }
+            let timestamp = trimmed.parse::<i64>().ok()?;
+            unix_timestamp_value_to_iso(timestamp)
+        }
+        serde_json::Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_u64().and_then(|raw| i64::try_from(raw).ok()))
+            .and_then(unix_timestamp_value_to_iso),
+        _ => None,
+    }
+}
+
+fn unix_timestamp_value_to_iso(mut timestamp: i64) -> Option<String> {
+    if timestamp > 1_000_000_000_000 {
+        timestamp /= 1000;
+    }
+    unix_ts_to_iso(timestamp)
+}
+
+fn decode_codex_jwt_payload(token: &str) -> Option<serde_json::Value> {
+    let payload = token.split('.').nth(1)?;
+    let decoded = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    serde_json::from_slice(&decoded).ok()
+}
+
+/// 只读取明确命名的订阅 claim；绝不将 JWT `exp` 当作会员期限。
+fn codex_membership_from_jwt(
+    token: Option<&str>,
+    expected_account_id: Option<&str>,
+) -> Option<CodexMembership> {
+    let payload = decode_codex_jwt_payload(token?)?;
+    let auth = payload.get("https://api.openai.com/auth")?;
+    if let Some(expected) = expected_account_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let token_account_id = auth
+            .get("chatgpt_account_id")
+            .or_else(|| auth.get("account_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        if token_account_id != expected {
+            return None;
+        }
+    }
+    let active_until = codex_timestamp_to_iso(auth.get("chatgpt_subscription_active_until"))?;
+    Some(CodexMembership {
+        active_until,
+        will_renew: None,
+    })
+}
+
+fn codex_membership_from_tokens(
+    id_token: Option<&str>,
+    access_token: &str,
+    expected_account_id: Option<&str>,
+) -> Option<CodexMembership> {
+    codex_membership_from_jwt(id_token, expected_account_id)
+        .or_else(|| codex_membership_from_jwt(Some(access_token), expected_account_id))
+}
+
+fn codex_membership_from_subscriptions(raw: &serde_json::Value) -> Option<CodexMembership> {
+    let active_until = codex_timestamp_to_iso(
+        raw.get("active_until")
+            .or_else(|| raw.get("subscription_active_until"))
+            .or_else(|| raw.get("expires_at")),
+    )?;
+    Some(CodexMembership {
+        active_until,
+        will_renew: raw.get("will_renew").and_then(serde_json::Value::as_bool),
+    })
+}
+
+fn merge_codex_membership(
+    preferred: Option<CodexMembership>,
+    fallback: Option<CodexMembership>,
+) -> Option<CodexMembership> {
+    preferred.or(fallback)
+}
+
+/// 可选增强字段单独从宽松 JSON 中读取。即使后端临时改变这些字段的类型，
+/// 原有 5h / 7d 核心额度仍能正常反序列化和显示。
+fn codex_plan_type(raw: &serde_json::Value) -> Option<String> {
+    raw.get("plan_type")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .and_then(|value| trimmed_optional_text(Some(value), 64))
+}
+
+fn codex_reset_credits_summary(
+    raw: &serde_json::Value,
+) -> Option<CodexRateLimitResetCreditsSummary> {
+    raw.get("rate_limit_reset_credits")
+        .and_then(|value| value.get("available_count"))
+        .and_then(serde_json::Value::as_i64)
+        .map(|available_count| CodexRateLimitResetCreditsSummary { available_count })
+}
+
+fn trimmed_optional_text(value: Option<String>, max_chars: usize) -> Option<String> {
+    value
+        .map(|value| value.trim().chars().take(max_chars).collect::<String>())
+        .filter(|value| !value.is_empty())
+}
+
+fn reset_credit_expiry_sort_key(expires_at: Option<&str>) -> i64 {
+    expires_at
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.timestamp())
+        .unwrap_or(i64::MAX)
+}
+
+fn is_available_codex_reset_credit(credit: &CodexRateLimitResetCreditDetails) -> bool {
+    let status_matches = credit
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case("available"))
+        .unwrap_or(true);
+    let type_matches = credit
+        .reset_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value.eq_ignore_ascii_case("codex_rate_limits")
+                || value.eq_ignore_ascii_case("rate_limit_reset")
+        })
+        .unwrap_or(true);
+    status_matches && type_matches
+}
+
+/// 优先采用明细接口的权威快照；明细不可用时降级为 `/wham/usage` 的数量。
+fn merge_codex_reset_credits(
+    summary: Option<CodexRateLimitResetCreditsSummary>,
+    details: Option<CodexRateLimitResetCreditsDetails>,
+) -> Option<RateLimitResetCredits> {
+    if let Some(details) = details {
+        let mut credits = details
+            .credits
+            .into_iter()
+            .filter(is_available_codex_reset_credit)
+            .map(|credit| RateLimitResetCredit {
+                granted_at: codex_timestamp_to_iso(credit.granted_at.as_ref()),
+                expires_at: codex_timestamp_to_iso(credit.expires_at.as_ref()),
+                title: trimmed_optional_text(credit.title, 160),
+                description: trimmed_optional_text(credit.description, 500),
+            })
+            .collect::<Vec<_>>();
+        let available_count = details
+            .available_count
+            .or_else(|| summary.map(|value| value.available_count))
+            .unwrap_or_else(|| i64::try_from(credits.len()).unwrap_or(i64::MAX))
+            .max(0);
+        let detail_limit = usize::try_from(available_count).unwrap_or(usize::MAX);
+        credits.sort_by_key(|credit| reset_credit_expiry_sort_key(credit.expires_at.as_deref()));
+        credits.truncate(detail_limit);
+        return Some(RateLimitResetCredits {
+            available_count,
+            credits: Some(credits),
+        });
+    }
+
+    summary.map(|summary| RateLimitResetCredits {
+        available_count: summary.available_count.max(0),
+        credits: None,
+    })
+}
+
+fn decode_codex_reset_credit_details(
+    status: reqwest::StatusCode,
+    raw: &[u8],
+) -> Option<CodexRateLimitResetCreditsDetails> {
+    if !status.is_success() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(raw).ok()?;
+    let payload = value.get("data").unwrap_or(&value).clone();
+    serde_json::from_value(payload).ok()
+}
+
+fn codex_reset_credits_request(
+    client: &reqwest::Client,
+    access_token: &str,
+    account_id: Option<&str>,
+) -> reqwest::RequestBuilder {
+    codex_authenticated_get(client, CODEX_RESET_CREDITS_URL, access_token, account_id)
+        .header("OpenAI-Beta", "codex-1")
+        .header("originator", "Codex Desktop")
+}
+
+async fn fetch_codex_reset_credit_details(
+    client: &reqwest::Client,
+    access_token: &str,
+    account_id: Option<&str>,
+    should_fetch: bool,
+) -> Option<CodexRateLimitResetCreditsDetails> {
+    if !should_fetch {
+        return None;
+    }
+    let response = codex_reset_credits_request(client, access_token, account_id)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+    let status = response.status();
+    let raw = response.bytes().await.ok()?;
+    decode_codex_reset_credit_details(status, &raw)
+}
+
+fn decode_codex_membership_response(
+    status: reqwest::StatusCode,
+    raw: &[u8],
+) -> Option<CodexMembership> {
+    if !status.is_success() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(raw).ok()?;
+    codex_membership_from_subscriptions(&value)
+}
+
+fn codex_membership_request(
+    client: &reqwest::Client,
+    access_token: &str,
+    account_id: &str,
+) -> reqwest::RequestBuilder {
+    codex_authenticated_get(
+        client,
+        CODEX_SUBSCRIPTIONS_URL,
+        access_token,
+        Some(account_id),
+    )
+    .query(&[("account_id", account_id)])
+    .header("OpenAI-Beta", "codex-1")
+    .header("originator", "Codex Desktop")
+    .header("Referer", "https://chatgpt.com/")
+    .header("x-openai-target-path", "/backend-api/subscriptions")
+    .header("x-openai-target-route", "/backend-api/subscriptions")
+}
+
+/// ChatGPT Web 的订阅元数据是未公开接口，只作为同账号、只读、尽力而为的兜底。
+/// 任何失败都返回 `None`，不能拖垮原有额度查询。
+async fn fetch_codex_membership(
+    client: &reqwest::Client,
+    access_token: &str,
+    account_id: Option<&str>,
+    should_fetch: bool,
+) -> Option<CodexMembership> {
+    if !should_fetch {
+        return None;
+    }
+    let account_id = account_id?.trim();
+    if account_id.is_empty() {
+        return None;
+    }
+
+    let response = codex_membership_request(client, access_token, account_id)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+    let status = response.status();
+    let raw = response.bytes().await.ok()?;
+    decode_codex_membership_response(status, &raw)
 }
 
 /// 根据窗口秒数映射到 tier 名称（与 Claude 的命名兼容以复用前端 i18n）
@@ -677,23 +1068,20 @@ fn unix_ts_to_iso(ts: i64) -> Option<String> {
 /// - `"codex_oauth"` + "Please re-login via cc-switch."（cc-switch 自管 OAuth 路径）
 pub(crate) async fn query_codex_quota(
     access_token: &str,
+    id_token: Option<&str>,
     account_id: Option<&str>,
     tool_label: &str,
     expired_message: &str,
 ) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
-    let mut req = client
-        .get("https://chatgpt.com/backend-api/wham/usage")
-        .header("Authorization", format!("Bearer {access_token}"))
-        .header("User-Agent", "codex-cli")
-        .header("Accept", "application/json");
+    let usage_req = codex_authenticated_get(&client, CODEX_USAGE_URL, access_token, account_id);
 
-    if let Some(id) = account_id {
-        req = req.header("ChatGPT-Account-Id", id);
-    }
-
-    let resp = match req.timeout(std::time::Duration::from_secs(15)).send().await {
+    let resp = match usage_req
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => return Err(format!("Network error: {e}")),
     };
@@ -721,7 +1109,7 @@ pub(crate) async fn query_codex_quota(
         Ok(b) => b,
         Err(e) => return Err(format!("Failed to read API response: {e}")),
     };
-    let body: CodexUsageResponse = match serde_json::from_slice(&raw) {
+    let raw_value: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
         Err(e) => {
             return Ok(SubscriptionQuota::error(
@@ -731,10 +1119,51 @@ pub(crate) async fn query_codex_quota(
             ));
         }
     };
+    let body: CodexUsageResponse = match serde_json::from_value(raw_value.clone()) {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok(SubscriptionQuota::error(
+                tool_label,
+                CredentialStatus::Valid,
+                format!("Failed to parse API response: {e}"),
+            ));
+        }
+    };
+    let plan_type = codex_plan_type(&raw_value);
+    let rate_limit_reset_credits = codex_reset_credits_summary(&raw_value);
+    // Some Codex credential versions put the dedicated claim in the ID token,
+    // others in the access token. Opaque access tokens simply fail JWT decoding.
+    let token_membership = codex_membership_from_tokens(id_token, access_token, account_id);
 
+    // 会员元数据与重置卡明细彼此独立，并行获取，额外等待上限仍为 5 秒。
+    // 两者都是 best-effort：任何 HTTP、超时或 JSON 错误都不能影响核心额度。
+    let should_fetch_reset_credit_details = rate_limit_reset_credits
+        .as_ref()
+        .is_some_and(|summary| summary.available_count > 0);
+    let (reset_credit_details, live_membership) = tokio::join!(
+        fetch_codex_reset_credit_details(
+            &client,
+            access_token,
+            account_id,
+            should_fetch_reset_credit_details,
+        ),
+        fetch_codex_membership(
+            &client,
+            access_token,
+            account_id,
+            token_membership.is_none(),
+        ),
+    );
+
+    // OpenAI 签发的专用订阅 claim 优先；claim 缺失时才请求同一稳定 account_id
+    // 的订阅元数据。不接受默认账号、付费账号或首条记录回退。订阅端点的
+    // `expires_at` 只在该上下文中读取；JWT 路径绝不把通用 token `exp` 当期限。
+    let membership = merge_codex_membership(token_membership, live_membership);
+
+    let rate_limit = body.rate_limit;
     let mut tiers = Vec::new();
 
-    if let Some(rate_limit) = body.rate_limit {
+    if let Some(rate_limit) = rate_limit {
         for window in [rate_limit.primary_window, rate_limit.secondary_window]
             .into_iter()
             .flatten()
@@ -761,6 +1190,12 @@ pub(crate) async fn query_codex_quota(
         success: true,
         tiers,
         extra_usage: None,
+        plan_type,
+        membership,
+        rate_limit_reset_credits: merge_codex_reset_credits(
+            rate_limit_reset_credits,
+            reset_credit_details,
+        ),
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1224,6 +1659,9 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         success: true,
         tiers,
         extra_usage: None,
+        plan_type: None,
+        membership: None,
+        rate_limit_reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1269,7 +1707,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
             }
         }
         "codex" => {
-            let (token, account_id, status, message) = read_codex_credentials();
+            let (token, id_token, account_id, status, message) = read_codex_credentials();
 
             match status {
                 CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("codex")),
@@ -1283,6 +1721,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     if let Some(token) = token {
                         let result = query_codex_quota(
                             &token,
+                            id_token.as_deref(),
                             account_id.as_deref(),
                             "codex",
                             "Authentication failed. Please re-login with Codex CLI.",
@@ -1302,6 +1741,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     let token = token.expect("token must be Some when status is Valid");
                     query_codex_quota(
                         &token,
+                        id_token.as_deref(),
                         account_id.as_deref(),
                         "codex",
                         "Authentication failed. Please re-login with Codex CLI.",
@@ -1364,6 +1804,12 @@ fn now_millis() -> i64 {
 mod tests {
     use super::*;
 
+    fn unsigned_codex_jwt(payload: serde_json::Value) -> String {
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+        format!("{header}.{payload}.signature")
+    }
+
     #[test]
     fn window_seconds_map_to_expected_tier_names() {
         // 官方特例窗口
@@ -1375,5 +1821,362 @@ mod tests {
         // 其他窗口按小时/天回退命名
         assert_eq!(window_seconds_to_tier_name(3600), "1_hour");
         assert_eq!(window_seconds_to_tier_name(86400), "1_day");
+    }
+
+    #[test]
+    fn codex_optional_enrichments_are_tolerant_and_keep_future_plan_names() {
+        let raw = serde_json::json!({
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 12.5,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1_800_000_000
+                }
+            },
+            "plan_type": "prolite",
+            "rate_limit_reset_credits": { "available_count": 2 }
+        });
+
+        let core: CodexUsageResponse = serde_json::from_value(raw.clone()).unwrap();
+        assert!(core.rate_limit.is_some());
+        assert_eq!(codex_plan_type(&raw).as_deref(), Some("prolite"));
+        assert_eq!(
+            codex_reset_credits_summary(&raw).map(|summary| summary.available_count),
+            Some(2)
+        );
+
+        // 可选增强字段的临时类型漂移不能拖垮原有 rate_limit 解析。
+        let malformed_enrichments = serde_json::json!({
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 12.5,
+                    "limit_window_seconds": 18000
+                }
+            },
+            "plan_type": { "name": "plus" },
+            "rate_limit_reset_credits": { "available_count": "2" }
+        });
+        let core: CodexUsageResponse =
+            serde_json::from_value(malformed_enrichments.clone()).unwrap();
+        assert!(core.rate_limit.is_some());
+        assert_eq!(codex_plan_type(&malformed_enrichments), None);
+        assert!(codex_reset_credits_summary(&malformed_enrichments).is_none());
+    }
+
+    #[test]
+    fn codex_membership_uses_only_the_named_claim_and_checks_account_scope() {
+        let token_exp_only = unsigned_codex_jwt(serde_json::json!({
+            "exp": 1_900_000_000,
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-a"
+            }
+        }));
+        assert!(codex_membership_from_jwt(Some(&token_exp_only), Some("account-a")).is_none());
+
+        let subscription_token = unsigned_codex_jwt(serde_json::json!({
+            "exp": 1_700_000_000,
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-a",
+                "chatgpt_subscription_active_until": "2030-01-02T03:04:05Z"
+            }
+        }));
+        let membership =
+            codex_membership_from_jwt(Some(&subscription_token), Some("account-a")).unwrap();
+        assert_eq!(
+            chrono::DateTime::parse_from_rfc3339(&membership.active_until)
+                .unwrap()
+                .timestamp(),
+            chrono::DateTime::parse_from_rfc3339("2030-01-02T03:04:05Z")
+                .unwrap()
+                .timestamp()
+        );
+        assert_eq!(membership.will_renew, None);
+        assert!(codex_membership_from_jwt(Some(&subscription_token), Some("account-b")).is_none());
+
+        let unscoped_subscription_token = unsigned_codex_jwt(serde_json::json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_subscription_active_until": "2030-01-02T03:04:05Z"
+            }
+        }));
+        assert!(
+            codex_membership_from_jwt(Some(&unscoped_subscription_token), Some("account-a"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn codex_membership_token_fallback_checks_id_then_access_token() {
+        let id_token_without_membership = unsigned_codex_jwt(serde_json::json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-a"
+            }
+        }));
+        let access_token_with_membership = unsigned_codex_jwt(serde_json::json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-a",
+                "chatgpt_subscription_active_until": "2032-03-04T05:06:07Z"
+            }
+        }));
+
+        let membership = codex_membership_from_tokens(
+            Some(&id_token_without_membership),
+            &access_token_with_membership,
+            Some("account-a"),
+        )
+        .unwrap();
+        assert!(membership.active_until.starts_with("2032-03-04T05:06:07"));
+    }
+
+    #[test]
+    fn codex_membership_claim_accepts_seconds_and_milliseconds() {
+        for raw in [
+            serde_json::json!(1_900_000_000_i64),
+            serde_json::json!(1_900_000_000_000_i64),
+            serde_json::json!("1900000000"),
+        ] {
+            let token = unsigned_codex_jwt(serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_subscription_active_until": raw
+                }
+            }));
+            let membership = codex_membership_from_jwt(Some(&token), None).unwrap();
+            assert_eq!(
+                chrono::DateTime::parse_from_rfc3339(&membership.active_until)
+                    .unwrap()
+                    .timestamp(),
+                1_900_000_000
+            );
+        }
+    }
+
+    #[test]
+    fn subscriptions_membership_accepts_endpoint_expiry_and_claim_wins() {
+        let endpoint_expiry = codex_membership_from_subscriptions(&serde_json::json!({
+            "expires_at": "2099-01-01T00:00:00Z",
+            "will_renew": true
+        }))
+        .unwrap();
+        assert!(endpoint_expiry
+            .active_until
+            .starts_with("2099-01-01T00:00:00"));
+
+        let live = codex_membership_from_subscriptions(&serde_json::json!({
+            "active_until": "2031-02-03T04:05:06Z",
+            "will_renew": false
+        }))
+        .unwrap();
+        let claim = CodexMembership {
+            active_until: "2030-01-02T03:04:05Z".to_string(),
+            will_renew: None,
+        };
+        let merged = merge_codex_membership(Some(claim), Some(live)).unwrap();
+        assert_eq!(merged.will_renew, None);
+        assert!(merged.active_until.starts_with("2030-01-02T03:04:05"));
+    }
+
+    #[test]
+    fn membership_http_and_json_failures_are_best_effort() {
+        let valid = br#"{
+            "active_until": "2030-01-02T03:04:05Z",
+            "will_renew": true
+        }"#;
+        assert!(decode_codex_membership_response(reqwest::StatusCode::OK, valid).is_some());
+        assert!(decode_codex_membership_response(reqwest::StatusCode::OK, b"not-json").is_none());
+        for status in [401, 403, 404, 429, 500, 503] {
+            assert!(decode_codex_membership_response(
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                valid
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn reset_credit_details_filter_to_available_codex_cards_without_ids() {
+        let details: CodexRateLimitResetCreditsDetails =
+            serde_json::from_value(serde_json::json!({
+                "available_count": 2,
+                "total_earned_count": 9,
+                "credits": [
+                    {
+                        "id": "must-not-leave-rust",
+                        "reset_type": "codex_rate_limits",
+                        "status": "available",
+                        "granted_at": 1900000000,
+                        "expires_at": 1900003600000_i64,
+                        "title": "  Full reset  ",
+                        "description": "  Ready to redeem  ",
+                        "profile_user_id": "must-not-leave-rust"
+                    },
+                    {
+                        "id": "redeemed",
+                        "reset_type": "codex_rate_limits",
+                        "status": "redeemed",
+                        "granted_at": "2026-06-01T00:00:00Z",
+                        "expires_at": null
+                    },
+                    {
+                        "id": "legacy-without-status-or-type",
+                        "granted_at": "2098-01-01T00:00:00Z",
+                        "expires_at": "2099-01-01T00:00:00Z",
+                        "title": "Legacy reset"
+                    },
+                    {
+                        "id": "different-product",
+                        "reset_type": "future_reset_type",
+                        "status": "available",
+                        "granted_at": "2026-06-02T00:00:00Z",
+                        "expires_at": null
+                    }
+                ]
+            }))
+            .unwrap();
+        let merged = merge_codex_reset_credits(None, Some(details)).unwrap();
+
+        // 数量来自明细响应，而不是过滤后的列表长度。
+        assert_eq!(merged.available_count, 2);
+        let credits = merged.credits.unwrap();
+        assert_eq!(credits.len(), 2);
+        assert_eq!(
+            chrono::DateTime::parse_from_rfc3339(credits[0].granted_at.as_deref().unwrap())
+                .unwrap()
+                .timestamp(),
+            1_900_000_000
+        );
+        assert_eq!(
+            chrono::DateTime::parse_from_rfc3339(credits[0].expires_at.as_deref().unwrap())
+                .unwrap()
+                .timestamp(),
+            1_900_003_600
+        );
+        assert_eq!(credits[0].title.as_deref(), Some("Full reset"));
+        assert_eq!(credits[0].description.as_deref(), Some("Ready to redeem"));
+
+        let serialized = serde_json::to_value(&credits[0]).unwrap();
+        assert!(serialized.get("id").is_none());
+        assert!(serialized.get("status").is_none());
+        assert!(serialized.get("profileUserId").is_none());
+    }
+
+    #[test]
+    fn reset_credit_summary_survives_missing_details_and_distinguishes_zero() {
+        let count_only = merge_codex_reset_credits(
+            Some(CodexRateLimitResetCreditsSummary { available_count: 3 }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(count_only.available_count, 3);
+        assert!(count_only.credits.is_none());
+
+        let zero = merge_codex_reset_credits(
+            Some(CodexRateLimitResetCreditsSummary { available_count: 0 }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(zero.available_count, 0);
+        assert!(merge_codex_reset_credits(None, None).is_none());
+    }
+
+    #[test]
+    fn reset_credit_detail_http_and_json_failures_are_best_effort() {
+        let valid = br#"{
+            "available_count": 1,
+            "credits": [{
+                "reset_type": "codex_rate_limits",
+                "status": "available",
+                "granted_at": "2026-07-01T00:00:00Z",
+                "expires_at": null
+            }]
+        }"#;
+        assert!(decode_codex_reset_credit_details(reqwest::StatusCode::OK, valid).is_some());
+        let nested = br#"{
+            "data": {
+                "credits": [{"status": "available", "expires_at": 1900000000}]
+            }
+        }"#;
+        let nested = decode_codex_reset_credit_details(reqwest::StatusCode::OK, nested).unwrap();
+        assert_eq!(nested.available_count, None);
+        assert_eq!(nested.credits.len(), 1);
+        assert!(decode_codex_reset_credit_details(reqwest::StatusCode::OK, b"not-json").is_none());
+
+        for status in [401, 403, 404, 429, 500, 503] {
+            assert!(decode_codex_reset_credit_details(
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                valid,
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn legacy_subscription_quota_deserializes_without_new_fields() {
+        let quota: SubscriptionQuota = serde_json::from_value(serde_json::json!({
+            "tool": "codex",
+            "credentialStatus": "valid",
+            "credentialMessage": null,
+            "success": true,
+            "tiers": [],
+            "extraUsage": null,
+            "error": null,
+            "queriedAt": 0
+        }))
+        .unwrap();
+
+        assert!(quota.plan_type.is_none());
+        assert!(quota.membership.is_none());
+        assert!(quota.rate_limit_reset_credits.is_none());
+    }
+
+    #[test]
+    fn usage_and_reset_detail_requests_share_the_same_account_scope() {
+        let client = reqwest::Client::new();
+        let usage =
+            codex_authenticated_get(&client, CODEX_USAGE_URL, "test-token", Some("account-a"))
+                .build()
+                .unwrap();
+        let details = codex_reset_credits_request(&client, "test-token", Some("account-a"))
+            .build()
+            .unwrap();
+        let membership = codex_membership_request(&client, "test-token", "account-a")
+            .build()
+            .unwrap();
+
+        assert_eq!(usage.url().as_str(), CODEX_USAGE_URL);
+        assert_eq!(details.url().as_str(), CODEX_RESET_CREDITS_URL);
+        assert_eq!(
+            details
+                .headers()
+                .get("OpenAI-Beta")
+                .and_then(|value| value.to_str().ok()),
+            Some("codex-1")
+        );
+        assert_eq!(
+            details
+                .headers()
+                .get("originator")
+                .and_then(|value| value.to_str().ok()),
+            Some("Codex Desktop")
+        );
+        assert_eq!(membership.url().path(), "/backend-api/subscriptions");
+        assert!(membership
+            .url()
+            .query_pairs()
+            .any(|(key, value)| key == "account_id" && value == "account-a"));
+        for request in [&usage, &details, &membership] {
+            assert_eq!(
+                request
+                    .headers()
+                    .get("ChatGPT-Account-Id")
+                    .and_then(|value| value.to_str().ok()),
+                Some("account-a")
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("Authorization")
+                    .and_then(|value| value.to_str().ok()),
+                Some("Bearer test-token")
+            );
+        }
     }
 }

@@ -20,29 +20,27 @@ pub struct CodexOAuthState(pub Arc<CodexOAuthManager>);
 
 /// 查询 Codex OAuth (ChatGPT Plus/Pro) 订阅额度
 ///
-/// - `account_id` 未指定时回退到 `CodexOAuthManager` 的默认账号
-/// - 没有任何账号时返回 `not_found`，前端 `SubscriptionQuotaView` 会静默不渲染
+/// - 必须显式携带稳定 `account_id`，禁止回退到可变的默认账号
+/// - 账号 ID 为空时返回 `not_found`，前端 `SubscriptionQuotaView` 会静默不渲染
 /// - 复用 `services::subscription::query_codex_quota`，因此 wham/usage 端点协议
 ///   与 Codex CLI 路径完全一致
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_codex_oauth_quota(
-    account_id: Option<String>,
+    account_id: String,
     state: State<'_, CodexOAuthState>,
 ) -> Result<SubscriptionQuota, String> {
     let manager = &state.0;
 
-    // 解析最终使用的账号 ID：显式 > 默认账号 > 无账号 (not_found)
-    let resolved = match account_id {
-        Some(id) => Some(id),
-        None => manager.default_account_id().await,
-    };
-    let Some(id) = resolved else {
+    let id = account_id.trim();
+    if id.is_empty() {
         return Ok(SubscriptionQuota::not_found("codex_oauth"));
-    };
+    }
+    let id = id.to_string();
 
-    // 获取（必要时自动刷新）access_token
-    let token = match manager.get_valid_token_for_account(&id).await {
-        Ok(t) => t,
+    // 获取（必要时自动刷新）access_token 与 id_token。后者只用于读取 OpenAI
+    // 明确命名的订阅期限 claim，不读取通用 JWT `exp`。
+    let (token, id_token) = match manager.get_valid_token_and_id_token_for_account(&id).await {
+        Ok(tokens) => tokens,
         Err(e) => {
             return Ok(SubscriptionQuota::error(
                 "codex_oauth",
@@ -55,6 +53,7 @@ pub async fn get_codex_oauth_quota(
     // 瞬时传输失败以 Err 传播（前端 reject → retry + 保留上次成功值）。
     query_codex_quota(
         &token,
+        id_token.as_deref(),
         Some(&id),
         "codex_oauth",
         "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",

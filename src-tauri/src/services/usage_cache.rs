@@ -107,6 +107,9 @@ mod tests {
             success: true,
             tiers: vec![],
             extra_usage: None,
+            plan_type: None,
+            membership: None,
+            rate_limit_reset_credits: None,
             error: None,
             queried_at: Some(0),
         }
