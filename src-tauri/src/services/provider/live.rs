@@ -737,7 +737,101 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         return Ok(());
     }
 
+    if matches!(app_type, AppType::GrokBuild) {
+        return write_grok_live_with_db(db, &effective_provider);
+    }
+
     write_live_snapshot(app_type, &effective_provider)
+}
+
+/// Park a live Grok CLI session on an official card before stripping OAuth.
+///
+/// Returns true when it is safe to remove live OAuth scopes: either there was
+/// nothing to save, or a copy now exists on an official provider row.
+pub(crate) fn preserve_live_grok_oauth_in_db(db: &Database) -> Result<bool, AppError> {
+    let live = crate::grok_config::read_grok_auth()?;
+    if !crate::grok_config::grok_auth_has_login_material(&live) {
+        return Ok(true);
+    }
+
+    db.ensure_official_seed_by_id(
+        crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+        AppType::GrokBuild,
+    )?;
+
+    if let Some(mut official) = db.get_provider_by_id(
+        crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+        AppType::GrokBuild.as_str(),
+    )? {
+        if crate::grok_config::merge_live_grok_oauth_into_settings(
+            &mut official.settings_config,
+            &live,
+            false,
+        ) {
+            db.save_provider(AppType::GrokBuild.as_str(), &official)?;
+            return Ok(true);
+        }
+    }
+
+    for mut provider in db
+        .get_all_providers(AppType::GrokBuild.as_str())?
+        .into_values()
+    {
+        if provider.category.as_deref() != Some("official") {
+            continue;
+        }
+        if crate::grok_config::merge_live_grok_oauth_into_settings(
+            &mut provider.settings_config,
+            &live,
+            false,
+        ) {
+            db.save_provider(AppType::GrokBuild.as_str(), &provider)?;
+            return Ok(true);
+        }
+    }
+
+    log::warn!(
+        "Live Grok OAuth session was not copied onto an official card; leaving ~/.grok/auth.json in place"
+    );
+    Ok(false)
+}
+
+fn write_grok_live_with_db(db: &Database, provider: &Provider) -> Result<(), AppError> {
+    if provider.category.as_deref() == Some("official") {
+        return crate::grok_config::write_grok_provider_live(provider);
+    }
+
+    let preserved = preserve_live_grok_oauth_in_db(db)?;
+    crate::grok_config::write_grok_provider_live(provider)?;
+    if preserved {
+        crate::grok_config::strip_grok_oauth_from_live_auth()?;
+    }
+    Ok(())
+}
+
+pub(crate) fn adopt_live_grok_oauth_on_current_official(provider: &mut Provider) -> bool {
+    if provider.category.as_deref() != Some("official") {
+        return false;
+    }
+    let Ok(live) = crate::grok_config::read_grok_auth() else {
+        return false;
+    };
+    crate::grok_config::merge_live_grok_oauth_into_settings(
+        &mut provider.settings_config,
+        &live,
+        true,
+    )
+}
+
+fn grok_official_ready_for_current_sync(
+    state: &AppState,
+    provider: &Provider,
+) -> Result<Provider, AppError> {
+    let mut next = provider.clone();
+    if adopt_live_grok_oauth_on_current_official(&mut next) {
+        state.db.save_provider(AppType::GrokBuild.as_str(), &next)?;
+    }
+    Ok(next)
 }
 
 pub(crate) fn build_effective_provider_for_live_with_codex_oauth_manager(
@@ -1461,7 +1555,8 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config_for_state(state, app_type, provider)?;
+            let provider = grok_official_ready_for_current_sync(state, provider)?;
+            write_live_with_common_config_for_state(state, app_type, &provider)?;
         }
     }
 
@@ -1512,7 +1607,8 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     }
 
-    write_live_with_common_config_for_state(state, app_type, provider)
+    let provider = grok_official_ready_for_current_sync(state, provider)?;
+    write_live_with_common_config_for_state(state, app_type, &provider)
 }
 
 /// Sync current provider to live configuration

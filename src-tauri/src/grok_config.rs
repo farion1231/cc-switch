@@ -77,6 +77,72 @@ pub fn grok_auth_has_login_material(auth: &Value) -> bool {
     })
 }
 
+fn grok_oauth_identity(auth: &Value) -> Option<String> {
+    let root = auth.as_object()?;
+    for (scope, entry) in root {
+        if !is_grok_oauth_scope(scope) || !grok_oauth_entry_has_material(entry) {
+            continue;
+        }
+        let obj = entry.as_object()?;
+        for key in ["user_id", "principal_id", "email"] {
+            if let Some(value) = obj
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                return Some(format!("{key}:{value}"));
+            }
+        }
+    }
+    None
+}
+
+pub fn grok_auth_same_identity(left: &Value, right: &Value) -> bool {
+    match (grok_oauth_identity(left), grok_oauth_identity(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// Prefer live tokens when they belong to the same official account as `stored`.
+pub fn adopt_live_grok_auth(stored: &Value, live: &Value) -> Value {
+    if grok_auth_has_login_material(live) && grok_auth_same_identity(stored, live) {
+        live.clone()
+    } else {
+        stored.clone()
+    }
+}
+
+/// Copy live OAuth into `settings`.
+///
+/// `bind_new_account` applies to the current card: a newer `grok login` must
+/// not be overwritten by the stored snapshot. Without it, a different account
+/// already saved on a card is left untouched (used when parking live auth on
+/// the official seed before a third-party takeover).
+pub fn merge_live_grok_oauth_into_settings(
+    settings: &mut Value,
+    live_auth: &Value,
+    bind_new_account: bool,
+) -> bool {
+    if !grok_auth_has_login_material(live_auth) {
+        return false;
+    }
+    let stored = settings.get("auth").cloned().unwrap_or_else(|| json!({}));
+    if grok_auth_has_login_material(&stored) && !grok_auth_same_identity(&stored, live_auth) {
+        if !bind_new_account {
+            return false;
+        }
+    } else if stored == *live_auth {
+        return false;
+    }
+    if let Some(object) = settings.as_object_mut() {
+        object.insert("auth".to_string(), live_auth.clone());
+        return true;
+    }
+    false
+}
+
 /// Drop OIDC / legacy session scopes, keeping unrelated scopes (e.g. API keys).
 pub fn strip_grok_oauth_scopes(auth: &Value) -> Value {
     let Some(root) = auth.as_object() else {
@@ -90,7 +156,7 @@ pub fn strip_grok_oauth_scopes(auth: &Value) -> Value {
     Value::Object(kept)
 }
 
-fn read_grok_auth() -> Result<Value, AppError> {
+pub fn read_grok_auth() -> Result<Value, AppError> {
     let path = get_grok_auth_path();
     if !path.exists() {
         return Ok(json!({}));
@@ -536,18 +602,20 @@ pub fn write_grok_provider_live(provider: &Provider) -> Result<(), AppError> {
     // 官方条目不注入自定义模型表：按快照原样写回（首次为空文件），
     // Grok CLI 回落到官方内置模型 + 自带 OAuth 登录；MCP 投影随后由
     // 切换流程重新补写。带登录材料的官方供应商同时写回 auth.json，
-    // 才能在多账号之间切换。非官方供应商必须携带完整的自定义模型配置，
-    // 并且必须清掉 live OAuth，否则 session token 会盖过 config 里的 api_key。
+    // 才能在多账号之间切换。同一账号的 live 刷新优先于库存快照。
+    // 非官方供应商只写 config.toml；清 OAuth 必须由调用方在把 live
+    // 登录回填/快照到官方卡之后再做，否则会丢掉唯一一份 grok login。
     if provider.category.as_deref() != Some("official") {
         validate_config_toml(config)?;
         write_grok_live_atomic(None, config)?;
-        strip_grok_oauth_from_live_auth()?;
         return Ok(());
     }
 
     validate_config_toml_syntax(config)?;
     if grok_auth_has_login_material(&auth) {
-        write_grok_live_atomic(Some(&auth), config)
+        let live = read_grok_auth().unwrap_or_else(|_| json!({}));
+        let auth_to_write = adopt_live_grok_auth(&auth, &live);
+        write_grok_live_atomic(Some(&auth_to_write), config)
     } else {
         write_grok_live_atomic(None, config)
     }
@@ -854,6 +922,7 @@ context_window = 500000
                 "key": token,
                 "auth_mode": "oidc",
                 "email": email,
+                "user_id": email,
                 "refresh_token": format!("{token}-refresh"),
                 "oidc_issuer": "https://auth.x.ai",
                 "oidc_client_id": "b1a00492-073a-47ea-816f-4c329264a828"
@@ -919,13 +988,13 @@ context_window = 500000
 
     #[test]
     #[serial]
-    fn third_party_switch_strips_oauth_so_api_key_wins() {
+    fn third_party_write_does_not_strip_oauth_without_caller_preserve() {
         let temp = TempDir::new().expect("temp dir");
         let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
 
-        write_grok_live_atomic(Some(&oidc_auth("session-token", "a@example.com")), "")
-            .expect("seed official session");
+        let session = oidc_auth("session-token", "a@example.com");
+        write_grok_live_atomic(Some(&session), "").expect("seed official session");
 
         let custom = Provider::with_id(
             "relay".to_string(),
@@ -935,13 +1004,60 @@ context_window = 500000
         );
         write_grok_provider_live(&custom).expect("write third-party live");
 
-        assert!(
-            !get_grok_auth_path().exists(),
-            "oauth session must be removed so config.toml api_key is used"
+        let live_auth: Value =
+            serde_json::from_str(&fs::read_to_string(get_grok_auth_path()).expect("read auth"))
+                .expect("parse auth");
+        assert_eq!(
+            live_auth, session,
+            "stripping OAuth is the caller's job after snapshotting the live login"
         );
         assert_eq!(
             fs::read_to_string(get_grok_config_path()).expect("read config"),
             valid_config()
+        );
+
+        strip_grok_oauth_from_live_auth().expect("caller may strip after preserve");
+        assert!(
+            !get_grok_auth_path().exists(),
+            "explicit strip still removes oauth so config.toml api_key wins"
+        );
+
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn official_write_adopts_live_refresh_for_the_same_account() {
+        let temp = TempDir::new().expect("temp dir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let live = oidc_auth("refreshed-token", "a@example.com");
+        write_grok_live_atomic(Some(&live), "").expect("seed refreshed live auth");
+
+        let mut official = Provider::with_id(
+            "official-a".to_string(),
+            "Grok Official A".to_string(),
+            json!({
+                "auth": oidc_auth("stale-token", "a@example.com"),
+                "config": ""
+            }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        write_grok_provider_live(&official).expect("write official");
+
+        let written = read_grok_auth().expect("read adopted auth");
+        assert_eq!(
+            written
+                .get("https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828")
+                .and_then(|entry| entry.get("key"))
+                .and_then(Value::as_str),
+            Some("refreshed-token"),
+            "same-account live refresh must win over the stored snapshot"
         );
 
         match original_test_home {

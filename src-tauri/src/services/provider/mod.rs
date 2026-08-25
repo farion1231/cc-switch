@@ -4711,6 +4711,10 @@ impl ProviderService {
 
         drop(codex_update_switch_guard);
 
+        if matches!(app_type, AppType::GrokBuild) && is_current {
+            live::adopt_live_grok_oauth_on_current_official(&mut provider);
+        }
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
