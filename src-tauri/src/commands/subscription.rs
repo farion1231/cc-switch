@@ -15,18 +15,25 @@ use crate::store::AppState;
 /// `Err`（瞬时传输失败）不写快照、不 emit：保留上一份托盘快照，与前端
 /// react-query reject 保留上次 data 的语义一致（emit 失败快照会经
 /// `useUsageCacheBridge` 盲写回 query 缓存，抹掉本该保留的旧值）。
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_subscription_quota(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     tool: String,
+    scope_key: Option<String>,
 ) -> Result<SubscriptionQuota, String> {
     let inner = crate::services::subscription::get_subscription_quota(&tool).await;
     if let Ok(snapshot) = &inner {
         if let Ok(app_type) = AppType::from_str(&tool) {
+            let scope_key = scope_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("active");
             let payload = serde_json::json!({
                 "kind": "subscription",
                 "appType": app_type.as_str(),
+                "scopeKey": scope_key,
                 "data": snapshot,
             });
             if let Err(e) = app.emit("usage-cache-updated", payload) {

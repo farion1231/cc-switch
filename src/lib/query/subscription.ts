@@ -13,7 +13,9 @@ const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 export const subscriptionKeys = {
   all: ["subscription"] as const,
-  quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
+  forApp: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
+  quota: (appId: AppId, scopeKey: string) =>
+    [...subscriptionKeys.forApp(appId), scopeKey] as const,
 };
 
 /**
@@ -81,6 +83,7 @@ export function useSubscriptionQuota(
   enabled: boolean,
   autoQuery = false,
   autoQueryIntervalMinutes = 5,
+  scopeKey = "active",
 ) {
   const refetchInterval =
     autoQuery && autoQueryIntervalMinutes > 0
@@ -88,8 +91,8 @@ export function useSubscriptionQuota(
       : false;
 
   const query = useQuery({
-    queryKey: subscriptionKeys.quota(appId),
-    queryFn: () => subscriptionApi.getQuota(appId),
+    queryKey: subscriptionKeys.quota(appId, scopeKey),
+    queryFn: () => subscriptionApi.getQuota(appId, scopeKey),
     enabled:
       enabled && ["claude", "codex", "gemini", "grokbuild"].includes(appId),
     refetchInterval,
@@ -102,7 +105,7 @@ export function useSubscriptionQuota(
     retry: 1,
   });
 
-  return useQuotaKeepLastGood(query, appId);
+  return useQuotaKeepLastGood(query, `${appId}:${scopeKey}`);
 }
 
 export interface UseCodexOauthQuotaOptions {
@@ -118,7 +121,7 @@ export interface UseCodexOauthQuotaOptions {
  * 直接以 cc-switch 自管的 ChatGPT 账号 ID 查询额度，供认证中心里逐个账号
  * 展示用量时复用。Query key 与 `useCodexOauthQuota` 一致，绑定到同一账号的
  * 供应商卡片与账号列表会自动去重共享同一份请求缓存。
- * accountId 为 null 时使用 "default" 占位，让后端 fallback 到默认账号。
+ * accountId 为空时禁用查询，避免“默认账号”变化后把旧账号额度写入同一缓存。
  */
 export function useCodexOauthQuotaByAccountId(
   accountId: string | null,
@@ -133,10 +136,17 @@ export function useCodexOauthQuotaByAccountId(
     autoQuery && autoQueryIntervalMinutes > 0
       ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
       : false;
+  const normalizedAccountId = accountId?.trim() || null;
   const query = useQuery({
-    queryKey: ["codex_oauth", "quota", accountId ?? "default"],
-    queryFn: () => subscriptionApi.getCodexOauthQuota(accountId),
-    enabled,
+    queryKey: ["codex_oauth", "quota", normalizedAccountId ?? "unbound"],
+    queryFn: () => {
+      if (!normalizedAccountId) {
+        throw new Error("Codex OAuth quota requires a bound account");
+      }
+      return subscriptionApi.getCodexOauthQuota(normalizedAccountId);
+    },
+    // 账号卡必须绑定到稳定 ID；禁止把空绑定静默解析为可变的默认账号。
+    enabled: enabled && normalizedAccountId !== null,
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),
     refetchOnWindowFocus: Boolean(refetchInterval),
@@ -147,7 +157,7 @@ export function useCodexOauthQuotaByAccountId(
     retry: 1,
   });
 
-  return useQuotaKeepLastGood(query, accountId ?? "default");
+  return useQuotaKeepLastGood(query, normalizedAccountId ?? "unbound");
 }
 
 /**

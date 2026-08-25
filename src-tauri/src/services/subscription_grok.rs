@@ -673,6 +673,9 @@ pub(crate) async fn query_grok_quota(
         success: true,
         tiers: vec![tier],
         extra_usage: None,
+        plan_type: None,
+        membership: None,
+        rate_limit_reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     })

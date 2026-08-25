@@ -630,6 +630,7 @@ export function ProviderCard({
                 officialSubscriptionEnabled ? (
                   <SubscriptionQuotaFooter
                     appId={appId}
+                    scopeKey={provider.id}
                     inline={true}
                     isCurrent={isCurrent}
                     autoQueryInterval={

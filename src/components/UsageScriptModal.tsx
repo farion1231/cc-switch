@@ -7,6 +7,7 @@ import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
+import { subscriptionKeys } from "@/lib/query/subscription";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -537,12 +538,35 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               PROVIDER_TYPES.CODEX_OAUTH,
             ) ?? null)
           : null;
+        if (isBoundCodexOfficial && !accountId) {
+          throw new Error("Codex Official provider is not bound to an account");
+        }
         const quota = isBoundCodexOfficial
-          ? await subscriptionApi.getCodexOauthQuota(accountId)
-          : await subscriptionApi.getQuota(appId);
-        if (quota.success && quota.tiers.length > 0) {
-          const summary = quota.tiers
+          ? await subscriptionApi.getCodexOauthQuota(accountId!)
+          : await subscriptionApi.getQuota(appId, provider.id);
+        if (
+          quota.success &&
+          (quota.tiers.length > 0 ||
+            Boolean(quota.planType) ||
+            Boolean(quota.membership) ||
+            Boolean(quota.rateLimitResetCredits))
+        ) {
+          const tierSummary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
+            .join(", ");
+          const resetSummary = quota.rateLimitResetCredits
+            ? `reset cards: ${quota.rateLimitResetCredits.availableCount}`
+            : "";
+          const membershipSummary = quota.membership
+            ? `membership until: ${quota.membership.activeUntil}`
+            : "";
+          const summary = [
+            quota.planType ? `plan: ${quota.planType}` : "",
+            membershipSummary,
+            tierSummary,
+            resetSummary,
+          ]
+            .filter(Boolean)
             .join(", ");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
@@ -550,8 +574,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           });
           queryClient.setQueryData(
             isBoundCodexOfficial
-              ? ["codex_oauth", "quota", accountId ?? "default"]
-              : ["subscription", "quota", appId],
+              ? ["codex_oauth", "quota", accountId]
+              : subscriptionKeys.quota(appId, provider.id),
             quota,
           );
         } else {
