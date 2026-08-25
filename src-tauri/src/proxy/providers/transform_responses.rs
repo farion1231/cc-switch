@@ -19,7 +19,9 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 use super::reasoning_bridge::{
-    anthropic_block_from_openai_reasoning_item, openai_reasoning_item_from_anthropic_block,
+    anthropic_block_from_openai_reasoning_item,
+    anthropic_block_from_openai_reasoning_item_for_client,
+    openai_reasoning_item_from_anthropic_block,
 };
 
 pub(crate) const TOOL_RESULT_ERROR_MARKER: &str = "[cc-switch:tool-result-error]";
@@ -1821,11 +1823,28 @@ pub fn anthropic_to_responses(
         result["stream"] = v.clone();
     }
 
-    // Map Anthropic thinking → OpenAI Responses reasoning.effort
+    // Map Anthropic thinking → OpenAI Responses reasoning.effort and summary.
+    // Responses makes summary visibility an explicit opt-in; Claude Code commonly
+    // omits thinking.display while still expecting its UI to receive a visible
+    // summary. Request the default summary whenever reasoning is enabled, unless
+    // the client explicitly asks to omit it.
     if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
         if super::transform::supports_reasoning_effort(model_name) {
-            if let Some(effort) = super::transform::resolve_reasoning_effort(&body) {
-                result["reasoning"] = json!({ "effort": effort });
+            let effort = super::transform::resolve_reasoning_effort(&body);
+            let summary_requested = body
+                .pointer("/thinking/display")
+                .and_then(Value::as_str)
+                .map(|display| display.eq_ignore_ascii_case("summarized"))
+                .unwrap_or(effort.is_some());
+            if effort.is_some() || summary_requested {
+                let mut reasoning = json!({});
+                if let Some(effort) = effort {
+                    reasoning["effort"] = json!(effort);
+                }
+                if summary_requested {
+                    reasoning["summary"] = json!("auto");
+                }
+                result["reasoning"] = reasoning;
             }
         }
     }
@@ -2499,6 +2518,20 @@ pub(crate) fn responses_to_anthropic_with_web_search_options(
     hosted_web_search_name: Option<&str>,
     max_web_search_uses: Option<u64>,
 ) -> Result<Value, ProxyError> {
+    responses_to_anthropic_with_web_search_options_for_client(
+        body,
+        hosted_web_search_name,
+        max_web_search_uses,
+        true,
+    )
+}
+
+pub(crate) fn responses_to_anthropic_with_web_search_options_for_client(
+    body: Value,
+    hosted_web_search_name: Option<&str>,
+    max_web_search_uses: Option<u64>,
+    _preserve_redacted_thinking: bool,
+) -> Result<Value, ProxyError> {
     // A Responses failure can arrive inside an HTTP 2xx response object. Reject it
     // before looking at `output`; otherwise `{status:"failed", output:[]}` becomes
     // a successful empty Anthropic `end_turn` and hides the upstream error.
@@ -2756,7 +2789,9 @@ pub(crate) fn responses_to_anthropic_with_web_search_options(
             }
 
             "reasoning" => {
-                if let Some(block) = anthropic_block_from_openai_reasoning_item(item) {
+                if let Some(block) = anthropic_block_from_openai_reasoning_item_for_client(
+                    item,
+                ) {
                     content.push(block);
                 }
             }
@@ -3195,6 +3230,51 @@ mod tests {
         assert_eq!(result["input"][0]["content"][0]["text"], "Hello");
         // stop_sequences should not appear
         assert!(result.get("stop_sequences").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_adaptive_thinking_requests_visible_summary_without_display() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+        assert_eq!(result["reasoning"]["summary"], "auto");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_summarized_thinking_requests_visible_summary() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "thinking": {
+                "type": "adaptive",
+                "display": "summarized"
+            },
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+        assert_eq!(result["reasoning"]["summary"], "auto");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_honors_explicit_omitted_summary() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "thinking": {
+                "type": "adaptive",
+                "display": "omitted"
+            },
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+        assert!(result["reasoning"].get("summary").is_none());
     }
 
     #[test]
@@ -4538,6 +4618,50 @@ mod tests {
     }
 
     #[test]
+    fn test_responses_to_anthropic_reasoning_content_fallback() {
+        let input = json!({
+            "id": "resp_reasoning_content",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [],
+                    "content": [
+                        {"type": "reasoning_text", "text": "Restored from content."}
+                    ]
+                },
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Done."}]
+                }
+            ]
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(result["content"][0]["thinking"], "Restored from content.");
+        assert_eq!(result["content"][1]["type"], "text");
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_reasoning_summary_wins_over_content() {
+        let input = json!({
+            "id": "resp_reasoning_both",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [{
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Summary."}],
+                "content": [{"type": "reasoning_text", "text": "Summary."}]
+            }]
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["thinking"], "Summary.");
+    }
+
+    #[test]
     fn test_encrypted_reasoning_round_trips_through_anthropic_history() {
         let original = json!({
             "type": "reasoning",
@@ -4575,6 +4699,34 @@ mod tests {
         .unwrap();
         assert_eq!(replay["input"][0], original);
         assert_eq!(replay["input"][1]["type"], "function_call");
+    }
+
+    #[test]
+    fn test_encrypted_reasoning_uses_supported_empty_thinking_block() {
+        let input = json!({
+            "id": "resp_reasoning_vscode",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [{
+                "type": "reasoning",
+                "id": "rs_vscode",
+                "summary": [],
+                "encrypted_content": "opaque-ciphertext"
+            }]
+        });
+
+        let result = responses_to_anthropic_with_web_search_options_for_client(
+            input,
+            None,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(result["content"][0]["thinking"], "");
+        assert!(result["content"][0]["signature"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ccswitch-openai-reasoning-v1:")));
     }
 
     #[test]
@@ -4818,6 +4970,7 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
+        assert_eq!(result["reasoning"]["summary"], "auto");
     }
 
     #[test]
@@ -4832,6 +4985,7 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
+        assert_eq!(result["reasoning"]["summary"], "auto");
     }
 
     #[test]

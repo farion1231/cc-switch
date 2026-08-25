@@ -20,6 +20,7 @@ use super::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
         get_adapter, get_claude_api_format,
+        reasoning_bridge::reasoning_summary_text,
         streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
             create_responses_sse_stream_from_anthropic_with_context,
@@ -27,10 +28,7 @@ use super::{
         },
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
-        streaming_responses::{
-            create_anthropic_sse_stream_from_responses,
-            create_anthropic_sse_stream_from_responses_with_web_search_options,
-        },
+        streaming_responses::create_anthropic_sse_stream_from_responses_with_web_search_options_for_client,
         transform, transform_codex_anthropic, transform_codex_chat,
         transform_codex_responses_namespace, transform_codex_responses_xai_sanitize,
         transform_gemini, transform_responses,
@@ -53,6 +51,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap};
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -175,6 +174,7 @@ async fn handle_messages_for_app(
     let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
+    let preserve_redacted_thinking = !is_claude_vscode_client(&headers);
     let extensions = parts.extensions;
     let body_bytes = body
         .collect()
@@ -252,6 +252,7 @@ async fn handle_messages_for_app(
             &body,
             is_stream,
             &api_format,
+            preserve_redacted_thinking,
             connection_guard,
         )
         .await;
@@ -389,6 +390,7 @@ async fn handle_claude_transform(
     original_body: &Value,
     is_stream: bool,
     api_format: &str,
+    preserve_redacted_thinking: bool,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
@@ -429,13 +431,21 @@ async fn handle_claude_transform(
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
             if hosted_web_search_name.is_none() && hosted_web_search_max_uses.is_none() {
-                Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
+                Box::new(Box::pin(
+                    create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
+                        stream,
+                        None,
+                        None,
+                        preserve_redacted_thinking,
+                    ),
+                ))
             } else {
                 Box::new(Box::pin(
-                    create_anthropic_sse_stream_from_responses_with_web_search_options(
+                    create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
                         stream,
                         hosted_web_search_name.clone(),
                         hosted_web_search_max_uses,
+                        preserve_redacted_thinking,
                     ),
                 ))
             }
@@ -557,11 +567,12 @@ async fn handle_claude_transform(
                 )));
             }
             let response_headers = response.headers().clone();
-            let message = responses_sse_stream_to_anthropic_message(
+            let message = responses_sse_stream_to_anthropic_message_for_client(
                 response.bytes_stream(),
                 hosted_web_search_name.clone(),
                 hosted_web_search_max_uses,
                 body_timeout,
+                preserve_redacted_thinking,
             )
             .await?;
             (response_headers, Some(message), None)
@@ -634,10 +645,11 @@ async fn handle_claude_transform(
     let transform_result = match (direct_anthropic_response, upstream_response) {
         (Some(response), _) => Ok(response),
         (None, Some(response)) if api_format == "openai_responses" => {
-            transform_responses::responses_to_anthropic_with_web_search_options(
+            transform_responses::responses_to_anthropic_with_web_search_options_for_client(
                 response,
                 hosted_web_search_name.as_deref(),
                 hosted_web_search_max_uses,
+                preserve_redacted_thinking,
             )
         }
         (None, Some(response)) if api_format == "gemini_native" => {
@@ -2152,6 +2164,13 @@ pub async fn handle_gemini(
     .await
 }
 
+fn is_claude_vscode_client(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("claude-vscode"))
+}
+
 fn should_use_claude_transform_streaming(
     requested_streaming: bool,
     upstream_is_sse: bool,
@@ -2167,11 +2186,29 @@ async fn responses_sse_stream_to_anthropic_message(
     max_web_search_uses: Option<u64>,
     body_timeout: std::time::Duration,
 ) -> Result<Value, ProxyError> {
+    responses_sse_stream_to_anthropic_message_for_client(
+        stream,
+        hosted_web_search_name,
+        max_web_search_uses,
+        body_timeout,
+        true,
+    )
+    .await
+}
+
+async fn responses_sse_stream_to_anthropic_message_for_client(
+    stream: impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    hosted_web_search_name: Option<String>,
+    max_web_search_uses: Option<u64>,
+    body_timeout: std::time::Duration,
+    preserve_redacted_thinking: bool,
+) -> Result<Value, ProxyError> {
     let collect = async move {
-        let converted = create_anthropic_sse_stream_from_responses_with_web_search_options(
+        let converted = create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
             stream,
             hosted_web_search_name,
             max_web_search_uses,
+            preserve_redacted_thinking,
         );
         tokio::pin!(converted);
 
@@ -2207,15 +2244,157 @@ async fn responses_sse_stream_to_anthropic_message(
     transform_codex_anthropic::anthropic_sse_to_message_value(&body)
 }
 
+#[derive(Default)]
+struct ResponsesSseReasoningSummaryState {
+    parts: BTreeMap<u64, String>,
+}
+
+/// Keep one stable identity when a Responses stream alternates between item_id and output_index.
+fn responses_sse_reasoning_summary_key(
+    data: &Value,
+    keys_by_item_id: &mut HashMap<String, String>,
+    keys_by_output_index: &mut HashMap<u64, String>,
+) -> Option<String> {
+    let item_id = data
+        .get("item_id")
+        .and_then(Value::as_str)
+        .or_else(|| data.pointer("/item/id").and_then(Value::as_str))
+        .filter(|value| !value.is_empty());
+    let output_index = data.get("output_index").and_then(Value::as_u64);
+
+    let existing_key = item_id
+        .and_then(|id| keys_by_item_id.get(id).cloned())
+        .or_else(|| output_index.and_then(|index| keys_by_output_index.get(&index).cloned()));
+    let key = existing_key.or_else(|| {
+        item_id
+            .map(|id| format!("id:{id}"))
+            .or_else(|| output_index.map(|index| format!("output:{index}")))
+    })?;
+
+    if let Some(id) = item_id {
+        keys_by_item_id.insert(id.to_string(), key.clone());
+    }
+    if let Some(index) = output_index {
+        keys_by_output_index.insert(index, key.clone());
+    }
+    Some(key)
+}
+
+/// Reconcile incremental deltas with cumulative done/part snapshots without duplicating text.
+fn merge_responses_sse_reasoning_summary_part(current: &mut String, incoming: &str) {
+    if incoming.is_empty() {
+        return;
+    }
+    if current.is_empty() || incoming.starts_with(current.as_str()) {
+        *current = incoming.to_string();
+    } else if current.starts_with(incoming) || current.ends_with(incoming) {
+        return;
+    } else {
+        current.push_str(incoming);
+    }
+}
+
+fn responses_sse_reasoning_summary_text(
+    summaries: &HashMap<String, ResponsesSseReasoningSummaryState>,
+    key: &str,
+) -> String {
+    summaries
+        .get(key)
+        .map(|state| state.parts.values().cloned().collect::<Vec<_>>().join("\n"))
+        .unwrap_or_default()
+}
+
+fn collect_responses_sse_reasoning_item_summary(
+    data: &Value,
+    item: &Value,
+    summaries: &mut HashMap<String, ResponsesSseReasoningSummaryState>,
+    keys_by_item_id: &mut HashMap<String, String>,
+    keys_by_output_index: &mut HashMap<u64, String>,
+) {
+    if item.get("type").and_then(Value::as_str) != Some("reasoning") {
+        return;
+    }
+    let Some(key) = responses_sse_reasoning_summary_key(
+        data,
+        keys_by_item_id,
+        keys_by_output_index,
+    ) else {
+        return;
+    };
+    let state = summaries.entry(key).or_default();
+    match item.get("summary") {
+        Some(Value::Array(parts)) => {
+            for (index, part) in parts.iter().enumerate() {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    merge_responses_sse_reasoning_summary_part(
+                        state.parts.entry(index as u64).or_default(),
+                        text,
+                    );
+                } else if let Some(text) = part.as_str() {
+                    merge_responses_sse_reasoning_summary_part(
+                        state.parts.entry(index as u64).or_default(),
+                        text,
+                    );
+                }
+            }
+        }
+        Some(Value::String(text)) => {
+            merge_responses_sse_reasoning_summary_part(state.parts.entry(0).or_default(), text);
+        }
+        Some(Value::Object(object)) => {
+            if let Some(text) = object.get("text").and_then(Value::as_str) {
+                merge_responses_sse_reasoning_summary_part(
+                    state.parts.entry(0).or_default(),
+                    text,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn enrich_responses_sse_reasoning_item(
+    data: &Value,
+    item: &mut Value,
+    summaries: &HashMap<String, ResponsesSseReasoningSummaryState>,
+    keys_by_item_id: &mut HashMap<String, String>,
+    keys_by_output_index: &mut HashMap<u64, String>,
+) {
+    if item.get("type").and_then(Value::as_str) != Some("reasoning")
+        || !reasoning_summary_text(item).is_empty()
+    {
+        return;
+    }
+    let Some(key) = responses_sse_reasoning_summary_key(
+        data,
+        keys_by_item_id,
+        keys_by_output_index,
+    ) else {
+        return;
+    };
+    let text = responses_sse_reasoning_summary_text(summaries, &key);
+    if !text.is_empty() {
+        if let Some(object) = item.as_object_mut() {
+            object.insert(
+                "summary".to_string(),
+                json!([{"type": "summary_text", "text": text}]),
+            );
+        }
+    }
+}
+
 /// 把 OpenAI Responses SSE 流聚合成一个完整的 Responses JSON 对象，供下游转成 Anthropic
 /// 非流响应。仅在 Codex OAuth 把 `stream:false` 强制升级为 SSE 的场景下调用。
 ///
-/// 复用 `proxy::sse` 的 `take_sse_block`/`strip_sse_field`：`take_sse_block` 同时支持
-/// `\n\n` 与 `\r\n\r\n` 两种分隔符，`strip_sse_field` 兼容带/不带空格的字段写法。
+/// 除了收集 output_item.done，还要保留 reasoning summary 事件；部分上游只在这些
+/// 增量事件中返回可见摘要，最终 reasoning item 只携带 encrypted_content。
 fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     let mut buffer = body.trim_start_matches('\u{feff}').to_string();
     let mut completed_response: Option<Value> = None;
-    let mut output_items = Vec::new();
+    let mut output_items: Vec<(Option<u64>, Value)> = Vec::new();
+    let mut reasoning_summaries: HashMap<String, ResponsesSseReasoningSummaryState> = HashMap::new();
+    let mut reasoning_keys_by_item_id: HashMap<String, String> = HashMap::new();
+    let mut reasoning_keys_by_output_index: HashMap<u64, String> = HashMap::new();
 
     // strict=false 用于残余尾块：截断的半截 JSON 忽略而非报错，避免破坏
     // 已聚合好的完整响应（codex_oauth 聚合路径也复用本函数）
@@ -2257,10 +2436,127 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             }
         };
 
+        let event_name = if event_name.is_empty() {
+            data.get("type").and_then(Value::as_str).unwrap_or("")
+        } else {
+            event_name
+        };
+
         match event_name {
+            "response.output_item.added" => {
+                if let Some(item) = data.get("item") {
+                    collect_responses_sse_reasoning_item_summary(
+                        &data,
+                        item,
+                        &mut reasoning_summaries,
+                        &mut reasoning_keys_by_item_id,
+                        &mut reasoning_keys_by_output_index,
+                    );
+                }
+            }
             "response.output_item.done" => {
                 if let Some(item) = data.get("item") {
-                    output_items.push(item.clone());
+                    let mut item = item.clone();
+                    collect_responses_sse_reasoning_item_summary(
+                        &data,
+                        &item,
+                        &mut reasoning_summaries,
+                        &mut reasoning_keys_by_item_id,
+                        &mut reasoning_keys_by_output_index,
+                    );
+                    enrich_responses_sse_reasoning_item(
+                        &data,
+                        &mut item,
+                        &reasoning_summaries,
+                        &mut reasoning_keys_by_item_id,
+                        &mut reasoning_keys_by_output_index,
+                    );
+                    output_items.push((
+                        data.get("output_index").and_then(Value::as_u64),
+                        item,
+                    ));
+                }
+            }
+            "response.reasoning_summary_text.delta"
+            | "response.reasoning_text.delta"
+            | "response.reasoning.delta" => {
+                if let (Some(text), Some(key)) = (
+                    data.get("delta")
+                        .or_else(|| data.get("text"))
+                        .and_then(Value::as_str),
+                    responses_sse_reasoning_summary_key(
+                        &data,
+                        &mut reasoning_keys_by_item_id,
+                        &mut reasoning_keys_by_output_index,
+                    ),
+                ) {
+                    let summary_index = data
+                        .get("summary_index")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    merge_responses_sse_reasoning_summary_part(
+                        reasoning_summaries
+                            .entry(key)
+                            .or_default()
+                            .parts
+                            .entry(summary_index)
+                            .or_default(),
+                        text,
+                    );
+                }
+            }
+            "response.reasoning_summary_text.done" | "response.reasoning_text.done" => {
+                if let (Some(text), Some(key)) = (
+                    data.get("text")
+                        .or_else(|| data.get("delta"))
+                        .and_then(Value::as_str),
+                    responses_sse_reasoning_summary_key(
+                        &data,
+                        &mut reasoning_keys_by_item_id,
+                        &mut reasoning_keys_by_output_index,
+                    ),
+                ) {
+                    let summary_index = data
+                        .get("summary_index")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    merge_responses_sse_reasoning_summary_part(
+                        reasoning_summaries
+                            .entry(key)
+                            .or_default()
+                            .parts
+                            .entry(summary_index)
+                            .or_default(),
+                        text,
+                    );
+                }
+            }
+            "response.reasoning_summary_part.added" | "response.reasoning_summary_part.done" => {
+                if let (Some(text), Some(key)) = (
+                    data.get("part").and_then(|part| {
+                        part.get("text")
+                            .and_then(Value::as_str)
+                            .or_else(|| part.as_str())
+                    }),
+                    responses_sse_reasoning_summary_key(
+                        &data,
+                        &mut reasoning_keys_by_item_id,
+                        &mut reasoning_keys_by_output_index,
+                    ),
+                ) {
+                    let summary_index = data
+                        .get("summary_index")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    merge_responses_sse_reasoning_summary_part(
+                        reasoning_summaries
+                            .entry(key)
+                            .or_default()
+                            .parts
+                            .entry(summary_index)
+                            .or_default(),
+                        text,
+                    );
                 }
             }
             "response.completed" => {
@@ -2291,12 +2587,43 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     })?;
 
     if !output_items.is_empty() {
+        let mut output = Vec::with_capacity(output_items.len());
+        for (position, (output_index, mut item)) in output_items.into_iter().enumerate() {
+            let data = json!({
+                "output_index": output_index.unwrap_or(position as u64),
+                "item_id": item.get("id").and_then(Value::as_str),
+            });
+            enrich_responses_sse_reasoning_item(
+                &data,
+                &mut item,
+                &reasoning_summaries,
+                &mut reasoning_keys_by_item_id,
+                &mut reasoning_keys_by_output_index,
+            );
+            output.push(item);
+        }
         if let Some(obj) = response.as_object_mut() {
-            obj.insert("output".to_string(), Value::Array(output_items));
+            obj.insert("output".to_string(), Value::Array(output));
         } else {
             return Err(ProxyError::TransformError(
                 "response.completed payload is not an object".to_string(),
             ));
+        }
+    } else if let Some(output) = response.get_mut("output").and_then(Value::as_array_mut) {
+        // Some gateways put the final reasoning snapshot only in response.completed.
+        // Enrich that snapshot too when its summary was carried by earlier SSE events.
+        for (index, item) in output.iter_mut().enumerate() {
+            let data = json!({
+                "output_index": index as u64,
+                "item_id": item.get("id").and_then(Value::as_str),
+            });
+            enrich_responses_sse_reasoning_item(
+                &data,
+                item,
+                &reasoning_summaries,
+                &mut reasoning_keys_by_item_id,
+                &mut reasoning_keys_by_output_index,
+            );
         }
     }
 
@@ -2858,16 +3185,33 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
+        codex_proxy_error_json, is_claude_vscode_client,
+        responses_sse_stream_to_anthropic_message,
         responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
         upstream_body_parse_error,
     };
-    use crate::proxy::ProxyError;
+    use crate::proxy::{providers::transform_responses, ProxyError};
     use bytes::Bytes;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    #[test]
+    fn claude_vscode_user_agent_selects_compatible_reasoning_blocks() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::USER_AGENT,
+            axum::http::HeaderValue::from_static("claude-vscode/1.0.0"),
+        );
+        assert!(is_claude_vscode_client(&headers));
+
+        headers.insert(
+            axum::http::header::USER_AGENT,
+            axum::http::HeaderValue::from_static("claude-code-cli/1.0.0"),
+        );
+        assert!(!is_claude_vscode_client(&headers));
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
@@ -3499,6 +3843,70 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
         assert_eq!(response["id"], "resp_1");
         assert_eq!(response["output"][0]["type"], "message");
         assert_eq!(response["output"][0]["content"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_preserves_reasoning_summary_events() {
+        // Codex OAuth may leave summary empty on output_item.done even though the
+        // visible summary was delivered through reasoning summary SSE events.
+        let sse = r#"event: response.output_item.added
+ data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}
+
+ event: response.reasoning_summary_part.added
+ data: {"type":"response.reasoning_summary_part.added","item_id":"rs_1","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}
+
+ event: response.reasoning_summary_text.delta
+ data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"summary_index":0,"delta":"Need a tool."}
+
+ event: response.reasoning_summary_text.done
+ data: {"type":"response.reasoning_summary_text.done","item_id":"rs_1","output_index":0,"summary_index":0,"text":"Need a tool."}
+
+ event: response.output_item.done
+ data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"opaque"}}
+
+ event: response.completed
+ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","model":"gpt-5.6","output":[]}}
+
+"#;
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+        assert_eq!(
+            response["output"][0]["summary"][0]["text"],
+            "Need a tool."
+        );
+
+        let anthropic = transform_responses::responses_to_anthropic_with_web_search_options_for_client(
+            response,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(anthropic["content"][0]["type"], "thinking");
+        assert_eq!(anthropic["content"][0]["thinking"], "Need a tool.");
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_separates_reasoning_summary_parts() {
+        let sse = r#"event: response.reasoning_summary_part.done
+ data: {"type":"response.reasoning_summary_part.done","item_id":"rs_parts","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"First"}}
+
+ event: response.reasoning_summary_part.done
+ data: {"type":"response.reasoning_summary_part.done","item_id":"rs_parts","output_index":0,"summary_index":1,"part":{"type":"summary_text","text":"Second"}}
+
+ event: response.output_item.done
+ data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_parts","type":"reasoning","summary":[],"encrypted_content":"opaque"}}
+
+ event: response.completed
+ data: {"type":"response.completed","response":{"id":"resp_parts","status":"completed","model":"gpt-5.6","output":[]}}
+
+"#;
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+        assert_eq!(
+            response["output"][0]["summary"][0]["text"],
+            "First\nSecond"
+        );
     }
 
     #[test]
