@@ -58,7 +58,11 @@ type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
 
 function stringifyGrokAuth(auth: unknown): string {
   try {
-    return JSON.stringify(auth && typeof auth === "object" ? auth : {}, null, 2);
+    return JSON.stringify(
+      auth && typeof auth === "object" ? auth : {},
+      null,
+      2,
+    );
   } catch {
     return "{}";
   }
