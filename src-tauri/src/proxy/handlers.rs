@@ -32,7 +32,8 @@ use super::{
             create_anthropic_sse_stream_from_responses_with_web_search_options,
         },
         transform, transform_codex_anthropic, transform_codex_chat,
-        transform_codex_responses_namespace, transform_gemini, transform_responses,
+        transform_codex_responses_namespace, transform_codex_responses_xai_tool_search,
+        transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, create_usage_collector, process_response,
@@ -879,6 +880,8 @@ async fn handle_responses_for_app(
     // {namespace, name} map used to restore the native Responses upstream's
     // function-call names (see the namespace-restore dispatch below).
     let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
+    let restore_tool_search =
+        transform_codex_responses_xai_tool_search::request_offers_tool_search(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -938,7 +941,7 @@ async fn handle_responses_for_app(
     // them to `{name, namespace}` so the Codex client matches them against its
     // namespaced tool registry.
     if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
-        && !namespace_restore_map.is_empty()
+        && (!namespace_restore_map.is_empty() || restore_tool_search)
     {
         return handle_codex_responses_namespace_restore(
             response,
@@ -946,6 +949,7 @@ async fn handle_responses_for_app(
             &state,
             connection_guard,
             namespace_restore_map,
+            restore_tool_search,
         )
         .await;
     }
@@ -1078,6 +1082,8 @@ async fn handle_responses_compact_for_app(
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
     let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
+    let restore_tool_search =
+        transform_codex_responses_xai_tool_search::request_offers_tool_search(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -1132,7 +1138,7 @@ async fn handle_responses_compact_for_app(
     }
 
     if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
-        && !namespace_restore_map.is_empty()
+        && (!namespace_restore_map.is_empty() || restore_tool_search)
     {
         return handle_codex_responses_namespace_restore(
             response,
@@ -1140,6 +1146,7 @@ async fn handle_responses_compact_for_app(
             &state,
             connection_guard,
             namespace_restore_map,
+            restore_tool_search,
         )
         .await;
     }
@@ -1168,6 +1175,7 @@ async fn handle_codex_responses_namespace_restore(
         String,
         transform_codex_responses_namespace::NamespacedName,
     >,
+    restore_tool_search: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -1189,9 +1197,10 @@ async fn handle_codex_responses_namespace_restore(
         }
 
         let restore_stream =
-            transform_codex_responses_namespace::create_namespace_restore_sse_stream(
+            transform_codex_responses_namespace::create_tool_call_restore_sse_stream(
                 response.bytes_stream(),
                 restore_map,
+                restore_tool_search,
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
@@ -1228,9 +1237,10 @@ async fn handle_codex_responses_namespace_restore(
     // this only guards against a malformed upstream).
     let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
         Ok(mut value) => {
-            transform_codex_responses_namespace::restore_response_namespaces(
+            transform_codex_responses_namespace::restore_response_tool_calls(
                 &mut value,
                 &restore_map,
+                restore_tool_search,
             );
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)

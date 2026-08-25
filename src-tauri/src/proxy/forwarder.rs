@@ -1564,23 +1564,51 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // Native Responses passthrough to a strict third-party gateway (xAI):
-        // flatten Codex's private `namespace`/plugin tool declarations into
-        // top-level function tools so the upstream's strict serde parser does
-        // not 422 on `unknown variant "namespace"`. The Chat/Anthropic paths
-        // above already unwrap namespaces, so this only fires on the native
-        // passthrough. The response handler restores the flat names using a map
-        // re-derived from the same request tools.
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        let is_xai_native_responses = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && super::providers::provider_needs_responses_namespace_flatten(provider);
+
+        // Codex's private deferred-search items are not part of xAI's strict
+        // Responses schema. Proxy them as an ordinary function before namespace
+        // flattening; discovered namespaces are promoted here so only selected
+        // tools become model-visible.
+        if is_xai_native_responses
+            && super::providers::transform_codex_responses_xai_tool_search::prepare_xai_tool_search_request(
+                &mut request_body,
+            )?
+        {
+            log::debug!(
+                "[Codex] Proxied deferred tool search for xAI native Responses (provider={})",
+                provider.id
+            );
+        }
+
+        // Flatten non-deferred namespace children into top-level function tools
+        // so xAI does not reject the private namespace carrier. Deferred children
+        // stay hidden until Codex returns them in a tool_search_output.
+        if is_xai_native_responses
             && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
                 &mut request_body,
             )?
         {
             log::debug!(
                 "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+                provider.id
+            );
+        }
+
+        // A tool discovered in an earlier turn can be replayed directly as a
+        // top-level function, bypassing the carriers normalized above. Run one
+        // final function-only pass after namespace flattening so xAI never sees
+        // a root `object | null` (or another non-object union branch).
+        if is_xai_native_responses
+            && super::providers::transform_codex_responses_xai_tool_search::normalize_xai_top_level_function_schemas(
+                &mut request_body,
+            )
+        {
+            log::debug!(
+                "[Codex] Normalized top-level xAI function schemas (provider={})",
                 provider.id
             );
         }
@@ -1592,10 +1620,7 @@ impl RequestForwarder {
         // xAI OAuth path, so the prompt-cache prefix stays stable and no other
         // provider is affected. Runs after the flatten above so lifted
         // `namespace` tools survive the tool-type whitelist.
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && !codex_responses_to_chat
-            && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
+        if is_xai_native_responses
             && super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
                 &mut request_body,
             )
