@@ -40,6 +40,11 @@ const GROK_45_UNSUPPORTED_FIELDS: &[&str] = &[
     "stop",
 ];
 
+/// Codex consumes Responses `reasoning` items as hidden thinking. Asking xAI to
+/// stream reasoning summaries can therefore hide the useful answer from the
+/// user if Grok puts answer-like text in that channel.
+const REASONING_SUMMARY_FIELDS: &[&str] = &["summary", "generate_summary"];
+
 /// Tool `type` values xAI's Responses schema accepts. Sourced from xAI's own
 /// serde error enumeration (which is more complete than sub2api's hand-copied
 /// list — it includes `image_generation`). Any other `type` is a Codex/OpenAI
@@ -95,7 +100,11 @@ pub(crate) fn sanitize_xai_responses_request(body: &mut Value) -> bool {
     //    deserializer refuses a present-but-null content field.
     changed |= strip_null_reasoning_content(body);
 
-    // 6. Whitelist the tool types and clean a now-dangling `tool_choice`.
+    // 6. Keep reasoning effort, but do not ask xAI for reasoning summaries: Codex
+    //    treats that output item as hidden thinking, not final assistant text.
+    changed |= strip_reasoning_summary_request(body);
+
+    // 7. Whitelist the tool types and clean a now-dangling `tool_choice`.
     changed |= filter_unsupported_tools(body);
 
     changed
@@ -236,6 +245,28 @@ fn strip_null_reasoning_content(body: &mut Value) -> bool {
             }
         }
     }
+    changed
+}
+
+fn strip_reasoning_summary_request(body: &mut Value) -> bool {
+    let Some(reasoning) = body.get_mut("reasoning") else {
+        return false;
+    };
+    let Some(obj) = reasoning.as_object_mut() else {
+        return false;
+    };
+
+    let mut changed = false;
+    for field in REASONING_SUMMARY_FIELDS {
+        changed |= obj.remove(*field).is_some();
+    }
+
+    if changed && obj.is_empty() {
+        if let Some(body_obj) = body.as_object_mut() {
+            body_obj.remove("reasoning");
+        }
+    }
+
     changed
 }
 
@@ -451,6 +482,26 @@ mod tests {
         let input = body.get("input").unwrap().as_array().unwrap();
         assert!(input[0].get("content").is_none());
         assert!(input[1].get("content").is_some());
+    }
+
+    #[test]
+    fn strips_reasoning_summary_but_keeps_effort() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "reasoning": {"effort": "high", "summary": "detailed"}
+        });
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert_eq!(body["reasoning"], json!({"effort": "high"}));
+    }
+
+    #[test]
+    fn removes_empty_reasoning_after_summary_strip() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "reasoning": {"summary": "auto", "generate_summary": "detailed"}
+        });
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert!(body.get("reasoning").is_none());
     }
 
     #[test]
