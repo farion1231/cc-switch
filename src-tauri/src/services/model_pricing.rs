@@ -881,6 +881,87 @@ mod tests {
 
     #[test]
     #[serial]
+    fn batch_reprice_preserves_provider_reported_costs() {
+        // Pi and GrokBuild session imports may carry provider-reported costs
+        // (record.costs.reported()). Repricing must not zero and overwrite
+        // those authoritative values with locally-calculated pricing.
+        with_test_home(|db, _path| {
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                // Standard proxy row: locally-calculated costs → repriced.
+                insert_usage_row(&conn, "proxy-target", "custom-model");
+                // Pi session row with provider-reported costs → must be left alone.
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                        cache_creation_cost_usd, total_cost_usd, latency_ms,
+                        status_code, created_at, data_source
+                    ) VALUES (
+                        'pi-reported', 'pi-provider', 'pi', 'custom-model', 'custom-model',
+                        1000000, 1000000, 500000, 250000,
+                        '0.50', '2.00', '0.10', '0.75', '3.35', 100, 200, 1, 'pi_session'
+                    )",
+                    [],
+                )
+                .expect("insert pi row");
+                // GrokBuild session row with provider-reported total → must be left alone.
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                        cache_creation_cost_usd, total_cost_usd, latency_ms,
+                        status_code, created_at, data_source
+                    ) VALUES (
+                        'grok-reported', 'xai', 'grokbuild', 'custom-model', 'custom-model',
+                        1000000, 1000000, 500000, 250000,
+                        '0.40', '1.60', '0.08', '0.60', '2.68', 100, 200, 1, 'grok_session'
+                    )",
+                    [],
+                )
+                .expect("insert grok row");
+            }
+
+            // Seed v1 pricing → backfill zero-cost proxy row.
+            update_model_pricing(db, sample_pricing()).expect("seed v1 pricing");
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                assert_eq!(usage_costs(&conn, "proxy-target"), V1_COSTS);
+                // Provider-reported rows keep their original costs.
+                assert_eq!(
+                    usage_costs(&conn, "pi-reported"),
+                    "0.50,2.00,0.10,0.75,3.35"
+                );
+                assert_eq!(
+                    usage_costs(&conn, "grok-reported"),
+                    "0.40,1.60,0.08,0.60,2.68"
+                );
+            }
+
+            // Batch repricing: proxy row gets new price, provider-reported
+            // rows are untouched.
+            assert_eq!(
+                update_model_pricing_batch(db, vec![repriced_pricing()]).expect("batch reprice"),
+                1
+            );
+            let conn = db.conn.lock().expect("lock test database");
+            assert_eq!(usage_costs(&conn, "proxy-target"), V2_COSTS);
+            // Provider-reported costs preserved — not zeroed or recalculated.
+            assert_eq!(
+                usage_costs(&conn, "pi-reported"),
+                "0.50,2.00,0.10,0.75,3.35"
+            );
+            assert_eq!(
+                usage_costs(&conn, "grok-reported"),
+                "0.40,1.60,0.08,0.60,2.68"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn recording_sync_result_preserves_user_selection_and_switches() {
         with_test_home(|db, _path| {
             let config = ModelsDevSyncConfig {

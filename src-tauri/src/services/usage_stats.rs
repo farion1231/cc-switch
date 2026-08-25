@@ -1889,7 +1889,8 @@ impl Database {
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) > 0
                AND (input_tokens > 0 OR output_tokens > 0
-                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)";
+                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)
+               AND COALESCE(data_source, 'proxy') NOT IN ('pi_session', 'grok_session')";
 
         let zeroed = {
             let conn = lock_conn!(self.conn);
