@@ -16,12 +16,12 @@ use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
-use crate::services::usage_stats::find_model_pricing;
+use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 const APP_TYPE: &str = "dsh";
@@ -189,20 +189,28 @@ fn parse_dsh_file(file_path: &Path, file_modified_seconds: i64) -> Result<Parsed
 
     loop {
         buffer.clear();
-        let read = reader
+        // Bound each read_line with the remaining byte allowance so a single
+        // decompressed line without a newline cannot exhaust memory before the
+        // total check below runs. `Take` caps the bytes read from the
+        // underlying BufReader, preventing a decompression-bomb allocation.
+        let remaining = MAX_SESSION_BYTES.saturating_sub(decompressed_bytes);
+        let mut limited = reader.by_ref().take(remaining);
+        let read = limited
             .read_line(&mut buffer)
             .map_err(|error| AppError::Config(format!("无法读取 DSH 会话文件: {error}")))?;
         if read == 0 {
             break;
         }
         decompressed_bytes = decompressed_bytes.saturating_add(read as u64);
-        if decompressed_bytes > MAX_SESSION_BYTES {
+        let has_newline = buffer.ends_with('\n');
+        // The Take budget was exhausted mid-line — the decompressed content
+        // exceeds the safety allowance within a single line.
+        if !has_newline && limited.limit() == 0 {
             return Err(AppError::Config(format!(
                 "DSH 会话解压后超过 {} 字节安全上限",
                 MAX_SESSION_BYTES
             )));
         }
-        let has_newline = buffer.ends_with('\n');
         let line = buffer.trim();
         if line.is_empty() {
             continue;
@@ -342,6 +350,24 @@ fn insert_dsh_record(
     if already_seen {
         return Ok(false);
     }
+
+    // Cross-source dedup: when DSH sends requests through CC Switch's
+    // Claude/Codex proxy endpoint, the proxy already recorded the same
+    // usage under that endpoint's app type with a different request ID.
+    // Skip the session insert so the dashboard does not double-count.
+    let dedup_key = DedupKey {
+        app_type: APP_TYPE,
+        model: &record.model,
+        input_tokens: record.input_tokens,
+        output_tokens: record.output_tokens,
+        cache_read_tokens: record.cache_read_tokens,
+        cache_creation_tokens: 0,
+        created_at: record.created_at,
+    };
+    if should_skip_session_insert(conn, &record.request_id, &dedup_key)? {
+        return Ok(false);
+    }
+
     conn.execute(
         "INSERT OR IGNORE INTO session_usage_dedup
          (data_source, request_id, semantic_id, has_entry_id)
@@ -680,6 +706,90 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn decompression_bomb_line_is_rejected_by_bounded_reader() -> Result<(), AppError> {
+        // A single line without a newline that exceeds MAX_SESSION_BYTES must
+        // be rejected by the Take-bounded reader, not allocated in full.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_file(temp.path(), "--work--", "session-bomb");
+        let bomb_line = "A".repeat(MAX_SESSION_BYTES as usize + 1024);
+        let jsonl = format!("{}\n{}\n", session_header("session-bomb"), bomb_line);
+        let compressed = zstd::stream::encode_all(jsonl.as_bytes(), 0).expect("encode bomb");
+        fs::write(&path, compressed).expect("write bomb");
+
+        let db = Database::memory()?;
+        let result = sync_dsh_files(&db, std::slice::from_ref(&path));
+        assert_eq!(result.imported, 0);
+        assert!(!result.errors.is_empty());
+        // The error must mention the safety limit, and no rows should be written.
+        assert!(result.errors[0].contains("安全上限"));
+        let count: i64 = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'dsh_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn dsh_session_row_is_skipped_when_proxy_already_recorded() -> Result<(), AppError> {
+        // DSH sends through CC Switch's Claude proxy: the proxy logs the
+        // request as app_type='claude'. The session importer must detect the
+        // fingerprint match and skip the session insert.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_file(temp.path(), "--work--", "session-proxy-dup");
+        write_zstd_session(
+            &path,
+            &[
+                session_header("session-proxy-dup"),
+                assistant_line(5, 1786678145825, 5000, 200, 500),
+            ],
+        );
+
+        let db = Database::memory()?;
+        // Simulate the proxy row: same tokens, same model, within the dedup
+        // window (±10 min), app_type='claude'.
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, latency_ms, status_code, created_at, data_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "proxy-req-1",
+                    "anthropic",
+                    "claude",
+                    "step-3.7-flash",
+                    "step-3.7-flash",
+                    5000,
+                    200,
+                    500,
+                    7, // proxy may have non-zero cache_creation; DSH reports 0
+                    100,
+                    200,
+                    1_786_678_145, // ±60s of the session row's created_at
+                    "proxy",
+                ],
+            )?;
+        }
+
+        let result = sync_dsh_files(&db, std::slice::from_ref(&path));
+        // The session row is skipped because the proxy already recorded it.
+        assert_eq!(result.imported, 0);
+        assert_eq!(result.skipped, 1);
+
+        let count: i64 = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'dsh_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 0);
         Ok(())
     }
 }
