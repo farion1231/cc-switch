@@ -9,24 +9,25 @@
 
 use std::collections::HashSet;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::proxy::error::ProxyError;
 
-const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
+const TOOL_SEARCH_NATIVE_NAME: &str = "tool_search";
+const TOOL_SEARCH_PROXY_NAME: &str = "ccswitch_tool_search";
+const XAI_MAX_TOOL_COUNT: usize = 350;
 
 /// Whether the original Codex request offered the private `tool_search` tool.
 ///
-/// Response restoration uses this request-scoped bit instead of matching every
-/// function named `tool_search`, so an unrelated user function is never
-/// reclassified accidentally.
+/// Response restoration uses this request-scoped bit so an unrelated user
+/// function is never reclassified accidentally.
 pub(crate) fn request_offers_tool_search(body: &Value) -> bool {
     body.get("tools")
         .and_then(Value::as_array)
         .is_some_and(|tools| {
-            tools
-                .iter()
-                .any(|tool| tool.get("type").and_then(Value::as_str) == Some("tool_search"))
+            tools.iter().any(|tool| {
+                tool.get("type").and_then(Value::as_str) == Some(TOOL_SEARCH_NATIVE_NAME)
+            })
         })
 }
 
@@ -43,10 +44,13 @@ pub(crate) fn request_offers_tool_search(body: &Value) -> bool {
 ///   exposes exactly the tools Codex selected.
 pub(crate) fn prepare_xai_tool_search_request(body: &mut Value) -> Result<bool, ProxyError> {
     let offers_tool_search = request_offers_tool_search(body);
-    if offers_tool_search && has_tool_search_function(body) {
+    if has_reserved_tool_search_function(body) {
         return Err(ProxyError::TransformError(
-            "native tool_search collides with a top-level function named tool_search".to_string(),
+            "native tool_search collides with a reserved xAI function name".to_string(),
         ));
+    }
+    if !offers_tool_search {
+        validate_no_search_tool_catalog(body)?;
     }
 
     let mut changed = replace_tool_search_declaration(body);
@@ -111,15 +115,118 @@ fn omit_unloaded_top_level_functions(body: &mut Value) -> bool {
     changed || tools.len() != original_len
 }
 
-fn has_tool_search_function(body: &Value) -> bool {
+fn has_reserved_tool_search_function(body: &Value) -> bool {
     body.get("tools")
         .and_then(Value::as_array)
         .is_some_and(|tools| {
             tools.iter().any(|tool| {
                 tool.get("type").and_then(Value::as_str) == Some("function")
-                    && tool.get("name").and_then(Value::as_str) == Some(TOOL_SEARCH_PROXY_NAME)
+                    && tool
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_some_and(is_reserved_tool_search_function_name)
             })
         })
+}
+
+fn is_reserved_tool_search_function_name(name: &str) -> bool {
+    name == TOOL_SEARCH_NATIVE_NAME || name == TOOL_SEARCH_PROXY_NAME
+}
+
+fn validate_no_search_tool_catalog(body: &Value) -> Result<(), ProxyError> {
+    if body_contains_deferred_tools(body) {
+        return Err(ProxyError::TransformError(
+            "xAI native Responses received deferred Codex tools without tool_search support"
+                .to_string(),
+        ));
+    }
+
+    let visible_tools = count_xai_visible_tools(body);
+    if visible_tools > XAI_MAX_TOOL_COUNT {
+        return Err(ProxyError::TransformError(format!(
+            "xAI native Responses received {visible_tools} tools without tool_search support; limit is {XAI_MAX_TOOL_COUNT}"
+        )));
+    }
+    Ok(())
+}
+
+fn body_contains_deferred_tools(body: &Value) -> bool {
+    body.get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| tools_contain_deferred(tools))
+        || body
+            .get("input")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    matches!(
+                        item.get("type").and_then(Value::as_str),
+                        Some("additional_tools" | "tool_search_output")
+                    ) && item
+                        .get("tools")
+                        .and_then(Value::as_array)
+                        .is_some_and(|tools| tools_contain_deferred(tools))
+                })
+            })
+}
+
+fn tools_contain_deferred(tools: &[Value]) -> bool {
+    tools.iter().any(tool_contains_deferred)
+}
+
+fn tool_contains_deferred(tool: &Value) -> bool {
+    tool.get("defer_loading")
+        .or_else(|| tool.get("deferLoading"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || tool
+            .get("tools")
+            .or_else(|| tool.get("children"))
+            .and_then(Value::as_array)
+            .is_some_and(|tools| tools_contain_deferred(tools))
+}
+
+fn count_xai_visible_tools(body: &Value) -> usize {
+    let top_level = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| tools.iter().map(count_xai_visible_tool).sum::<usize>())
+        .unwrap_or(0);
+    let promoted = body
+        .get("input")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| {
+                    matches!(
+                        item.get("type").and_then(Value::as_str),
+                        Some("additional_tools" | "tool_search_output")
+                    )
+                })
+                .filter_map(|item| item.get("tools").and_then(Value::as_array))
+                .flat_map(|tools| tools.iter())
+                .map(count_xai_visible_tool)
+                .sum::<usize>()
+        })
+        .unwrap_or(0);
+    top_level + promoted
+}
+
+fn count_xai_visible_tool(tool: &Value) -> usize {
+    match tool.get("type").and_then(Value::as_str) {
+        Some("namespace") => tool
+            .get("tools")
+            .or_else(|| tool.get("children"))
+            .and_then(Value::as_array)
+            .map(|children| children.iter().map(count_xai_visible_tool).sum())
+            .unwrap_or(0),
+        Some(
+            "function" | "web_search" | "x_search" | "image_generation" | "collections_search"
+            | "file_search" | "code_execution" | "code_interpreter" | "mcp" | "shell",
+        ) => 1,
+        _ => 0,
+    }
 }
 
 /// Convert xAI's proxy function call back into a client-executed Codex
@@ -171,7 +278,7 @@ fn replace_tool_search_declaration(body: &mut Value) -> bool {
     };
     let mut changed = false;
     for tool in tools {
-        if tool.get("type").and_then(Value::as_str) == Some("tool_search") {
+        if tool.get("type").and_then(Value::as_str) == Some(TOOL_SEARCH_NATIVE_NAME) {
             *tool = tool_search_function();
             changed = true;
         }
@@ -183,7 +290,7 @@ fn replace_tool_search_choice(body: &mut Value) -> bool {
     let Some(choice) = body.get_mut("tool_choice") else {
         return false;
     };
-    if choice.get("type").and_then(Value::as_str) != Some("tool_search") {
+    if choice.get("type").and_then(Value::as_str) != Some(TOOL_SEARCH_NATIVE_NAME) {
         return false;
     }
     *choice = json!({"type": "function", "name": TOOL_SEARCH_PROXY_NAME});
@@ -325,11 +432,13 @@ fn append_loaded_tools(body: &mut Value, loaded_tools: Vec<Value>) -> Result<boo
     let mut changed = false;
     for tool in loaded_tools {
         if tool.get("type").and_then(Value::as_str) == Some("function")
-            && tool.get("name").and_then(Value::as_str) == Some(TOOL_SEARCH_PROXY_NAME)
+            && tool
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(is_reserved_tool_search_function_name)
         {
             return Err(ProxyError::TransformError(
-                "discovered function named tool_search collides with the xAI proxy shim"
-                    .to_string(),
+                "discovered function collides with the xAI tool_search proxy shim".to_string(),
             ));
         }
 
@@ -408,10 +517,26 @@ fn merge_namespace_children(existing: &mut Value, loaded: &Value) -> bool {
 }
 
 fn tool_dedup_key(tool: &Value) -> String {
-    let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or_default();
-    let name = tool.get("name").and_then(Value::as_str).unwrap_or_default();
-    if !tool_type.is_empty() || !name.is_empty() {
+    let tool_type = tool
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if !tool_type.is_empty() && !name.is_empty() {
         return format!("{tool_type}\0{name}");
+    }
+    if tool_type == "mcp" {
+        if let Some(label) = tool.get("server_label").and_then(Value::as_str) {
+            let label = label.trim();
+            if !label.is_empty() {
+                return format!("mcp\0{label}");
+            }
+        }
     }
     tool.to_string()
 }
@@ -428,7 +553,11 @@ fn normalize_loaded_tool(tool: &mut Value) {
             let mut parameters = ["parameters", "inputSchema", "input_schema"]
                 .iter()
                 .filter_map(|key| obj.get(*key).cloned())
-                .find(|value| value.as_object().is_some_and(|schema| !schema.is_empty()))
+                .find(|value| {
+                    value
+                        .as_object()
+                        .is_some_and(schema_alias_can_be_root_object)
+                })
                 .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
             obj.remove("inputSchema");
             obj.remove("input_schema");
@@ -468,18 +597,29 @@ fn normalize_root_object_schema(schema: &mut Map<String, Value>) {
         .unwrap_or_default();
     let original_union_key = ["oneOf", "anyOf"]
         .into_iter()
-        .find(|key| schema.get(*key).is_some())
-        .unwrap_or("oneOf");
+        .find(|key| schema.get(*key).is_some());
+    let had_root_ref = schema.get("$ref").is_some();
     let mut root_candidate = schema.clone();
     root_candidate.remove("$defs");
-    let variants = expand_root_object_variants(&root_candidate, &defs, &mut HashSet::new());
+    let mut variants = expand_root_object_variants(&root_candidate, &defs, &mut HashSet::new());
 
     schema.remove("$ref");
     schema.remove("anyOf");
     schema.remove("oneOf");
-    if !variants.is_empty() {
+    if let Some(union_key) = original_union_key {
+        if !variants.is_empty() {
+            schema.insert(
+                union_key.to_string(),
+                Value::Array(variants.into_iter().map(Value::Object).collect()),
+            );
+        }
+    } else if had_root_ref && variants.len() == 1 {
+        for (key, value) in variants.pop().unwrap() {
+            schema.insert(key, value);
+        }
+    } else if had_root_ref && !variants.is_empty() {
         schema.insert(
-            original_union_key.to_string(),
+            "oneOf".to_string(),
             Value::Array(variants.into_iter().map(Value::Object).collect()),
         );
     }
@@ -487,6 +627,10 @@ fn normalize_root_object_schema(schema: &mut Map<String, Value>) {
     schema
         .entry("properties".to_string())
         .or_insert_with(|| json!({}));
+}
+
+fn schema_alias_can_be_root_object(schema: &Map<String, Value>) -> bool {
+    !schema.is_empty() && schema_type_can_be_object(schema.get("type"))
 }
 
 fn expand_root_object_variants(
@@ -567,6 +711,7 @@ fn schema_type_can_be_object(schema_type: Option<&Value>) -> bool {
 fn is_tool_search_function_call(obj: &Map<String, Value>) -> bool {
     obj.get("type").and_then(Value::as_str) == Some("function_call")
         && obj.get("name").and_then(Value::as_str) == Some(TOOL_SEARCH_PROXY_NAME)
+        && !obj.contains_key("namespace")
 }
 
 fn tool_search_call_item(item: &Map<String, Value>) -> Value {
@@ -659,17 +804,17 @@ mod tests {
         assert!(prepare_xai_tool_search_request(&mut body).unwrap());
 
         assert_eq!(body["tools"][0]["type"], "function");
-        assert_eq!(body["tools"][0]["name"], "tool_search");
+        assert_eq!(body["tools"][0]["name"], TOOL_SEARCH_PROXY_NAME);
         assert_eq!(
             body["tool_choice"],
-            json!({"type": "function", "name": "tool_search"})
+            json!({"type": "function", "name": TOOL_SEARCH_PROXY_NAME})
         );
         assert_eq!(body["tools"][1]["type"], "namespace");
         assert!(body["tools"][1]["tools"][0].get("defer_loading").is_none());
         assert!(body["tools"][1]["tools"][0].get("inputSchema").is_none());
         assert_eq!(body["tools"][1]["tools"][0]["parameters"]["type"], "object");
         assert_eq!(body["input"][0]["type"], "function_call");
-        assert_eq!(body["input"][0]["name"], "tool_search");
+        assert_eq!(body["input"][0]["name"], TOOL_SEARCH_PROXY_NAME);
         assert_eq!(body["input"][1]["type"], "function_call_output");
 
         super::super::transform_codex_responses_namespace::flatten_request_namespaces(&mut body)
@@ -680,7 +825,7 @@ mod tests {
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["tool_search", "mcp__mail____search"]);
+        assert_eq!(names, vec![TOOL_SEARCH_PROXY_NAME, "mcp__mail____search"]);
     }
 
     #[test]
@@ -769,7 +914,7 @@ mod tests {
         let mut tool = json!({
             "type": "function",
             "name": "lookup",
-            "parameters": null,
+            "parameters": {"type": "string"},
             "inputSchema": {
                 "type": "object",
                 "properties": {"id": {"type": "string"}}
@@ -778,6 +923,50 @@ mod tests {
         normalize_loaded_tool(&mut tool);
         assert_eq!(tool["parameters"]["properties"]["id"]["type"], "string");
         assert!(tool.get("inputSchema").is_none());
+    }
+
+    #[test]
+    fn ordinary_object_schema_is_not_wrapped_in_synthetic_union() {
+        let mut tool = json!({
+            "type": "function",
+            "name": "lookup",
+            "parameters": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}}
+            }
+        });
+
+        normalize_loaded_tool(&mut tool);
+        let parameters = &tool["parameters"];
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(parameters["properties"]["id"]["type"], "string");
+        assert!(parameters.get("oneOf").is_none());
+        assert!(parameters.get("anyOf").is_none());
+    }
+
+    #[test]
+    fn sole_root_ref_schema_is_inlined_without_synthetic_union() {
+        let mut tool = json!({
+            "type": "function",
+            "name": "lookup",
+            "parameters": {
+                "$ref": "#/$defs/query",
+                "$defs": {
+                    "query": {
+                        "type": "object",
+                        "properties": {"q": {"type": "string"}}
+                    }
+                }
+            }
+        });
+
+        normalize_loaded_tool(&mut tool);
+        let parameters = &tool["parameters"];
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(parameters["properties"]["q"]["type"], "string");
+        assert!(parameters.get("oneOf").is_none());
+        assert!(parameters.get("anyOf").is_none());
+        assert!(parameters.get("$ref").is_none());
     }
 
     #[test]
@@ -893,9 +1082,11 @@ mod tests {
         assert_eq!(branches.len(), 5);
         assert!(branches.iter().all(|branch| branch["type"] == "object"));
         assert!(branches.iter().all(|branch| branch.get("$ref").is_none()));
-        assert!(branches
-            .iter()
-            .all(|branch| branch.get("oneOf").is_none() && branch.get("anyOf").is_none()));
+        assert!(
+            branches
+                .iter()
+                .all(|branch| branch.get("oneOf").is_none() && branch.get("anyOf").is_none())
+        );
         assert_eq!(
             branches[1]["properties"]["notificationPolicy"]["anyOf"][1]["type"],
             "null"
@@ -943,6 +1134,68 @@ mod tests {
     }
 
     #[test]
+    fn rejects_reserved_tool_search_function_even_without_search_shim() {
+        let mut body = json!({
+            "tools": [{"type": "function", "name": "tool_search", "parameters": {}}]
+        });
+        assert!(prepare_xai_tool_search_request(&mut body).is_err());
+    }
+
+    #[test]
+    fn rejects_proxy_function_name_collision() {
+        let mut body = json!({
+            "tools": [
+                {"type": "tool_search"},
+                {"type": "function", "name": TOOL_SEARCH_PROXY_NAME, "parameters": {}}
+            ]
+        });
+        assert!(prepare_xai_tool_search_request(&mut body).is_err());
+        assert_eq!(body["tools"][0]["type"], "tool_search");
+    }
+
+    #[test]
+    fn rejects_deferred_catalog_without_tool_search_shim() {
+        let mut body = json!({
+            "tools": [{
+                "type": "namespace",
+                "name": "mcp__large__",
+                "tools": [{"type": "function", "name": "cold", "defer_loading": true}]
+            }]
+        });
+        assert!(prepare_xai_tool_search_request(&mut body).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_catalog_without_tool_search_shim() {
+        let tools = (0..351)
+            .map(|index| json!({"type": "function", "name": format!("tool_{index}")}))
+            .collect::<Vec<_>>();
+        let mut body = json!({"tools": tools});
+        assert!(prepare_xai_tool_search_request(&mut body).is_err());
+    }
+
+    #[test]
+    fn loaded_mcp_tools_dedup_by_server_label() {
+        let mut body = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [
+                    {"type": "mcp", "server_label": "alpha"},
+                    {"type": "mcp", "server_label": "beta"}
+                ]
+            }]
+        });
+
+        prepare_xai_tool_search_request(&mut body).unwrap();
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 3);
+        assert!(tools.iter().any(|tool| tool["server_label"] == "alpha"));
+        assert!(tools.iter().any(|tool| tool["server_label"] == "beta"));
+    }
+
+    #[test]
     fn initial_top_level_deferred_functions_are_omitted() {
         let deferred = (0..400)
             .map(|index| {
@@ -966,7 +1219,7 @@ mod tests {
 
         prepare_xai_tool_search_request(&mut body).unwrap();
         assert_eq!(body["tools"].as_array().unwrap().len(), 2);
-        assert_eq!(body["tools"][0]["name"], "tool_search");
+        assert_eq!(body["tools"][0]["name"], TOOL_SEARCH_PROXY_NAME);
         assert_eq!(body["tools"][1]["name"], "hot");
         assert!(body["tools"][1].get("deferLoading").is_none());
     }
@@ -1005,7 +1258,7 @@ mod tests {
 
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["name"], "tool_search");
+        assert_eq!(tools[0]["name"], TOOL_SEARCH_PROXY_NAME);
     }
 
     #[test]
@@ -1015,7 +1268,7 @@ mod tests {
             "response": {
                 "output": [{
                     "type": "function_call",
-                    "name": "tool_search",
+                    "name": TOOL_SEARCH_PROXY_NAME,
                     "call_id": "search_1",
                     "status": "completed",
                     "arguments": "{\"query\":\"mail\",\"limit\":\"3\"}"
@@ -1035,7 +1288,7 @@ mod tests {
     fn malformed_tool_search_arguments_fail_closed_to_empty_object() {
         let mut call = json!({
             "type": "function_call",
-            "name": "tool_search",
+            "name": TOOL_SEARCH_PROXY_NAME,
             "call_id": "search_1",
             "arguments": "not json"
         });

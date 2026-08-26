@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::transform_codex_chat::flatten_namespace_tool_name;
 use crate::proxy::error::ProxyError;
@@ -729,6 +729,37 @@ mod tests {
     }
 
     #[test]
+    fn restore_tool_calls_keeps_namespaced_child_named_tool_search() {
+        let request = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__tools__",
+                    "tools": [{"type": "function", "name": "tool_search", "parameters": {}}]
+                }]
+            }]
+        });
+        let map = namespace_restore_map(&request);
+        let mut response = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "mcp__tools____tool_search",
+                "call_id": "c1",
+                "arguments": "{}"
+            }]
+        });
+
+        assert!(restore_response_tool_calls(&mut response, &map, true));
+        let call = &response["output"][0];
+        assert_eq!(call["type"], "function_call");
+        assert_eq!(call["name"], "tool_search");
+        assert_eq!(call["namespace"], "mcp__tools__");
+    }
+
+    #[test]
     fn long_flat_names_stay_consistent_between_flatten_and_restore() {
         let long_child = "a".repeat(80);
         let body = json!({
@@ -787,7 +818,7 @@ mod tests {
     #[tokio::test]
     async fn sse_stream_restores_xai_tool_search_function() {
         let added = "event: response.output_item.added\n\
-                     data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"tool_search\",\"call_id\":\"search_1\",\"arguments\":\"{\\\"query\\\":\\\"mail\\\"}\"}}\n\n";
+                     data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"ccswitch_tool_search\",\"call_id\":\"search_1\",\"arguments\":\"{\\\"query\\\":\\\"mail\\\"}\"}}\n\n";
         let input = stream::iter(vec![Ok::<Bytes, std::io::Error>(Bytes::from(added))]);
         let out = create_tool_call_restore_sse_stream(input, HashMap::new(), true);
         futures::pin_mut!(out);
@@ -800,6 +831,6 @@ mod tests {
         assert!(collected.contains("\"type\":\"tool_search_call\""));
         assert!(collected.contains("\"execution\":\"client\""));
         assert!(collected.contains("\"query\":\"mail\""));
-        assert!(!collected.contains("\"name\":\"tool_search\""));
+        assert!(!collected.contains("\"name\":\"ccswitch_tool_search\""));
     }
 }
