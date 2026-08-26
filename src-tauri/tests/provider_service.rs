@@ -485,7 +485,8 @@ requires_openai_auth = true
             .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
-        Some(true)
+        Some(false),
+        "provider-scoped bearer auth must not select the preserved ChatGPT login"
     );
 
     ProviderService::switch(&state, AppType::Codex, "plain-provider")
