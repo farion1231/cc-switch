@@ -191,6 +191,68 @@ pub enum ErrorCategory {
     ClientAbort, // 客户端主动中断
 }
 
+/// 上游 400/422 明确表示目标模型不可用时，失败在供应商侧（映射目标已下线/不存在），
+/// 换一家 provider 可能成功。不要把这类错误当成客户端请求格式问题（issue #6821）。
+pub(crate) fn is_upstream_model_unavailable(error: &ProxyError) -> bool {
+    let ProxyError::UpstreamError { status, body } = error else {
+        return false;
+    };
+    if !matches!(*status, 400 | 422) {
+        return false;
+    }
+    let Some(body) = body.as_deref() else {
+        return false;
+    };
+
+    let raw = body.to_ascii_lowercase();
+    if has_model_unavailable_phrase(&raw) {
+        return true;
+    }
+
+    let message = extract_upstream_error_text(body).to_ascii_lowercase();
+    has_model_unavailable_phrase(&message)
+}
+
+fn extract_upstream_error_text(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return body.to_string();
+    };
+
+    let candidates = [
+        value.pointer("/error/message"),
+        value.pointer("/error/code"),
+        value.pointer("/error/type"),
+        value.pointer("/message"),
+        value.pointer("/detail"),
+        value.pointer("/error"),
+    ];
+    if let Some(message) = candidates
+        .into_iter()
+        .flatten()
+        .find_map(|value| value.as_str())
+    {
+        return message.to_string();
+    }
+
+    serde_json::to_string(&value).unwrap_or_else(|_| body.to_string())
+}
+
+fn has_model_unavailable_phrase(text: &str) -> bool {
+    const PHRASES: &[&str] = &[
+        "model is unavailable",
+        "model unavailable",
+        "model_not_found",
+        "model not found",
+        "no such model",
+        "model does not exist",
+        "model doesn't exist",
+        "模型不可用",
+        "模型不存在",
+        "模型已下线",
+    ];
+    PHRASES.iter().any(|phrase| text.contains(phrase))
+}
+
 /// 判断错误是否可重试
 #[allow(dead_code)]
 pub fn categorize_error(error: &reqwest::Error) -> ErrorCategory {
@@ -208,5 +270,57 @@ pub fn categorize_error(error: &reqwest::Error) -> ErrorCategory {
         }
     } else {
         ErrorCategory::Retryable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unavailable_error(status: u16, body: &str) -> ProxyError {
+        ProxyError::UpstreamError {
+            status,
+            body: Some(body.to_string()),
+        }
+    }
+
+    #[test]
+    fn issue_body_model_is_unavailable_is_detected() {
+        let body = r#"{"error":{"type":"server_error","message":"Error from provider (Console): Upstream request failed: Model is unavailable."}}"#;
+        assert!(is_upstream_model_unavailable(&unavailable_error(400, body)));
+    }
+
+    #[test]
+    fn openai_model_not_found_code_is_detected() {
+        let body = r#"{"error":{"message":"The model `gpt-5` does not exist","type":"invalid_request_error","code":"model_not_found"}}"#;
+        assert!(is_upstream_model_unavailable(&unavailable_error(400, body)));
+    }
+
+    #[test]
+    fn chinese_model_offline_message_is_detected() {
+        assert!(is_upstream_model_unavailable(&unavailable_error(
+            422,
+            r#"{"error":{"message":"模型已下线"}}"#
+        )));
+    }
+
+    #[test]
+    fn generic_client_400_is_not_treated_as_model_unavailable() {
+        let body = r#"{"error":{"message":"invalid request: missing required field"}}"#;
+        assert!(!is_upstream_model_unavailable(&unavailable_error(
+            400, body
+        )));
+        assert!(!is_upstream_model_unavailable(&unavailable_error(
+            400,
+            r#"{"error":{"message":"field does not exist"}}"#
+        )));
+        assert!(!is_upstream_model_unavailable(&ProxyError::UpstreamError {
+            status: 400,
+            body: None,
+        }));
+        assert!(!is_upstream_model_unavailable(&unavailable_error(
+            401,
+            r#"{"error":{"message":"Model is unavailable."}}"#
+        )));
     }
 }
