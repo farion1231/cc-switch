@@ -238,15 +238,38 @@ fn usage_base_url_override(request: &DeepLinkImportRequest) -> Option<String> {
 
 /// Build provider meta with usage script configuration
 fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
-    // Check if any usage script fields are provided
-    if request.usage_script.is_none()
-        && request.usage_enabled.is_none()
-        && request.usage_api_key.is_none()
-        && request.usage_base_url.is_none()
-        && request.usage_access_token.is_none()
-        && request.usage_user_id.is_none()
-        && request.usage_auto_interval.is_none()
+    // Share-link fidelity path: a `usageScriptConfig` blob carries the full
+    // `UsageScript` (templateType, codingPlanProvider, Volcengine AK/SK, Zhipu
+    // org/project, ...) verbatim, restoring native usage templates the
+    // scattered `usage_*` params would drop. Authoritative when present.
+    if let Some(blob_b64) = request
+        .usage_script_config
+        .as_deref()
+        .filter(|s| !s.is_empty())
     {
+        let decoded = decode_base64_param("usage_script_config", blob_b64)?;
+        let usage_script: UsageScript = serde_json::from_slice(&decoded).map_err(|e| {
+            AppError::InvalidInput(format!("Invalid usage_script_config JSON: {e}"))
+        })?;
+        return Ok(Some(ProviderMeta {
+            usage_script: Some(usage_script),
+            api_format: request.api_format.clone(),
+            ..Default::default()
+        }));
+    }
+
+    // Check if any usage script fields are provided. `api_format` is tracked
+    // separately so a provider that carries only routing metadata doesn't
+    // synthesize a spurious empty `usage_script` here (which would break the
+    // share-link fidelity gate).
+    let has_usage_fields = request.usage_script.is_some()
+        || request.usage_enabled.is_some()
+        || request.usage_api_key.is_some()
+        || request.usage_base_url.is_some()
+        || request.usage_access_token.is_some()
+        || request.usage_user_id.is_some()
+        || request.usage_auto_interval.is_some();
+    if !has_usage_fields && request.api_format.is_none() {
         return Ok(None);
     }
 
@@ -272,7 +295,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
     // 用户在应用内手动配置的脚本不走这条路径。
     let enabled = request.usage_enabled.unwrap_or(false);
 
-    let usage_script = UsageScript {
+    let usage_script = has_usage_fields.then(|| UsageScript {
         enabled,
         language: "javascript".to_string(),
         code,
@@ -288,34 +311,56 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         secret_access_key: None,
         team_organization_id: None,
         team_project_id: None,
-    };
+    });
 
     Ok(Some(ProviderMeta {
-        usage_script: Some(usage_script),
+        usage_script,
+        api_format: request.api_format.clone(),
         ..Default::default()
     }))
 }
 
 /// Build Claude settings configuration
 ///
-/// Merges env from the inline config (if any) with the standard fields from URL params.
-/// URL params take priority — they overwrite same-named fields from the config.
-/// Non-standard env fields (e.g. `ANTHROPIC_CUSTOM_HEADERS`, `API_TIMEOUT_MS`,
-/// `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, ...) are preserved as-is so that
-/// providers requiring extra environment variables work after deeplink import.
+/// When the deeplink carries an inline config with a Claude-shaped `env`
+/// object, the full config object is used as the base (top-level keys like
+/// `permissions` survive). Standard env fields are then overwritten by URL
+/// params, which stay authoritative per the deeplink protocol.
+///
+/// Precondition: callers must run the request through `parse_and_merge_config`
+/// first — standard env fields are unconditionally overwritten from request
+/// fields, so an empty `api_key` would write `""`.
+///
+/// Note: unlike the Codex passthrough (which ignores URL params except
+/// `apiKey`), the Claude path applies all standard URL params over the config
+/// base. This asymmetry is deliberate: env JSON is mergeable while TOML is not.
 fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    // Start from the full env block in the inline config (if present), so any
-    // custom env vars the user passed via `config=<base64-json>` survive the
-    // import. Falling back to an empty map keeps the previous behavior for
-    // deeplinks that don't carry a config field.
-    let mut env = extract_claude_config_env(request).unwrap_or_default();
+    let mut settings = decoded_config_object(request)
+        .filter(|cfg| cfg.get("env").is_some_and(|v| v.is_object()))
+        .map(serde_json::Value::Object)
+        .unwrap_or_else(|| json!({ "env": {} }));
 
-    // Now overwrite / fill in the standard fields from URL params. URL params
-    // are authoritative because they're what the deeplink builder put on the
-    // wire — for Claude these are: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL,
-    // ANTHROPIC_MODEL, and the haiku/sonnet/opus model aliases.
+    let env = settings
+        .as_object_mut()
+        .expect("settings is always an object")
+        .get_mut("env")
+        .and_then(|v| v.as_object_mut())
+        .expect("env is always an object (guarded above)");
+
+    // Write the credential back to the field the sender used. Presets like
+    // PatewayAI / Gemini Native / AiHubMix store the key only as
+    // `ANTHROPIC_API_KEY`; writing `ANTHROPIC_AUTH_TOKEN` here would inject a
+    // spurious second key and break the verbatim round-trip. Default to
+    // `ANTHROPIC_AUTH_TOKEN` (the canonical Claude Code field) when the base
+    // env doesn't already pin a credential field.
+    let cred_field =
+        if env.contains_key("ANTHROPIC_API_KEY") && !env.contains_key("ANTHROPIC_AUTH_TOKEN") {
+            "ANTHROPIC_API_KEY"
+        } else {
+            "ANTHROPIC_AUTH_TOKEN"
+        };
     env.insert(
-        "ANTHROPIC_AUTH_TOKEN".to_string(),
+        cred_field.to_string(),
         json!(request.api_key.clone().unwrap_or_default()),
     );
     env.insert(
@@ -323,12 +368,9 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         json!(get_primary_endpoint(request)),
     );
 
-    // Add default model if provided
     if let Some(model) = &request.model {
         env.insert("ANTHROPIC_MODEL".to_string(), json!(model));
     }
-
-    // Add Claude-specific model fields (v3.7.1+)
     if let Some(haiku_model) = &request.haiku_model {
         env.insert(
             "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
@@ -348,49 +390,62 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         );
     }
 
-    json!({ "env": env })
+    settings
 }
 
-/// Decode and extract the `env` object from the deeplink's inline config payload.
+/// Decode the inline base64 JSON config into an object, if present and valid.
 ///
-/// Returns `None` when no config is attached, when the payload can't be
-/// decoded/parsed, or when it doesn't contain a Claude-style `env` object.
-/// This is a best-effort accessor — we deliberately don't surface parse
-/// errors here because `parse_and_merge_config` will have already validated
-/// the payload during the merge phase; any failure at this point just means
-/// "fall back to URL-param-only behavior".
-fn extract_claude_config_env(
+/// Best-effort: any decode/parse failure returns None and the caller falls
+/// back to the legacy template-rebuild path. `parse_and_merge_config` has
+/// already surfaced hard errors during the merge phase.
+fn decoded_config_object(
     request: &DeepLinkImportRequest,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
-    // Only the inline base64 config carries an env block. Remote config_url
-    // is not implemented yet (see parse_and_merge_config), so nothing else to
-    // try here.
     let config_b64 = request.config.as_ref()?;
-
-    // Honor the declared format; default to JSON like parse_and_merge_config does.
     let format = request.config_format.as_deref().unwrap_or("json");
     if format != "json" {
-        // Claude config is always JSON in practice. TOML/other formats aren't
-        // expected on this app path, so don't try to handle them — safer to
-        // fall back than to risk silently producing the wrong shape.
         return None;
     }
-
-    // Decode the base64 payload. We re-decode here rather than threading the
-    // already-decoded value through every build_* function, because the call
-    // graph (parse_and_merge_config is pub and called separately for preview)
-    // makes signature changes invasive. Decode cost is negligible on this
-    // one-shot import path.
     let decoded = decode_base64_param("config", config_b64).ok()?;
     let json_str = std::str::from_utf8(&decoded).ok()?;
-    let value: serde_json::Value = serde_json::from_str(json_str).ok()?;
-
-    // Pull out the env object — same shape as Claude's own settings.json.
-    value.get("env").and_then(|v| v.as_object()).cloned()
+    match serde_json::from_str::<serde_json::Value>(json_str).ok()? {
+        serde_json::Value::Object(map) => Some(map),
+        _ => None,
+    }
 }
 
 /// Build Codex settings configuration
 fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    // Share-link passthrough: a deeplink carrying the native {auth, config} shape
+    // keeps the original TOML verbatim — rebuilding from the template used to
+    // drop custom details like wire_api / extra keys.
+    // On this path URL params other than apiKey are intentionally ignored.
+    if let Some(mut settings) = decoded_config_object(request) {
+        let has_native_toml = settings.get("config").is_some_and(|v| v.is_string());
+        if has_native_toml {
+            let existing_key = crate::codex_config::extract_codex_api_key(
+                settings.get("auth"),
+                settings.get("config").and_then(|v| v.as_str()),
+            );
+            // URL apiKey 仅在与 config 自带的 key 不同时覆写 auth（保持
+            // bearer-token 型配置的 auth 原样，维持往返保真）。
+            if let Some(url_key) = request.api_key.as_deref().filter(|k| !k.is_empty()) {
+                if existing_key.as_deref() != Some(url_key) {
+                    let auth = settings
+                        .entry("auth".to_string())
+                        .or_insert_with(|| json!({}));
+                    if !auth.is_object() {
+                        *auth = json!({});
+                    }
+                    if let Some(auth_obj) = auth.as_object_mut() {
+                        auth_obj.insert("OPENAI_API_KEY".to_string(), json!(url_key));
+                    }
+                }
+            }
+            return serde_json::Value::Object(settings);
+        }
+    }
+
     let provider_display_name = request
         .name
         .as_deref()
@@ -447,23 +502,140 @@ requires_openai_auth = true
 }
 
 /// Build Gemini settings configuration
+///
+/// When the deeplink carries an inline config with a native `{ env: {...} }`
+/// shape, the full config object is used as the base so extra env keys like
+/// `GOOGLE_CLOUD_PROJECT` survive. Standard env fields are then overwritten
+/// by URL params, which stay authoritative per the deeplink protocol.
+///
+/// Precondition: callers must run the request through `parse_and_merge_config`
+/// first — standard env fields are unconditionally overwritten from request
+/// fields.
 fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    let mut env = serde_json::Map::new();
+    let mut settings = decoded_config_object(request)
+        .filter(|cfg| cfg.get("env").is_some_and(|v| v.is_object()))
+        .map(serde_json::Value::Object)
+        .unwrap_or_else(|| json!({ "env": {} }));
+
+    let env = settings
+        .as_object_mut()
+        .expect("settings is always an object")
+        .get_mut("env")
+        .and_then(|v| v.as_object_mut())
+        .expect("env is always an object (guarded above)");
+
     env.insert("GEMINI_API_KEY".to_string(), json!(request.api_key));
     env.insert(
         "GOOGLE_GEMINI_BASE_URL".to_string(),
         json!(get_primary_endpoint(request)),
     );
-
-    // Add model if provided
     if let Some(model) = &request.model {
         env.insert("GEMINI_MODEL".to_string(), json!(model));
     }
 
-    json!({ "env": env })
+    settings
+}
+
+/// Apply explicit `apiKey`/`endpoint`/`model` URL overrides onto a native
+/// GrokBuild TOML, preserving unrelated keys via `toml_edit`.
+///
+/// Returns `Some(updated_toml)` only when at least one value actually differs
+/// from the embedded TOML; returns `None` when nothing changed (so the caller
+/// can keep the original verbatim) or when the TOML is too malformed to read
+/// the selected model profile. Rewrite failures are logged and skipped
+/// best-effort rather than aborting the import.
+fn apply_grokbuild_passthrough_overrides(
+    toml_str: &str,
+    request: &DeepLinkImportRequest,
+) -> Option<String> {
+    let model_cfg = crate::grok_config::extract_model_config(toml_str)?;
+    let mut current = toml_str.to_string();
+    let mut changed = false;
+
+    if let Some(url_key) = request
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+    {
+        if model_cfg.api_key.as_deref().map(str::trim) != Some(url_key) {
+            match crate::grok_config::update_api_key(&current, url_key) {
+                Ok(updated) => {
+                    current = updated;
+                    changed = true;
+                }
+                Err(e) => log::warn!("grokbuild passthrough: apiKey override failed: {e}"),
+            }
+        }
+    }
+
+    let primary = get_primary_endpoint(request);
+    let primary_trimmed = primary.trim().trim_end_matches('/');
+    if !primary_trimmed.is_empty() {
+        let current_base = model_cfg.base_url.trim_end_matches('/');
+        if current_base != primary_trimmed {
+            match crate::grok_config::update_selected_model_string(
+                &current,
+                "base_url",
+                primary_trimmed,
+            ) {
+                Ok(updated) => {
+                    current = updated;
+                    changed = true;
+                }
+                Err(e) => log::warn!("grokbuild passthrough: endpoint override failed: {e}"),
+            }
+        }
+    }
+
+    if let Some(url_model) = request
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    {
+        if model_cfg.model.trim() != url_model {
+            match crate::grok_config::update_selected_model_string(&current, "model", url_model) {
+                Ok(updated) => {
+                    current = updated;
+                    changed = true;
+                }
+                Err(e) => log::warn!("grokbuild passthrough: model override failed: {e}"),
+            }
+        }
+    }
+
+    changed.then_some(current)
 }
 
 fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    // Share-link passthrough: a config whose `config` field is a TOML string is
+    // the native GrokBuild shape — keep it verbatim so custom TOML keys survive.
+    // Legacy deeplinks without an embedded TOML string fall through to the
+    // template rebuild below.
+    if let Some(mut settings) = decoded_config_object(request) {
+        if settings.get("config").is_some_and(|v| v.is_string()) {
+            // Apply explicit URL overrides on top of the embedded TOML. Share
+            // links carry no `apiKey`/`endpoint`/`model` params, so
+            // `parse_and_merge_config` backfills them from the TOML itself and
+            // every value matches -> no rewrite -> verbatim. A hand-crafted
+            // link that pairs an embedded TOML with explicit overrides would
+            // otherwise silently keep the stale embedded credentials/routing;
+            // here we rewrite only the differing values (via toml_edit, which
+            // preserves comments/ordering and unrelated keys).
+            if let Some(toml_str) = settings
+                .get("config")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            {
+                if let Some(updated) = apply_grokbuild_passthrough_overrides(&toml_str, request) {
+                    settings.insert("config".to_string(), serde_json::Value::String(updated));
+                }
+            }
+            return serde_json::Value::Object(settings);
+        }
+    }
+
     let model = request
         .model
         .as_deref()
@@ -495,6 +667,26 @@ fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Valu
 
 /// Build OpenCode settings configuration
 fn build_opencode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    // Share-link passthrough: keep the native OpenCode provider JSON verbatim;
+    // URL params only overwrite the canonical options fields. Legacy flat
+    // configs (top-level apiKey/baseUrl) fall through to the template rebuild.
+    if let Some(mut settings) = decoded_config_object(request)
+        .filter(|cfg| cfg.get("options").is_some_and(|v| v.is_object()))
+    {
+        let opts = settings
+            .get_mut("options")
+            .and_then(|v| v.as_object_mut())
+            .expect("options is an object (guarded above)");
+        if let Some(api_key) = request.api_key.as_deref().filter(|s| !s.is_empty()) {
+            opts.insert("apiKey".to_string(), json!(api_key));
+        }
+        let endpoint = get_primary_endpoint(request);
+        if !endpoint.is_empty() {
+            opts.insert("baseURL".to_string(), json!(endpoint));
+        }
+        return serde_json::Value::Object(settings);
+    }
+
     let endpoint = get_primary_endpoint(request);
 
     // Build options object
@@ -523,6 +715,23 @@ fn build_opencode_settings(request: &DeepLinkImportRequest) -> serde_json::Value
 /// Build settings for OpenClaw (camelCase live config).
 /// Format: { baseUrl, apiKey, api, models }
 fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    // Share-link passthrough: keep the native OpenClaw JSON (api / models /
+    // any extra keys) verbatim; URL params overwrite the canonical fields
+    // only. Bare legacy configs without the `api` protocol field fall
+    // through to the template rebuild.
+    if let Some(mut settings) =
+        decoded_config_object(request).filter(|cfg| cfg.get("api").is_some_and(|v| v.is_string()))
+    {
+        if let Some(api_key) = request.api_key.as_deref().filter(|s| !s.is_empty()) {
+            settings.insert("apiKey".to_string(), json!(api_key));
+        }
+        let endpoint = get_primary_endpoint(request);
+        if !endpoint.is_empty() {
+            settings.insert("baseUrl".to_string(), json!(endpoint));
+        }
+        return serde_json::Value::Object(settings);
+    }
+
     let endpoint = get_primary_endpoint(request);
 
     let mut config = serde_json::Map::new();
@@ -559,7 +768,27 @@ fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::V
 /// protocol) and let the user adjust via the UI after import. We never rely
 /// on Hermes' built-in URL heuristics, which only recognize a handful of
 /// official endpoints.
+///
+/// Share links carrying the full native shape (with `api_mode`) bypass the
+/// template rebuild entirely — see the passthrough branch below.
 fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    // Share-link passthrough: keep the native Hermes snake_case YAML-shaped
+    // JSON (api_mode / models / name) verbatim; URL params overwrite the
+    // canonical fields only. Bare legacy configs without `api_mode` fall
+    // through to the template rebuild.
+    if let Some(mut settings) = decoded_config_object(request)
+        .filter(|cfg| cfg.get("api_mode").is_some_and(|v| v.is_string()))
+    {
+        if let Some(api_key) = request.api_key.as_deref().filter(|s| !s.is_empty()) {
+            settings.insert("api_key".to_string(), json!(api_key));
+        }
+        let endpoint = get_primary_endpoint(request);
+        if !endpoint.is_empty() {
+            settings.insert("base_url".to_string(), json!(endpoint));
+        }
+        return serde_json::Value::Object(settings);
+    }
+
     let endpoint = get_primary_endpoint(request);
 
     let mut config = serde_json::Map::new();
@@ -681,9 +910,15 @@ fn merge_claude_config(
             AppError::InvalidInput("Claude config must have 'env' object".to_string())
         })?;
 
-    // Auto-fill API key if not provided in URL
+    // Auto-fill API key if not provided in URL. Prefer ANTHROPIC_AUTH_TOKEN
+    // (canonical), fall back to ANTHROPIC_API_KEY for presets like PatewayAI /
+    // Gemini Native / AiHubMix that store the key only under that field.
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
-        if let Some(token) = env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()) {
+        if let Some(token) = env
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .or_else(|| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|v| v.as_str())
+        {
             request.api_key = Some(token.to_string());
         }
     }
@@ -787,17 +1022,22 @@ fn merge_gemini_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
-    // Gemini uses flat env structure
+    // Gemini 历史 deeplink 用 flat 结构；分享链接携带原生 { env: {...} } 形态
+    let flat = match config.get("env").filter(|v| v.is_object()) {
+        Some(env) => env,
+        None => config,
+    };
+
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
-        if let Some(api_key) = config.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
+        if let Some(api_key) = flat.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
             request.api_key = Some(api_key.to_string());
         }
     }
 
     if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
-        if let Some(base_url) = config
+        if let Some(base_url) = flat
             .get("GOOGLE_GEMINI_BASE_URL")
-            .or_else(|| config.get("GEMINI_BASE_URL"))
+            .or_else(|| flat.get("GEMINI_BASE_URL"))
             .and_then(|v| v.as_str())
         {
             request.endpoint = Some(base_url.to_string());
@@ -805,7 +1045,7 @@ fn merge_gemini_config(
     }
 
     if request.model.is_none() {
-        request.model = config
+        request.model = flat
             .get("GEMINI_MODEL")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
@@ -899,10 +1139,13 @@ fn merge_grokbuild_config(
     Ok(())
 }
 
-/// Merge configuration for additive mode apps (OpenClaw, OpenCode)
+/// Merge configuration for additive mode apps (OpenClaw, OpenCode, Hermes)
 ///
 /// These apps use JSON config directly, so we only extract common fields
-/// (api_key, endpoint, model) from the config if not already set in URL params.
+/// (api_key, endpoint, model) from the config if not already set in URL
+/// params. Besides flat top-level keys (`apiKey`/`api_key`,
+/// `baseUrl`/`base_url`), this also extracts OpenCode's nested
+/// `options.apiKey` / `options.baseURL`.
 fn merge_additive_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
@@ -912,6 +1155,7 @@ fn merge_additive_config(
         if let Some(api_key) = config
             .get("apiKey")
             .or_else(|| config.get("api_key"))
+            .or_else(|| config.get("options").and_then(|o| o.get("apiKey")))
             .and_then(|v| v.as_str())
         {
             request.api_key = Some(api_key.to_string());
@@ -956,6 +1200,7 @@ fn extract_codex_base_url(toml_value: &toml::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::prelude::*;
 
     fn hermes_request() -> DeepLinkImportRequest {
         DeepLinkImportRequest {
@@ -1183,5 +1428,453 @@ mod tests {
         let obj = settings.as_object().unwrap();
         assert!(obj.contains_key("baseUrl"));
         assert!(obj.contains_key("apiKey"));
+    }
+
+    fn b64_config(config: &serde_json::Value) -> String {
+        BASE64_STANDARD.encode(serde_json::to_string(config).unwrap())
+    }
+
+    fn codex_custom_config() -> serde_json::Value {
+        let toml = r#"model_provider = "custom"
+model = "gpt-5.2"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+wire_api = "chat"
+requires_openai_auth = false
+"#;
+        json!({ "auth": { "OPENAI_API_KEY": "sk-relay" }, "config": toml })
+    }
+
+    #[test]
+    fn codex_config_passthrough_preserves_custom_toml() {
+        let config = codex_custom_config();
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Relay".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_codex_settings(&merged);
+        // 原 TOML（wire_api="chat" 等自定义细节）与 auth 必须原样保留
+        assert_eq!(settings, config);
+    }
+
+    #[test]
+    fn codex_url_api_key_overrides_config_auth() {
+        let config = codex_custom_config();
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Relay".to_string()),
+            api_key: Some("sk-url-wins".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_codex_settings(&merged);
+        assert_eq!(settings["auth"]["OPENAI_API_KEY"], "sk-url-wins");
+        // TOML 本体不受 apiKey 覆写影响
+        assert_eq!(settings["config"], config["config"]);
+    }
+
+    #[test]
+    fn codex_auth_only_config_falls_back_to_template() {
+        let config = json!({ "auth": { "OPENAI_API_KEY": "sk-auth-only" } });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("AuthOnly".to_string()),
+            endpoint: Some("https://relay.example.com/v1".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_codex_settings(&merged);
+        let config_text = settings.get("config").and_then(|v| v.as_str()).unwrap();
+        assert!(config_text.contains("base_url = \"https://relay.example.com/v1\""));
+        assert_eq!(settings["auth"]["OPENAI_API_KEY"], "sk-auth-only");
+    }
+
+    #[test]
+    fn claude_config_passthrough_preserves_top_level_and_custom_env() {
+        let config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-team",
+                "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                "ANTHROPIC_CUSTOM_HEADERS": "X-Team: a",
+                "API_TIMEOUT_MS": "600000"
+            },
+            "permissions": { "allow": ["Bash"] }
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("claude".to_string()),
+            name: Some("团队 Claude".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_claude_settings(&merged);
+        assert_eq!(settings, config);
+    }
+
+    #[test]
+    fn claude_url_params_override_config_env_on_passthrough() {
+        let config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-old",
+                "ANTHROPIC_BASE_URL": "https://old.example.com"
+            },
+            "permissions": { "allow": ["Bash"] }
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("claude".to_string()),
+            name: Some("C".to_string()),
+            api_key: Some("sk-url-wins".to_string()),
+            endpoint: Some("https://url.example.com".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_claude_settings(&merged);
+        assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-url-wins");
+        assert_eq!(
+            settings["env"]["ANTHROPIC_BASE_URL"],
+            "https://url.example.com"
+        );
+        assert_eq!(settings["permissions"], json!({ "allow": ["Bash"] }));
+    }
+
+    #[test]
+    fn gemini_config_passthrough_supports_env_wrapper() {
+        // 分享侧导出的是原生 settings 形态 { env: {...} }，而非历史 flat 形态
+        let config = json!({
+            "env": {
+                "GEMINI_API_KEY": "gk-1",
+                "GOOGLE_GEMINI_BASE_URL": "https://g.example.com",
+                "GEMINI_MODEL": "gemini-3-pro",
+                "GOOGLE_CLOUD_PROJECT": "my-proj"
+            }
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("gemini".to_string()),
+            name: Some("G".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        assert_eq!(merged.api_key.as_deref(), Some("gk-1"));
+        assert_eq!(merged.endpoint.as_deref(), Some("https://g.example.com"));
+        let settings = build_gemini_settings(&merged);
+        assert_eq!(settings, config);
+    }
+
+    #[test]
+    fn gemini_flat_config_still_merges() {
+        // 历史 deeplink 的 flat 形态必须继续可用
+        let config = json!({
+            "GEMINI_API_KEY": "gk-flat",
+            "GEMINI_BASE_URL": "https://flat.example.com",
+            "GEMINI_MODEL": "gemini-3-pro"
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("gemini".to_string()),
+            name: Some("G".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        assert_eq!(merged.api_key.as_deref(), Some("gk-flat"));
+        assert_eq!(merged.endpoint.as_deref(), Some("https://flat.example.com"));
+        assert_eq!(merged.model.as_deref(), Some("gemini-3-pro"));
+    }
+
+    #[test]
+    fn gemini_url_params_override_config_env_on_passthrough() {
+        let config = json!({
+            "env": {
+                "GEMINI_API_KEY": "gk-old",
+                "GOOGLE_GEMINI_BASE_URL": "https://old.example.com",
+                "GOOGLE_CLOUD_PROJECT": "my-proj"
+            }
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("gemini".to_string()),
+            name: Some("G".to_string()),
+            api_key: Some("gk-url-wins".to_string()),
+            endpoint: Some("https://url.example.com".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_gemini_settings(&merged);
+        assert_eq!(settings["env"]["GEMINI_API_KEY"], "gk-url-wins");
+        assert_eq!(
+            settings["env"]["GOOGLE_GEMINI_BASE_URL"],
+            "https://url.example.com"
+        );
+        assert_eq!(settings["env"]["GOOGLE_CLOUD_PROJECT"], "my-proj");
+    }
+
+    #[test]
+    fn opencode_config_passthrough_preserves_npm_and_models() {
+        let config = json!({
+            "npm": "@ai-sdk/anthropic",
+            "options": { "baseURL": "https://oc.example.com/v1", "apiKey": "sk-oc" },
+            "models": { "claude-opus-4": { "name": "claude-opus-4" } }
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("opencode".to_string()),
+            name: Some("OC".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        // options.apiKey 必须能被提取，否则导入端会因缺 key 拒绝
+        assert_eq!(merged.api_key.as_deref(), Some("sk-oc"));
+        let settings = build_opencode_settings(&merged);
+        assert_eq!(settings, config);
+    }
+
+    #[test]
+    fn opencode_url_params_override_config_options_on_passthrough() {
+        let config = json!({
+            "npm": "@ai-sdk/anthropic",
+            "options": { "baseURL": "https://old.example.com/v1", "apiKey": "sk-old" },
+            "models": { "claude-opus-4": { "name": "claude-opus-4" } }
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("opencode".to_string()),
+            name: Some("OC".to_string()),
+            api_key: Some("sk-url-wins".to_string()),
+            endpoint: Some("https://url.example.com/v1".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_opencode_settings(&merged);
+        assert_eq!(settings["options"]["apiKey"], "sk-url-wins");
+        assert_eq!(settings["options"]["baseURL"], "https://url.example.com/v1");
+        assert_eq!(settings["npm"], "@ai-sdk/anthropic");
+    }
+
+    #[test]
+    fn opencode_flat_config_falls_back_to_template() {
+        // 历史 flat 形态（无 options 对象）必须继续走模板重建
+        let config = json!({ "baseUrl": "https://flat.example.com/v1", "apiKey": "sk-flat" });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("opencode".to_string()),
+            name: Some("OC".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_opencode_settings(&merged);
+        // 模板重建：无顶层 baseUrl/apiKey 残留，配置进入 options
+        assert!(settings.get("baseUrl").is_none());
+        assert!(settings.get("apiKey").is_none());
+        assert_eq!(settings["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(settings["options"]["apiKey"], "sk-flat");
+        assert_eq!(
+            settings["options"]["baseURL"],
+            "https://flat.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn openclaw_config_passthrough_preserves_api_and_models() {
+        let config = json!({
+            "baseUrl": "https://claw.example.com",
+            "apiKey": "sk-claw",
+            "api": "anthropic-messages",
+            "models": [{ "id": "m1", "name": "m1" }, { "id": "m2", "name": "m2" }]
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("openclaw".to_string()),
+            name: Some("Claw".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_additive_app_settings(&merged);
+        assert_eq!(settings, config);
+    }
+
+    #[test]
+    fn hermes_config_passthrough_preserves_api_mode_and_models() {
+        let config = json!({
+            "name": "H",
+            "base_url": "https://h.example.com/v1",
+            "api_key": "sk-h",
+            "api_mode": "anthropic_messages",
+            "models": [{ "id": "opus", "name": "opus" }]
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("hermes".to_string()),
+            name: Some("H".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_hermes_settings(&merged);
+        assert_eq!(settings, config);
+    }
+
+    #[test]
+    fn openclaw_bare_config_falls_back_to_template() {
+        // 无 api 协议字段的历史 config 必须走模板重建（补 api 字段）
+        let config = json!({ "baseUrl": "https://bare.example.com", "apiKey": "sk-bare" });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("openclaw".to_string()),
+            name: Some("Claw".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_additive_app_settings(&merged);
+        assert_eq!(settings["api"], "openai-completions");
+        assert_eq!(settings["apiKey"], "sk-bare");
+        assert_eq!(settings["baseUrl"], "https://bare.example.com");
+    }
+
+    #[test]
+    fn hermes_bare_config_falls_back_to_template() {
+        let config = json!({ "base_url": "https://bare.example.com/v1", "api_key": "sk-bare" });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("hermes".to_string()),
+            name: Some("H".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_hermes_settings(&merged);
+        assert_eq!(settings["api_mode"], "chat_completions");
+        assert_eq!(settings["api_key"], "sk-bare");
+        assert_eq!(settings["base_url"], "https://bare.example.com/v1");
+    }
+
+    #[test]
+    fn openclaw_url_params_override_config_on_passthrough() {
+        let config = json!({
+            "baseUrl": "https://old.example.com",
+            "apiKey": "sk-old",
+            "api": "anthropic-messages",
+            "models": [{ "id": "m1", "name": "m1" }]
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("openclaw".to_string()),
+            name: Some("Claw".to_string()),
+            api_key: Some("sk-url-wins".to_string()),
+            endpoint: Some("https://url.example.com".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_additive_app_settings(&merged);
+        assert_eq!(settings["apiKey"], "sk-url-wins");
+        assert_eq!(settings["baseUrl"], "https://url.example.com");
+        // 协议字段与自定义键原样保留
+        assert_eq!(settings["api"], "anthropic-messages");
+        assert_eq!(settings["models"], config["models"]);
+    }
+
+    #[test]
+    fn hermes_url_params_override_config_on_passthrough() {
+        let config = json!({
+            "name": "H",
+            "base_url": "https://old.example.com/v1",
+            "api_key": "sk-old",
+            "api_mode": "anthropic_messages",
+            "models": [{ "id": "opus", "name": "opus" }]
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("hermes".to_string()),
+            name: Some("H".to_string()),
+            api_key: Some("sk-url-wins".to_string()),
+            endpoint: Some("https://url.example.com/v1".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_hermes_settings(&merged);
+        assert_eq!(settings["api_key"], "sk-url-wins");
+        assert_eq!(settings["base_url"], "https://url.example.com/v1");
+        assert_eq!(settings["api_mode"], "anthropic_messages");
+        assert_eq!(settings["models"], config["models"]);
+    }
+
+    #[test]
+    fn grokbuild_config_passthrough_preserves_original_toml() {
+        let toml = "[models]\ndefault = \"grok-code\"\n\n[model.\"grok-code\"]\nmodel = \"grok-code\"\nbase_url = \"https://grok.example.com/v1\"\nname = \"custom\"\napi_key = \"sk-grok\"\napi_backend = \"anthropic\"\ncontext_window = 256000\ncustom_flag = true\n";
+        let config = json!({ "config": toml });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("grokbuild".to_string()),
+            name: Some("Grok".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        let settings = build_grokbuild_settings(&merged);
+        // 自定义 TOML 字段 (custom_flag, api_backend="anthropic") 必须原样保留
+        assert_eq!(settings, config);
+    }
+
+    #[test]
+    fn grokbuild_config_without_toml_falls_back_to_template() {
+        // config 字段非字符串 → passthrough 门禁不触发，走模板重建
+        let config = json!({ "config": { "models": {} } });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("grokbuild".to_string()),
+            name: Some("Grok".to_string()),
+            endpoint: Some("https://g.example.com/v1".to_string()),
+            api_key: Some("sk-g".to_string()),
+            config: Some(b64_config(&config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let settings = build_grokbuild_settings(&request);
+        let toml = settings["config"]
+            .as_str()
+            .expect("config is a toml string");
+        assert!(toml.contains("api_backend"));
+        assert!(toml.contains("sk-g"));
+        assert!(toml.contains("https://g.example.com/v1"));
     }
 }

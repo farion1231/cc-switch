@@ -9,6 +9,7 @@ import {
   Minus,
   Play,
   Plus,
+  Share2,
   Terminal,
   Trash2,
   Zap,
@@ -41,6 +42,7 @@ interface ProviderActionsProps {
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate?: () => void;
+  onShare?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
   onDelete: () => void;
@@ -83,6 +85,7 @@ export function ProviderActions({
   onSwitch,
   onEdit,
   onDuplicate,
+  onShare,
   onTest,
   onConfigureUsage,
   onDelete,
@@ -409,6 +412,18 @@ export function ProviderActions({
             className={iconButtonClass}
           >
             <Copy className="h-4 w-4" />
+          </Button>
+        )}
+
+        {onShare && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onShare}
+            title={t("provider.shareLink", "复制分享链接")}
+            className={iconButtonClass}
+          >
+            <Share2 className="h-4 w-4" />
           </Button>
         )}
 

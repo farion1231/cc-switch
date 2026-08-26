@@ -3,6 +3,8 @@ use crate::deeplink::{
     import_skill_from_deeplink, parse_deeplink_url, DeepLinkImportRequest,
 };
 use crate::store::AppState;
+use crate::AppType;
+use std::str::FromStr;
 use tauri::State;
 
 /// Parse a deep link URL and return the parsed request for frontend confirmation
@@ -86,4 +88,22 @@ pub async fn import_from_deeplink_unified(
         }
         _ => Err(format!("Unsupported resource type: {}", request.resource)),
     }
+}
+
+/// Generate a shareable ccswitch:// deeplink for a single provider
+#[tauri::command]
+pub fn generate_provider_deeplink(
+    state: State<AppState>,
+    app: String,
+    provider_id: String,
+) -> Result<String, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let providers = state
+        .db
+        .get_all_providers(app_type.as_str())
+        .map_err(|e| e.to_string())?;
+    let provider = providers
+        .get(&provider_id)
+        .ok_or_else(|| format!("Provider not found: {provider_id}"))?;
+    crate::deeplink::build_provider_share_url(&app_type, provider).map_err(|e| e.to_string())
 }

@@ -142,6 +142,13 @@ fn parse_provider_deeplink(
         .get("usageAutoInterval")
         .and_then(|v| v.parse::<u64>().ok());
 
+    // Share-link fidelity fields (v3.9+)
+    let api_format = params
+        .get("apiFormat")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let usage_script_config = params.get("usageScriptConfig").cloned();
+
     Ok(DeepLinkImportRequest {
         version,
         resource,
@@ -173,6 +180,8 @@ fn parse_provider_deeplink(
         usage_access_token,
         usage_user_id,
         usage_auto_interval,
+        api_format,
+        usage_script_config,
     })
 }
 
@@ -243,6 +252,8 @@ fn parse_prompt_deeplink(
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     })
 }
 
@@ -315,6 +326,8 @@ fn parse_mcp_deeplink(
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     })
 }
 
@@ -370,5 +383,7 @@ fn parse_skill_deeplink(
         usage_access_token: None,
         usage_user_id: None,
         usage_auto_interval: None,
+        api_format: None,
+        usage_script_config: None,
     })
 }
