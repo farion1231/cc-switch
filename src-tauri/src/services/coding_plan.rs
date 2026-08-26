@@ -750,6 +750,17 @@ fn volcengine_region(base_url: &str) -> String {
         .unwrap_or_else(|| VOLCENGINE_DEFAULT_REGION.to_string())
 }
 
+fn volcengine_actions(base_url: &str) -> &'static [&'static str] {
+    let url = base_url.to_ascii_lowercase();
+    if url.contains("/api/coding") {
+        &["GetCodingPlanUsage"]
+    } else if url.contains("/api/plan") {
+        &["GetAFPUsage"]
+    } else {
+        &["GetAFPUsage", "GetCodingPlanUsage"]
+    }
+}
+
 /// 判断 OpenAPI 错误码是否属于鉴权类（需要硬停并提示换 AK/SK）。
 fn volcengine_is_auth_error_code(code: &str) -> bool {
     let c = code.to_lowercase();
@@ -1114,46 +1125,32 @@ async fn query_volcengine(
         format!("{action}={raw}")
     };
 
-    // 1) Agent Plan：GetAFPUsage
-    match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage").await {
-        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
-        VolcCall::Transient(detail) => return Err(format!("GetAFPUsage: {detail}")),
-        VolcCall::Soft(detail) => soft_errors.push(format!("GetAFPUsage: {detail}")),
-        VolcCall::Body(body) => {
-            let result = body.get("Result").unwrap_or(&body);
-            let tiers = parse_afp_tiers(result);
-            if !tiers.is_empty() {
-                let plan = result
-                    .get("PlanType")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| format!("Agent Plan {s}"));
-                return Ok(volcengine_success(tiers, plan));
+    for &action in volcengine_actions(base_url) {
+        match volcengine_openapi_call(&region, access_key_id, secret_access_key, action).await {
+            VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
+            VolcCall::Transient(detail) => return Err(format!("{action}: {detail}")),
+            VolcCall::Soft(detail) => soft_errors.push(format!("{action}: {detail}")),
+            VolcCall::Body(body) => {
+                let result = body.get("Result").unwrap_or(&body);
+                let (tiers, plan) = if action == "GetAFPUsage" {
+                    let plan = result
+                        .get("PlanType")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!("Agent Plan {s}"));
+                    (parse_afp_tiers(result), plan)
+                } else {
+                    (
+                        parse_coding_plan_tiers(result),
+                        Some("Coding Plan".to_string()),
+                    )
+                };
+                if !tiers.is_empty() {
+                    return Ok(volcengine_success(tiers, plan));
+                }
+                empty_responses.push(summarize(action, &body));
             }
-            empty_responses.push(summarize("GetAFPUsage", &body));
-        }
-    }
-
-    // 2) Coding Plan：GetCodingPlanUsage
-    match volcengine_openapi_call(
-        &region,
-        access_key_id,
-        secret_access_key,
-        "GetCodingPlanUsage",
-    )
-    .await
-    {
-        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
-        VolcCall::Transient(detail) => return Err(format!("GetCodingPlanUsage: {detail}")),
-        VolcCall::Soft(detail) => soft_errors.push(format!("GetCodingPlanUsage: {detail}")),
-        VolcCall::Body(body) => {
-            let result = body.get("Result").unwrap_or(&body);
-            let tiers = parse_coding_plan_tiers(result);
-            if !tiers.is_empty() {
-                return Ok(volcengine_success(tiers, Some("Coding Plan".to_string())));
-            }
-            empty_responses.push(summarize("GetCodingPlanUsage", &body));
         }
     }
 
@@ -1343,9 +1340,9 @@ pub async fn get_coding_plan_quota(
 mod tests {
     use super::{
         parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, parse_zhipu_token_tiers,
-        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
-        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
-        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        query_zhipu_team_at, volcengine_actions, volcengine_canonical_query,
+        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
+        volcengine_sign, zhipu_quota_base, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -1776,6 +1773,22 @@ mod tests {
     }
 
     // ── 火山方舟 Agent Plan / Coding Plan ──
+
+    #[test]
+    fn volcengine_actions_follow_provider_plan_url() {
+        assert_eq!(
+            volcengine_actions("https://ark.cn-beijing.volces.com/api/coding/v3"),
+            &["GetCodingPlanUsage"]
+        );
+        assert_eq!(
+            volcengine_actions("https://ark.cn-beijing.volces.com/api/plan/v3"),
+            &["GetAFPUsage"]
+        );
+        assert_eq!(
+            volcengine_actions("https://ark.cn-beijing.volces.com"),
+            &["GetAFPUsage", "GetCodingPlanUsage"]
+        );
+    }
 
     #[test]
     fn volcengine_afp_three_windows_from_official_example() {
