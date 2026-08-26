@@ -318,3 +318,45 @@ export interface StatsFilters {
   providerId?: string;
   appType?: string;
 }
+
+/** 堆叠柱状图的颗粒度档位；"auto" 由后端按范围解析。 */
+export type TrendGranularityOption =
+  | "auto"
+  | "1min"
+  | "5min"
+  | "15min"
+  | "30min"
+  | "hour"
+  | "day"
+  | "week"
+  | "month";
+
+/** 后端实际解析出的颗粒度（不含 "auto"）。 */
+export type ResolvedTrendGranularity = Exclude<TrendGranularityOption, "auto">;
+
+/** 堆叠维度：Token 类型 / 模型 / Provider。 */
+export type TrendGroupBy = "token_type" | "model" | "provider";
+
+/** 图表指标。cost 仅在模型/Provider 维度可用（rollup 只有总成本）。 */
+export type TrendMetric = "tokens" | "cost";
+
+/** 堆叠柱状图单系列点（key 语义随维度变化）。 */
+export interface UsageTrendSeriesPoint {
+  key: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  cost: string;
+}
+
+/** 堆叠柱状图单桶；空桶 series 为空数组，由前端补零。 */
+export interface UsageTrendBucket {
+  bucketStart: string;
+  series: UsageTrendSeriesPoint[];
+}
+
+export interface UsageTrendSeriesResponse {
+  granularity: ResolvedTrendGranularity;
+  buckets: UsageTrendBucket[];
+}
