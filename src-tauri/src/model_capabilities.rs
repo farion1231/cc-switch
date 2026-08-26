@@ -79,6 +79,7 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         // Exact rather than prefix matching: GLM visual models use a `v`
         // suffix (for example glm-5.2v), which must remain image-capable.
         "glm-5.2",
+        "glm-5.3",
         "kat-coder",
         "kat-coder-pro",
         "kat-coder-pro v1",
