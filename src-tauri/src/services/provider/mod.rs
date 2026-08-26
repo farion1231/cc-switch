@@ -58,28 +58,65 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
         && crate::proxy::providers::is_codex_official_provider(provider)
 }
 
+fn reproject_codex_official_config_only(
+    state: &AppState,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config = live::build_effective_settings_with_common_config(
+        state.db.as_ref(),
+        &AppType::Codex,
+        provider,
+    )?;
+    let config_text = effective_provider
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&effective_provider);
+    let projected_config = crate::codex_config::prepare_codex_config_text_with_model_catalog(
+        &effective_provider.settings_config,
+        config_text,
+        profile,
+    )?;
+    let projected_config = if crate::settings::unify_codex_session_history() {
+        crate::codex_config::inject_codex_unified_session_bucket(&projected_config)?
+    } else {
+        projected_config
+    };
+
+    // A history toggle changes routing only. Never rewrite auth.json here:
+    // Codex may rotate OAuth tokens concurrently with this projection.
+    crate::codex_config::write_codex_live_config_atomic(Some(&projected_config))
+}
+
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
 /// 第三方 live 配置不受开关影响。
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
+    let _guard = futures::executor::block_on(
+        state
+            .proxy_service
+            .lock_switch_for_app(AppType::Codex.as_str()),
+    );
     let current_id = ProviderService::current(state, AppType::Codex)?;
     if current_id.is_empty() {
         return Ok(false);
     }
     let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
-    let Some(provider) = providers.get(&current_id) else {
+    let Some(stored_provider) = providers.get(&current_id) else {
         return Ok(false);
     };
-    if provider.category.as_deref() != Some("official")
-        && !crate::proxy::providers::is_codex_official_provider(provider)
+    if stored_provider.category.as_deref() != Some("official")
+        && !crate::proxy::providers::is_codex_official_provider(stored_provider)
     {
         return Ok(false);
     }
-
     // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
-    // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
-    // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
+    // 二者可以共存）。有接管标记时，backup 与 live 必须在同一把切换锁下
+    // 一起重投影；仅残留 backup 而 live 未被接管时，只更新恢复源，避免把
+    // 当前直连 live 意外改写成无法工作的代理地址。
     let has_live_backup =
         futures::executor::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
             .ok()
@@ -88,17 +125,26 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     let live_taken_over = state
         .proxy_service
         .detect_takeover_in_live_config_for_app(&AppType::Codex);
-    if has_live_backup || live_taken_over {
+    if live_taken_over {
         futures::executor::block_on(
             state
                 .proxy_service
-                .update_live_backup_from_provider(AppType::Codex.as_str(), provider),
+                .reproject_codex_official_live_for_history_toggle_locked(stored_provider),
         )
+        .map_err(|e| AppError::Message(format!("重投影 Codex 官方接管配置失败: {e}")))?;
+        return Ok(true);
+    }
+    if has_live_backup {
+        futures::executor::block_on(state.proxy_service.update_live_backup_from_provider_inner(
+            AppType::Codex.as_str(),
+            stored_provider,
+            None,
+        ))
         .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
         return Ok(true);
     }
 
-    live::write_live_with_common_config_for_state(state, &AppType::Codex, provider)?;
+    reproject_codex_official_config_only(state, stored_provider)?;
     // 重写 live 会整体替换 config.toml（有意设计），[mcp_servers] 随之丢失，
     // 写完必须立刻从 DB 重新投影启用的 MCP。只投影 Codex 而非
     // sync_all_enabled：后者按 AppType::all() 顺序逐应用短路，排在 Codex
@@ -340,6 +386,108 @@ mod tests {
             ..Default::default()
         });
         provider
+    }
+
+    #[test]
+    #[serial]
+    fn codex_history_reapply_rechecks_current_provider_after_waiting_for_switch_lock() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            unify_codex_session_history: true,
+            current_provider_codex: Some("codex-official".to_string()),
+            ..Default::default()
+        })
+        .expect("enable unified history");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = Arc::new(AppState::new(db.clone()));
+
+        let mut official = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("codex", &official)
+            .expect("save official provider");
+
+        let third_party_config = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+"#;
+        let mut third_party = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "relay-key" },
+                "config": third_party_config
+            }),
+            None,
+        );
+        third_party.category = Some("custom".to_string());
+        db.save_provider("codex", &third_party)
+            .expect("save third-party provider");
+        db.set_current_provider("codex", "codex-official")
+            .expect("set initial current provider");
+        crate::codex_config::write_codex_live_atomic(
+            &json!({
+                "auth_mode": "chatgpt",
+                "tokens": { "access_token": "oauth-access" }
+            }),
+            Some(""),
+        )
+        .expect("seed official live config");
+
+        let switch_guard = futures::executor::block_on(
+            state
+                .proxy_service
+                .lock_switch_for_app(AppType::Codex.as_str()),
+        );
+        let state_for_reapply = state.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let reapply_thread = std::thread::spawn(move || {
+            started_tx.send(()).expect("signal reapply start");
+            reapply_current_codex_official_live(&state_for_reapply)
+        });
+        started_rx.recv().expect("wait for reapply start");
+
+        // The old implementation reads the official provider before waiting
+        // for the switch lock. Give it time to reach that deterministic wait,
+        // then complete a provider switch while still holding the same lock.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        db.set_current_provider("codex", "relay")
+            .expect("switch current provider while reapply waits");
+        crate::settings::set_current_provider(&AppType::Codex, Some("relay"))
+            .expect("switch local current provider while reapply waits");
+        crate::codex_config::write_codex_live_atomic(
+            &json!({ "OPENAI_API_KEY": "relay-key" }),
+            Some(third_party_config),
+        )
+        .expect("write relay live config");
+        drop(switch_guard);
+
+        let reapplied = reapply_thread
+            .join()
+            .expect("join reapply thread")
+            .expect("reapply result");
+        assert!(
+            !reapplied,
+            "reapply must re-check the current provider after acquiring the switch lock"
+        );
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read final live config");
+        assert!(
+            live_config.contains("https://relay.example/v1"),
+            "stale official reprojection overwrote the newer relay config: {live_config}"
+        );
+
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
     }
 
     fn openclaw_provider(id: &str) -> Provider {
