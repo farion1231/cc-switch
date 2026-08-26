@@ -483,6 +483,8 @@
       "safetyBackupId": "安全備份 ID",
       "intervalLabel": "自動備份間隔",
       "retainLabel": "備份保留數量",
+      "maxTotalLabel": "備份總大小上限",
+      "maxTotalUnlimited": "不限制",
       "intervalDisabled": "停用",
       "intervalHours": "{{hours}} 小時",
       "intervalDays": "{{days}} 天",

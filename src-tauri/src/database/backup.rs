@@ -444,6 +444,15 @@ impl Database {
             }
         }
 
+        // Retention (count + total-size cap) also runs when no new backup is
+        // due, so an oversized backups folder is bounded on the first launch
+        // after an upgrade instead of waiting up to a full backup interval.
+        let backup_dir = get_app_config_dir().join("backups");
+        if backup_dir.exists() {
+            let _backup_file_guard = lock_backup_file_operations()?;
+            Self::cleanup_db_backups(&backup_dir, &[])?;
+        }
+
         // Periodic maintenance is always enabled, regardless of auto-backup settings.
         let mut reclaimed_rows = 0u64;
         match self.cleanup_old_stream_check_logs(7) {
@@ -460,6 +469,14 @@ impl Database {
             }
             Err(e) => {
                 log::warn!("Periodic rollup_and_prune failed: {e}");
+            }
+        }
+        match self.cap_session_usage_dedup(super::dao::usage_rollup::SESSION_USAGE_DEDUP_MAX_ROWS) {
+            Ok(deleted) => {
+                reclaimed_rows += deleted;
+            }
+            Err(e) => {
+                log::warn!("Periodic session_usage_dedup cap failed: {e}");
             }
         }
         if reclaimed_rows > 0 {
@@ -598,10 +615,12 @@ impl Database {
         }
     }
 
-    /// 清理旧的数据库备份，保留最新的 N 个
+    /// 清理旧的数据库备份：先按份数保留最新的 N 个，再把目录总大小压到
+    /// `backup_max_total_mb` 上限内（至少保留 1 份）。protected_paths
+    /// （新建备份/恢复源）在两轮中都绝不删除。
     fn cleanup_db_backups(dir: &Path, protected_paths: &[&Path]) -> Result<(), AppError> {
         let retain = crate::settings::effective_backup_retain_count();
-        let entries = match fs::read_dir(dir) {
+        let mut entries = match fs::read_dir(dir) {
             Ok(iter) => iter
                 .filter_map(|entry| entry.ok())
                 .filter(|entry| {
@@ -615,31 +634,78 @@ impl Database {
             Err(_) => return Ok(()),
         };
 
-        if entries.len() <= retain {
+        let is_protected = |path: &Path| -> bool {
+            protected_paths
+                .iter()
+                .any(|protected| Self::same_existing_backup_path(path, protected))
+        };
+
+        entries.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
+
+        if entries.len() > retain {
+            let remove_count = entries.len() - retain;
+            let mut removed = 0;
+            entries.retain(|entry| {
+                if removed >= remove_count {
+                    return true;
+                }
+                let path = entry.path();
+                if is_protected(&path) {
+                    return true;
+                }
+
+                match fs::remove_file(&path) {
+                    Ok(()) => {
+                        removed += 1;
+                        false
+                    }
+                    Err(err) => {
+                        log::warn!("删除旧数据库备份失败 {}: {}", path.display(), err);
+                        true
+                    }
+                }
+            });
+        }
+
+        let max_total = crate::settings::effective_backup_max_total_bytes();
+        if max_total == u64::MAX {
             return Ok(());
         }
 
-        let remove_count = entries.len().saturating_sub(retain);
-        let mut sorted = entries;
-        sorted.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
-
-        let mut removed = 0;
-        for entry in sorted {
-            if removed >= remove_count {
-                break;
-            }
+        // Newest-first: keep backups until the accumulated size exceeds the
+        // cap. The newest non-protected backup is always kept even when it
+        // alone exceeds the cap, so a restore point always survives.
+        let mut kept = 0usize;
+        let mut total = 0u64;
+        for entry in entries.iter().rev() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let size = metadata.len();
             let path = entry.path();
-            if protected_paths
-                .iter()
-                .any(|protected| Self::same_existing_backup_path(&path, protected))
-            {
+            if is_protected(&path) {
+                total = total.saturating_add(size);
                 continue;
             }
 
-            if let Err(err) = fs::remove_file(&path) {
-                log::warn!("删除旧数据库备份失败 {}: {}", path.display(), err);
-            } else {
-                removed += 1;
+            if total.saturating_add(size) <= max_total || kept == 0 {
+                total = total.saturating_add(size);
+                kept += 1;
+                continue;
+            }
+
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    log::info!(
+                        "删除超限数据库备份 {}（目录总大小超过上限）",
+                        path.display()
+                    );
+                }
+                Err(err) => {
+                    log::warn!("删除超限数据库备份失败 {}: {}", path.display(), err);
+                    total = total.saturating_add(size);
+                    kept += 1;
+                }
             }
         }
         Ok(())
@@ -1242,12 +1308,166 @@ mod tests {
             update_settings(next).expect("set backup retention for test");
             Self { previous }
         }
+
+        fn with_backup_max_total_mb(max_total_mb: u32) -> Self {
+            let previous = get_settings();
+            let mut next = previous.clone();
+            next.backup_max_total_mb = Some(max_total_mb);
+            update_settings(next).expect("set backup size cap for test");
+            Self { previous }
+        }
     }
 
     impl Drop for SettingsGuard {
         fn drop(&mut self) {
             let _ = update_settings(self.previous.clone());
         }
+    }
+
+    fn write_backup_file(
+        backup_dir: &std::path::Path,
+        filename: &str,
+        size_bytes: usize,
+        age_secs: u64,
+    ) -> Result<std::path::PathBuf, AppError> {
+        let path = backup_dir.join(filename);
+        std::fs::write(&path, vec![0u8; size_bytes]).map_err(|e| AppError::io(&path, e))?;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .map_err(|e| AppError::io(&path, e))?;
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs))
+            .map_err(|e| AppError::io(&path, e))?;
+        Ok(path)
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_db_backups_enforces_total_size_cap() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+        let _cap = SettingsGuard::with_backup_max_total_mb(1);
+
+        // Reproduces #6706: three full-image backups of a bloated database
+        // under a 1 MB cap must keep only the newest restore point.
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            600 * 1024,
+            3 * 86400,
+        )?;
+        let middle = write_backup_file(
+            &backup_dir,
+            "db_backup_20260802_000002.db",
+            600 * 1024,
+            2 * 86400,
+        )?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260803_000003.db",
+            600 * 1024,
+            86400,
+        )?;
+
+        Database::cleanup_db_backups(&backup_dir, &[])?;
+
+        assert!(
+            !oldest.exists(),
+            "oldest backup over the size cap must be removed"
+        );
+        assert!(
+            !middle.exists(),
+            "second-oldest backup over the size cap must be removed"
+        );
+        assert!(
+            newest.exists(),
+            "newest backup is always kept even when it alone exceeds the cap"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_db_backups_size_cap_never_deletes_protected_paths() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+        let _cap = SettingsGuard::with_backup_max_total_mb(1);
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            900 * 1024,
+            3 * 86400,
+        )?;
+        let protected = write_backup_file(
+            &backup_dir,
+            "db_backup_20260802_000002.db",
+            900 * 1024,
+            2 * 86400,
+        )?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260803_000003.db",
+            900 * 1024,
+            86400,
+        )?;
+
+        Database::cleanup_db_backups(&backup_dir, &[&protected])?;
+
+        assert!(protected.exists(), "restore source must never be deleted");
+        assert!(newest.exists(), "newest backup must be kept");
+        assert!(
+            !oldest.exists(),
+            "oldest backup over the size cap must be removed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn periodic_backup_if_needed_enforces_size_cap_without_new_backup() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let previous = get_settings();
+        let mut next = previous.clone();
+        next.backup_interval_hours = Some(0);
+        next.backup_retain_count = Some(10);
+        next.backup_max_total_mb = Some(1);
+        update_settings(next).expect("set backup settings for test");
+        let _settings = SettingsGuard { previous };
+
+        let db = Database::init()?;
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        // Database::init() may publish its own safety backup; start from a
+        // clean directory so the cap math only sees this test's files.
+        if backup_dir.exists() {
+            std::fs::remove_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        }
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            900 * 1024,
+            2 * 86400,
+        )?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260802_000002.db",
+            900 * 1024,
+            86400,
+        )?;
+
+        db.periodic_backup_if_needed()?;
+
+        assert!(
+            !oldest.exists(),
+            "startup retention must bound an oversized backups folder"
+        );
+        assert!(newest.exists(), "newest backup must be kept");
+        Ok(())
     }
 
     #[test]
