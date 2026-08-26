@@ -20,9 +20,11 @@ import type { FetchedModel } from "@/lib/api/model-fetch";
 export function ModelDropdown({
   models,
   onSelect,
+  disabled,
 }: {
   models: FetchedModel[];
   onSelect: (id: string) => void;
+  disabled?: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -43,6 +45,7 @@ export function ModelDropdown({
           variant="outline"
           size="icon"
           className="shrink-0"
+          disabled={disabled}
           aria-label={t("providerForm.searchModelAriaLabel", {
             defaultValue: "Select model",
           })}

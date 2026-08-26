@@ -1577,7 +1577,8 @@
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "預設供應商已自動設定；自訂供應商會按名稱/位址自動推斷。僅當自動識別不準時才需手動覆寫。",
     "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。",
-    "noCommonConfigToApply": "通用設定片段為空或沒有可寫入的內容"
+    "noCommonConfigToApply": "通用設定片段為空或沒有可寫入的內容",
+    "aggregationNoMappingError": "聚合模式下關閉官方登入至少需要一條有效模型映射，請新增模型或保持官方登入開啟"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
