@@ -58,8 +58,9 @@ pub(crate) fn prepare_xai_tool_search_request(body: &mut Value) -> Result<bool, 
         changed |= append_loaded_tools(body, loaded_tools)?;
     }
     if offers_tool_search {
-        changed |= omit_unloaded_top_level_functions(body);
+        changed |= omit_unloaded_top_level_tools(body);
     }
+    validate_xai_visible_tool_limit(body)?;
     Ok(changed)
 }
 
@@ -85,22 +86,14 @@ pub(crate) fn normalize_xai_top_level_function_schemas(body: &mut Value) -> bool
     changed
 }
 
-fn omit_unloaded_top_level_functions(body: &mut Value) -> bool {
+fn omit_unloaded_top_level_tools(body: &mut Value) -> bool {
     let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
         return false;
     };
     let original_len = tools.len();
     let mut changed = false;
     tools.retain_mut(|tool| {
-        if tool.get("type").and_then(Value::as_str) != Some("function") {
-            return true;
-        }
-        let deferred = tool
-            .get("defer_loading")
-            .or_else(|| tool.get("deferLoading"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        if deferred {
+        if is_tool_deferred(tool) {
             return false;
         }
         if let Some(obj) = tool.as_object_mut() {
@@ -138,10 +131,14 @@ fn validate_no_search_tool_catalog(body: &Value) -> Result<(), ProxyError> {
         ));
     }
 
+    validate_xai_visible_tool_limit(body)
+}
+
+fn validate_xai_visible_tool_limit(body: &Value) -> Result<(), ProxyError> {
     let visible_tools = count_xai_visible_tools(body);
     if visible_tools > XAI_MAX_TOOL_COUNT {
         return Err(ProxyError::TransformError(format!(
-            "xAI native Responses received {visible_tools} tools without tool_search support; limit is {XAI_MAX_TOOL_COUNT}"
+            "xAI native Responses received {visible_tools} visible tools; limit is {XAI_MAX_TOOL_COUNT}"
         )));
     }
     Ok(())
@@ -172,15 +169,19 @@ fn tools_contain_deferred(tools: &[Value]) -> bool {
 }
 
 fn tool_contains_deferred(tool: &Value) -> bool {
-    tool.get("defer_loading")
-        .or_else(|| tool.get("deferLoading"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    is_tool_deferred(tool)
         || tool
             .get("tools")
             .or_else(|| tool.get("children"))
             .and_then(Value::as_array)
             .is_some_and(|tools| tools_contain_deferred(tools))
+}
+
+fn is_tool_deferred(tool: &Value) -> bool {
+    tool.get("defer_loading")
+        .or_else(|| tool.get("deferLoading"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn count_xai_visible_tools(body: &Value) -> usize {
@@ -217,6 +218,13 @@ fn collect_xai_visible_tool_keys(
     namespace_key: Option<&str>,
     seen: &mut HashSet<String>,
 ) {
+    // Initial deferred catalog entries are omitted later by the request
+    // transforms. Loaded copies have their marker removed before reaching this
+    // count, so only tools that will actually be sent upstream consume xAI's
+    // catalog limit.
+    if is_tool_deferred(tool) {
+        return;
+    }
     match tool.get("type").and_then(Value::as_str) {
         Some("namespace") => {
             let name = tool
@@ -1314,6 +1322,86 @@ mod tests {
         assert_eq!(body["tools"][0]["name"], TOOL_SEARCH_PROXY_NAME);
         assert_eq!(body["tools"][1]["name"], "hot");
         assert!(body["tools"][1].get("deferLoading").is_none());
+    }
+
+    #[test]
+    fn initial_top_level_deferred_non_function_tools_are_omitted() {
+        let mut body = json!({
+            "tools": [
+                {"type": "tool_search"},
+                {
+                    "type": "mcp",
+                    "server_label": "cold",
+                    "defer_loading": true
+                },
+                {
+                    "type": "mcp",
+                    "server_label": "hot",
+                    "deferLoading": false
+                }
+            ]
+        });
+
+        prepare_xai_tool_search_request(&mut body).unwrap();
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["name"], TOOL_SEARCH_PROXY_NAME);
+        assert_eq!(tools[1]["server_label"], "hot");
+        assert!(tools[1].get("deferLoading").is_none());
+    }
+
+    #[test]
+    fn rejects_oversized_catalog_after_search_result_promotion() {
+        let children = (0..XAI_MAX_TOOL_COUNT)
+            .map(|index| {
+                json!({
+                    "type": "function",
+                    "name": format!("loaded_{index}"),
+                    "defer_loading": true,
+                    "parameters": {"type": "object"}
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut body = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__loaded__",
+                    "defer_loading": true,
+                    "tools": children
+                }]
+            }]
+        });
+
+        let error = prepare_xai_tool_search_request(&mut body).unwrap_err();
+        assert!(error.to_string().contains("351 visible tools"));
+        assert!(error.to_string().contains("limit is 350"));
+    }
+
+    #[test]
+    fn accepts_search_shim_plus_loaded_catalog_at_limit() {
+        let loaded = (0..XAI_MAX_TOOL_COUNT - 1)
+            .map(|index| {
+                json!({
+                    "type": "function",
+                    "name": format!("loaded_{index}"),
+                    "parameters": {"type": "object"}
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut body = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "additional_tools",
+                "tools": loaded
+            }]
+        });
+
+        prepare_xai_tool_search_request(&mut body).unwrap();
+        assert_eq!(body["tools"].as_array().unwrap().len(), XAI_MAX_TOOL_COUNT);
     }
 
     #[test]
