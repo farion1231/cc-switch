@@ -236,6 +236,8 @@ export interface ProviderMeta {
   providerType?: string;
   // Pi Provider 是否最初来自 /login 投影。
   piLoginOrigin?: boolean;
+  // Pi /login 卡片是否只包含 CC Switch 生成的展示配置。
+  piLoginSynthetic?: boolean;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
 }

@@ -268,6 +268,7 @@ fn sync_native_locked(
             let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
             meta.provider_type = None;
             meta.pi_login_origin = Some(true);
+            meta.pi_login_synthetic = Some(false);
             provider.category = Some("custom".to_string());
         }
         if !is_new
@@ -322,10 +323,16 @@ fn sync_login_locked(
         let previous_name = provider.name.clone();
         let previous_config = provider.settings_config.clone();
         let was_login_managed = is_pi_login_provider(&provider);
+        let previous_origin = has_pi_login_origin(&provider);
+        let previous_synthetic = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.pi_login_synthetic);
+        let should_use_synthetic_config = is_new || is_synthetic_pi_login_provider(&provider);
 
         // 纯登录投影使用合成展示配置；经历过显式覆盖的条目保留最后一份
         // models.json 配置，待 `/logout` 后仍可作为普通未启用卡片继续使用。
-        if is_new || is_synthetic_pi_login_provider(&provider) {
+        if should_use_synthetic_config {
             provider.name = name.to_string();
             provider.settings_config = config;
             provider.category = Some("official".to_string());
@@ -334,11 +341,14 @@ fn sync_login_locked(
         let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
         meta.provider_type = Some(PI_LOGIN_PROVIDER_TYPE.to_string());
         meta.pi_login_origin = Some(true);
+        meta.pi_login_synthetic = Some(should_use_synthetic_config);
 
         if !is_new
             && provider.name == previous_name
             && provider.settings_config == previous_config
             && was_login_managed
+            && previous_origin
+            && previous_synthetic == Some(should_use_synthetic_config)
         {
             continue;
         }
@@ -386,25 +396,25 @@ fn has_pi_login_origin(provider: &Provider) -> bool {
 
 fn is_synthetic_pi_login_provider(provider: &Provider) -> bool {
     provider
-        .settings_config
-        .get("source")
-        .and_then(Value::as_str)
-        == Some("pi-login")
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.pi_login_synthetic)
+        == Some(true)
 }
 
 fn clear_pi_login_origin(provider: &mut Provider) {
     if let Some(meta) = provider.meta.as_mut() {
         meta.provider_type = None;
         meta.pi_login_origin = None;
+        meta.pi_login_synthetic = None;
     }
 }
 
 fn restore_pi_login_origin(provider: &mut Provider, should_restore: bool) {
     if should_restore {
-        provider
-            .meta
-            .get_or_insert_with(ProviderMeta::default)
-            .pi_login_origin = Some(true);
+        let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+        meta.pi_login_origin = Some(true);
+        meta.pi_login_synthetic = Some(false);
     }
 }
 
@@ -876,7 +886,7 @@ mod tests {
         ProviderService::list(&state, AppType::Pi).expect("import login provider");
         fs::write(
             &models_path,
-            r#"{"providers":{"deepseek":{"name":"Explicit DeepSeek"}}}"#,
+            r#"{"providers":{"deepseek":{"name":"Explicit DeepSeek","source":"pi-login","futureField":{"preserve":true}}}}"#,
         )
         .expect("write explicit override");
         ProviderService::list(&state, AppType::Pi).expect("sync explicit override");
@@ -904,6 +914,11 @@ mod tests {
         assert!(!is_pi_login_provider(restored));
         assert!(!has_pi_login_origin(restored));
         assert_eq!(restored.name, "Explicit DeepSeek");
+        assert_eq!(restored.settings_config["source"], json!("pi-login"));
+        assert_eq!(
+            restored.settings_config["futureField"],
+            json!({"preserve": true})
+        );
     }
 
     #[test]
@@ -921,6 +936,12 @@ mod tests {
         .expect("write auth");
 
         ProviderService::list(&state, AppType::Pi).expect("import login provider");
+        let projected = state
+            .db
+            .get_provider_by_id("deepseek", PI_APP)
+            .expect("read login provider")
+            .expect("login provider");
+        assert!(is_synthetic_pi_login_provider(&projected));
         let error = ProviderService::delete(&state, AppType::Pi, "deepseek")
             .expect_err("login provider must be read-only");
         assert!(error.to_string().contains("managed by Pi /login"));
