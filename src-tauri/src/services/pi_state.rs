@@ -35,26 +35,38 @@ impl PiStateService {
         // Pi owns login credentials in auth.json. Only providers actually
         // configured through `/login` are surfaced here, and explicit
         // models.json nodes win so the same provider never appears twice.
+        let saved = state.db.get_all_providers(PI_APP)?;
         let auth_provider_ids = match read_pi_auth_provider_ids() {
             Ok(provider_ids) => provider_ids,
             Err(error) => {
                 log::warn!("Failed to read Pi auth provider ids for advisory UI: {error}");
-                Default::default()
+                // auth.json 暂时不可读时，沿用已同步的 /login 来源标记，避免前端
+                // 把只读卡片误判为可编辑。真实文件恢复后会重新以 auth.json 为准。
+                saved
+                    .iter()
+                    .filter_map(|(id, provider)| {
+                        let meta = provider.meta.as_ref();
+                        (meta.and_then(|value| value.provider_type.as_deref())
+                            == Some(PI_LOGIN_PROVIDER_TYPE)
+                            || meta.and_then(|value| value.pi_login_origin) == Some(true))
+                        .then(|| id.clone())
+                    })
+                    .collect()
             }
         };
-        let saved = state.db.get_all_providers(PI_APP)?;
         let login_provider_ids = auth_provider_ids
             .into_iter()
             .filter(|id| {
                 if native.contains_key(id) {
                     return false;
                 }
+                // 用户自己保存在 CC Switch、但尚未写入 models.json 的同 ID
+                // Provider 仍可正常启用；只有登录投影及其显式覆盖历史恢复只读。
                 saved.get(id).is_none_or(|provider| {
-                    provider
-                        .meta
-                        .as_ref()
-                        .and_then(|meta| meta.provider_type.as_deref())
+                    let meta = provider.meta.as_ref();
+                    meta.and_then(|value| value.provider_type.as_deref())
                         == Some(PI_LOGIN_PROVIDER_TYPE)
+                        || meta.and_then(|value| value.pi_login_origin) == Some(true)
                 })
             })
             .collect();
@@ -71,7 +83,7 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::pi_config::test_support::TestAgentDir;
-    use crate::provider::Provider;
+    use crate::provider::{Provider, ProviderMeta};
     use serde_json::json;
     use serial_test::serial;
     use std::fs;
@@ -182,6 +194,54 @@ mod tests {
         );
         assert_eq!(current.default_provider_id.as_deref(), Some("deepseek"));
         assert_eq!(current.login_provider_ids, vec!["kimi-coding".to_string()]);
+    }
+
+    #[test]
+    #[serial]
+    fn invalid_auth_falls_back_to_saved_login_provider_ids() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        fs::write(agent_dir.join("auth.json"), "{").expect("write invalid auth");
+
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({"name": "DeepSeek", "source": "pi-login"}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some(PI_LOGIN_PROVIDER_TYPE.to_string()),
+            ..ProviderMeta::default()
+        });
+        state
+            .db
+            .save_provider(PI_APP, &provider)
+            .expect("save login provider");
+
+        let mut overridden = Provider::with_id(
+            "kimi-coding".to_string(),
+            "Kimi explicit override".to_string(),
+            json!({"name": "Kimi explicit override"}),
+            None,
+        );
+        overridden.meta = Some(ProviderMeta {
+            pi_login_origin: Some(true),
+            ..ProviderMeta::default()
+        });
+        state
+            .db
+            .save_provider(PI_APP, &overridden)
+            .expect("save provider with login origin");
+
+        let current = PiStateService::current(&state).expect("read state with fallback");
+        assert_eq!(
+            current.login_provider_ids,
+            vec!["deepseek".to_string(), "kimi-coding".to_string()]
+        );
     }
 
     #[test]

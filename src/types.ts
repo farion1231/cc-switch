@@ -234,6 +234,8 @@ export interface ProviderMeta {
   liveConfigManaged?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
+  // Pi Provider 是否最初来自 /login 投影。
+  piLoginOrigin?: boolean;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
 }
