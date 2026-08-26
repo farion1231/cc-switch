@@ -503,6 +503,18 @@ fn append_loaded_tools(body: &mut Value, loaded_tools: Vec<Value>) -> Result<boo
 }
 
 fn merge_namespace_children(existing: &mut Value, loaded: &Value) -> bool {
+    // An outer deferred marker means none of the original namespace children
+    // were published. A search result is the authoritative selected subset, so
+    // retaining unmatched children from the stale catalog would expose tools
+    // the client never loaded.
+    if is_tool_deferred(existing) {
+        if existing != loaded {
+            *existing = loaded.clone();
+            return true;
+        }
+        return false;
+    }
+
     let Some(loaded_children) = loaded
         .get("tools")
         .or_else(|| loaded.get("children"))
@@ -899,6 +911,66 @@ mod tests {
         super::super::transform_codex_responses_namespace::flatten_request_namespaces(&mut body)
             .unwrap();
         assert_eq!(body["tools"][1]["name"], "mcp__mail____search");
+    }
+
+    #[test]
+    fn discovered_subset_replaces_outer_deferred_namespace_catalog() {
+        let mut body = json!({
+            "tools": [
+                {"type": "tool_search"},
+                {
+                    "type": "namespace",
+                    "name": "mcp__mail__",
+                    "defer_loading": true,
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "search",
+                            "parameters": {"type": "object", "properties": {"stale": {"type": "string"}}}
+                        },
+                        {
+                            "type": "function",
+                            "name": "delete",
+                            "parameters": {"type": "object"}
+                        }
+                    ]
+                }
+            ],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__mail__",
+                    "defer_loading": true,
+                    "tools": [{
+                        "type": "function",
+                        "name": "search",
+                        "defer_loading": true,
+                        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}}
+                    }]
+                }]
+            }]
+        });
+
+        prepare_xai_tool_search_request(&mut body).unwrap();
+        let namespace = &body["tools"][1];
+        assert!(namespace.get("defer_loading").is_none());
+        assert_eq!(namespace["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(namespace["tools"][0]["name"], "search");
+        assert!(namespace["tools"][0]["parameters"]["properties"]
+            .get("stale")
+            .is_none());
+
+        super::super::transform_codex_responses_namespace::flatten_request_namespaces(&mut body)
+            .unwrap();
+        let names = body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![TOOL_SEARCH_PROXY_NAME, "mcp__mail____search"]);
     }
 
     #[test]
