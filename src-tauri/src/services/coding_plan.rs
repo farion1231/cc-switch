@@ -1,6 +1,7 @@
-//! 国产 Token Plan 额度查询服务
+//! Token Plan 额度查询服务
 //!
-//! 支持 Kimi For Coding、智谱 GLM、MiniMax 的 Token Plan 额度查询。
+//! 支持 Kimi For Coding、智谱 GLM、MiniMax 的 Token Plan 额度查询，
+//! 以及 OpenCode Go（opencode.ai/zen）订阅配额查询。
 //! 复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
@@ -21,6 +22,10 @@ enum CodingPlanProvider {
     /// `https://ark.cn-beijing.volces.com/api/plan[/v3]`（Agent Plan）
     /// 或 `/api/coding[/v3]`（Coding Plan））。
     Volcengine,
+    /// OpenCode Go（`opencode.ai/zen` 订阅）。官方用量 API：
+    /// `GET {base_url}/v1/usage`（Bearer api_key），返回 rolling / weekly /
+    /// monthly 三个配额窗口，无需 workspace_id / auth cookie。
+    OpencodeGo,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -43,6 +48,8 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 额度，不在此命中。用量探测本身是双 plan 自动探测（GetAFPUsage →
         // GetCodingPlanUsage），无需在此区分两种订阅。
         Some(CodingPlanProvider::Volcengine)
+    } else if url.contains("opencode.ai/zen") {
+        Some(CodingPlanProvider::OpencodeGo)
     } else {
         None
     }
@@ -1267,6 +1274,118 @@ async fn query_zhipu_team_at(
     Ok(zhipu_quota_from_body(&body))
 }
 
+// ── OpenCode Go ─────────────────────────────────────────────
+
+/// 查询 OpenCode Go（`opencode.ai/zen` 订阅）配额。
+///
+/// 官方用量 API：`GET {base_url}/v1/usage`（Bearer api_key 鉴权，无需
+/// workspace_id / auth cookie），返回 rolling（5 小时）/ weekly / monthly
+/// 三个配额窗口：
+///
+/// ```json
+/// { "usage": { "rolling": { "status": "ok", "percent": 4,
+///                            "resetsAt": "2026-08-13T16:27:38.287Z" },
+///              "weekly":  { "status": "ok", "percent": 3, ... },
+///              "monthly": { "status": "ok", "percent": 1, ... } } }
+/// ```
+async fn query_opencode_go(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::get();
+
+    let resp = client
+        .get(format!("{}/v1/usage", base_url.trim_end_matches('/')))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        });
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。与 query_kimi 等保持一致。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    let usage = match body.get("usage") {
+        Some(u) => u,
+        None => return Ok(make_error("Missing 'usage' field in response".to_string())),
+    };
+
+    let mut tiers = Vec::new();
+    for (key, tier_name) in [
+        ("rolling", TIER_FIVE_HOUR),
+        ("weekly", TIER_WEEKLY_LIMIT),
+        ("monthly", TIER_MONTHLY),
+    ] {
+        let Some(window) = usage.get(key) else {
+            continue;
+        };
+        // status 非 "ok" 的窗口（如服务端临时限流）跳过，避免误报 0%
+        if window.get("status").and_then(|v| v.as_str()) != Some("ok") {
+            continue;
+        }
+        let Some(percent) = window.get("percent").and_then(parse_f64) else {
+            continue;
+        };
+        let resets_at = window
+            .get("resetsAt")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        tiers.push(QuotaTier {
+            name: tier_name.to_string(),
+            utilization: percent,
+            resets_at,
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+
+    if tiers.is_empty() {
+        return Ok(make_error(
+            "No valid quota windows in OpenCode Go response".to_string(),
+        ));
+    }
+
+    Ok(SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    })
+}
+
 /// 查询编程套餐额度。瞬时传输失败（网络/超时/读体中断）返回 `Err`（前端 reject →
 /// retry + 保留上次成功值）；确定性失败（凭据缺失/未知域名/鉴权/非 2xx/业务错误）
 /// 返回 `Ok(success:false)` 立即透出文案。判定按 reqwest 错误种类在折叠点完成。
@@ -1332,6 +1451,7 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
+        CodingPlanProvider::OpencodeGo => query_opencode_go(base_url, api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
@@ -1342,9 +1462,10 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, parse_zhipu_token_tiers,
-        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
-        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
+        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers,
+        parse_zhipu_token_tiers, query_opencode_go, query_zhipu_team_at,
+        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
+        volcengine_response_error, volcengine_sign, zhipu_quota_base, CodingPlanProvider,
         TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
@@ -2238,5 +2359,75 @@ mod tests {
         assert_eq!(quota.tiers[0].utilization, 26.0);
         assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
         assert_eq!(quota.tiers[1].utilization, 5.0);
+    }
+
+    #[test]
+    fn detect_opencode_go_by_base_url() {
+        // OpenCode Go 订阅 base_url 形如 https://opencode.ai/zen/go
+        assert!(matches!(
+            detect_provider("https://opencode.ai/zen/go"),
+            Some(CodingPlanProvider::OpencodeGo)
+        ));
+        // 大小写不敏感、尾斜杠不影响子串匹配
+        assert!(matches!(
+            detect_provider("HTTPS://OPencode.ai/zen/"),
+            Some(CodingPlanProvider::OpencodeGo)
+        ));
+        // 不误命中其他域名
+        assert_eq!(detect_provider("https://api.kimi.com/coding"), None);
+        assert_eq!(detect_provider("https://example.com"), None);
+    }
+
+    #[tokio::test]
+    async fn opencode_go_usage_parsed_into_three_tiers() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({
+            "usage": {
+                "rolling": { "status": "ok", "percent": 4.0, "resetsAt": "2026-08-13T16:27:38.287Z" },
+                "weekly":  { "status": "ok", "percent": 3.0, "resetsAt": "2026-08-17T00:00:00.287Z" },
+                "monthly": { "status": "ok", "percent": 1.0, "resetsAt": "2026-09-13T06:06:01.287Z" }
+            }
+        })
+        .to_string();
+        let (base_url, handle) = spawn_once_server(Some(http_response("200 OK", &body)));
+        let quota = query_opencode_go(&base_url, "sk-test")
+            .await
+            .expect("query ok");
+        handle.join().expect("server thread");
+
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 3);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 4.0);
+        assert_eq!(
+            quota.tiers[0].resets_at.as_deref(),
+            Some("2026-08-13T16:27:38.287Z")
+        );
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 3.0);
+        assert_eq!(quota.tiers[2].name, TIER_MONTHLY);
+        assert_eq!(quota.tiers[2].utilization, 1.0);
+    }
+
+    #[tokio::test]
+    async fn opencode_go_non_ok_window_skipped() {
+        ensure_no_proxy_for_loopback();
+        // 某个窗口 status 非 ok（如服务端限流）时跳过，其余窗口照常解析
+        let body = json!({
+            "usage": {
+                "rolling": { "status": "ok", "percent": 4.0, "resetsAt": "2026-08-13T16:27:38.287Z" },
+                "weekly":  { "status": "degraded", "percent": 99.0, "resetsAt": "2026-08-17T00:00:00.287Z" },
+                "monthly": { "status": "ok", "percent": 1.0, "resetsAt": "2026-09-13T06:06:01.287Z" }
+            }
+        })
+        .to_string();
+        let (base_url, handle) = spawn_once_server(Some(http_response("200 OK", &body)));
+        let quota = query_opencode_go(&base_url, "sk-test").expect("query ok");
+        handle.join().expect("server thread");
+
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[1].name, TIER_MONTHLY);
     }
 }

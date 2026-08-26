@@ -11,7 +11,14 @@ import { TEMPLATE_TYPES } from "@/config/constants";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
-  id: "kimi" | "zhipu" | "zhipu_team" | "minimax" | "zenmux" | "volcengine";
+  id:
+    | "kimi"
+    | "zhipu"
+    | "zhipu_team"
+    | "minimax"
+    | "zenmux"
+    | "volcengine"
+    | "opencode_go";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -53,6 +60,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "volcengine",
     label: "火山方舟 (Volcengine)",
     pattern: /volces\.com\/api\/(plan|coding)/i,
+  },
+  {
+    // OpenCode Go 订阅（base_url 形如 https://opencode.ai/zen/go）。
+    // 官方用量 API：GET {base_url}/v1/usage（Bearer api_key），
+    // 返回 rolling / weekly / monthly 三个配额窗口，无需 workspace_id / cookie。
+    id: "opencode_go",
+    label: "OpenCode Go",
+    pattern: /opencode\.ai\/zen/i,
   },
 ] as const;
 
