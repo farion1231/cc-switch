@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -20,6 +20,21 @@ import {
 const COLLAPSE_THRESHOLD = 3000;
 const COLLAPSED_LENGTH = 1500;
 
+// 工具消息在会话里占了绝大部分篇幅，而它们多是命令输出、文件内容与日志，
+// 扫读对话时并不需要看全文，只要知道「这里调了个工具、大致返回了什么」。
+// 按行折叠而不是按字符：工具输出的排版本来就是按行的，同样的字符数可能是
+// 一行也可能是十几行，按行才能得到可预期的视觉高度；字符上限只是单行超长
+// 时的兜底。
+const TOOL_PREVIEW_LINES = 2;
+const TOOL_PREVIEW_MAX_CHARS = 300;
+
+const clampToLines = (content: string, maxLines: number, maxChars: number) => {
+  const lines = content.split("\n");
+  // 尾部空行不带信息量，去掉可以让预览更紧凑
+  const head = lines.slice(0, maxLines).join("\n").trimEnd();
+  return head.length > maxChars ? head.slice(0, maxChars) : head;
+};
+
 interface SessionMessageItemProps {
   message: SessionMessage;
   isActive: boolean;
@@ -36,7 +51,21 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
-  const isLong = message.content.length > COLLAPSE_THRESHOLD;
+  const isTool = message.role.toLowerCase() === "tool";
+  const toolPreview = useMemo(
+    () =>
+      isTool
+        ? clampToLines(
+            message.content,
+            TOOL_PREVIEW_LINES,
+            TOOL_PREVIEW_MAX_CHARS,
+          )
+        : "",
+    [isTool, message.content],
+  );
+  const isLong = isTool
+    ? toolPreview.length < message.content.length
+    : message.content.length > COLLAPSE_THRESHOLD;
   const hasSearchMatch =
     isLong &&
     !expanded &&
@@ -44,7 +73,9 @@ export const SessionMessageItem = memo(function SessionMessageItem({
     message.content.toLowerCase().includes(searchQuery.toLowerCase());
   const collapsed = isLong && !expanded && !hasSearchMatch;
   const displayContent = collapsed
-    ? message.content.slice(0, COLLAPSED_LENGTH) + "…"
+    ? isTool
+      ? `${toolPreview}…`
+      : message.content.slice(0, COLLAPSED_LENGTH) + "…"
     : message.content;
 
   return (
@@ -86,7 +117,14 @@ export const SessionMessageItem = memo(function SessionMessageItem({
           </span>
         )}
       </div>
-      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed min-w-0">
+      <div
+        className={cn(
+          "whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed min-w-0",
+          // 预览取的是前两个源码行，其中的长行折行后视觉上仍可能占三四行；
+          // line-clamp 兜住这种情况，让每条折叠的工具消息高度一致。
+          isTool && collapsed && "line-clamp-2",
+        )}
+      >
         {searchQuery
           ? highlightText(displayContent, searchQuery)
           : displayContent}
@@ -112,7 +150,14 @@ export const SessionMessageItem = memo(function SessionMessageItem({
                 defaultValue: "展开完整内容",
               })}
               <span className="text-muted-foreground/60">
-                ({Math.round(message.content.length / 1000)}k)
+                (
+                {isTool
+                  ? t("sessionManager.lineCount", {
+                      lines: message.content.split("\n").length,
+                      defaultValue: "{{lines}} 行",
+                    })
+                  : `${Math.round(message.content.length / 1000)}k`}
+                )
               </span>
             </>
           )}
