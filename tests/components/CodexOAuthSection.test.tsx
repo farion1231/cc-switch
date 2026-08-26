@@ -78,6 +78,8 @@ describe("CodexOAuthSection", () => {
       isRemovingAccount: false,
       isSettingDefaultAccount: false,
       addAccount: vi.fn(),
+      reauthAccount: vi.fn(),
+      retryAuth: vi.fn(),
       removeAccount: vi.fn(),
       setDefaultAccount: vi.fn(),
       cancelAuth: vi.fn(),
@@ -113,6 +115,44 @@ describe("CodexOAuthSection", () => {
     expect(
       screen.getAllByTestId("account-quota").map((quota) => quota.textContent),
     ).toEqual(["account-1", "account-2"]);
+  });
+
+  it("reauthenticates the selected legacy account in place", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    const reauthAccount = vi.fn();
+    mocks.useCodexOauth.mockReturnValue({
+      ...authResult,
+      reauthAccount,
+      accounts: [
+        {
+          ...authResult.accounts[0],
+          reauth_required: true,
+        },
+      ],
+    });
+
+    render(<CodexOAuthSection />);
+    await user.click(screen.getByRole("button", { name: "重新登录" }));
+
+    expect(reauthAccount).toHaveBeenCalledWith("account-1");
+    expect(authResult.addAccount).not.toHaveBeenCalled();
+  });
+
+  it("allows an existing account to reauthenticate in place", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    const reauthAccount = vi.fn();
+    mocks.useCodexOauth.mockReturnValue({
+      ...authResult,
+      reauthAccount,
+      accounts: [authResult.accounts[0]],
+    });
+
+    render(<CodexOAuthSection />);
+    await user.click(screen.getByRole("button", { name: "重新登录" }));
+
+    expect(reauthAccount).toHaveBeenCalledWith("account-1");
   });
 
   it("selects a specific account when multiple accounts are managed", async () => {

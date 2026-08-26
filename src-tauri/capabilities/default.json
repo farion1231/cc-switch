@@ -15,6 +15,7 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "core:window:allow-set-decorations",
+    "process:allow-exit",
     "process:allow-restart",
     "dialog:default"
   ]

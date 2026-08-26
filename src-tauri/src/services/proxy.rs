@@ -3109,8 +3109,8 @@ impl ProxyService {
                     profile,
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-                if target_managed_codex_account_id.is_some() {
-                    crate::codex_config::record_codex_managed_oauth_live_auth(auth)
+                if let Some(account_id) = target_managed_codex_account_id.as_deref() {
+                    crate::codex_config::record_codex_managed_oauth_live_auth(auth, account_id)
                         .map_err(|error| format!("记录 Codex 托管认证标记失败: {error}"))?;
                 }
             }
@@ -3271,10 +3271,9 @@ impl ProxyService {
             return Err("Codex 备份必须是 JSON 对象".to_string());
         };
 
-        // Access tokens and refresh tokens rotate independently while Codex is
-        // running, so backup stripping must be account-scoped and content-based
-        // rather than tied to a stale marker fingerprint. A native login of the
-        // same managed account is treated equivalently and remains live-only.
+        // Access and refresh tokens rotate independently while Codex is running,
+        // so backup stripping uses the stable local-account marker plus workspace
+        // ID rather than a token fingerprint.
         if crate::codex_config::codex_live_auth_is_managed_chatgpt_login(existing_auth, account_id)
         {
             // Do not copy the outgoing managed bundle over the target. Keep the
@@ -3608,11 +3607,11 @@ impl ProxyService {
     ) -> Result<(), String> {
         let official_passthrough =
             provider.is_some_and(crate::proxy::providers::is_codex_official_provider);
-        let managed_official = official_passthrough
-            && provider
-                .and_then(|provider| provider.meta.as_ref())
-                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
-                .is_some_and(|account_id| !account_id.trim().is_empty());
+        let managed_account_id = provider
+            .and_then(|provider| provider.meta.as_ref())
+            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            .filter(|account_id| !account_id.trim().is_empty());
+        let managed_official = official_passthrough && managed_account_id.is_some();
         let placeholder_auth = config
             .get("auth")
             .is_some_and(Self::codex_auth_has_proxy_placeholder);
@@ -3644,8 +3643,13 @@ impl ProxyService {
                     Some(&prepared_config),
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-                crate::codex_config::record_codex_managed_oauth_live_auth(auth)
-                    .map_err(|e| format!("记录 Codex 托管认证标记失败: {e}"))?;
+                crate::codex_config::record_codex_managed_oauth_live_auth(
+                    auth,
+                    managed_account_id
+                        .as_deref()
+                        .expect("managed official account checked"),
+                )
+                .map_err(|e| format!("记录 Codex 托管认证标记失败: {e}"))?;
                 return Ok(());
             }
             let live_config = if official_passthrough {
@@ -7602,15 +7606,16 @@ wire_api = "responses"
 
     #[test]
     #[serial]
-    fn codex_snapshot_rollback_preserves_newer_same_account_generation() {
+    fn codex_snapshot_rollback_preserves_newer_native_login_without_marker() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
+        let id_token = crate::codex_config::test_codex_id_token("native-user");
 
         let auth_r0 = json!({
             "auth_mode": "chatgpt",
             "OPENAI_API_KEY": null,
             "tokens": {
-                "id_token": "id-r0",
+                "id_token": id_token,
                 "access_token": "access-r0",
                 "refresh_token": "refresh-r0",
                 "account_id": "acct-a"
@@ -7619,8 +7624,6 @@ wire_api = "responses"
         });
         crate::codex_config::write_codex_live_atomic(&auth_r0, Some("model = \"before\"\n"))
             .expect("seed R0 live");
-        crate::codex_config::record_codex_managed_oauth_live_auth(&auth_r0)
-            .expect("record R0 marker");
         let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()
             .expect("capture transaction snapshot");
 
@@ -7628,7 +7631,7 @@ wire_api = "responses"
             "auth_mode": "chatgpt",
             "OPENAI_API_KEY": null,
             "tokens": {
-                "id_token": "id-r1",
+                "id_token": crate::codex_config::test_codex_id_token("native-user"),
                 "access_token": "access-r1",
                 "refresh_token": "refresh-r1",
                 "account_id": "acct-a"
@@ -7637,8 +7640,6 @@ wire_api = "responses"
         });
         crate::codex_config::write_codex_live_atomic(&auth_r1, Some("model = \"after\"\n"))
             .expect("write concurrent R1 live");
-        crate::codex_config::record_codex_managed_oauth_live_auth(&auth_r1)
-            .expect("record R1 marker");
 
         snapshot
             .restore_preserving_newer_same_account_auth()
@@ -7648,10 +7649,7 @@ wire_api = "responses"
             crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
                 .expect("read restored auth");
         assert_eq!(restored, auth_r1, "newer same-account auth must survive");
-        assert!(
-            crate::codex_config::codex_auth_matches_recorded_managed_oauth(&restored, "acct-a")
-                .expect("check R1 marker")
-        );
+        assert!(!crate::codex_config::codex_managed_oauth_live_auth_marker_exists());
         assert_eq!(
             std::fs::read_to_string(crate::codex_config::get_codex_config_path())
                 .expect("read rolled-back config"),
@@ -7661,24 +7659,25 @@ wire_api = "responses"
 
     #[test]
     #[serial]
-    fn codex_snapshot_rollback_restores_previous_cross_account_generation() {
+    fn codex_snapshot_rollback_restores_previous_local_account_in_same_workspace() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
+        let id_token_a = crate::codex_config::test_codex_id_token("user-a");
 
         let auth_a = json!({
             "auth_mode": "chatgpt",
             "OPENAI_API_KEY": null,
             "tokens": {
-                "id_token": "id-a",
+                "id_token": id_token_a,
                 "access_token": "access-a",
                 "refresh_token": "refresh-a",
-                "account_id": "acct-a"
+                "account_id": "workspace-shared"
             },
             "last_refresh": "2026-01-01T00:00:00Z"
         });
         crate::codex_config::write_codex_live_atomic(&auth_a, Some("model = \"before\"\n"))
             .expect("seed account A live");
-        crate::codex_config::record_codex_managed_oauth_live_auth(&auth_a)
+        crate::codex_config::record_codex_managed_oauth_live_auth(&auth_a, "local-a")
             .expect("record A marker");
         let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()
             .expect("capture account A snapshot");
@@ -7687,16 +7686,16 @@ wire_api = "responses"
             "auth_mode": "chatgpt",
             "OPENAI_API_KEY": null,
             "tokens": {
-                "id_token": "id-b",
+                "id_token": crate::codex_config::test_codex_id_token("user-b"),
                 "access_token": "access-b",
                 "refresh_token": "refresh-b",
-                "account_id": "acct-b"
+                "account_id": "workspace-shared"
             },
             "last_refresh": "2026-01-02T00:00:00Z"
         });
         crate::codex_config::write_codex_live_atomic(&auth_b, Some("model = \"after\"\n"))
             .expect("write account B live");
-        crate::codex_config::record_codex_managed_oauth_live_auth(&auth_b)
+        crate::codex_config::record_codex_managed_oauth_live_auth(&auth_b, "local-b")
             .expect("record B marker");
 
         snapshot
@@ -7708,7 +7707,7 @@ wire_api = "responses"
                 .expect("read restored auth");
         assert_eq!(restored, auth_a, "failed A to B change must restore A");
         assert!(
-            crate::codex_config::codex_auth_matches_recorded_managed_oauth(&restored, "acct-a")
+            crate::codex_config::codex_auth_matches_recorded_managed_oauth(&restored, "local-a")
                 .expect("check restored A marker")
         );
         assert_eq!(
