@@ -199,16 +199,25 @@ impl RequestContext {
     /// - 故障转移开启：超时配置正常生效（0 表示禁用超时）
     /// - 故障转移关闭：超时配置不生效（全部传入 0）
     pub fn create_forwarder(&self, state: &ProxyState) -> RequestForwarder {
+        let retry_rules = self
+            .app_config
+            .retry_rules
+            .iter()
+            .filter(|rule| rule.enabled && rule.retry_count > 0)
+            .cloned()
+            .collect::<Vec<_>>();
+        let needs_precommit_inspection =
+            self.app_config.auto_failover_enabled || !retry_rules.is_empty();
         let (non_streaming_timeout, first_byte_timeout, idle_timeout) =
-            if self.app_config.auto_failover_enabled {
-                // 故障转移开启：使用配置的值（0 = 禁用超时）
+            if needs_precommit_inspection {
+                // 故障转移或特定错误重试开启：在响应提交前保留检查窗口。
                 (
                     self.app_config.non_streaming_timeout as u64,
                     self.app_config.streaming_first_byte_timeout as u64,
                     self.app_config.streaming_idle_timeout as u64,
                 )
             } else {
-                // 故障转移关闭：不启用超时配置
+                // 两类重试均关闭：不启用超时配置
                 log::debug!(
                     "[{}] Failover disabled, timeout configs are bypassed",
                     self.tag
@@ -241,6 +250,7 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            retry_rules,
         )
     }
 

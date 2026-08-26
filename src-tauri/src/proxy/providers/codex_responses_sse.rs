@@ -14,6 +14,7 @@
 //! `output_item_added` / `output_item_done` helpers.
 
 use bytes::Bytes;
+use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
 
 /// Serialize one Responses SSE event with the standard `event:`/`data:` framing.
@@ -342,6 +343,104 @@ pub(crate) fn custom_tool_call_input_done(output_index: u32, item_id: &str, inpu
     )
 }
 
+const MAX_CAPACITY_SHED_SSE_BLOCK_BYTES: usize = 1024 * 1024;
+
+fn is_capacity_shed_error_code(code: &str) -> bool {
+    matches!(
+        code.trim().to_ascii_lowercase().as_str(),
+        "server_is_overloaded" | "server_overloaded" | "slow_down"
+    )
+}
+
+fn sanitize_capacity_shed_payload(mut payload: Value, event_type: Option<&str>) -> Option<Value> {
+    if !matches!(event_type, Some("error" | "response.failed")) {
+        return None;
+    }
+
+    let mut changed = false;
+    for pointer in ["/response/error/code", "/error/code", "/code"] {
+        let should_rewrite = payload
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .is_some_and(is_capacity_shed_error_code);
+        if should_rewrite {
+            if let Some(code) = payload.pointer_mut(pointer) {
+                *code = Value::String("server_error".to_string());
+                changed = true;
+            }
+        }
+    }
+    changed.then_some(payload)
+}
+
+fn sanitize_capacity_shed_block(block: &str) -> Option<String> {
+    let mut event_name = None;
+    let mut data_lines = Vec::new();
+    for line in block.lines() {
+        if let Some(event) = crate::proxy::sse::strip_sse_field(line, "event") {
+            event_name = Some(event.trim().to_string());
+        } else if let Some(data) = crate::proxy::sse::strip_sse_field(line, "data") {
+            data_lines.push(data);
+        }
+    }
+    if data_lines.is_empty() {
+        return None;
+    }
+    let payload: Value = serde_json::from_str(&data_lines.join("\n")).ok()?;
+    let event_type = event_name.filter(|event| !event.is_empty()).or_else(|| {
+        payload
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    if !matches!(event_type.as_deref(), Some("error" | "response.failed")) {
+        return None;
+    }
+    let sanitized = sanitize_capacity_shed_payload(payload, event_type.as_deref())?;
+    log::warn!("[Codex] 流式响应已提交后收到容量降载错误，错误码已改写为 server_error");
+    let data = serde_json::to_string(&sanitized).unwrap_or_default();
+    Some(match event_type {
+        Some(event) => format!("event: {event}\ndata: {data}"),
+        None => format!("data: {data}"),
+    })
+}
+
+pub(crate) fn sanitize_capacity_shed_stream(
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    async_stream::stream! {
+        tokio::pin!(stream);
+        let mut buffer = String::new();
+        let mut utf8_remainder = Vec::new();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &chunk);
+            let mut output = String::new();
+            while let Some(block) = crate::proxy::sse::take_sse_block(&mut buffer) {
+                output.push_str(&sanitize_capacity_shed_block(&block).unwrap_or(block));
+                output.push_str("\n\n");
+            }
+            if !output.is_empty() {
+                yield Ok(Bytes::from(output));
+            }
+            if buffer.len() > MAX_CAPACITY_SHED_SSE_BLOCK_BYTES {
+                yield Ok(Bytes::from(std::mem::take(&mut buffer)));
+            }
+        }
+
+        if !utf8_remainder.is_empty() {
+            crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &[]);
+        }
+        if !buffer.is_empty() {
+            let output = sanitize_capacity_shed_block(&buffer)
+                .map(|block| format!("{block}\n\n"))
+                .unwrap_or(buffer);
+            yield Ok(Bytes::from(output));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,5 +494,68 @@ mod tests {
             .contains("\"type\":\"response.function_call_arguments.delta\""));
         assert!(body(&function_call_arguments_done(1, "fc_x", "{\"a\":1}"))
             .contains("\"arguments\":\"{\\\"a\\\":1}\""));
+    }
+
+    #[test]
+    fn capacity_shed_failed_event_code_becomes_client_retryable() {
+        let block = "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded.\"}}}";
+
+        let sanitized = sanitize_capacity_shed_block(block).expect("capacity event");
+
+        assert!(sanitized.contains("\"code\":\"server_error\""));
+        assert!(sanitized.contains("Our servers are currently overloaded."));
+        assert!(!sanitized.contains("server_is_overloaded"));
+    }
+
+    #[test]
+    fn capacity_shed_error_frame_code_becomes_client_retryable() {
+        let block = "event: error\ndata: {\"type\":\"error\",\"error\":{\"code\":\"slow_down\",\"message\":\"Please retry later.\"}}";
+
+        let sanitized = sanitize_capacity_shed_block(block).expect("capacity event");
+
+        assert!(sanitized.contains("event: error"));
+        assert!(sanitized.contains("\"code\":\"server_error\""));
+        assert!(sanitized.contains("Please retry later."));
+    }
+
+    #[test]
+    fn rate_limit_error_code_is_preserved() {
+        let block = "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"try again in 3s\"}}}";
+
+        assert!(sanitize_capacity_shed_block(block).is_none());
+    }
+
+    #[tokio::test]
+    async fn capacity_shed_stream_sanitizes_split_error_events_after_output() {
+        let chunks = vec![
+            Ok(Bytes::from(
+                "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
+            )),
+            Ok(Bytes::from("event: error\nda")),
+            Ok(Bytes::from(
+                "ta: {\"type\":\"error\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded.\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_overloaded\",\"message\":\"Selected model is at capacity.\"}}}\n\n",
+            )),
+        ];
+
+        let output = sanitize_capacity_shed_stream(futures::stream::iter(chunks))
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<Bytes>, _>>()
+            .expect("sanitized stream");
+        let body = output
+            .iter()
+            .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+            .collect::<String>();
+
+        assert!(body.contains("partial"));
+        assert_eq!(body.matches("\"code\":\"server_error\"").count(), 2);
+        assert!(!body.contains("server_is_overloaded"));
+        assert!(!body.contains("server_overloaded"));
+        assert!(body.contains("Our servers are currently overloaded."));
+        assert!(body.contains("Selected model is at capacity."));
     }
 }
