@@ -40,7 +40,7 @@ pub(crate) fn request_offers_tool_search(body: &Value) -> bool {
 ///   exposes exactly the tools Codex selected.
 pub(crate) fn prepare_xai_tool_search_request(body: &mut Value) -> Result<bool, ProxyError> {
     let offers_tool_search = request_offers_tool_search(body);
-    if has_tool_search_proxy_function(body) {
+    if offers_tool_search && has_tool_search_proxy_function(body) {
         return Err(ProxyError::TransformError(
             "function name ccswitch_tool_search is reserved for the xAI tool_search proxy shim"
                 .to_string(),
@@ -55,7 +55,7 @@ pub(crate) fn prepare_xai_tool_search_request(body: &mut Value) -> Result<bool, 
     let mut loaded_tools = take_additional_tools(body, &mut changed);
     loaded_tools.extend(rewrite_tool_search_history(body, &mut changed));
     if !loaded_tools.is_empty() {
-        changed |= append_loaded_tools(body, loaded_tools)?;
+        changed |= append_loaded_tools(body, loaded_tools, offers_tool_search)?;
     }
     if offers_tool_search {
         changed |= omit_unloaded_top_level_tools(body);
@@ -450,7 +450,11 @@ fn canonical_arguments(arguments: Option<&Value>) -> String {
     }
 }
 
-fn append_loaded_tools(body: &mut Value, loaded_tools: Vec<Value>) -> Result<bool, ProxyError> {
+fn append_loaded_tools(
+    body: &mut Value,
+    loaded_tools: Vec<Value>,
+    reserve_tool_search_proxy_name: bool,
+) -> Result<bool, ProxyError> {
     let Some(obj) = body.as_object_mut() else {
         return Ok(false);
     };
@@ -463,7 +467,8 @@ fn append_loaded_tools(body: &mut Value, loaded_tools: Vec<Value>) -> Result<boo
 
     let mut changed = false;
     for tool in loaded_tools {
-        if tool.get("type").and_then(Value::as_str) == Some("function")
+        if reserve_tool_search_proxy_name
+            && tool.get("type").and_then(Value::as_str) == Some("function")
             && tool
                 .get("name")
                 .and_then(Value::as_str)
@@ -1258,7 +1263,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_proxy_function_name_even_without_search_shim() {
+    fn accepts_proxy_function_name_without_search_shim() {
         let mut body = json!({
             "tools": [{
                 "type": "function",
@@ -1266,6 +1271,42 @@ mod tests {
                 "parameters": {}
             }]
         });
+        assert!(!prepare_xai_tool_search_request(&mut body).unwrap());
+        assert_eq!(body["tools"][0]["name"], TOOL_SEARCH_PROXY_NAME);
+    }
+
+    #[test]
+    fn accepts_loaded_proxy_function_name_without_search_shim() {
+        let mut body = json!({
+            "input": [{
+                "type": "additional_tools",
+                "tools": [{
+                    "type": "function",
+                    "name": TOOL_SEARCH_PROXY_NAME,
+                    "parameters": {}
+                }]
+            }]
+        });
+
+        prepare_xai_tool_search_request(&mut body).unwrap();
+        assert_eq!(body["tools"][0]["name"], TOOL_SEARCH_PROXY_NAME);
+    }
+
+    #[test]
+    fn rejects_loaded_proxy_function_name_with_search_shim() {
+        let mut body = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "function",
+                    "name": TOOL_SEARCH_PROXY_NAME,
+                    "parameters": {}
+                }]
+            }]
+        });
+
         assert!(prepare_xai_tool_search_request(&mut body).is_err());
     }
 

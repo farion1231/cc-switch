@@ -339,6 +339,7 @@ impl CodexToolContext {
         tool: &Value,
         loaded: bool,
         enable_codex_private_tools: bool,
+        reserve_private_proxy_name: bool,
     ) -> Result<(), ProxyError> {
         match tool {
             Value::String(name) => self.add_custom_tool(
@@ -347,13 +348,13 @@ impl CodexToolContext {
                     "name": name
                 }),
                 loaded,
-                enable_codex_private_tools,
+                reserve_private_proxy_name,
             ),
             Value::Object(_) => match tool.get("type").and_then(Value::as_str) {
                 Some("function") => {
-                    self.add_function_tool(tool, None, loaded, enable_codex_private_tools)
+                    self.add_function_tool(tool, None, loaded, reserve_private_proxy_name)
                 }
-                Some("custom") => self.add_custom_tool(tool, loaded, enable_codex_private_tools),
+                Some("custom") => self.add_custom_tool(tool, loaded, reserve_private_proxy_name),
                 Some(TOOL_SEARCH_NATIVE_TYPE) if enable_codex_private_tools => {
                     self.add_tool_search_tool()
                 }
@@ -396,7 +397,12 @@ fn build_tool_context_from_request(
         for tool in tools {
             // Without the private search shim there is no loading phase, so
             // preserve legacy behavior and expose the complete catalog.
-            context.add_response_tool(tool, !offers_tool_search, enable_codex_private_tools)?;
+            context.add_response_tool(
+                tool,
+                !offers_tool_search,
+                enable_codex_private_tools,
+                offers_tool_search,
+            )?;
         }
     }
 
@@ -404,11 +410,11 @@ fn build_tool_context_from_request(
         match body.get("input") {
             Some(Value::Array(items)) => {
                 for item in items {
-                    add_direct_tool_carrier(item, &mut context)?;
+                    add_direct_tool_carrier(item, &mut context, offers_tool_search)?;
                 }
             }
             Some(Value::Object(_)) => {
-                add_direct_tool_carrier(&body["input"], &mut context)?;
+                add_direct_tool_carrier(&body["input"], &mut context, offers_tool_search)?;
             }
             _ => {}
         }
@@ -417,7 +423,11 @@ fn build_tool_context_from_request(
     Ok(context)
 }
 
-fn add_direct_tool_carrier(item: &Value, context: &mut CodexToolContext) -> Result<(), ProxyError> {
+fn add_direct_tool_carrier(
+    item: &Value,
+    context: &mut CodexToolContext,
+    reserve_private_proxy_name: bool,
+) -> Result<(), ProxyError> {
     if !matches!(
         item.get("type").and_then(Value::as_str),
         Some("tool_search_output" | "additional_tools")
@@ -426,7 +436,7 @@ fn add_direct_tool_carrier(item: &Value, context: &mut CodexToolContext) -> Resu
     }
     if let Some(tools) = item.get("tools").and_then(Value::as_array) {
         for tool in tools {
-            context.add_response_tool(tool, true, true)?;
+            context.add_response_tool(tool, true, true, reserve_private_proxy_name)?;
         }
     }
     Ok(())
@@ -699,11 +709,30 @@ mod tests {
     }
 
     #[test]
-    fn proxy_name_is_reserved_for_top_level_functions() {
+    fn proxy_name_is_reserved_when_private_search_shim_is_published() {
+        let body = json!({
+            "tools": [
+                {"type": "tool_search"},
+                {"type": "function", "name": TOOL_SEARCH_PROXY_NAME, "parameters": {}}
+            ]
+        });
+        assert!(build_codex_tool_context_from_request(&body).is_err());
+    }
+
+    #[test]
+    fn proxy_name_is_available_without_private_search_shim() {
         let body = json!({
             "tools": [{"type": "function", "name": TOOL_SEARCH_PROXY_NAME, "parameters": {}}]
         });
-        assert!(build_codex_tool_context_from_request(&body).is_err());
+        let context = build_codex_tool_context_from_request(&body).unwrap();
+        assert_eq!(upstream_names(&context), vec![TOOL_SEARCH_PROXY_NAME]);
+        assert_eq!(
+            context
+                .lookup_upstream_name(TOOL_SEARCH_PROXY_NAME)
+                .unwrap()
+                .kind,
+            CodexToolKind::Function
+        );
     }
 
     #[test]
