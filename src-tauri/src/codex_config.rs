@@ -366,6 +366,11 @@ impl CodexLiveStateSnapshot {
 pub enum CodexCatalogToolProfile {
     ProxyChat,
     NativeResponses,
+    /// Codex talks through cc-switch's takeover proxy to a strict native
+    /// Responses gateway whose private `tool_search` protocol is translated by
+    /// the proxy. This profile keeps the clean native tool surface while
+    /// advertising deferred search support to Codex.
+    ProxiedNativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
     /// tools — the Responses→Anthropic transform keeps only `function` tools.
@@ -1445,6 +1450,12 @@ fn codex_catalog_model_entry(
         }
     }
 
+    if profile == CodexCatalogToolProfile::ProxiedNativeResponses {
+        // This capability is valid only while cc-switch takeover owns the live
+        // endpoint and translates Codex's private tool-search protocol.
+        entry_obj.insert("supports_search_tool".to_string(), json!(true));
+    }
+
     // Per-model reasoning levels override the template's conservative
     // none/high default (e.g. a LiteLLM gateway serving a model that accepts
     // low/medium/high/xhigh/max). Applies to every profile.
@@ -2105,9 +2116,9 @@ fn codex_model_catalog_from_settings(
     // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
     // entry so the proxy can rewrite custom<->function tools as before.
     let template = match profile {
-        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
-            load_codex_native_responses_template()
-        }
+        CodexCatalogToolProfile::NativeResponses
+        | CodexCatalogToolProfile::ProxiedNativeResponses
+        | CodexCatalogToolProfile::Anthropic => load_codex_native_responses_template(),
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
     Ok(Some(codex_model_catalog_from_specs(
@@ -2213,7 +2224,8 @@ pub fn prepare_codex_config_text_with_model_catalog(
             // The Responses→Anthropic transform silently drops the Codex web_search
             // hosted tool, so always disable it here rather than present a dead tool.
             CodexCatalogToolProfile::Anthropic => true,
-            CodexCatalogToolProfile::NativeResponses => {
+            CodexCatalogToolProfile::NativeResponses
+            | CodexCatalogToolProfile::ProxiedNativeResponses => {
                 codex_native_gateway_rejects_web_search(&config_text)
             }
             CodexCatalogToolProfile::ProxyChat => false,
@@ -4414,6 +4426,32 @@ base_url = "https://production.api/v1"
         assert!(template.get("supports_search_tool").is_none());
         assert!(template.get("supports_image_detail_original").is_none());
         assert!(template.get("web_search_tool_type").is_none());
+    }
+
+    #[test]
+    fn proxied_native_catalog_alone_enables_deferred_search() {
+        let settings = json!({
+            "modelCatalog": {"models": [{"model": "grok-4.6"}]}
+        });
+        let direct = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .unwrap()
+        .unwrap();
+        let proxied = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::ProxiedNativeResponses,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(direct["models"][0]["supports_search_tool"], json!(false));
+        assert_eq!(proxied["models"][0]["supports_search_tool"], json!(true));
+        assert!(proxied["models"][0].get("tools").is_none());
+        assert_eq!(proxied["models"][0]["shell_type"], "shell_command");
     }
 
     #[test]

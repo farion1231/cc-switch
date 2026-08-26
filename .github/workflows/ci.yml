@@ -210,10 +210,14 @@ jobs:
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
         run: |
-          $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = cargo test --lib --manifest-path src-tauri/Cargo.toml -- --ignored --list
+          $testExe = Get-ChildItem -Path "src-tauri\target\debug\deps" -Filter "cc_switch_lib-*.exe" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $testExe) {
+            throw "Expected compiled test executable was not found"
+          }
+          $testList = & $testExe --ignored --list
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -221,7 +225,9 @@ jobs:
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
-          cargo test --lib --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
+          $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          & $testExe $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }

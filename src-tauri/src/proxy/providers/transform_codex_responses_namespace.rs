@@ -32,7 +32,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 
-use super::transform_codex_chat::flatten_namespace_tool_name;
+use super::codex_tool_bridge::flatten_namespace_tool_name;
 use crate::proxy::error::ProxyError;
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 
@@ -49,11 +49,36 @@ pub(crate) struct NamespacedName {
 /// flatten; derives names exactly as [`flatten_request_namespaces`] does.
 pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, NamespacedName> {
     let mut map = HashMap::new();
-    let Some(tools) = request_body.get("tools").and_then(Value::as_array) else {
-        return map;
-    };
+    if let Some(tools) = request_body.get("tools").and_then(Value::as_array) {
+        add_namespace_tools_to_restore_map(tools, &mut map, false);
+    }
+    // A discovered namespace is carried in the direct protocol item's `tools`
+    // field rather than the next request's top-level declaration. Include it so
+    // calls to newly loaded tools are restored to Codex's namespaced registry.
+    if let Some(input) = request_body.get("input").and_then(Value::as_array) {
+        for item in input {
+            if matches!(
+                item.get("type").and_then(Value::as_str),
+                Some("tool_search_output" | "additional_tools")
+            ) {
+                if let Some(tools) = item.get("tools").and_then(Value::as_array) {
+                    add_namespace_tools_to_restore_map(tools, &mut map, true);
+                }
+            }
+        }
+    }
+    map
+}
+
+fn add_namespace_tools_to_restore_map(
+    tools: &[Value],
+    map: &mut HashMap<String, NamespacedName>,
+    include_deferred: bool,
+) {
     for tool in tools {
-        if tool.get("type").and_then(Value::as_str) != Some("namespace") {
+        if tool.get("type").and_then(Value::as_str) != Some("namespace")
+            || (!include_deferred && is_deferred_tool(tool))
+        {
             continue;
         }
         let Some(namespace) = tool.get("name").and_then(Value::as_str) else {
@@ -64,7 +89,9 @@ pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, Nam
             continue;
         }
         for child in namespace_children(tool) {
-            if child.get("type").and_then(Value::as_str) != Some("function") {
+            if child.get("type").and_then(Value::as_str) != Some("function")
+                || (!include_deferred && is_deferred_tool(&child))
+            {
                 continue;
             }
             let Some(name) = child.get("name").and_then(Value::as_str) else {
@@ -81,7 +108,6 @@ pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, Nam
             });
         }
     }
-    map
 }
 
 /// Flatten Codex `namespace` tool declarations in a native Responses request
@@ -130,8 +156,12 @@ pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, Proxy
         if namespace.is_empty() {
             continue;
         }
+        let namespace_deferred = is_deferred_tool(tool);
         for child in namespace_children(tool) {
-            if child.get("type").and_then(Value::as_str) != Some("function") {
+            if child.get("type").and_then(Value::as_str) != Some("function")
+                || namespace_deferred
+                || is_deferred_tool(&child)
+            {
                 continue;
             }
             let Some(name) = child.get("name").and_then(Value::as_str).map(str::trim) else {
@@ -181,8 +211,12 @@ pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, Proxy
         let Some(namespace) = tool.get("name").and_then(Value::as_str).map(str::trim) else {
             continue;
         };
+        let namespace_deferred = is_deferred_tool(&tool);
         for child in namespace_children(&tool) {
-            if child.get("type").and_then(Value::as_str) != Some("function") {
+            if child.get("type").and_then(Value::as_str) != Some("function")
+                || namespace_deferred
+                || is_deferred_tool(&child)
+            {
                 continue;
             }
             let Some(name) = child.get("name").and_then(Value::as_str).map(str::trim) else {
@@ -198,6 +232,8 @@ pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, Proxy
             let mut lifted = child.clone();
             if let Some(obj) = lifted.as_object_mut() {
                 obj.insert("name".to_string(), json!(flat));
+                obj.remove("defer_loading");
+                obj.remove("deferLoading");
             }
             flattened.push(lifted);
         }
@@ -246,6 +282,34 @@ pub(crate) fn restore_sse_event_namespaces(
     restore_value(event, map)
 }
 
+/// Restore both flattened namespace calls and the request-scoped xAI function
+/// shim used for Codex's private `tool_search` protocol.
+pub(crate) fn restore_response_tool_calls(
+    value: &mut Value,
+    map: &HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
+) -> bool {
+    let mut changed = restore_response_namespaces(value, map);
+    if restore_tool_search {
+        changed |=
+            super::transform_codex_responses_xai_tool_search::restore_tool_search_calls(value);
+    }
+    changed
+}
+
+fn restore_sse_event_tool_calls(
+    event: &mut Value,
+    map: &HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
+) -> bool {
+    let mut changed = restore_sse_event_namespaces(event, map);
+    if restore_tool_search {
+        changed |=
+            super::transform_codex_responses_xai_tool_search::restore_tool_search_calls(event);
+    }
+    changed
+}
+
 fn namespace_children(tool: &Value) -> Vec<Value> {
     tool.get("tools")
         .or_else(|| tool.get("children"))
@@ -254,21 +318,22 @@ fn namespace_children(tool: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn is_deferred_tool(tool: &Value) -> bool {
+    tool.get("defer_loading")
+        .or_else(|| tool.get("deferLoading"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn rewrite_namespace_qualified_calls(value: &mut Value, owners: &HashMap<String, NamespacedName>) {
     match value {
         Value::Array(items) => {
             for item in items {
-                rewrite_namespace_qualified_calls(item, owners);
+                rewrite_namespace_qualified_call(item, owners);
             }
         }
-        Value::Object(obj) => {
-            if obj.get("type").and_then(Value::as_str) == Some("function_call") {
-                rewrite_namespace_qualified_call(value, owners);
-                return;
-            }
-            for child in obj.values_mut() {
-                rewrite_namespace_qualified_calls(child, owners);
-            }
+        Value::Object(_) => {
+            rewrite_namespace_qualified_call(value, owners);
         }
         _ => {}
     }
@@ -308,39 +373,54 @@ fn rewrite_namespace_qualified_call(
 }
 
 fn restore_value(value: &mut Value, map: &HashMap<String, NamespacedName>) -> bool {
+    if restore_direct_function_call(value, map) {
+        return true;
+    }
+    let Some(obj) = value.as_object_mut() else {
+        return false;
+    };
+
     let mut changed = false;
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                changed |= restore_value(item, map);
-            }
+    if let Some(item) = obj.get_mut("item") {
+        changed |= restore_direct_function_call(item, map);
+    }
+    if let Some(output) = obj.get_mut("output").and_then(Value::as_array_mut) {
+        for item in output {
+            changed |= restore_direct_function_call(item, map);
         }
-        Value::Object(obj) => {
-            if obj.get("type").and_then(Value::as_str) == Some("function_call") {
-                if let Some(flat) = obj.get("name").and_then(Value::as_str) {
-                    if let Some(entry) = map.get(flat) {
-                        obj.insert("name".to_string(), json!(entry.name));
-                        obj.insert("namespace".to_string(), json!(entry.namespace));
-                        changed = true;
-                    }
-                }
-            }
-            for child in obj.values_mut() {
-                changed |= restore_value(child, map);
-            }
-        }
-        _ => {}
+    }
+    if let Some(response) = obj.get_mut("response") {
+        changed |= restore_value(response, map);
     }
     changed
+}
+
+fn restore_direct_function_call(value: &mut Value, map: &HashMap<String, NamespacedName>) -> bool {
+    let Some(obj) = value.as_object_mut() else {
+        return false;
+    };
+    if obj.get("type").and_then(Value::as_str) != Some("function_call") {
+        return false;
+    }
+    let Some(flat) = obj.get("name").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(entry) = map.get(flat) else {
+        return false;
+    };
+    obj.insert("name".to_string(), json!(entry.name));
+    obj.insert("namespace".to_string(), json!(entry.namespace));
+    true
 }
 
 /// Wrap a native Responses SSE byte stream, restoring flattened `function_call`
 /// names in each event back to their namespace identity. Events that carry no
 /// affected function call pass through with their inner content preserved
 /// verbatim (only the block delimiter is normalized to `\n\n`).
-pub(crate) fn create_namespace_restore_sse_stream<E>(
+pub(crate) fn create_tool_call_restore_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     map: HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where
     E: std::error::Error + Send + 'static,
@@ -359,7 +439,7 @@ where
                         if block.trim().is_empty() {
                             continue;
                         }
-                        yield Ok(restore_sse_block(&block, &map));
+                        yield Ok(restore_sse_block(&block, &map, restore_tool_search));
                     }
                 }
                 Err(e) => {
@@ -376,7 +456,7 @@ where
         }
         let tail = std::mem::take(&mut buffer);
         if !tail.trim().is_empty() {
-            yield Ok(restore_sse_block(&tail, &map));
+            yield Ok(restore_sse_block(&tail, &map, restore_tool_search));
         }
     }
 }
@@ -384,7 +464,11 @@ where
 /// Restore one SSE block. When the block's `data:` JSON carries an affected
 /// function call, re-serialize just that line; otherwise the original block text
 /// is preserved and only the `\n\n` delimiter re-appended.
-fn restore_sse_block(block: &str, map: &HashMap<String, NamespacedName>) -> Bytes {
+fn restore_sse_block(
+    block: &str,
+    map: &HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
+) -> Bytes {
     let mut event_name: Option<&str> = None;
     let mut data_parts: Vec<&str> = Vec::new();
     for line in block.lines() {
@@ -411,7 +495,7 @@ fn restore_sse_block(block: &str, map: &HashMap<String, NamespacedName>) -> Byte
         Err(_) => return Bytes::from(format!("{block}\n\n")),
     };
 
-    if !restore_sse_event_namespaces(&mut event, map) {
+    if !restore_sse_event_tool_calls(&mut event, map, restore_tool_search) {
         return Bytes::from(format!("{block}\n\n"));
     }
 
@@ -496,6 +580,93 @@ mod tests {
     }
 
     #[test]
+    fn flatten_omits_deferred_children_until_loaded() {
+        let mut body = json!({
+            "tools": [{
+                "type": "namespace",
+                "name": "mcp__large__",
+                "tools": [
+                    {"type": "function", "name": "hot", "defer_loading": false, "parameters": {}},
+                    {"type": "function", "name": "cold_a", "defer_loading": true, "parameters": {}},
+                    {"type": "function", "name": "cold_b", "deferLoading": true, "parameters": {}}
+                ]
+            }]
+        });
+
+        assert!(flatten_request_namespaces(&mut body).unwrap());
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "mcp__large____hot");
+        assert!(tools[0].get("defer_loading").is_none());
+    }
+
+    #[test]
+    fn restore_map_includes_discovered_namespaces() {
+        let body = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__mail__",
+                    "tools": [{"type": "function", "name": "search", "parameters": {}}]
+                }]
+            }]
+        });
+        let map = namespace_restore_map(&body);
+        assert_eq!(
+            map.get("mcp__mail____search"),
+            Some(&NamespacedName {
+                namespace: "mcp__mail__".to_string(),
+                name: "search".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn restore_map_excludes_omitted_deferred_catalog_children() {
+        let body = json!({
+            "tools": [
+                {"type": "function", "name": "mcp__mail____search", "parameters": {}},
+                {
+                    "type": "namespace",
+                    "name": "mcp__mail__",
+                    "tools": [{
+                        "type": "function",
+                        "name": "search",
+                        "defer_loading": true,
+                        "parameters": {}
+                    }]
+                }
+            ]
+        });
+        assert!(namespace_restore_map(&body).is_empty());
+    }
+
+    #[test]
+    fn restore_map_includes_additional_tool_namespaces() {
+        let body = json!({
+            "input": [{
+                "type": "additional_tools",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__calendar__",
+                    "defer_loading": true,
+                    "tools": [{
+                        "type": "function",
+                        "name": "list_events",
+                        "defer_loading": true,
+                        "parameters": {}
+                    }]
+                }]
+            }]
+        });
+        let map = namespace_restore_map(&body);
+        assert!(map.contains_key("mcp__calendar____list_events"));
+    }
+
+    #[test]
     fn flatten_is_noop_without_namespace_tools() {
         let mut body = json!({
             "tools": [ { "type": "function", "name": "plain", "parameters": {} } ]
@@ -566,6 +737,92 @@ mod tests {
     }
 
     #[test]
+    fn restore_tool_calls_keeps_namespaced_child_named_tool_search() {
+        let request = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__tools__",
+                    "tools": [{"type": "function", "name": "tool_search", "parameters": {}}]
+                }]
+            }]
+        });
+        let map = namespace_restore_map(&request);
+        let mut response = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "mcp__tools____tool_search",
+                "call_id": "c1",
+                "arguments": "{}"
+            }]
+        });
+
+        assert!(restore_response_tool_calls(&mut response, &map, true));
+        let call = &response["output"][0];
+        assert_eq!(call["type"], "function_call");
+        assert_eq!(call["name"], "tool_search");
+        assert_eq!(call["namespace"], "mcp__tools__");
+    }
+
+    #[test]
+    fn restore_tool_calls_keeps_namespaced_child_named_proxy_shim() {
+        let request = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__tools__",
+                    "tools": [{
+                        "type": "function",
+                        "name": "ccswitch_tool_search",
+                        "parameters": {}
+                    }]
+                }]
+            }]
+        });
+        let map = namespace_restore_map(&request);
+        let mut response = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "mcp__tools____ccswitch_tool_search",
+                "call_id": "c1",
+                "arguments": "{}"
+            }]
+        });
+
+        assert!(restore_response_tool_calls(&mut response, &map, true));
+        let call = &response["output"][0];
+        assert_eq!(call["type"], "function_call");
+        assert_eq!(call["name"], "ccswitch_tool_search");
+        assert_eq!(call["namespace"], "mcp__tools__");
+    }
+
+    #[test]
+    fn restore_does_not_rewrite_nested_business_json() {
+        let map = namespace_restore_map(&namespace_request());
+        let nested = json!({
+            "type": "function_call",
+            "name": "mcp__files____read",
+            "call_id": "business-data"
+        });
+        let mut response = json!({
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "metadata": nested.clone()}]
+            }]
+        });
+
+        assert!(!restore_response_namespaces(&mut response, &map));
+        assert_eq!(response["output"][0]["content"][0]["metadata"], nested);
+    }
+
+    #[test]
     fn long_flat_names_stay_consistent_between_flatten_and_restore() {
         let long_child = "a".repeat(80);
         let body = json!({
@@ -604,7 +861,7 @@ mod tests {
             Ok(Bytes::from(done)),
         ];
         let input = stream::iter(chunks);
-        let out = create_namespace_restore_sse_stream(input, map);
+        let out = create_tool_call_restore_sse_stream(input, map, false);
         futures::pin_mut!(out);
 
         let mut collected = String::new();
@@ -619,5 +876,24 @@ mod tests {
         // Unrelated events preserved verbatim.
         assert!(collected.contains("\"delta\":\"hi\""));
         assert!(collected.contains("[DONE]"));
+    }
+
+    #[tokio::test]
+    async fn sse_stream_restores_xai_tool_search_function() {
+        let added = "event: response.output_item.added\n\
+                     data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"ccswitch_tool_search\",\"call_id\":\"search_1\",\"arguments\":\"{\\\"query\\\":\\\"mail\\\"}\"}}\n\n";
+        let input = stream::iter(vec![Ok::<Bytes, std::io::Error>(Bytes::from(added))]);
+        let out = create_tool_call_restore_sse_stream(input, HashMap::new(), true);
+        futures::pin_mut!(out);
+
+        let mut collected = String::new();
+        while let Some(chunk) = out.next().await {
+            collected.push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
+        }
+
+        assert!(collected.contains("\"type\":\"tool_search_call\""));
+        assert!(collected.contains("\"execution\":\"client\""));
+        assert!(collected.contains("\"query\":\"mail\""));
+        assert!(!collected.contains("\"name\":\"ccswitch_tool_search\""));
     }
 }

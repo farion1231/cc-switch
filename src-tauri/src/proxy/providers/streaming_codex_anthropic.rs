@@ -7,6 +7,10 @@
 //! this set of events.
 
 use super::codex_responses_sse as sse;
+use super::codex_tool_bridge::{
+    response_tool_call_item_from_upstream_name, response_tool_call_item_id_from_upstream_name,
+    CodexToolContext,
+};
 use super::transform_codex_anthropic::{
     build_responses_usage_from_anthropic, map_anthropic_stop_reason_to_status,
     responses_reasoning_item_from_anthropic_block,
@@ -14,10 +18,6 @@ use super::transform_codex_anthropic::{
 #[cfg(test)]
 use super::transform_codex_anthropic::{
     decode_anthropic_thinking_block, ANTHROPIC_THINKING_ENCRYPTED_PREFIX,
-};
-use super::transform_codex_chat::{
-    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
-    CodexToolContext,
 };
 use super::transform_responses::sanitize_anthropic_tool_use_input_json;
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
@@ -210,9 +210,12 @@ impl AnthropicToResponsesState {
                     .filter(|v| v.as_object().map(|o| !o.is_empty()).unwrap_or(false))
                     .map(|v| v.to_string())
                     .unwrap_or_default();
-                let item_id =
-                    response_tool_call_item_id_from_chat_name(call_id, name, &self.tool_context);
-                let item = response_tool_call_item_from_chat_name(
+                let item_id = response_tool_call_item_id_from_upstream_name(
+                    call_id,
+                    name,
+                    &self.tool_context,
+                );
+                let item = response_tool_call_item_from_upstream_name(
                     &item_id,
                     "in_progress",
                     call_id,
@@ -298,7 +301,9 @@ impl AnthropicToResponsesState {
                     .unwrap_or("");
                 block.accum.push_str(partial);
                 // The Read tool needs to be sanitized at close time, to avoid emitting pages:"" deltas mid-stream
-                if block.name == "Read" || self.tool_context.is_custom_tool_chat_name(&block.name) {
+                if block.name == "Read"
+                    || self.tool_context.is_custom_tool_upstream_name(&block.name)
+                {
                     return Vec::new();
                 }
                 vec![sse::function_call_arguments_delta(
@@ -373,8 +378,8 @@ impl AnthropicToResponsesState {
                 } else {
                     canonicalize_tool_arguments_str(&raw_input)
                 };
-                let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&name);
-                let item = response_tool_call_item_from_chat_name(
+                let is_custom_tool = self.tool_context.is_custom_tool_upstream_name(&name);
+                let item = response_tool_call_item_from_upstream_name(
                     &item_id,
                     if self.stream_truncated {
                         "incomplete"
@@ -1149,7 +1154,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_namespace_tool_stream_restores_namespace() {
-        let context = super::super::transform_codex_chat::build_codex_tool_context_from_request(
+        let context = super::super::codex_tool_bridge::build_codex_tool_context_from_request(
             &json!({
                 "tools": [{
                     "type": "namespace",
@@ -1157,7 +1162,8 @@ mod tests {
                     "tools": [{"type": "function", "name": "read", "parameters": {"type": "object"}}]
                 }]
             }),
-        );
+        )
+        .unwrap();
         let input = concat!(
             "event: message_start\n",
             "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_ns\",\"model\":\"claude\"}}\n\n",

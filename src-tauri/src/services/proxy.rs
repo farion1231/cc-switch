@@ -3600,6 +3600,20 @@ impl ProxyService {
         auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
     }
 
+    fn codex_takeover_catalog_tool_profile(
+        provider: Option<&Provider>,
+    ) -> crate::codex_config::CodexCatalogToolProfile {
+        match provider {
+            Some(provider) if provider.is_xai_oauth() => {
+                // Only takeover mode owns the proxy bridge that converts
+                // Codex's private deferred-search protocol for xAI.
+                crate::codex_config::CodexCatalogToolProfile::ProxiedNativeResponses
+            }
+            Some(provider) => crate::proxy::providers::resolve_codex_catalog_tool_profile(provider),
+            None => crate::codex_config::CodexCatalogToolProfile::ProxyChat,
+        }
+    }
+
     fn write_codex_takeover_live_for_provider(
         &self,
         config: &Value,
@@ -3622,9 +3636,7 @@ impl ProxyService {
         // makes Codex supply its native authorization.
         if official_passthrough || placeholder_auth {
             let config_str = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
-            let profile = provider
-                .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
-                .unwrap_or(crate::codex_config::CodexCatalogToolProfile::ProxyChat);
+            let profile = Self::codex_takeover_catalog_tool_profile(provider);
             let prepared_config =
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
                     config, config_str, profile,
@@ -4361,6 +4373,30 @@ mod tests {
             .expect("env should exist");
         assert_env_str(env, "ANTHROPIC_API_KEY", None);
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn codex_xai_search_profile_is_takeover_only() {
+        let mut provider = Provider::with_id(
+            "xai-codex".to_string(),
+            "xAI Codex".to_string(),
+            json!({}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            crate::proxy::providers::resolve_codex_catalog_tool_profile(&provider),
+            crate::codex_config::CodexCatalogToolProfile::NativeResponses
+        );
+        assert_eq!(
+            ProxyService::codex_takeover_catalog_tool_profile(Some(&provider)),
+            crate::codex_config::CodexCatalogToolProfile::ProxiedNativeResponses
+        );
     }
 
     #[test]
