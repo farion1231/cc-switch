@@ -26,6 +26,7 @@ export const APP_IDS: AppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "kimi",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -38,6 +39,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   openclaw: true,
   hermes: true,
   pi: true,
+  kimi: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -93,6 +95,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "kimi",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -192,6 +195,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  kimi: {
+    label: "Kimi",
+    icon: (
+      <ProviderIcon
+        icon="kimi"
+        name="Kimi"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-indigo-400/10 ring-1 ring-indigo-400/20 hover:bg-indigo-400/20 text-indigo-500 dark:text-indigo-300",
+    badgeClass:
+      "bg-indigo-400/10 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-400/20 border-0 gap-1.5",
   },
 };
 

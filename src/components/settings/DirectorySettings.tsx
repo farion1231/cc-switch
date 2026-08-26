@@ -22,6 +22,7 @@ interface DirectorySettingsProps {
   openclawDir?: string;
   hermesDir?: string;
   piDir?: string;
+  kimiDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -41,6 +42,7 @@ export function DirectorySettings({
   openclawDir,
   hermesDir,
   piDir,
+  kimiDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -183,6 +185,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("pi", val)}
           onBrowse={() => onBrowseDirectory("pi")}
           onReset={() => onResetDirectory("pi")}
+        />
+
+        <DirectoryInput
+          label={t("settings.kimiConfigDir")}
+          description={undefined}
+          value={kimiDir}
+          resolvedValue={resolvedDirs.kimi}
+          placeholder={t("settings.browsePlaceholderKimi")}
+          onChange={(val) => onDirectoryChange("kimi", val)}
+          onBrowse={() => onBrowseDirectory("kimi")}
+          onReset={() => onResetDirectory("kimi")}
         />
       </section>
     </div>

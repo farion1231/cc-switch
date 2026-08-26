@@ -91,7 +91,8 @@ type ProviderFilter =
   | "openclaw"
   | "gemini"
   | "hermes"
-  | "pi";
+  | "pi" |
+  "kimi";
 
 type SessionListViewMode = "flat" | "grouped";
 

@@ -19,6 +19,8 @@ fn parse_known_apps_case_insensitive_and_trim() {
         Ok(AppType::Claude)
     ));
     assert!(matches!(AppType::from_str("\tcoDeX\t"), Ok(AppType::Codex)));
+    assert!(matches!(AppType::from_str("kimi"), Ok(AppType::Kimi)));
+    assert!(matches!(AppType::from_str("KIMI"), Ok(AppType::Kimi)));
 }
 
 #[test]

@@ -43,6 +43,7 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
+import { invalidateKimiProviderCaches } from "@/hooks/useKimi";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
@@ -239,7 +240,8 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
-      sharedFeatureApp !== "pi"
+      sharedFeatureApp !== "pi" &&
+      sharedFeatureApp !== "kimi"
     ) {
       setCurrentView("providers");
     }
@@ -316,7 +318,8 @@ function App() {
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
-    sharedFeatureApp === "pi";
+    sharedFeatureApp === "pi" ||
+    sharedFeatureApp === "kimi";
   const hasMcpSupport = sharedFeatureApp !== "pi";
 
   const {
@@ -758,6 +761,8 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "kimi") {
+        await invalidateKimiProviderCaches(queryClient);
       }
       toast.success(
         activeApp === "pi"
@@ -814,7 +819,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "kimi"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -1125,7 +1131,8 @@ function App() {
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
-                        activeApp === "pi"
+                        activeApp === "pi" ||
+                        activeApp === "kimi"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1148,7 +1155,7 @@ function App() {
                       onSetAsDefault={
                         activeApp === "openclaw"
                           ? setAsDefaultModel
-                          : activeApp === "hermes"
+                          : activeApp === "hermes" || activeApp === "kimi"
                             ? switchProvider
                             : undefined
                       }
@@ -1369,7 +1376,11 @@ function App() {
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
-              (activeApp === "claude-desktop" || proxyAppId) && (
+              (activeApp === "claude-desktop" || proxyAppId) &&
+              activeApp !== "opencode" &&
+              activeApp !== "openclaw" &&
+              activeApp !== "hermes" &&
+              activeApp !== "kimi" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
