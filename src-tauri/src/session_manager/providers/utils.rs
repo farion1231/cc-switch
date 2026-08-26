@@ -8,6 +8,13 @@ use serde_json::Value;
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
 
+/// Maximum number of characters for session summary previews. Longer than
+/// `TITLE_MAX_CHARS` because summaries are used for in-detail search and
+/// previews, but still bounded so a user who pastes a multi-KB document as
+/// their first message does not bloat the Session Manager payload or
+/// `useSessionSearch`'s index.
+pub const SUMMARY_MAX_CHARS: usize = 240;
+
 /// Read the first `head_n` lines and last `tail_n` lines from a file.
 /// For small files (< 16 KB), reads all lines once to avoid unnecessary seeking.
 pub fn read_head_tail_lines(
