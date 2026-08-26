@@ -297,7 +297,28 @@ fn sync_login_locked(
     for id in auth_provider_ids {
         // An explicit models.json node is already represented by the normal
         // editable provider path and always wins over the /login projection.
+        // 首次同步时两份文件可能已经同时存在，仍需记录登录来源，确保显式
+        // 节点以后移除时可以恢复为只读卡片。
         if native.contains_key(id) {
+            if let Some(existing) = saved.get(id) {
+                let previous_origin = has_pi_login_origin(existing);
+                let previous_synthetic = existing
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.pi_login_synthetic);
+                if !previous_origin
+                    || previous_synthetic != Some(false)
+                    || is_pi_login_provider(existing)
+                {
+                    let mut explicit = existing.clone();
+                    let meta = explicit.meta.get_or_insert_with(ProviderMeta::default);
+                    meta.provider_type = None;
+                    meta.pi_login_origin = Some(true);
+                    meta.pi_login_synthetic = Some(false);
+                    state.db.save_provider(PI_APP, &explicit)?;
+                    changed += 1;
+                }
+            }
             continue;
         }
 
@@ -850,8 +871,9 @@ mod tests {
         let state = state();
         let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
         fs::create_dir_all(&agent_dir).expect("create agent directory");
+        let models_path = agent_dir.join("models.json");
         fs::write(
-            agent_dir.join("models.json"),
+            &models_path,
             r#"{"providers":{"deepseek":{"name":"Explicit DeepSeek","futureField":true}}}"#,
         )
         .expect("write models");
@@ -867,6 +889,16 @@ mod tests {
         assert_eq!(deepseek.name, "Explicit DeepSeek");
         assert_eq!(deepseek.settings_config["futureField"], json!(true));
         assert!(!is_pi_login_provider(deepseek));
+        assert!(has_pi_login_origin(deepseek));
+        assert!(!is_synthetic_pi_login_provider(deepseek));
+
+        fs::write(&models_path, r#"{"providers":{}}"#).expect("remove explicit provider");
+        let providers = ProviderService::list(&state, AppType::Pi)
+            .expect("restore login provider after explicit removal");
+        let deepseek = &providers["deepseek"];
+        assert!(is_pi_login_provider(deepseek));
+        assert!(!is_synthetic_pi_login_provider(deepseek));
+        assert_eq!(deepseek.settings_config["futureField"], json!(true));
     }
 
     #[test]

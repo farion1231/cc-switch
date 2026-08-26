@@ -707,6 +707,7 @@ export function ProviderCard({
                   : undefined
               }
               onConfigureUsage={
+                isReadOnly ||
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
                 (isCodexOauth && !isBoundCodexOfficial) ||
