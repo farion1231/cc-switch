@@ -348,50 +348,44 @@ fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
 }
 
 fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
-    for message in messages.iter_mut() {
+    messages.retain_mut(|message| {
         if message.get("role").and_then(|value| value.as_str()) != Some("system") {
-            continue;
+            return true;
         }
 
         let Some(content) = message.get_mut("content") else {
-            continue;
+            return true;
         };
 
         match content {
             Value::String(text) => {
+                let is_marker = is_anthropic_total_tokens_marker(text);
                 strip_anthropic_total_tokens_marker(text);
+                !is_marker
             }
             Value::Array(content_parts) => {
+                let mut stripped_marker = false;
                 content_parts.retain_mut(|part| {
                     let Some(Value::String(text)) = part.get_mut("text") else {
                         return true;
                     };
 
-                    let is_marker = is_anthropic_total_tokens_marker(text);
-                    strip_anthropic_total_tokens_marker(text);
-                    !(is_marker && text.is_empty())
+                    if is_anthropic_total_tokens_marker(text) {
+                        stripped_marker = true;
+                        return false;
+                    }
+
+                    true
                 });
-            }
-            _ => {}
-        }
-    }
 
-    // Removing a marker can leave only the line breaks that surrounded it.
-    // Drop those system messages before counting them, otherwise their number
-    // would still grow with every turn and change the cached prefix.
-    messages.retain(|message| {
-        if message.get("role").and_then(|value| value.as_str()) != Some("system") {
-            return true;
-        }
-
-        match message.get("content") {
-            Some(Value::String(text)) => !text.trim().is_empty(),
-            Some(Value::Array(content_parts)) => {
-                !content_parts.is_empty()
-                    && !content_parts.iter().all(|part| {
+                // A marker-only content array should disappear with its
+                // message. Preserve any other meaningful content, including
+                // non-text blocks, and preserve unrelated blank system parts.
+                !stripped_marker
+                    || content_parts.iter().any(|part| {
                         part.get("text")
                             .and_then(Value::as_str)
-                            .is_some_and(|text| text.trim().is_empty())
+                            .is_none_or(|text| !text.trim().is_empty())
                     })
             }
             _ => true,
@@ -426,14 +420,14 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
         }
 
         match message.get("content") {
-            Some(Value::String(text)) if !text.trim().is_empty() => parts.push(text.clone()),
+            Some(Value::String(text)) if !text.is_empty() => parts.push(text.clone()),
             Some(Value::Array(content_parts)) => {
                 let text = content_parts
                     .iter()
                     .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
                     .collect::<Vec<_>>()
                     .join("\n");
-                if !text.trim().is_empty() {
+                if !text.is_empty() {
                     parts.push(text);
                 }
             }
@@ -1066,6 +1060,24 @@ mod tests {
             result["messages"][0]["content"],
             "<total_tokens>XML example</total_tokens>"
         );
+        assert_eq!(result["messages"][1]["content"], "Hello");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_preserves_unrelated_blank_system_message() {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "system", "content": "\n"},
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(result["messages"][0]["content"], "\n");
         assert_eq!(result["messages"][1]["content"], "Hello");
     }
 
