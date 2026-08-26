@@ -55,43 +55,44 @@ pub(crate) fn strip_leading_anthropic_billing_header(text: &str) -> &str {
     }
 }
 
-/// Strip Claude Code's per-turn context-budget marker from system text.
+/// Recognize Claude Code's standalone per-turn context-budget marker.
 ///
 /// Claude Code sends this marker as a standalone Anthropic `system` message
 /// during multi-turn conversations. OpenAI-compatible endpoints do not use it,
 /// and merging the changing marker into the first system message prevents
-/// stable prompt-prefix caching (#6789). Only callers handling system text
-/// should use this helper; user and assistant content must remain untouched.
+/// stable prompt-prefix caching (#6789).
+///
+/// The payload shape is intentionally strict. A user-authored XML element with
+/// the same tag must remain intact unless it is the known Claude marker form.
+fn is_anthropic_total_tokens_marker(text: &str) -> bool {
+    let text = text.trim();
+    let Some(payload) = text
+        .strip_prefix(ANTHROPIC_TOTAL_TOKENS_OPEN_TAG)
+        .and_then(|text| text.strip_suffix(ANTHROPIC_TOTAL_TOKENS_CLOSE_TAG))
+    else {
+        return false;
+    };
+
+    let mut fields = payload.split_whitespace();
+    let Some(token_count) = fields.next() else {
+        return false;
+    };
+
+    !token_count.is_empty()
+        && token_count.bytes().all(|byte| byte.is_ascii_digit())
+        && fields.next() == Some("tokens")
+        && fields.next() == Some("left")
+        && fields.next().is_none()
+}
+
+/// Remove Claude Code's standalone per-turn context-budget marker.
+///
+/// Only callers handling system text should use this helper; user and
+/// assistant content must remain untouched.
 fn strip_anthropic_total_tokens_marker(text: &mut String) {
-    if !text.contains(ANTHROPIC_TOTAL_TOKENS_OPEN_TAG) {
-        return;
+    if is_anthropic_total_tokens_marker(text) {
+        text.clear();
     }
-
-    let original = text.clone();
-    let mut stripped = String::with_capacity(original.len());
-    let mut remaining = original.as_str();
-
-    loop {
-        let Some(open_offset) = remaining.find(ANTHROPIC_TOTAL_TOKENS_OPEN_TAG) else {
-            stripped.push_str(remaining);
-            break;
-        };
-
-        stripped.push_str(&remaining[..open_offset]);
-        let content_start = open_offset + ANTHROPIC_TOTAL_TOKENS_OPEN_TAG.len();
-        let Some(close_offset) = remaining[content_start..].find(ANTHROPIC_TOTAL_TOKENS_CLOSE_TAG)
-        else {
-            // Preserve an unterminated marker rather than deleting the rest of
-            // the prompt when the input is malformed or user-authored.
-            stripped.push_str(&remaining[open_offset..]);
-            break;
-        };
-
-        remaining =
-            &remaining[content_start + close_offset + ANTHROPIC_TOTAL_TOKENS_CLOSE_TAG.len()..];
-    }
-
-    *text = stripped;
 }
 
 /// Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)
@@ -366,9 +367,9 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
                         return true;
                     };
 
-                    let had_marker = text.contains(ANTHROPIC_TOTAL_TOKENS_OPEN_TAG);
+                    let is_marker = is_anthropic_total_tokens_marker(text);
                     strip_anthropic_total_tokens_marker(text);
-                    !(had_marker && text.trim().is_empty())
+                    !(is_marker && text.is_empty())
                 });
             }
             _ => {}
@@ -978,8 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_strips_total_tokens_from_system_content_without_touching_user_text()
-    {
+    fn test_anthropic_to_openai_preserves_embedded_total_tokens_text() {
         let input = json!({
             "model": "deepseek-v4-flash",
             "max_tokens": 1024,
@@ -992,7 +992,10 @@ mod tests {
 
         let result = anthropic_to_openai(input).unwrap();
 
-        assert_eq!(result["messages"][0]["content"], "Stable system ");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Stable system <total_tokens>15000000 tokens left</total_tokens>"
+        );
         assert_eq!(
             result["messages"][1]["content"],
             "Keep this literal: <total_tokens>15000000 tokens left</total_tokens>"
@@ -1041,6 +1044,29 @@ mod tests {
             result["messages"][0]["content"],
             "Keep this literal: <total_tokens>unfinished"
         );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_preserves_unknown_total_tokens_payload() {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "<total_tokens>XML example</total_tokens>"
+                },
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        assert_eq!(
+            result["messages"][0]["content"],
+            "<total_tokens>XML example</total_tokens>"
+        );
+        assert_eq!(result["messages"][1]["content"], "Hello");
     }
 
     #[test]
