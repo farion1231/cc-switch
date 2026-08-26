@@ -19,10 +19,17 @@ fn should_sync_codex_mcp() -> bool {
     crate::codex_config::get_codex_config_dir().exists()
 }
 
+fn is_unmanaged_server(id: &str) -> bool {
+    crate::codex_config::is_codex_unmanaged_mcp_server(id)
+}
+
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
 fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     let mut out = HashMap::new();
     for (id, entry) in cfg.servers.iter() {
+        if is_unmanaged_server(id) {
+            continue;
+        }
         let enabled = entry
             .get("enabled")
             .and_then(|v| v.as_bool())
@@ -67,6 +74,10 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
     let mut import_servers_tbl = |servers_tbl: &toml::value::Table| {
         let mut changed = 0usize;
         for (id, entry_val) in servers_tbl.iter() {
+            if is_unmanaged_server(id) {
+                log::debug!("跳过 Codex 非托管 MCP '{id}'");
+                continue;
+            }
             let Some(entry_tbl) = entry_val.as_table() else {
                 continue;
             };
@@ -340,7 +351,8 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
     }
 
     // 6) 写回（仅改 TOML，不触碰 auth.json）；toml_edit 会尽量保留未改区域的注释/空白/顺序
-    let new_text = doc.to_string();
+    let new_text =
+        crate::codex_config::preserve_unmanaged_codex_mcp_servers(&doc.to_string(), &base_text)?;
     let path = crate::codex_config::get_codex_config_path();
     crate::config::write_text_file(&path, &new_text)?;
     Ok(())
@@ -421,6 +433,9 @@ pub fn sync_single_server_to_codex(
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
+    if is_unmanaged_server(id) {
+        return Ok(());
+    }
     if !should_sync_codex_mcp() {
         return Ok(());
     }
@@ -464,6 +479,9 @@ pub fn sync_single_server_to_codex(
 /// 从 Codex live 配置中移除单个 MCP 服务器
 /// 从正确的 [mcp_servers] 表中删除，同时清理可能存在于错误位置 [mcp.servers] 的数据
 pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
+    if is_unmanaged_server(id) {
+        return Ok(());
+    }
     if !should_sync_codex_mcp() {
         return Ok(());
     }

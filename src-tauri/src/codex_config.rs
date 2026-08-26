@@ -23,6 +23,17 @@ pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+/// MCP entries that belong to Codex itself rather than CC Switch.
+///
+/// These entries may be present in the live config written by Codex App.
+/// CC Switch must preserve them during provider/config writes, but must not
+/// import, update, enable, or remove them from its MCP database.
+pub const CODEX_UNMANAGED_MCP_SERVER_IDS: &[&str] = &["node_repl"];
+
+pub fn is_codex_unmanaged_mcp_server(id: &str) -> bool {
+    CODEX_UNMANAGED_MCP_SERVER_IDS.contains(&id)
+}
+
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -786,8 +797,8 @@ pub fn write_codex_live_atomic(
     } else {
         None
     };
-    let _old_config = if config_path.exists() {
-        Some(fs::read(&config_path).map_err(|e| AppError::io(&config_path, e))?)
+    let old_config = if config_path.exists() {
+        Some(fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?)
     } else {
         None
     };
@@ -797,6 +808,8 @@ pub fn write_codex_live_atomic(
         Some(s) => s.to_string(),
         None => String::new(),
     };
+    let cfg_text =
+        preserve_unmanaged_codex_mcp_servers(&cfg_text, old_config.as_deref().unwrap_or_default())?;
     if !cfg_text.trim().is_empty() {
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
     }
@@ -872,12 +885,90 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
         Some(config_text) => config_text.to_string(),
         None => String::new(),
     };
+    let old_config = if config_path.exists() {
+        Some(fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?)
+    } else {
+        None
+    };
+    let cfg_text =
+        preserve_unmanaged_codex_mcp_servers(&cfg_text, old_config.as_deref().unwrap_or_default())?;
 
     if !cfg_text.trim().is_empty() {
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
     }
 
     write_text_file(&config_path, &cfg_text)
+}
+
+/// Preserve Codex-owned MCP entries when CC Switch writes a new config.
+///
+/// The current live config is authoritative for unmanaged entries. If an
+/// unmanaged entry is absent from the current live config, it is removed from
+/// the proposed CC Switch config so a provider snapshot cannot reintroduce it.
+/// Invalid existing TOML is left alone and the proposed config is returned
+/// unchanged; the normal write validation still reports errors for the new
+/// config.
+pub fn preserve_unmanaged_codex_mcp_servers(
+    proposed_config: &str,
+    existing_live_config: &str,
+) -> Result<String, AppError> {
+    if existing_live_config.trim().is_empty() {
+        return Ok(proposed_config.to_string());
+    }
+
+    let existing_doc = match existing_live_config.parse::<DocumentMut>() {
+        Ok(doc) => doc,
+        Err(error) => {
+            log::warn!("无法解析现有 Codex config.toml，跳过非托管 MCP 保留: {error}");
+            return Ok(proposed_config.to_string());
+        }
+    };
+    let mut proposed_doc = proposed_config
+        .parse::<DocumentMut>()
+        .map_err(|error| AppError::Message(format!("Invalid Codex config.toml: {error}")))?;
+
+    let existing_servers = existing_doc
+        .get("mcp_servers")
+        .and_then(|item| item.as_table_like());
+
+    let mut unmanaged = Vec::new();
+    for id in CODEX_UNMANAGED_MCP_SERVER_IDS {
+        let item = existing_servers
+            .and_then(|servers| servers.get(id))
+            .cloned();
+        unmanaged.push((*id, item));
+    }
+
+    let has_unmanaged = unmanaged.iter().any(|(_, item)| item.is_some());
+    let proposed_has_table = proposed_doc
+        .get_mut("mcp_servers")
+        .and_then(|item| item.as_table_like_mut())
+        .is_some();
+
+    if !has_unmanaged && !proposed_has_table {
+        return Ok(proposed_doc.to_string());
+    }
+
+    if !proposed_has_table {
+        proposed_doc["mcp_servers"] = toml_edit::table();
+    }
+    let servers = proposed_doc
+        .get_mut("mcp_servers")
+        .and_then(|item| item.as_table_like_mut())
+        .ok_or_else(|| AppError::Message("Codex mcp_servers 不是 TOML 表".to_string()))?;
+
+    for (id, item) in unmanaged {
+        match item {
+            Some(item) => {
+                servers.insert(id, item);
+            }
+            None => {
+                servers.remove(id);
+            }
+        }
+    }
+
+    Ok(proposed_doc.to_string())
 }
 
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
@@ -3044,6 +3135,70 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::ffi::OsString;
+
+    #[test]
+    fn preserves_codex_owned_mcp_and_removes_stale_proposed_copy() {
+        let existing = r#"
+[mcp_servers.node_repl]
+command = "new-node-repl.exe"
+
+[mcp_servers.exa]
+command = "npx"
+"#;
+        let proposed = r#"
+model = "gpt-5.6"
+
+[mcp_servers.node_repl]
+command = "old-node-repl.exe"
+
+[mcp_servers.exa]
+command = "npx"
+"#;
+
+        let merged = preserve_unmanaged_codex_mcp_servers(proposed, existing).unwrap();
+        let parsed: toml::Value = toml::from_str(&merged).unwrap();
+        let servers = parsed
+            .get("mcp_servers")
+            .and_then(|value| value.as_table())
+            .unwrap();
+        assert_eq!(
+            servers
+                .get("node_repl")
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("new-node-repl.exe")
+        );
+        assert_eq!(
+            servers
+                .get("exa")
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("npx")
+        );
+    }
+
+    #[test]
+    fn does_not_reintroduce_codex_owned_mcp_after_user_removal() {
+        let existing = r#"
+model = "gpt-5.6"
+"#;
+        let proposed = r#"
+model = "gpt-5.5"
+
+[mcp_servers.node_repl]
+command = "stale-node-repl.exe"
+"#;
+
+        let merged = preserve_unmanaged_codex_mcp_servers(proposed, existing).unwrap();
+        let parsed: toml::Value = toml::from_str(&merged).unwrap();
+        assert!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|value| value.get("node_repl"))
+                .is_none(),
+            "CC Switch must not reintroduce a removed Codex-owned MCP"
+        );
+    }
 
     struct CodexLiveTestHome {
         _dir: tempfile::TempDir,
