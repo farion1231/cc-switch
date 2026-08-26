@@ -28,6 +28,13 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
         AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::Cursor => {
+            return Err(AppError::localized(
+                "app.prompts_unsupported",
+                "当前应用暂不支持 Prompts",
+                "This app does not support Prompts",
+            ))
+        }
     };
 
     let filename = match app {
@@ -38,6 +45,13 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Hermes => "SOUL.md",
         AppType::Pi => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::Cursor => {
+            return Err(AppError::localized(
+                "app.prompts_unsupported",
+                "当前应用暂不支持 Prompts",
+                "This app does not support Prompts",
+            ))
+        }
     };
 
     Ok(base_dir.join(filename))

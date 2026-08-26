@@ -108,6 +108,11 @@ import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 import {
+  CursorModelPanel,
+  type ProviderCatalogHandle,
+} from "@/components/cursor/CursorModelPanel";
+import { CursorRuntimeToggle } from "@/components/cursor/CursorRuntimeToggle";
+import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
   isProxyAppId,
@@ -224,9 +229,20 @@ function App() {
     }
   }, [visibleApps, activeApp]);
 
-  // Fallback from sessions view when switching to an app without session support
+  // Runtime-only apps must always return to their dedicated provider view.
   useEffect(() => {
-    if (currentView === "mcp" && sharedFeatureApp === "pi") {
+    if (
+      activeApp === "cursor" &&
+      currentView !== "providers" &&
+      currentView !== "settings"
+    ) {
+      setCurrentView("providers");
+      return;
+    }
+    if (
+      currentView === "mcp" &&
+      (sharedFeatureApp === "pi" || activeApp === "cursor")
+    ) {
       setCurrentView("providers");
       return;
     }
@@ -243,7 +259,7 @@ function App() {
     ) {
       setCurrentView("providers");
     }
-  }, [sharedFeatureApp, currentView]);
+  }, [activeApp, sharedFeatureApp, currentView]);
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
@@ -260,6 +276,7 @@ function App() {
   useUsageCacheBridge();
 
   const promptPanelRef = useRef<PromptPanelHandle>(null);
+  const cursorCatalogRef = useRef<ProviderCatalogHandle>(null);
   const [promptPrimaryAction, setPromptPrimaryAction] =
     useState<PromptPrimaryAction>("prompt");
   const mcpPanelRef = useRef<any>(null);
@@ -293,6 +310,7 @@ function App() {
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning: currentAppUsesProxy && isProxyRunning,
+    enabled: activeApp !== "cursor",
   });
   const { data: piCurrentState } = usePiCurrentState(activeApp === "pi");
   const providers = useMemo(() => data?.providers ?? {}, [data]);
@@ -307,7 +325,8 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && activeApp !== "cursor";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -317,7 +336,7 @@ function App() {
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
     sharedFeatureApp === "pi";
-  const hasMcpSupport = sharedFeatureApp !== "pi";
+  const hasMcpSupport = sharedFeatureApp !== "pi" && activeApp !== "cursor";
 
   const {
     addProvider,
@@ -1088,6 +1107,9 @@ function App() {
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
         default:
+          if (activeApp === "cursor") {
+            return <CursorModelPanel ref={cursorCatalogRef} />;
+          }
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
@@ -1368,6 +1390,14 @@ function App() {
           </div>
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
+            {currentView === "providers" && activeApp === "cursor" && (
+              <div
+                className="flex shrink-0 items-center gap-1.5"
+                style={{ WebkitAppRegion: "no-drag" } as any}
+              >
+                <CursorRuntimeToggle />
+              </div>
+            )}
             {currentView === "providers" &&
               (activeApp === "claude-desktop" || proxyAppId) && (
                 <div
@@ -1389,6 +1419,7 @@ function App() {
                 </div>
               )}
             {currentView === "providers" &&
+              activeApp !== "cursor" &&
               (settingsData?.showProfileSwitcher ?? true) && (
                 <div
                   className="flex shrink-0 items-center"
@@ -1560,7 +1591,17 @@ function App() {
                     )}
                   </>
                 )}
-                {currentView === "providers" && (
+                {currentView === "providers" && activeApp === "cursor" ? (
+                  <Button
+                    onClick={() => cursorCatalogRef.current?.openCreate()}
+                    size="icon"
+                    className={`ml-2 ${addActionButtonClass}`}
+                    aria-label={t("cursor.endpointDialog.addAction")}
+                    title={t("cursor.endpointDialog.addAction")}
+                  >
+                    <Plus className="w-5 h-5" />
+                  </Button>
+                ) : currentView === "providers" ? (
                   <>
                     <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                       <AnimatePresence mode="wait">
@@ -1737,7 +1778,7 @@ function App() {
                       <Plus className="w-5 h-5" />
                     </Button>
                   </>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
@@ -1751,27 +1792,31 @@ function App() {
         {renderContent()}
       </main>
 
-      <AddProviderDialog
-        open={isAddOpen}
-        onOpenChange={setIsAddOpen}
-        appId={activeApp}
-        onSubmit={addProvider}
-      />
+      {activeApp !== "cursor" && (
+        <AddProviderDialog
+          open={isAddOpen}
+          onOpenChange={setIsAddOpen}
+          appId={activeApp}
+          onSubmit={addProvider}
+        />
+      )}
 
-      <EditProviderDialog
-        open={Boolean(editingProvider)}
-        provider={effectiveEditingProvider}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditingProvider(null);
-          }
-        }}
-        onSubmit={handleEditProvider}
-        appId={activeApp}
-        isProxyTakeover={isCurrentAppTakeoverActive}
-      />
+      {activeApp !== "cursor" && (
+        <EditProviderDialog
+          open={Boolean(editingProvider)}
+          provider={effectiveEditingProvider}
+          onOpenChange={(open) => {
+            if (!open) {
+              setEditingProvider(null);
+            }
+          }}
+          onSubmit={handleEditProvider}
+          appId={activeApp}
+          isProxyTakeover={isCurrentAppTakeoverActive}
+        />
+      )}
 
-      {effectiveUsageProvider && (
+      {effectiveUsageProvider && activeApp !== "cursor" && (
         <UsageScriptModal
           key={effectiveUsageProvider.id}
           provider={effectiveUsageProvider}

@@ -324,6 +324,68 @@ fn schema_create_tables_include_pricing_model_columns() {
 }
 
 #[test]
+fn legacy_cursor_v20_schema_is_reconciled_to_current_v18() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE cursor_endpoints (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            provider_type TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE TABLE proxy_request_logs (
+            request_id TEXT PRIMARY KEY,
+            provider_name_snapshot TEXT,
+            token_usage_status TEXT NOT NULL DEFAULT 'reported',
+            cache_usage_observed INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE usage_daily_rollups (
+            date TEXT PRIMARY KEY,
+            provider_name_snapshot TEXT,
+            cache_observed_request_count INTEGER NOT NULL DEFAULT 0,
+            cache_observed_input_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_observed_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_observed_creation_tokens INTEGER NOT NULL DEFAULT 0
+        );
+        "#,
+    )
+    .expect("seed legacy Cursor v20 schema");
+    Database::set_user_version(&conn, 20).expect("set user_version=20");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("reconcile legacy Cursor v20");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read reconciled version"),
+        SCHEMA_VERSION
+    );
+    assert!(Database::table_exists(&conn, "session_usage_dedup").expect("check current v17 table"));
+    assert!(
+        Database::has_column(&conn, "proxy_request_logs", "token_usage_status")
+            .expect("legacy v20 column remains")
+    );
+}
+
+#[test]
+fn unknown_v20_schema_remains_rejected() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute("CREATE TABLE unknown_future_table (id INTEGER)", [])
+        .expect("seed unknown schema");
+    Database::set_user_version(&conn, 20).expect("set user_version=20");
+
+    let error = Database::apply_schema_migrations_on_conn(&conn)
+        .expect_err("unknown future schema must stay rejected");
+
+    assert!(error.to_string().contains("数据库版本过新"));
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version remains untouched"),
+        20
+    );
+}
+
+#[test]
 fn schema_migration_v4_adds_pricing_model_columns() {
     let conn = Connection::open_in_memory().expect("open memory db");
     conn.execute_batch(

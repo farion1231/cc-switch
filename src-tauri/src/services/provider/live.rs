@@ -531,6 +531,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Cursor
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -606,6 +607,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Cursor
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -666,6 +668,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Cursor
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1401,6 +1404,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Pi providers use the Pi provider service".to_string(),
             ));
         }
+        AppType::Cursor => {
+            return Err(AppError::InvalidInput(
+                "Cursor providers are managed by the Cursor runtime page".to_string(),
+            ))
+        }
     }
     Ok(())
 }
@@ -1519,7 +1527,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi) {
+        if matches!(app_type, AppType::Pi | AppType::Cursor) {
             continue;
         }
         let result = if app_type.is_additive_mode() {
@@ -1546,6 +1554,9 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Skill sync
     for app_type in AppType::all() {
+        if matches!(app_type, AppType::Cursor) {
+            continue;
+        }
         if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
             log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
             failures.push(format!("skill/{}: {e}", app_type.as_str()));
@@ -1677,6 +1688,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
+        AppType::Cursor => Err(AppError::InvalidInput(
+            "Cursor providers are managed by the Cursor runtime page".to_string(),
+        )),
     }
 }
 
@@ -1789,6 +1803,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
         }
+        AppType::Cursor => return Ok(false),
     };
 
     let mut provider = Provider::with_id(

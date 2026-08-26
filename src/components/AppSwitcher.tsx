@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { CursorIcon } from "@/components/BrandIcons";
 import {
   Popover,
   PopoverContent,
@@ -37,6 +38,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   openclaw: "openclaw",
   hermes: "hermes",
   pi: "pi",
+  cursor: "cursor",
 };
 
 const APP_DISPLAY_NAME: Record<AppId, string> = {
@@ -49,6 +51,7 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  cursor: "Cursor",
 };
 
 /** 应用图标 + 角标（Claude Code / Desktop 用角标区分终端与桌面） */
@@ -57,11 +60,15 @@ function AppGlyph({ app, isActive }: { app: AppId; isActive: boolean }) {
   const BadgeIcon = badgeConfig?.icon;
   return (
     <span className="relative inline-flex shrink-0">
-      <ProviderIcon
-        icon={APP_ICON_NAME[app]}
-        name={APP_DISPLAY_NAME[app]}
-        size={20}
-      />
+      {app === "cursor" ? (
+        <CursorIcon size={20} />
+      ) : (
+        <ProviderIcon
+          icon={APP_ICON_NAME[app]}
+          name={APP_DISPLAY_NAME[app]}
+          size={20}
+        />
+      )}
       {BadgeIcon && (
         <span
           className={cn(

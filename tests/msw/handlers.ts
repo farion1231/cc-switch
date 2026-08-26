@@ -1,5 +1,4 @@
 import { http, HttpResponse } from "msw";
-import type { AppId } from "@/lib/api/types";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDevPricing";
 import type { McpServer, Provider, Settings } from "@/types";
 import {
@@ -24,6 +23,7 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
+  type TestAppId,
 } from "./state";
 
 const TAURI_ENDPOINT = "http://tauri.local";
@@ -48,12 +48,12 @@ export const handlers = [
   ),
   http.post(`${TAURI_ENDPOINT}/list_profiles`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
-    const { app } = await withJson<{ app: AppId }>(request);
+    const { app } = await withJson<{ app: TestAppId }>(request);
     return success(getProviders(app));
   }),
 
   http.post(`${TAURI_ENDPOINT}/get_current_provider`, async ({ request }) => {
-    const { app } = await withJson<{ app: AppId }>(request);
+    const { app } = await withJson<{ app: TestAppId }>(request);
     return success(getCurrentProviderId(app));
   }),
 
@@ -62,7 +62,7 @@ export const handlers = [
     async ({ request }) => {
       const { updates = [], app } = await withJson<{
         updates: { id: string; sortIndex: number }[];
-        app: AppId;
+        app: TestAppId;
       }>(request);
       updateSortOrder(app, updates);
       return success(true);
@@ -86,7 +86,7 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/scan_openclaw_config_health`, () => success([])),
 
   http.post(`${TAURI_ENDPOINT}/switch_provider`, async ({ request }) => {
-    const { id, app } = await withJson<{ id: string; app: AppId }>(request);
+    const { id, app } = await withJson<{ id: string; app: TestAppId }>(request);
     const providers = listProviders(app);
     if (!providers[id]) {
       return HttpResponse.json(false, { status: 404 });
@@ -98,7 +98,7 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/add_provider`, async ({ request }) => {
     const { provider, app } = await withJson<{
       provider: Provider & { id?: string };
-      app: AppId;
+      app: TestAppId;
     }>(request);
 
     const newId = provider.id ?? `mock-${Date.now()}`;
@@ -109,14 +109,14 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/update_provider`, async ({ request }) => {
     const { provider, app } = await withJson<{
       provider: Provider;
-      app: AppId;
+      app: TestAppId;
     }>(request);
     updateProvider(app, provider);
     return success(true);
   }),
 
   http.post(`${TAURI_ENDPOINT}/delete_provider`, async ({ request }) => {
-    const { id, app } = await withJson<{ id: string; app: AppId }>(request);
+    const { id, app } = await withJson<{ id: string; app: TestAppId }>(request);
     deleteProvider(app, id);
     return success(true);
   }),
@@ -176,7 +176,7 @@ export const handlers = [
 
   // MCP APIs
   http.post(`${TAURI_ENDPOINT}/get_mcp_config`, async ({ request }) => {
-    const { app } = await withJson<{ app: AppId }>(request);
+    const { app } = await withJson<{ app: TestAppId }>(request);
     return success(getMcpConfig(app));
   }),
 
@@ -185,7 +185,7 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/set_mcp_enabled`, async ({ request }) => {
     const { app, id, enabled } = await withJson<{
-      app: AppId;
+      app: TestAppId;
       id: string;
       enabled: boolean;
     }>(request);
@@ -197,7 +197,7 @@ export const handlers = [
     `${TAURI_ENDPOINT}/upsert_mcp_server_in_config`,
     async ({ request }) => {
       const { app, id, spec } = await withJson<{
-        app: AppId;
+        app: TestAppId;
         id: string;
         spec: McpServer;
       }>(request);
@@ -209,7 +209,7 @@ export const handlers = [
   http.post(
     `${TAURI_ENDPOINT}/delete_mcp_server_in_config`,
     async ({ request }) => {
-      const { app, id } = await withJson<{ app: AppId; id: string }>(request);
+      const { app, id } = await withJson<{ app: TestAppId; id: string }>(request);
       deleteMcpServer(app, id);
       return success(true);
     },
@@ -258,7 +258,7 @@ export const handlers = [
   ),
 
   http.post(`${TAURI_ENDPOINT}/get_config_dir`, async ({ request }) => {
-    const { app } = await withJson<{ app: AppId }>(request);
+    const { app } = await withJson<{ app: TestAppId }>(request);
     return success(app === "claude" ? "/default/claude" : "/default/codex");
   }),
 

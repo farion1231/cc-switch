@@ -911,7 +911,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "cursor": "Cursor"
   },
   "pi": {
     "empty": {
@@ -3246,5 +3247,242 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "cursor": {
+    "protocol": {
+      "openAICompatible": "OpenAI 相容",
+      "anthropicCompatible": "Anthropic 相容"
+    },
+    "runtime": {
+      "toast": {
+        "started": "Cursor 模型轉發已啟動",
+        "stopped": "Cursor 已還原原始設定",
+        "trustedAndStarted": "CA 已信任，Cursor 模型轉發已啟動",
+        "caInstalled": "Cursor CA 已安裝",
+        "caRemoved": "CC Switch Cursor CA 已移除"
+      },
+      "error": {
+        "startFailed": "啟動 Cursor 模型轉發失敗",
+        "stopFailed": "停止 Cursor 模型轉發失敗",
+        "enableFailed": "啟用 Cursor 模型轉發失敗",
+        "caInstallFailed": "安裝 Cursor CA 失敗",
+        "caRemoveFailed": "移除 Cursor CA 失敗"
+      },
+      "tooltip": {
+        "running": "Cursor 模型轉發已開啟 · {{count}} 個模型",
+        "start": "開啟 Cursor 模型轉發 · {{count}} 個模型",
+        "noModels": "請先新增並啟用至少一個 Cursor 模型"
+      },
+      "toggleAriaLabel": "Cursor 模型轉發",
+      "ca": {
+        "manage": "管理 Cursor CA",
+        "install": "安裝 Cursor CA",
+        "dialogTitle": "Cursor CA 信任",
+        "installedDescription": "本機已信任 CC Switch 為 Cursor 產生的獨立 CA。",
+        "requiredDescription": "Cursor 模型轉發需要先信任本機產生的獨立 CA。",
+        "status": "狀態",
+        "trusted": "已信任",
+        "notTrusted": "未信任",
+        "fingerprint": "SHA-256 {{fingerprint}}",
+        "stopBeforeRemove": "請先關閉 Cursor 模型轉發，再移除 CA。",
+        "removeAction": "移除 CA",
+        "installAction": "安裝 CA"
+      },
+      "trust": {
+        "dialogTitle": "首次啟用 Cursor 轉發",
+        "description": "Cursor 的 HTTPS 流量需要信任本機為此安裝產生的獨立 CA。",
+        "privateKeyNotice": "私鑰僅儲存在本機 CC Switch 資料目錄。停止服務會還原 Cursor 設定，但 CA 會保留；您可以稍後透過頂部的 CA 按鈕移除。",
+        "confirmAction": "信任並啟動",
+        "platform": {
+          "windows": "憑證會安裝至目前使用者的 Windows Root 憑證庫，不需要系統管理員權限。",
+          "linux": "系統會透過 pkexec 請求系統管理員授權，並安裝至目前發行版的系統信任庫。",
+          "macos": "憑證會安裝至目前使用者的 macOS 登入鑰匙圈，系統可能要求確認。"
+        }
+      }
+    },
+    "panel": {
+      "toast": {
+        "modelSaved": "Cursor 模型已儲存",
+        "endpointUpdated": "Endpoint 已更新 · {{count}} 個模型",
+        "endpointAdded": "Endpoint 已新增 · {{count}} 個模型",
+        "testSucceeded": "{{name}} 測速完成",
+        "testFailed": "{{name}} 測速失敗",
+        "modelDeleted": "Cursor 模型已刪除",
+        "endpointDeleted": "Cursor Endpoint 及其 API Key 已刪除"
+      },
+      "error": {
+        "modelSaveFailed": "儲存 Cursor 模型失敗",
+        "endpointSaveFailed": "儲存 Cursor Endpoint 失敗",
+        "toggleFailed": "更新模型啟用狀態失敗",
+        "modelDeleteFailed": "刪除 Cursor 模型失敗",
+        "endpointDeleteFailed": "刪除 Cursor Endpoint 失敗"
+      },
+      "loadingRuntime": "載入 Cursor 執行狀態…",
+      "runtimeError": "Cursor 執行階段異常",
+      "empty": {
+        "title": "尚未設定 Cursor 模型",
+        "description": "新增 OpenAI 或 Anthropic 相容 Endpoint 後，即可透過安全的本機 sidecar 轉發 Cursor 聊天。"
+      },
+      "endpoint": {
+        "collapse": "收合",
+        "expand": "展開",
+        "toggleAriaLabel": "{{action}} {{name}} 模型清單",
+        "enabledCount": "{{enabled}}/{{total}} 已啟用",
+        "editAriaLabel": "編輯 {{name}} Endpoint",
+        "deleteAriaLabel": "刪除 {{name}} Endpoint",
+        "noModels": "暫無模型，可編輯 Endpoint 後重新新增。"
+      },
+      "endpointDelete": {
+        "title": "刪除 Cursor Endpoint",
+        "message": "確定刪除「{{name}}」嗎？該 Endpoint、其中所有模型和儲存的 API Key 都會被永久刪除。"
+      },
+      "delete": {
+        "title": "刪除 Cursor 模型",
+        "message": "確定刪除「{{name}}」嗎？歷史使用紀錄仍會依 Provider ID 和名稱快照保留。"
+      },
+      "model": {
+        "disabled": "已停用",
+        "pricingModel": "計價模型 {{model}}",
+        "tokensPerSecond": "{{value}} tok/s",
+        "firstToken": "首個 token {{milliseconds}} ms",
+        "testFailed": "測速失敗",
+        "enableAriaLabel": "啟用 {{name}}",
+        "editAriaLabel": "編輯 {{name}}",
+        "testAction": "檢測連線",
+        "testAriaLabel": "檢測 {{name}} 連線狀態",
+        "deleteAriaLabel": "刪除 {{name}}"
+      }
+    },
+    "endpointDialog": {
+      "error": {
+        "credentialsRequired": "請先填寫 API 端點和 API Key",
+        "emptyModelList": "供應商回傳了空模型清單",
+        "fetchFailed": "取得模型失敗：{{error}}",
+        "requiredFields": "供應商名稱、API 端點和 API Key 不能為空",
+        "modelRequired": "請至少新增一個模型",
+        "modelFieldsRequired": "模型顯示名稱和模型 ID 不能為空",
+        "duplicateModelId": "同一 Endpoint 下不能新增重複的模型 ID"
+      },
+      "footerHint": "儲存時會統一更新該 Endpoint 下所有模型的連線設定。",
+      "saveAction": "儲存 Endpoint",
+      "addAction": "新增 Endpoint",
+      "editTitle": "編輯 Cursor Endpoint",
+      "addTitle": "新增 Cursor Endpoint",
+      "config": {
+        "title": "Endpoint 設定",
+        "description": "連線資訊由該 Endpoint 下的全部模型共用。"
+      },
+      "fields": {
+        "providerName": "供應商名稱",
+        "apiProtocol": "API 協定",
+        "apiEndpoint": "API 端點",
+        "apiKey": "API Key",
+        "apiKeyHint": "憑證僅儲存在本機資料庫中",
+        "displayName": "顯示名稱",
+        "modelId": "模型 ID"
+      },
+      "placeholders": {
+        "providerName": "例如 OpenRouter",
+        "apiEndpoint": "https://api.example.com",
+        "apiKey": "sk-...",
+        "displayName": "例如 GPT-5 Coding",
+        "modelId": "gpt-5.4"
+      },
+      "models": {
+        "title": "模型清單",
+        "description": "可以手動新增，也可以從供應商介面批次取得。",
+        "fetchAction": "取得模型",
+        "addManually": "手動新增",
+        "selectLabel": "選擇要新增的模型",
+        "addSelected": "新增所選項目（{{count}}）",
+        "empty": "暫無模型，請取得模型或手動新增。",
+        "removeAction": "移除模型"
+      }
+    },
+    "modelDialog": {
+      "error": {
+        "invalidJson": "{{label}}不是有效的 JSON",
+        "jsonObjectRequired": "{{label}}必須是 JSON 物件",
+        "credentialsRequired": "請先填寫 Base URL 和 API Key",
+        "emptyModelList": "供應商回傳了空模型清單",
+        "discoveryFailed": "自動探索失敗：{{error}}",
+        "requiredFields": "名稱、Base URL、API Key 和上游模型不能為空"
+      },
+      "defaults": {
+        "tooltipData": "由 CC Switch 管理"
+      },
+      "footerHint": "設定儲存後，模型會歸入對應的供應商群組。",
+      "saveChanges": "儲存變更",
+      "addModel": "新增模型",
+      "editTitle": "編輯 Cursor 模型",
+      "addTitle": "新增 Cursor 模型",
+      "basic": {
+        "title": "基本設定",
+        "description": "填寫供應商連線資訊，並選擇要顯示於 Cursor 中的模型。"
+      },
+      "fields": {
+        "providerName": "供應商名稱",
+        "providerNameHint": "相同供應商名稱和介面位址下的模型會歸為一組",
+        "apiProtocol": "API 協定",
+        "apiEndpoint": "API 端點",
+        "apiEndpointHint": "供應商的 API Base URL",
+        "apiKey": "API Key",
+        "apiKeyHint": "憑證僅儲存在本機資料庫中",
+        "displayName": "模型顯示名稱",
+        "upstreamModelId": "上游模型 ID",
+        "pricingModel": "計價模型（選填）",
+        "pricingModelHint": "留空時使用上游模型 ID",
+        "openAIEndpoint": "OpenAI Endpoint",
+        "reasoningEffort": "推理強度",
+        "thinkingEffort": "Thinking Effort",
+        "thinkingBudgetTokens": "Thinking Budget Tokens",
+        "contextWindow": "上下文視窗",
+        "maxOutputTokens": "最大輸出 Tokens",
+        "anthropicMaxTokens": "Anthropic Max Tokens",
+        "customHeaders": "自訂請求標頭",
+        "openAIExtraParams": "OpenAI 額外參數",
+        "anthropicExtraParams": "Anthropic 額外參數"
+      },
+      "placeholders": {
+        "providerName": "例如 OpenRouter",
+        "apiEndpoint": "https://api.example.com",
+        "apiKey": "sk-...",
+        "displayName": "例如 GPT-5 Coding",
+        "anthropicModelId": "claude-sonnet-4-6",
+        "openAIModelId": "gpt-5.4",
+        "pricingModel": "與定價表模型一致",
+        "thinkingBudgetTokens": "4096",
+        "contextWindowTokens": "200000",
+        "maxOutputTokens": "65536",
+        "anthropicMaxTokens": "65536",
+        "jsonObject": "{\"header\": \"value\"}"
+      },
+      "models": {
+        "fetching": "取得中…",
+        "count": "{{count}} 個模型",
+        "fetchAction": "取得模型"
+      },
+      "advanced": {
+        "title": "進階設定",
+        "description": "計價、推理參數、Token 限制以及自訂請求參數"
+      },
+      "contextWindow": {
+        "provider": "供應商回傳 {{tokens}} tokens",
+        "inferred": "已推斷為 {{tokens}} tokens",
+        "manualHint": "自動探索未提供時可手動填寫"
+      },
+      "options": {
+        "responsesApi": "Responses API",
+        "chatCompletions": "Chat Completions",
+        "custom": "自訂"
+      },
+      "effort": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "xhigh": "超高",
+        "max": "最高"
+      }
+    }
   }
 }

@@ -7,6 +7,8 @@
     "dev": "pnpm tauri dev",
     "build": "pnpm tauri build",
     "tauri": "tauri",
+    "build:cursor-sidecar": "node scripts/build-cursor-sidecar.mjs",
+    "test:cursor-sidecar": "node scripts/build-cursor-sidecar.mjs host --test",
     "dev:renderer": "vite",
     "build:renderer": "vite build",
     "typecheck": "tsc --noEmit",

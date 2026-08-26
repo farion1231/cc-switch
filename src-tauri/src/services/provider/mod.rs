@@ -1870,6 +1870,11 @@ requires_openai_auth = true
 
         let db = Arc::new(Database::memory().expect("init db"));
         let state = AppState::new(db.clone());
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("use ephemeral proxy port");
 
         let mut original = Provider::with_id(
             "p1".into(),
@@ -1923,6 +1928,12 @@ requires_openai_auth = true
             .start()
             .await
             .expect("start proxy service");
+        let proxy_port = state
+            .proxy_service
+            .get_status()
+            .await
+            .expect("get proxy status")
+            .port;
 
         let mut updated = Provider::with_id(
             "p1".into(),
@@ -1966,7 +1977,7 @@ requires_openai_auth = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!("http://127.0.0.1:{proxy_port}/claude-desktop")),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -1975,6 +1986,12 @@ requires_openai_auth = true
             json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
             "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
+
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[test]
@@ -5541,6 +5558,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::Cursor => Ok(String::new()),
         }
     }
 
@@ -5559,6 +5577,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::Cursor => Ok(String::new()),
         }
     }
 
@@ -6327,6 +6346,11 @@ impl ProviderService {
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
+            AppType::Cursor => {
+                return Err(AppError::InvalidInput(
+                    "Cursor providers are managed by the Cursor runtime page".to_string(),
+                ))
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -6532,7 +6556,6 @@ impl ProviderService {
                 Ok((api_key, base_url))
             }
             AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
-                // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config
                     .get("apiKey")
@@ -6555,6 +6578,9 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::Cursor => Err(AppError::InvalidInput(
+                "Cursor providers are managed by the Cursor runtime page".to_string(),
+            )),
         }
     }
 }

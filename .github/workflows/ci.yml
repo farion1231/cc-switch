@@ -49,6 +49,9 @@ jobs:
               - ".github/workflows/**"
             backend:
               - "src-tauri/**"
+              - "sidecars/cursor-byok/**"
+              - "scripts/build-cursor-sidecar.mjs"
+              - ".gitmodules"
               - "rust-toolchain.toml"
               - ".github/workflows/**"
 
@@ -111,11 +114,39 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sidecars/cursor-byok/go.mod
+          cache-dependency-path: sidecars/cursor-byok/go.sum
+
+      - name: Setup protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "35.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protobuf Go plugins
+        shell: bash
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+
+      - name: Build and test Cursor sidecar for host
+        run: node scripts/build-cursor-sidecar.mjs host --test
 
       - name: Install Linux system deps
         if: runner.os == 'Linux'
@@ -163,9 +194,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sidecars/cursor-byok/go.mod
+          cache-dependency-path: sidecars/cursor-byok/go.sum
+
+      - name: Setup protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "35.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protobuf Go plugins
+        shell: bash
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+
+      - name: Build Cursor sidecar for host
+        run: node scripts/build-cursor-sidecar.mjs host
 
       - name: Setup WSL2
         uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7
@@ -204,8 +263,28 @@ jobs:
           "CC_SWITCH_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Compile backend tests with native temp
-        # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
-        run: cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run
+        shell: pwsh
+        run: |
+          # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
+          $messages = cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run --message-format=json
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $testBinary = $messages | ForEach-Object {
+            $message = $_ | ConvertFrom-Json
+            if (
+              $message.reason -eq "compiler-artifact" -and
+              $message.target.name -eq "cc_switch_lib" -and
+              $message.profile.test -and
+              $message.executable
+            ) {
+              $message.executable
+            }
+          } | Select-Object -Last 1
+          if (-not $testBinary -or -not (Test-Path -LiteralPath $testBinary)) {
+            throw "Compiled backend test binary was not found"
+          }
+          "CC_SWITCH_WSL_TEST_BINARY=$testBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
@@ -213,7 +292,7 @@ jobs:
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = cargo test --lib --manifest-path src-tauri/Cargo.toml -- --ignored --list
+          $testList = & $env:CC_SWITCH_WSL_TEST_BINARY --ignored --list
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -221,7 +300,7 @@ jobs:
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
-          cargo test --lib --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
+          & $env:CC_SWITCH_WSL_TEST_BINARY $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }

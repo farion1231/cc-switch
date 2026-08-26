@@ -280,6 +280,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
     if (!skills || !beginWrite()) return;
 
+    if (app === "cursor") return;
     const ids = skills
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)
       .map((skill) => skill.id);

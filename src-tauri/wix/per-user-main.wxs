@@ -166,7 +166,14 @@
             </Component>
             {{#each binaries as |bin| ~}}
             <Component Id="{{ bin.id }}" Guid="{{bin.guid}}" Win64="$(var.Win64)">
-                <File Id="Bin_{{ bin.id }}" Source="{{bin.path}}" KeyPath="yes"/>
+                <File Id="Bin_{{ bin.id }}" Source="{{bin.path}}" KeyPath="no"/>
+                <RegistryValue
+                    Root="HKCU"
+                    Key="Software\{{manufacturer}}\{{product_name}}\Binaries"
+                    Name="{{ bin.id }}"
+                    Type="integer"
+                    Value="1"
+                    KeyPath="yes"/>
             </Component>
             {{/each~}}
             {{#if enable_elevated_update_task}}

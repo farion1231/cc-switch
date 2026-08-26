@@ -3,10 +3,8 @@ import { FolderSearch, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
-import type { AppId } from "@/lib/api";
+import type { DirectoryAppId } from "@/hooks/useDirectorySettings";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
-
-type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 
 interface DirectorySettingsProps {
   appConfigDir?: string;
