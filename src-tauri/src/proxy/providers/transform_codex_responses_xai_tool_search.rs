@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use crate::proxy::error::ProxyError;
 
@@ -187,45 +187,72 @@ fn tool_contains_deferred(tool: &Value) -> bool {
 }
 
 fn count_xai_visible_tools(body: &Value) -> usize {
-    let top_level = body
-        .get("tools")
-        .and_then(Value::as_array)
-        .map(|tools| tools.iter().map(count_xai_visible_tool).sum::<usize>())
-        .unwrap_or(0);
-    let promoted = body
-        .get("input")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter(|item| {
-                    matches!(
-                        item.get("type").and_then(Value::as_str),
-                        Some("additional_tools" | "tool_search_output")
-                    )
-                })
-                .filter_map(|item| item.get("tools").and_then(Value::as_array))
-                .flat_map(|tools| tools.iter())
-                .map(count_xai_visible_tool)
-                .sum::<usize>()
-        })
-        .unwrap_or(0);
-    top_level + promoted
+    // Promotion (`append_loaded_tools`) merges carrier tools into the top-level
+    // catalog by the same dedup keys, so a repeated `additional_tools` copy must
+    // not inflate the no-search 350-tool check.
+    let mut seen = HashSet::new();
+    if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        for tool in tools {
+            collect_xai_visible_tool_keys(tool, None, &mut seen);
+        }
+    }
+    if let Some(items) = body.get("input").and_then(Value::as_array) {
+        for item in items {
+            if !matches!(
+                item.get("type").and_then(Value::as_str),
+                Some("additional_tools" | "tool_search_output")
+            ) {
+                continue;
+            }
+            let Some(tools) = item.get("tools").and_then(Value::as_array) else {
+                continue;
+            };
+            for tool in tools {
+                collect_xai_visible_tool_keys(tool, None, &mut seen);
+            }
+        }
+    }
+    seen.len()
 }
 
-fn count_xai_visible_tool(tool: &Value) -> usize {
+fn collect_xai_visible_tool_keys(
+    tool: &Value,
+    namespace_key: Option<&str>,
+    seen: &mut HashSet<String>,
+) {
     match tool.get("type").and_then(Value::as_str) {
-        Some("namespace") => tool
-            .get("tools")
-            .or_else(|| tool.get("children"))
-            .and_then(Value::as_array)
-            .map(|children| children.iter().map(count_xai_visible_tool).sum())
-            .unwrap_or(0),
+        Some("namespace") => {
+            let name = tool
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("");
+            let nested_key = match namespace_key {
+                Some(parent) => format!("{parent}\0namespace\0{name}"),
+                None => format!("namespace\0{name}"),
+            };
+            if let Some(children) = tool
+                .get("tools")
+                .or_else(|| tool.get("children"))
+                .and_then(Value::as_array)
+            {
+                for child in children {
+                    collect_xai_visible_tool_keys(child, Some(&nested_key), seen);
+                }
+            }
+        }
         Some(
             "function" | "web_search" | "x_search" | "image_generation" | "collections_search"
             | "file_search" | "code_execution" | "code_interpreter" | "mcp" | "shell",
-        ) => 1,
-        _ => 0,
+        ) => {
+            let tool_key = tool_dedup_key(tool);
+            let key = match namespace_key {
+                Some(namespace_key) => format!("{namespace_key}\0{tool_key}"),
+                None => tool_key,
+            };
+            seen.insert(key);
+        }
+        _ => {}
     }
 }
 
@@ -1082,11 +1109,9 @@ mod tests {
         assert_eq!(branches.len(), 5);
         assert!(branches.iter().all(|branch| branch["type"] == "object"));
         assert!(branches.iter().all(|branch| branch.get("$ref").is_none()));
-        assert!(
-            branches
-                .iter()
-                .all(|branch| branch.get("oneOf").is_none() && branch.get("anyOf").is_none())
-        );
+        assert!(branches
+            .iter()
+            .all(|branch| branch.get("oneOf").is_none() && branch.get("anyOf").is_none()));
         assert_eq!(
             branches[1]["properties"]["notificationPolicy"]["anyOf"][1]["type"],
             "null"
@@ -1171,6 +1196,42 @@ mod tests {
             .map(|index| json!({"type": "function", "name": format!("tool_{index}")}))
             .collect::<Vec<_>>();
         let mut body = json!({"tools": tools});
+        assert!(prepare_xai_tool_search_request(&mut body).is_err());
+    }
+
+    #[test]
+    fn accepts_catalog_at_limit_when_additional_tools_repeat_top_level() {
+        let tools = (0..XAI_MAX_TOOL_COUNT)
+            .map(|index| json!({"type": "function", "name": format!("tool_{index}")}))
+            .collect::<Vec<_>>();
+        let mut body = json!({
+            "tools": tools.clone(),
+            "input": [{
+                "type": "additional_tools",
+                "tools": tools
+            }]
+        });
+        assert!(prepare_xai_tool_search_request(&mut body).is_ok());
+        assert_eq!(body["tools"].as_array().unwrap().len(), XAI_MAX_TOOL_COUNT);
+        assert!(body["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item.get("type").and_then(Value::as_str) != Some("additional_tools")));
+    }
+
+    #[test]
+    fn rejects_oversized_unique_catalog_with_additional_tools_without_tool_search_shim() {
+        let tools = (0..XAI_MAX_TOOL_COUNT)
+            .map(|index| json!({"type": "function", "name": format!("tool_{index}")}))
+            .collect::<Vec<_>>();
+        let mut body = json!({
+            "tools": tools,
+            "input": [{
+                "type": "additional_tools",
+                "tools": [{"type": "function", "name": "tool_extra"}]
+            }]
+        });
         assert!(prepare_xai_tool_search_request(&mut body).is_err());
     }
 
