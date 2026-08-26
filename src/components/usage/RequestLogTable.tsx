@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useRequestLogs } from "@/lib/query/usage";
+import { useRequestLogs, useUsageEndpointOptions } from "@/lib/query/usage";
 import {
   getFreshInputTokens,
   isUnpricedUsage,
@@ -43,6 +43,8 @@ interface RequestLogTableProps {
   onRangeChange?: (range: UsageRangeSelection) => void;
 }
 
+const UNKNOWN_ENDPOINT_FILTER = "__unknown_endpoint__";
+
 export function RequestLogTable({
   range,
   rangeLabel,
@@ -55,8 +57,9 @@ export function RequestLogTable({
   const { t, i18n } = useTranslation();
 
   // 应用/Provider/模型筛选已上移到 Dashboard 顶栏（全局生效）；
-  // 这里只保留日志特有的状态码筛选。
+  // 这里只保留日志特有的状态码和 endpoint 筛选。
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
+  const [endpointId, setEndpointId] = useState<string | undefined>(undefined);
   const [page, setPage] = useState(0);
   const [pageInput, setPageInput] = useState("");
   const pageSize = 20;
@@ -67,6 +70,7 @@ export function RequestLogTable({
         ? dashboardAppType
         : undefined,
     providerName,
+    endpointId,
     model,
     statusCode,
   };
@@ -81,6 +85,14 @@ export function RequestLogTable({
     },
   });
 
+  const { data: endpointOptions = [] } = useUsageEndpointOptions({
+    filters: effectiveFilters,
+    range,
+    options: {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  });
+
   const logs = result?.data ?? [];
   const total = result?.total ?? 0;
   const totalPages = Math.ceil(total / pageSize);
@@ -89,6 +101,7 @@ export function RequestLogTable({
     setPage(0);
   }, [
     dashboardAppType,
+    endpointId,
     providerName,
     model,
     range.customEndDate,
@@ -136,6 +149,41 @@ export function RequestLogTable({
             </SelectContent>
           </Select>
 
+          <Select
+            value={
+              endpointId === undefined
+                ? "all"
+                : endpointId || UNKNOWN_ENDPOINT_FILTER
+            }
+            onValueChange={(value) => {
+              setEndpointId(
+                value === "all"
+                  ? undefined
+                  : value === UNKNOWN_ENDPOINT_FILTER
+                    ? ""
+                    : value,
+              );
+              setPage(0);
+            }}
+          >
+            <SelectTrigger className="h-8 w-[190px] bg-background text-xs">
+              <SelectValue placeholder={t("usage.endpoint", "Endpoint")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("common.all")}</SelectItem>
+              {endpointOptions.map(
+                ({ endpointId: id, endpointDisplay: display }) => (
+                  <SelectItem
+                    key={id || UNKNOWN_ENDPOINT_FILTER}
+                    value={id || UNKNOWN_ENDPOINT_FILTER}
+                  >
+                    {display}
+                  </SelectItem>
+                ),
+              )}
+            </SelectContent>
+          </Select>
+
           {onRangeChange && (
             <UsageDateRangePicker
               selection={range}
@@ -159,6 +207,9 @@ export function RequestLogTable({
                   </TableHead>
                   <TableHead className="text-center whitespace-nowrap">
                     {t("usage.provider")}
+                  </TableHead>
+                  <TableHead className="text-center whitespace-nowrap">
+                    {t("usage.endpoint", "Endpoint")}
                   </TableHead>
                   <TableHead className="text-center whitespace-nowrap">
                     {t("usage.billingModel")}
@@ -187,7 +238,7 @@ export function RequestLogTable({
                 {logs.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={9}
+                      colSpan={10}
                       className="text-center text-muted-foreground"
                     >
                       {t("usage.noData")}
@@ -211,6 +262,12 @@ export function RequestLogTable({
                         </TableCell>
                         <TableCell className="text-center">
                           {log.providerName || t("usage.unknownProvider")}
+                        </TableCell>
+                        <TableCell
+                          className="text-center font-mono text-xs max-w-[180px] truncate"
+                          title={log.endpointDisplay}
+                        >
+                          {log.endpointDisplay}
                         </TableCell>
                         <TableCell className="text-center font-mono text-xs max-w-[200px]">
                           <div

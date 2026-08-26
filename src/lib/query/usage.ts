@@ -22,6 +22,12 @@ type RequestLogsQueryArgs = {
   options?: UsageQueryOptions;
 };
 
+type UsageEndpointOptionsQueryArgs = {
+  filters: LogFilters;
+  range: UsageRangeSelection;
+  options?: UsageQueryOptions;
+};
+
 type RequestLogsKey = {
   preset: UsageRangeSelection["preset"];
   customStartDate?: number;
@@ -29,6 +35,7 @@ type RequestLogsKey = {
   liveEndTime?: boolean;
   appType?: string;
   providerName?: string;
+  endpointId?: string;
   model?: string;
   statusCode?: number;
 };
@@ -135,10 +142,29 @@ export const usageKeys = {
       key.liveEndTime ?? false,
       key.appType ?? "",
       key.providerName ?? "",
+      key.endpointId ?? "",
       key.model ?? "",
       key.statusCode ?? -1,
       page,
       pageSize,
+    ] as const,
+  endpointOptions: (
+    preset: UsageRangeSelection["preset"],
+    customStartDate: number | undefined,
+    customEndDate: number | undefined,
+    filters: Pick<LogFilters, "appType" | "providerName" | "model">,
+    liveEndTime?: boolean,
+  ) =>
+    [
+      ...usageKeys.all,
+      "endpoint-options",
+      preset,
+      customStartDate ?? 0,
+      customEndDate ?? 0,
+      liveEndTime ?? false,
+      filters.appType ?? "",
+      filters.providerName ?? "",
+      filters.model ?? "",
     ] as const,
   detail: (requestId: string) =>
     [...usageKeys.all, "detail", requestId] as const,
@@ -316,6 +342,7 @@ export function useRequestLogs({
     liveEndTime: range.liveEndTime,
     appType: filters.appType,
     providerName: filters.providerName,
+    endpointId: filters.endpointId,
     model: filters.model,
     statusCode: filters.statusCode,
   };
@@ -327,6 +354,36 @@ export function useRequestLogs({
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useUsageEndpointOptions({
+  filters,
+  range,
+  options,
+}: UsageEndpointOptionsQueryArgs) {
+  const { startDate, endDate } = resolveUsageRange(range);
+  const scopeFilters = {
+    appType: filters.appType,
+    providerName: filters.providerName,
+    model: filters.model,
+  };
+  return useQuery({
+    queryKey: usageKeys.endpointOptions(
+      range.preset,
+      range.customStartDate,
+      range.customEndDate,
+      scopeFilters,
+      range.liveEndTime,
+    ),
+    queryFn: () =>
+      usageApi.getUsageEndpointOptions({
+        ...scopeFilters,
+        startDate,
+        endDate,
+      }),
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }

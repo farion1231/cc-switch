@@ -255,7 +255,7 @@ export function UsageHero({
                         <span className="text-muted-foreground/30">•</span>
                       </>
                     )}
-                    {t("usage.realTotal", "真实消耗 Tokens")}
+                    {t("usage.realTotal", "模型处理 Tokens")}
                   </div>
                   <div className="flex items-baseline gap-2">
                     <span

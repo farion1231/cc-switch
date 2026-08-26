@@ -85,6 +85,7 @@ fn import_authorizer(context: rusqlite::hooks::AuthContext<'_>) -> rusqlite::hoo
 /// Tables whose data rows are skipped when exporting for WebDAV sync.
 const SYNC_SKIP_TABLES: &[&str] = &[
     "proxy_request_logs",
+    "usage_endpoints",
     "stream_check_logs",
     "provider_health",
     "proxy_live_backup",
@@ -97,6 +98,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
 /// Excludes ephemeral tables like provider_health that can safely rebuild at runtime.
 const SYNC_PRESERVE_TABLES: &[&str] = &[
     "proxy_request_logs",
+    "usage_endpoints",
     "stream_check_logs",
     "proxy_live_backup",
     "usage_daily_rollups",

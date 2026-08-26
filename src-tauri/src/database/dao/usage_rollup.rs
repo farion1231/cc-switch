@@ -123,13 +123,13 @@ impl Database {
         // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
         let aggregation_sql = format!(
             "INSERT OR REPLACE INTO usage_daily_rollups
-                (date, app_type, provider_id, model, request_model, pricing_model,
+                (date, app_type, provider_id, endpoint_id, model, request_model, pricing_model,
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
                  input_token_semantics, total_cost_usd, avg_latency_ms)
             SELECT
-                d, a, p, m, rm, pm,
+                d, a, p, e, m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
                 COALESCE(old.success_count, 0) + new_succ,
                 COALESCE({fresh_old_input}, 0) + new_in,
@@ -146,7 +146,7 @@ impl Database {
             FROM (
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
-                    l.app_type as a, l.provider_id as p, l.model as m,
+                    l.app_type as a, l.provider_id as p, COALESCE(l.endpoint_id, '') as e, l.model as m,
                     COALESCE(l.request_model, '') as rm,
                     COALESCE(l.pricing_model, '') as pm,
                     COUNT(*) as new_req,
@@ -159,11 +159,11 @@ impl Database {
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
                 FROM proxy_request_logs l
                 WHERE l.created_at < ?1 AND {effective_filter}
-                GROUP BY d, a, p, m, rm, pm
+                GROUP BY d, a, p, e, m, rm, pm
             ) agg
             LEFT JOIN usage_daily_rollups old
                 ON old.date = agg.d AND old.app_type = agg.a
-                AND old.provider_id = agg.p AND old.model = agg.m
+                AND old.provider_id = agg.p AND old.endpoint_id = agg.e AND old.model = agg.m
                 AND old.request_model = agg.rm AND old.pricing_model = agg.pm"
         );
 
@@ -278,6 +278,39 @@ mod tests {
                 row.get(0)
             })?;
         assert_eq!(remaining, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn rollup_keeps_same_provider_endpoints_in_separate_buckets() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86_400;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            for (request_id, endpoint_id) in
+                [("endpoint-a", "endpoint-a"), ("endpoint-b", "endpoint-b")]
+            {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, endpoint_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, status_code, created_at
+                    ) VALUES (?1, 'p1', ?2, 'codex', 'gpt-test', 10, 1, '0.01', 1, 200, ?3)",
+                    rusqlite::params![request_id, endpoint_id, old_ts],
+                )?;
+            }
+        }
+
+        db.rollup_and_prune(30)?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let buckets: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usage_daily_rollups
+             WHERE provider_id = 'p1' AND app_type = 'codex' AND model = 'gpt-test'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(buckets, 2);
         Ok(())
     }
 

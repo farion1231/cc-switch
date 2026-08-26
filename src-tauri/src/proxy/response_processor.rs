@@ -491,6 +491,9 @@ pub(crate) fn create_usage_collector(
     let app_type_str = ctx.app_type_str;
     let tag = ctx.tag;
     let start_time = ctx.start_time;
+    // Set only after the final upstream forward succeeds. Do not consult the
+    // current Provider config here: it may change while an SSE response lives.
+    let endpoint_url = ctx.upstream_endpoint_url.clone();
     let stream_parser = parser_config.stream_parser;
     let model_extractor = parser_config.model_extractor;
     let session_id = ctx.session_id.clone();
@@ -505,6 +508,7 @@ pub(crate) fn create_usage_collector(
 
                 let state = state.clone();
                 let provider_id = provider_id.clone();
+                let endpoint_url = endpoint_url.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
@@ -513,6 +517,7 @@ pub(crate) fn create_usage_collector(
                     log_usage_internal(
                         &state,
                         &provider_id,
+                        endpoint_url,
                         app_type_str,
                         &model,
                         &request_model,
@@ -531,6 +536,7 @@ pub(crate) fn create_usage_collector(
                 let latency_ms = start_time.elapsed().as_millis() as u64;
                 let state = state.clone();
                 let provider_id = provider_id.clone();
+                let endpoint_url = endpoint_url.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
@@ -539,6 +545,7 @@ pub(crate) fn create_usage_collector(
                     log_usage_internal(
                         &state,
                         &provider_id,
+                        endpoint_url,
                         app_type_str,
                         &model,
                         &request_model,
@@ -577,6 +584,7 @@ fn spawn_log_usage(
 
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
+    let endpoint_url = ctx.upstream_endpoint_url.clone();
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let request_model = request_model.to_string();
@@ -592,6 +600,7 @@ fn spawn_log_usage(
         log_usage_internal(
             &state,
             &provider_id,
+            endpoint_url,
             &app_type_str,
             &model,
             &request_model,
@@ -625,6 +634,7 @@ pub(crate) fn usage_logging_enabled(state: &ProxyState) -> bool {
 async fn log_usage_internal(
     state: &ProxyState,
     provider_id: &str,
+    endpoint_url: Option<String>,
     app_type: &str,
     model: &str,
     request_model: &str,
@@ -662,6 +672,7 @@ async fn log_usage_internal(
     if let Err(e) = logger.log_with_calculation(
         request_id,
         provider_id.to_string(),
+        endpoint_url,
         app_type.to_string(),
         model.to_string(),
         request_model.to_string(),
@@ -1097,6 +1108,7 @@ mod tests {
         log_usage_internal(
             &state,
             "provider-1",
+            None,
             app_type,
             "resp-model",
             "req-model",
@@ -1167,6 +1179,7 @@ mod tests {
         log_usage_internal(
             &state,
             "provider-3",
+            None,
             app_type,
             "resp-model",
             "req-model",
@@ -1247,6 +1260,7 @@ mod tests {
         log_usage_internal(
             &state,
             "provider-2",
+            None,
             app_type,
             "resp-model",
             "req-model",

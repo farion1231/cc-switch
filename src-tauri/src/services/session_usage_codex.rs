@@ -1461,16 +1461,17 @@ fn insert_codex_session_entry_on_conn(
     let inserted_rows = conn
         .prepare_cached(
             "INSERT OR IGNORE INTO proxy_request_logs (
-            request_id, provider_id, app_type, model, request_model,
+            request_id, provider_id, endpoint_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         )
         .and_then(|mut stmt| stmt.execute(rusqlite::params![
                 request_id,
                 "_codex_session",    // provider_id
+                Option::<String>::None, // JSONL cannot prove the proxy endpoint
                 "codex",             // app_type
                 model,
                 model,               // request_model = model
@@ -2824,6 +2825,35 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_codex_session_import_keeps_endpoint_unknown() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let delta = DeltaTokens {
+            input: 10,
+            cached_input: 1,
+            output: 2,
+        };
+        let mut suspected_duplicates = 0;
+        assert!(insert_codex_session_entry(
+            &db,
+            "codex-session-unknown-endpoint",
+            &delta,
+            "gpt-5.4",
+            Some("session-a"),
+            Some("1970-01-01T00:16:40Z"),
+            &mut suspected_duplicates,
+        )?);
+
+        let conn = lock_conn!(db.conn);
+        let endpoint_id: Option<String> = conn.query_row(
+            "SELECT endpoint_id FROM proxy_request_logs WHERE request_id = ?1",
+            ["codex-session-unknown-endpoint"],
+            |row| row.get(0),
+        )?;
+        assert_eq!(endpoint_id, None);
         Ok(())
     }
 

@@ -107,6 +107,8 @@ pub struct ForwardResult {
     /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
     /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
     pub outbound_model: Option<String>,
+    /// Base URL selected for the successful upstream attempt.
+    pub upstream_endpoint_url: String,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
@@ -538,7 +540,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format, outbound_model)) => {
+                Ok((response, claude_api_format, outbound_model, upstream_endpoint_url)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -587,6 +589,7 @@ impl RequestForwarder {
                         provider: provider.clone(),
                         claude_api_format,
                         outbound_model,
+                        upstream_endpoint_url,
                         connection_guard: None,
                     });
                 }
@@ -637,7 +640,12 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((
+                                    response,
+                                    claude_api_format,
+                                    outbound_model,
+                                    upstream_endpoint_url,
+                                )) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
@@ -690,6 +698,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        upstream_endpoint_url,
                                         connection_guard: None,
                                     });
                                 }
@@ -783,7 +792,12 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format, outbound_model)) => {
+                                    Ok((
+                                        response,
+                                        claude_api_format,
+                                        outbound_model,
+                                        upstream_endpoint_url,
+                                    )) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
                                             &provider.id,
@@ -839,6 +853,7 @@ impl RequestForwarder {
                                             provider: provider.clone(),
                                             claude_api_format,
                                             outbound_model,
+                                            upstream_endpoint_url,
                                             connection_guard: None,
                                         });
                                     }
@@ -949,7 +964,12 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((
+                                    response,
+                                    claude_api_format,
+                                    outbound_model,
+                                    upstream_endpoint_url,
+                                )) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
                                         &provider.id,
@@ -999,6 +1019,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        upstream_endpoint_url,
                                         connection_guard: None,
                                     });
                                 }
@@ -1157,7 +1178,7 @@ impl RequestForwarder {
 
     /// 转发单个请求（使用适配器）
     ///
-    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
+    /// 成功时返回 `(response, claude_api_format, outbound_model, base_url)`，其中
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
     #[allow(clippy::too_many_arguments)]
     async fn forward(
@@ -1170,7 +1191,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>, String), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -2415,7 +2436,12 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok((
+                response,
+                resolved_claude_api_format,
+                outbound_model,
+                base_url,
+            ))
         } else {
             let status_code = status.as_u16();
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何

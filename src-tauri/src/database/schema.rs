@@ -191,12 +191,29 @@ impl Database {
             FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 10. Proxy Request Logs 表
+        // 10. Usage endpoints. These are immutable attribution snapshots: provider
+        // configuration can change after a request has completed.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_endpoints (
+            id TEXT PRIMARY KEY,
+            app_type TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            url_fingerprint TEXT NOT NULL,
+            display_url TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            UNIQUE(app_type, provider_id, url_fingerprint)
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 11. Proxy Request Logs 表
         // pricing_model = 写入时实际用于计价的模型名（pricing_model_source 解析结果），
         // 回填按它重算；NULL 表示 v11 之前的历史行，'' 表示未计价的错误行。
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_request_logs (
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
+            endpoint_id TEXT,
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
@@ -220,6 +237,11 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_request_logs_endpoint ON proxy_request_logs(endpoint_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_request_logs_session ON proxy_request_logs(session_id)",
             [],
         )
@@ -231,7 +253,7 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
         Self::create_request_logs_usage_indexes_if_supported(conn)?;
 
-        // 11. Model Pricing 表
+        // 12. Model Pricing 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS model_pricing (
             model_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
@@ -243,7 +265,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 12. Stream Check Logs 表
+        // 13. Stream Check Logs 表
         conn.execute("CREATE TABLE IF NOT EXISTS stream_check_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id TEXT NOT NULL, provider_name TEXT NOT NULL,
             app_type TEXT NOT NULL, status TEXT NOT NULL, success INTEGER NOT NULL, message TEXT NOT NULL,
@@ -278,6 +300,7 @@ impl Database {
                 date TEXT NOT NULL,
                 app_type TEXT NOT NULL,
                 provider_id TEXT NOT NULL,
+                endpoint_id TEXT NOT NULL DEFAULT '',
                 model TEXT NOT NULL,
                 request_model TEXT NOT NULL DEFAULT '',
                 pricing_model TEXT NOT NULL DEFAULT '',
@@ -290,7 +313,7 @@ impl Database {
                 input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+                PRIMARY KEY (date, app_type, provider_id, endpoint_id, model, request_model, pricing_model)
             )",
             [],
         )
@@ -535,6 +558,11 @@ impl Database {
                         log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（记录不可变使用 endpoint 归因）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1562,6 +1590,91 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
+    }
+
+    /// v17 -> v18: endpoint attribution must survive later Provider URL edits.
+    /// Historical rows never contained the selected endpoint, so they remain unknown.
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS usage_endpoints (
+                id TEXT PRIMARY KEY,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                url_fingerprint TEXT NOT NULL,
+                display_url TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(app_type, provider_id, url_fingerprint)
+            );",
+        )
+        .map_err(|error| AppError::Database(format!("创建使用 endpoint 表失败: {error}")))?;
+
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(conn, "proxy_request_logs", "endpoint_id", "TEXT")?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_request_logs_endpoint ON proxy_request_logs(endpoint_id)",
+                [],
+            )
+            .map_err(|error| AppError::Database(format!("创建 endpoint 日志索引失败: {error}")))?;
+        }
+
+        let rollup_required_columns = [
+            "date",
+            "app_type",
+            "provider_id",
+            "model",
+            "request_model",
+            "pricing_model",
+            "request_count",
+            "success_count",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+            "input_token_semantics",
+            "total_cost_usd",
+            "avg_latency_ms",
+        ];
+        let can_rebuild_rollups = Self::table_exists(conn, "usage_daily_rollups")?
+            && rollup_required_columns.iter().all(|column| {
+                Self::has_column(conn, "usage_daily_rollups", column).unwrap_or(false)
+            });
+
+        if can_rebuild_rollups && !Self::has_column(conn, "usage_daily_rollups", "endpoint_id")? {
+            conn.execute_batch(
+                "CREATE TABLE usage_daily_rollups_v18 (
+                    date TEXT NOT NULL,
+                    app_type TEXT NOT NULL,
+                    provider_id TEXT NOT NULL,
+                    endpoint_id TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL,
+                    request_model TEXT NOT NULL DEFAULT '',
+                    pricing_model TEXT NOT NULL DEFAULT '',
+                    request_count INTEGER NOT NULL DEFAULT 0,
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                    input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                    total_cost_usd TEXT NOT NULL DEFAULT '0',
+                    avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (date, app_type, provider_id, endpoint_id, model, request_model, pricing_model)
+                );
+                INSERT INTO usage_daily_rollups_v18 (
+                    date, app_type, provider_id, endpoint_id, model, request_model, pricing_model,
+                    request_count, success_count, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, input_token_semantics, total_cost_usd, avg_latency_ms
+                ) SELECT
+                    date, app_type, provider_id, '', model, request_model, pricing_model,
+                    request_count, success_count, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, input_token_semantics, total_cost_usd, avg_latency_ms
+                  FROM usage_daily_rollups;
+                DROP TABLE usage_daily_rollups;
+                ALTER TABLE usage_daily_rollups_v18 RENAME TO usage_daily_rollups;",
+            )
+            .map_err(|error| AppError::Database(format!("迁移使用量汇总 endpoint 维度失败: {error}")))?;
+        }
         Ok(())
     }
 
@@ -3407,6 +3520,46 @@ mod tests {
              VALUES ('pi_session', 'request', 'semantic', 1)",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_marks_historical_usage_as_unknown_endpoint() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model, latency_ms, status_code, created_at)\
+             VALUES ('legacy-request', 'provider', 'codex', 'gpt-test', 1, 200, 1)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model)\
+             VALUES ('2026-08-19', 'codex', 'provider', 'gpt-test')",
+            [],
+        )?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "usage_endpoints")?);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_request_logs",
+            "endpoint_id"
+        )?);
+        let request_endpoint: Option<String> = conn.query_row(
+            "SELECT endpoint_id FROM proxy_request_logs WHERE request_id = 'legacy-request'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(request_endpoint, None);
+        let rollup_endpoint: String = conn.query_row(
+            "SELECT endpoint_id FROM usage_daily_rollups WHERE date = '2026-08-19'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(rollup_endpoint, "");
         Ok(())
     }
 }

@@ -110,6 +110,15 @@ pub fn get_request_logs(
     state.db.get_request_logs(&filters, page, page_size)
 }
 
+/// 获取当前日志筛选范围内的去重 endpoint 选项
+#[tauri::command]
+pub fn get_usage_endpoint_options(
+    state: State<'_, AppState>,
+    filters: LogFilters,
+) -> Result<Vec<UsageEndpointOption>, AppError> {
+    state.db.get_usage_endpoint_options(&filters)
+}
+
 /// 获取单个请求详情
 #[tauri::command]
 pub fn get_request_detail(
