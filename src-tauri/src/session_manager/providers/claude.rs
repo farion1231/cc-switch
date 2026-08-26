@@ -1,11 +1,13 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::fs::File;
-use std::io::BufReader;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use serde::de::{self, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
@@ -223,8 +225,44 @@ fn is_agent_session(path: &Path) -> bool {
 /// Title events are appended inline wherever the rename happened, so unlike
 /// head/tail metadata they have no guaranteed position; only a full scan can
 /// find the latest one. The substring prefilter keeps JSON parsing limited to
-/// candidate title lines.
+/// candidate title lines. Results are cached per file keyed on mtime + size —
+/// Claude Code only appends to these transcripts, so unchanged metadata means
+/// the last scanned title is still current and the full read can be skipped.
+/// Cache entry: (mtime, size, last seen title) — see [`CUSTOM_TITLE_CACHE`].
+type CustomTitleCacheEntry = (SystemTime, u64, Option<String>);
+
+static CUSTOM_TITLE_CACHE: OnceLock<Mutex<HashMap<PathBuf, CustomTitleCacheEntry>>> =
+    OnceLock::new();
+
 fn scan_last_custom_title(path: &Path) -> Option<String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        // Stat failed: still answer from a full read, just don't cache it.
+        Err(_) => return scan_last_custom_title_full(path),
+    };
+    let modified = match metadata.modified() {
+        Ok(modified) => modified,
+        Err(_) => return scan_last_custom_title_full(path),
+    };
+    let size = metadata.len();
+
+    let cache = CUSTOM_TITLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(entries) = cache.lock() {
+        if let Some((cached_mtime, cached_size, cached_title)) = entries.get(path) {
+            if *cached_mtime == modified && *cached_size == size {
+                return cached_title.clone();
+            }
+        }
+    }
+
+    let title = scan_last_custom_title_full(path);
+    if let Ok(mut entries) = cache.lock() {
+        entries.insert(path.to_path_buf(), (modified, size, title.clone()));
+    }
+    title
+}
+
+fn scan_last_custom_title_full(path: &Path) -> Option<String> {
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file);
     let mut last_title: Option<String> = None;
@@ -1903,6 +1941,65 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("latest name"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn custom_title_cache_hits_skip_the_full_file_read() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-cache-hit.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-cache-hit\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"custom-title\",\"customTitle\":\"cached name\",\"sessionId\":\"session-cache-hit\"}\n",
+            ),
+        )
+        .expect("write");
+
+        assert_eq!(
+            scan_last_custom_title(&path).as_deref(),
+            Some("cached name")
+        );
+
+        // chmod 000 keeps stat (mtime/size) readable but makes a full read fail,
+        // so a title coming back afterwards can only have come from the cache.
+        // chmod changes neither mtime nor size, so the entry stays fresh.
+        let perms = std::fs::metadata(&path).unwrap().permissions();
+        let mut no_read = perms.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut no_read, 0o000);
+        std::fs::set_permissions(&path, no_read).expect("chmod");
+        assert_eq!(
+            scan_last_custom_title(&path).as_deref(),
+            Some("cached name")
+        );
+        std::fs::set_permissions(&path, perms).expect("restore");
+    }
+
+    #[test]
+    fn custom_title_cache_invalidates_when_the_file_grows() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-cache-invalidate.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-cache-invalidate\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"custom-title\",\"customTitle\":\"old name\",\"sessionId\":\"session-cache-invalidate\"}\n",
+            ),
+        )
+        .expect("write");
+
+        assert_eq!(scan_last_custom_title(&path).as_deref(), Some("old name"));
+
+        // Appending changes the size, so the entry is invalidated even if the
+        // two writes land within the same mtime granularity window.
+        let mut existing = std::fs::read_to_string(&path).expect("read");
+        existing.push_str(
+            "{\"type\":\"custom-title\",\"customTitle\":\"new name\",\"sessionId\":\"session-cache-invalidate\"}\n",
+        );
+        std::fs::write(&path, existing).expect("append");
+
+        assert_eq!(scan_last_custom_title(&path).as_deref(), Some("new name"));
     }
 
     #[test]
