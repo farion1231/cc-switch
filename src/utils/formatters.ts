@@ -5,7 +5,7 @@
  * @throws 如果 JSON 格式无效
  */
 export function formatJSON(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = value.replace(/^\uFEFF/, "").trim();
   if (!trimmed) {
     return "";
   }
@@ -28,7 +28,7 @@ export function parseSmartMcpJson(jsonText: string): {
   config: any;
   formattedConfig: string;
 } {
-  let trimmed = jsonText.trim();
+  let trimmed = jsonText.replace(/^\uFEFF/, "").trim();
   if (!trimmed) {
     return { config: {}, formattedConfig: "" };
   }
