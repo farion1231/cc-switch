@@ -2127,6 +2127,23 @@ fn infer_install_source(path: &Path) -> &'static str {
     }
 }
 
+/// 安装来源：Homebrew 看 canonicalize 真身，node 管理器仍看 launcher。
+///
+/// Intel Cask 入口是 `/usr/local/bin/codex`，不含 `/homebrew/` / `/caskroom/`，
+/// 真身才在 `/usr/local/Caskroom/...`。只看 launcher 会把徽章标成 `system`。
+/// nvm/volta/fnm 的分类在 shim 路径上，必须继续用未解析的入口。
+fn infer_install_source_for_install(launcher: &Path, real: &Path) -> &'static str {
+    let real_s = real
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    if real_s.contains("/cellar/") || real_s.contains("/caskroom/") {
+        "homebrew"
+    } else {
+        infer_install_source(launcher)
+    }
+}
+
 /// 从 shell 输出里挑出第一个绝对路径行（trim 后以 `/` 开头），跳过交互式登录 shell
 /// （`-lic`）里 .zshrc 打印的欢迎语/提示符等噪音。canonicalize 由调用方做（碰 FS）。
 #[cfg(not(target_os = "windows"))]
@@ -2424,7 +2441,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
             let is_path_default = path_default.as_ref() == Some(&real);
             let path_str = tool_path.display().to_string();
-            let source = infer_install_source(&tool_path);
+            let source = infer_install_source_for_install(&tool_path, &real);
 
             installs.push(ToolInstallation {
                 path: path_str,
@@ -5561,6 +5578,33 @@ mod tests {
             assert_eq!(
                 infer_install_source(Path::new("/usr/local/Caskroom/codex/0.146.0/bin/codex")),
                 "homebrew"
+            );
+        }
+
+        #[test]
+        fn intel_cask_launcher_uses_resolved_target() {
+            // 标准 Intel cask：PATH 入口是 `/usr/local/bin/codex`，真身才在 Caskroom。
+            // 只看 launcher 会落到 `system`，徽章和冲突诊断都会错。
+            assert_eq!(
+                infer_install_source(Path::new("/usr/local/bin/codex")),
+                "system"
+            );
+            assert_eq!(
+                infer_install_source_for_install(
+                    Path::new("/usr/local/bin/codex"),
+                    Path::new("/usr/local/Caskroom/codex/0.146.0/bin/codex"),
+                ),
+                "homebrew"
+            );
+            // nvm shim 仍按 launcher 分类，不能被真身路径抢走。
+            assert_eq!(
+                infer_install_source_for_install(
+                    Path::new("/Users/me/.nvm/versions/node/v22.0.0/bin/codex"),
+                    Path::new(
+                        "/Users/me/.nvm/versions/node/v22.0.0/lib/node_modules/@openai/codex/bin/codex.js"
+                    ),
+                ),
+                "nvm"
             );
         }
 
