@@ -135,6 +135,30 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#6366F1",
   },
   {
+    name: "Kimi K3 (1M)",
+    primePartner: true,
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+        ANTHROPIC_AUTH_TOKEN: "",
+        // Claude Code requires the bracketed selector to request K3's 1M tier.
+        ANTHROPIC_MODEL: "k3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "k3[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "k3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "k3[1m]",
+        ANTHROPIC_DEFAULT_FABLE_MODEL: "k3[1m]",
+        CLAUDE_CODE_SUBAGENT_MODEL: "k3[1m]",
+        CLAUDE_CODE_EFFORT_LEVEL: "high",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1048576",
+      },
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
     apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
