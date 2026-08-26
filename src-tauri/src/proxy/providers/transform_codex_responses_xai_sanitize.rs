@@ -68,6 +68,20 @@ const XAI_SUPPORTED_TOOL_TYPES: &[&str] = &[
 /// idempotent: running it twice on the same body changes nothing the second
 /// time.
 pub(crate) fn sanitize_xai_responses_request(body: &mut Value) -> bool {
+    sanitize_xai_responses_request_with_private_tools(body, true)
+}
+
+/// Apply only xAI wire-format compatibility fixes that are valid for a
+/// standard Responses client. In particular, do not promote, drop, or rewrite
+/// Codex-private tool carriers on behalf of Grok Build.
+pub(crate) fn sanitize_standard_xai_responses_request(body: &mut Value) -> bool {
+    sanitize_xai_responses_request_with_private_tools(body, false)
+}
+
+fn sanitize_xai_responses_request_with_private_tools(
+    body: &mut Value,
+    enable_codex_private_tools: bool,
+) -> bool {
     if !body.is_object() {
         return false;
     }
@@ -86,26 +100,37 @@ pub(crate) fn sanitize_xai_responses_request(body: &mut Value) -> bool {
         }
     }
 
-    // 3. Codex plugin-private flags buried at any depth (e.g. inside tools or
-    //    tool parameter schemas).
-    for field in RECURSIVE_UNSUPPORTED_FIELDS {
-        changed |= remove_field_recursive(body, field);
-    }
+    if enable_codex_private_tools {
+        // 3. Codex plugin-private flags buried at any depth (e.g. inside tools
+        //    or tool parameter schemas).
+        for field in RECURSIVE_UNSUPPORTED_FIELDS {
+            changed |= remove_field_recursive(body, field);
+        }
 
-    // 4. Lift the `additional_tools` input carrier (Responses Lite private
-    //    shape) up to top-level `tools` so the supported ones survive.
-    changed |= promote_additional_tools(body);
+        // 4. Lift the `additional_tools` input carrier (Responses Lite private
+        //    shape) up to top-level `tools` so the supported ones survive.
+        changed |= promote_additional_tools(body);
+    }
 
     // 5. Drop `content: null` on reasoning input items — xAI's untagged enum
     //    deserializer refuses a present-but-null content field.
     changed |= strip_null_reasoning_content(body);
 
-    // 6. Keep reasoning effort, but do not ask xAI for reasoning summaries: Codex
-    //    treats that output item as hidden thinking, not final assistant text.
-    changed |= strip_reasoning_summary_request(body);
+    // 6. Keep reasoning effort, but do not ask xAI for reasoning summaries on
+    //    Codex requests: Codex treats that output item as hidden thinking, not
+    //    final assistant text. Other Responses clients retain their own
+    //    reasoning semantics.
+    if enable_codex_private_tools {
+        changed |= strip_reasoning_summary_request(body);
+    }
 
-    // 7. Whitelist the tool types and clean a now-dangling `tool_choice`.
-    changed |= filter_unsupported_tools(body);
+    // 7. Codex-only carriers have already been proxied or promoted, so remove
+    //    any remaining types that xAI cannot parse. Standard clients retain
+    //    their tool declarations unchanged and receive the upstream's own
+    //    validation response instead of silent semantic rewriting.
+    if enable_codex_private_tools {
+        changed |= filter_unsupported_tools(body);
+    }
 
     changed
 }
@@ -525,6 +550,32 @@ mod tests {
             .map(|t| t.get("type").and_then(Value::as_str).unwrap())
             .collect();
         assert_eq!(types, vec!["function", "mcp"]);
+    }
+
+    #[test]
+    fn standard_responses_client_tools_are_not_intercepted() {
+        let mut body = json!({
+            "model": "grok-4.5",
+            "reasoning": {"effort": "high", "summary": "auto"},
+            "tools": [
+                {"type": "tool_search"},
+                {
+                    "type": "namespace",
+                    "name": "private",
+                    "external_web_access": true,
+                    "tools": []
+                },
+                {"type": "custom", "name": "custom_tool"}
+            ],
+            "input": [{
+                "type": "additional_tools",
+                "tools": [{"type": "function", "name": "loaded"}]
+            }]
+        });
+        let original = body.clone();
+
+        assert!(!sanitize_standard_xai_responses_request(&mut body));
+        assert_eq!(body, original);
     }
 
     #[test]

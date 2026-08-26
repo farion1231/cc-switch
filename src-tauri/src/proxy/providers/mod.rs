@@ -19,6 +19,7 @@ pub(crate) mod codex_chat_common;
 pub mod codex_chat_history;
 pub mod codex_oauth_auth;
 pub(crate) mod codex_responses_sse;
+pub(crate) mod codex_tool_bridge;
 pub mod copilot_auth;
 pub mod copilot_model_map;
 mod gemini;
@@ -47,6 +48,24 @@ use serde::{Deserialize, Serialize};
 
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const XAI_API_BASE_URL: &str = "https://api.x.ai/v1";
+
+/// Only the Codex client speaks the private deferred-tool dialect. Grok Build
+/// also uses the Responses wire format, but its requests are standard Responses
+/// requests and must not inherit Codex-only `tool_search`/`namespace` handling.
+pub(crate) fn client_uses_codex_private_tools(app_type: &AppType) -> bool {
+    matches!(app_type, AppType::Codex)
+}
+
+pub(crate) fn responses_tool_context_for_client(
+    app_type: &AppType,
+    body: &serde_json::Value,
+) -> Result<codex_tool_bridge::CodexToolContext, crate::proxy::error::ProxyError> {
+    if client_uses_codex_private_tools(app_type) {
+        codex_tool_bridge::build_codex_tool_context_from_request(body)
+    } else {
+        codex_tool_bridge::build_standard_responses_tool_context_from_request(body)
+    }
+}
 
 // 公开导出
 pub use adapter::ProviderAdapter;
@@ -315,6 +334,20 @@ mod tests {
         assert!(!ProviderType::GeminiCli.needs_transform());
         assert!(!ProviderType::OpenRouter.needs_transform());
         assert!(ProviderType::GitHubCopilot.needs_transform());
+    }
+
+    #[test]
+    fn codex_private_tools_are_not_enabled_for_other_responses_clients() {
+        assert!(client_uses_codex_private_tools(&AppType::Codex));
+        assert!(!client_uses_codex_private_tools(&AppType::GrokBuild));
+        assert!(!client_uses_codex_private_tools(&AppType::OpenCode));
+
+        let request = json!({"tools": [{"type": "tool_search"}]});
+        let codex_context = responses_tool_context_for_client(&AppType::Codex, &request).unwrap();
+        let grok_context =
+            responses_tool_context_for_client(&AppType::GrokBuild, &request).unwrap();
+        assert_eq!(codex_context.function_tools().len(), 1);
+        assert!(grok_context.function_tools().is_empty());
     }
 
     #[test]

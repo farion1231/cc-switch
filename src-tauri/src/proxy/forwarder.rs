@@ -1178,6 +1178,8 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        let client_uses_codex_private_tools =
+            super::providers::client_uses_codex_private_tools(app_type);
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
 
@@ -1476,10 +1478,13 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
-                mapped_body,
-                reasoning_config.as_ref(),
-            )?;
+            let tool_context =
+                super::providers::responses_tool_context_for_client(app_type, &mapped_body)?;
+            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning_and_tool_context(
+                    mapped_body,
+                    reasoning_config.as_ref(),
+                    &tool_context,
+                )?;
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
@@ -1514,10 +1519,13 @@ impl RequestForwarder {
             // accepted by every current Claude model and virtually all gateways. The
             // transform clamps any thinking budget below this value.
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
+            let tool_context =
+                super::providers::responses_tool_context_for_client(app_type, &mapped_body)?;
             let mut anthropic_body =
-                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                super::providers::transform_codex_anthropic::responses_request_to_anthropic_with_tool_context(
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
+                    &tool_context,
                 )?;
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
@@ -1568,12 +1576,14 @@ impl RequestForwarder {
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && super::providers::provider_needs_responses_namespace_flatten(provider);
+        let is_codex_private_xai_responses =
+            is_xai_native_responses && client_uses_codex_private_tools;
 
         // Codex's private deferred-search items are not part of xAI's strict
         // Responses schema. Proxy them as an ordinary function before namespace
         // flattening; discovered namespaces are promoted here so only selected
         // tools become model-visible.
-        if is_xai_native_responses
+        if is_codex_private_xai_responses
             && super::providers::transform_codex_responses_xai_tool_search::prepare_xai_tool_search_request(
                 &mut request_body,
             )?
@@ -1587,7 +1597,7 @@ impl RequestForwarder {
         // Flatten non-deferred namespace children into top-level function tools
         // so xAI does not reject the private namespace carrier. Deferred children
         // stay hidden until Codex returns them in a tool_search_output.
-        if is_xai_native_responses
+        if is_codex_private_xai_responses
             && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
                 &mut request_body,
             )?
@@ -1620,14 +1630,25 @@ impl RequestForwarder {
         // xAI OAuth path, so the prompt-cache prefix stays stable and no other
         // provider is affected. Runs after the flatten above so lifted
         // `namespace` tools survive the tool-type whitelist.
-        if is_xai_native_responses
-            && super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
-                &mut request_body,
-            )
-        {
+        let sanitized_xai_responses = is_xai_native_responses
+            && if client_uses_codex_private_tools {
+                super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
+                    &mut request_body,
+                )
+            } else {
+                super::providers::transform_codex_responses_xai_sanitize::sanitize_standard_xai_responses_request(
+                    &mut request_body,
+                )
+            };
+        if sanitized_xai_responses {
             log::debug!(
-                "[Codex] Sanitized xAI-unsupported Responses fields (provider={})",
-                provider.id
+                "[{}] Sanitized xAI-unsupported Responses fields (provider={})",
+                if client_uses_codex_private_tools {
+                    "Codex"
+                } else {
+                    "Grok Build"
+                },
+                provider.id,
             );
         }
 

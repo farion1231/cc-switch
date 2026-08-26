@@ -5,11 +5,12 @@ use super::{
     codex_chat_common::{
         extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
     },
+    codex_tool_bridge::{
+        custom_tool_input_from_upstream_arguments, response_tool_call_item_from_upstream_name,
+        response_tool_call_item_id_from_upstream_name, CodexToolContext,
+    },
     transform_codex_chat::{
-        chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
-        response_id_from_chat_id, response_status_from_finish_reason,
-        response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
-        CodexToolContext,
+        chat_usage_to_responses_usage, response_id_from_chat_id, response_status_from_finish_reason,
     },
 };
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
@@ -420,7 +421,9 @@ impl ChatToResponsesState {
             current_name = state.name.clone();
         }
 
-        let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&current_name);
+        let is_custom_tool = self
+            .tool_context
+            .is_custom_tool_upstream_name(&current_name);
         let mut events = Vec::new();
 
         if !args_delta.is_empty() && !is_custom_tool {
@@ -460,13 +463,13 @@ impl ChatToResponsesState {
             };
             state.added = true;
             state.output_index = Some(assigned);
-            state.item_id = response_tool_call_item_id_from_chat_name(
+            state.item_id = response_tool_call_item_id_from_upstream_name(
                 &state.call_id,
                 &state.name,
                 &self.tool_context,
             );
 
-            let item = response_tool_call_item_from_chat_name(
+            let item = response_tool_call_item_from_upstream_name(
                 &state.item_id,
                 "in_progress",
                 &state.call_id,
@@ -479,7 +482,7 @@ impl ChatToResponsesState {
             events.push(sse::output_item_added(assigned, &item));
 
             if !state.arguments.is_empty()
-                && !self.tool_context.is_custom_tool_chat_name(&state.name)
+                && !self.tool_context.is_custom_tool_upstream_name(&state.name)
             {
                 events.push(sse::function_call_arguments_delta(
                     assigned,
@@ -661,12 +664,12 @@ impl ChatToResponsesState {
                     state.call_id = format!("call_{key}");
                 }
                 state.output_index = Some(assigned);
-                state.item_id = response_tool_call_item_id_from_chat_name(
+                state.item_id = response_tool_call_item_id_from_upstream_name(
                     &state.call_id,
                     &state.name,
                     &self.tool_context,
                 );
-                let item = response_tool_call_item_from_chat_name(
+                let item = response_tool_call_item_from_upstream_name(
                     &state.item_id,
                     "in_progress",
                     &state.call_id,
@@ -687,8 +690,8 @@ impl ChatToResponsesState {
             };
             let output_index = state.output_index.unwrap_or(0);
             let arguments = canonicalize_tool_arguments_str(&state.arguments);
-            let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
-            let item = response_tool_call_item_from_chat_name(
+            let is_custom_tool = self.tool_context.is_custom_tool_upstream_name(&state.name);
+            let item = response_tool_call_item_from_upstream_name(
                 &state.item_id,
                 "completed",
                 &state.call_id,
@@ -701,7 +704,7 @@ impl ChatToResponsesState {
             self.output_items.push((output_index, item.clone()));
 
             if is_custom_tool {
-                let input = custom_tool_input_from_chat_arguments(&arguments);
+                let input = custom_tool_input_from_upstream_arguments(&arguments);
                 if !input.is_empty() {
                     events.push(sse::custom_tool_call_input_delta(
                         output_index,
@@ -1297,7 +1300,8 @@ mod tests {
             "tools": [{ "type": "custom", "name": "exec" }]
         });
         let context =
-            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+            super::super::codex_tool_bridge::build_codex_tool_context_from_request(&request)
+                .unwrap();
         let output = collect_with_context(
             vec![
                 "data: {\"id\":\"chatcmpl_custom\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_custom\",\"type\":\"function\",\"function\":{\"name\":\"exec\"}}]}}]}\n\n",
@@ -1383,7 +1387,8 @@ mod tests {
             }]
         });
         let context =
-            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+            super::super::codex_tool_bridge::build_codex_tool_context_from_request(&request)
+                .unwrap();
         let output = collect_with_context(
             vec![
                 "data: {\"id\":\"chatcmpl_gmail\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_gmail\",\"type\":\"function\",\"function\":{\"name\":\"mcp__codex_apps__gmail___search_emails\"}}]}}]}\n\n",
@@ -1408,10 +1413,11 @@ mod tests {
             "input": "Search for Gmail tools."
         });
         let context =
-            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+            super::super::codex_tool_bridge::build_codex_tool_context_from_request(&request)
+                .unwrap();
         let output = collect_with_context(
             vec![
-                "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_tool_search_1\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_tool_search_1\",\"type\":\"function\",\"function\":{\"name\":\"ccswitch_tool_search\"}}]}}]}\n\n",
                 "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"query\\\":\\\"Gmail search emails\\\",\\\"limit\\\":10}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
                 "data: [DONE]\n\n",
             ],

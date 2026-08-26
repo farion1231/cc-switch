@@ -11,10 +11,12 @@ use std::collections::HashSet;
 
 use serde_json::{json, Map, Value};
 
+use super::codex_tool_bridge::{
+    request_offers_tool_search as shared_request_offers_tool_search, TOOL_SEARCH_NATIVE_TYPE,
+    TOOL_SEARCH_PROXY_NAME,
+};
 use crate::proxy::error::ProxyError;
 
-const TOOL_SEARCH_NATIVE_NAME: &str = "tool_search";
-const TOOL_SEARCH_PROXY_NAME: &str = "ccswitch_tool_search";
 const XAI_MAX_TOOL_COUNT: usize = 350;
 
 /// Whether the original Codex request offered the private `tool_search` tool.
@@ -22,13 +24,7 @@ const XAI_MAX_TOOL_COUNT: usize = 350;
 /// Response restoration uses this request-scoped bit so an unrelated user
 /// function is never reclassified accidentally.
 pub(crate) fn request_offers_tool_search(body: &Value) -> bool {
-    body.get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| {
-            tools.iter().any(|tool| {
-                tool.get("type").and_then(Value::as_str) == Some(TOOL_SEARCH_NATIVE_NAME)
-            })
-        })
+    shared_request_offers_tool_search(body)
 }
 
 /// Translate Codex's private deferred-tool protocol into xAI-compatible native
@@ -44,9 +40,10 @@ pub(crate) fn request_offers_tool_search(body: &Value) -> bool {
 ///   exposes exactly the tools Codex selected.
 pub(crate) fn prepare_xai_tool_search_request(body: &mut Value) -> Result<bool, ProxyError> {
     let offers_tool_search = request_offers_tool_search(body);
-    if has_reserved_tool_search_function(body) {
+    if has_tool_search_proxy_function(body) {
         return Err(ProxyError::TransformError(
-            "native tool_search collides with a reserved xAI function name".to_string(),
+            "function name ccswitch_tool_search is reserved for the xAI tool_search proxy shim"
+                .to_string(),
         ));
     }
     if !offers_tool_search {
@@ -115,7 +112,7 @@ fn omit_unloaded_top_level_functions(body: &mut Value) -> bool {
     changed || tools.len() != original_len
 }
 
-fn has_reserved_tool_search_function(body: &Value) -> bool {
+fn has_tool_search_proxy_function(body: &Value) -> bool {
     body.get("tools")
         .and_then(Value::as_array)
         .is_some_and(|tools| {
@@ -124,13 +121,13 @@ fn has_reserved_tool_search_function(body: &Value) -> bool {
                     && tool
                         .get("name")
                         .and_then(Value::as_str)
-                        .is_some_and(is_reserved_tool_search_function_name)
+                        .is_some_and(is_tool_search_proxy_name)
             })
         })
 }
 
-fn is_reserved_tool_search_function_name(name: &str) -> bool {
-    name == TOOL_SEARCH_NATIVE_NAME || name == TOOL_SEARCH_PROXY_NAME
+fn is_tool_search_proxy_name(name: &str) -> bool {
+    name == TOOL_SEARCH_PROXY_NAME
 }
 
 fn validate_no_search_tool_catalog(body: &Value) -> Result<(), ProxyError> {
@@ -305,7 +302,7 @@ fn replace_tool_search_declaration(body: &mut Value) -> bool {
     };
     let mut changed = false;
     for tool in tools {
-        if tool.get("type").and_then(Value::as_str) == Some(TOOL_SEARCH_NATIVE_NAME) {
+        if tool.get("type").and_then(Value::as_str) == Some(TOOL_SEARCH_NATIVE_TYPE) {
             *tool = tool_search_function();
             changed = true;
         }
@@ -317,7 +314,7 @@ fn replace_tool_search_choice(body: &mut Value) -> bool {
     let Some(choice) = body.get_mut("tool_choice") else {
         return false;
     };
-    if choice.get("type").and_then(Value::as_str) != Some(TOOL_SEARCH_NATIVE_NAME) {
+    if choice.get("type").and_then(Value::as_str) != Some(TOOL_SEARCH_NATIVE_TYPE) {
         return false;
     }
     *choice = json!({"type": "function", "name": TOOL_SEARCH_PROXY_NAME});
@@ -462,7 +459,7 @@ fn append_loaded_tools(body: &mut Value, loaded_tools: Vec<Value>) -> Result<boo
             && tool
                 .get("name")
                 .and_then(Value::as_str)
-                .is_some_and(is_reserved_tool_search_function_name)
+                .is_some_and(is_tool_search_proxy_name)
         {
             return Err(ProxyError::TransformError(
                 "discovered function collides with the xAI tool_search proxy shim".to_string(),
@@ -1147,23 +1144,25 @@ mod tests {
     }
 
     #[test]
-    fn rejects_native_tool_search_function_name_collision() {
+    fn accepts_native_tool_search_function_alongside_search_shim() {
         let mut body = json!({
             "tools": [
                 {"type": "tool_search"},
                 {"type": "function", "name": "tool_search", "parameters": {}}
             ]
         });
-        assert!(prepare_xai_tool_search_request(&mut body).is_err());
-        assert_eq!(body["tools"][0]["type"], "tool_search");
+        assert!(prepare_xai_tool_search_request(&mut body).unwrap());
+        assert_eq!(body["tools"][0]["name"], TOOL_SEARCH_PROXY_NAME);
+        assert_eq!(body["tools"][1]["name"], TOOL_SEARCH_NATIVE_TYPE);
     }
 
     #[test]
-    fn rejects_reserved_tool_search_function_even_without_search_shim() {
+    fn accepts_native_tool_search_function_without_search_shim() {
         let mut body = json!({
             "tools": [{"type": "function", "name": "tool_search", "parameters": {}}]
         });
-        assert!(prepare_xai_tool_search_request(&mut body).is_err());
+        assert!(!prepare_xai_tool_search_request(&mut body).unwrap());
+        assert_eq!(body["tools"][0]["name"], TOOL_SEARCH_NATIVE_TYPE);
     }
 
     #[test]
@@ -1176,6 +1175,38 @@ mod tests {
         });
         assert!(prepare_xai_tool_search_request(&mut body).is_err());
         assert_eq!(body["tools"][0]["type"], "tool_search");
+    }
+
+    #[test]
+    fn rejects_proxy_function_name_even_without_search_shim() {
+        let mut body = json!({
+            "tools": [{
+                "type": "function",
+                "name": TOOL_SEARCH_PROXY_NAME,
+                "parameters": {}
+            }]
+        });
+        assert!(prepare_xai_tool_search_request(&mut body).is_err());
+    }
+
+    #[test]
+    fn accepts_discovered_native_tool_search_function() {
+        let mut body = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "function",
+                    "name": TOOL_SEARCH_NATIVE_TYPE,
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+
+        assert!(prepare_xai_tool_search_request(&mut body).unwrap());
+        assert_eq!(body["tools"][0]["name"], TOOL_SEARCH_PROXY_NAME);
+        assert_eq!(body["tools"][1]["name"], TOOL_SEARCH_NATIVE_TYPE);
     }
 
     #[test]
@@ -1327,13 +1358,22 @@ mod tests {
         let mut response = json!({
             "type": "response.completed",
             "response": {
-                "output": [{
-                    "type": "function_call",
-                    "name": TOOL_SEARCH_PROXY_NAME,
-                    "call_id": "search_1",
-                    "status": "completed",
-                    "arguments": "{\"query\":\"mail\",\"limit\":\"3\"}"
-                }]
+                "output": [
+                    {
+                        "type": "function_call",
+                        "name": TOOL_SEARCH_PROXY_NAME,
+                        "call_id": "search_1",
+                        "status": "completed",
+                        "arguments": "{\"query\":\"mail\",\"limit\":\"3\"}"
+                    },
+                    {
+                        "type": "function_call",
+                        "name": TOOL_SEARCH_NATIVE_TYPE,
+                        "call_id": "native_1",
+                        "status": "completed",
+                        "arguments": "{}"
+                    }
+                ]
             }
         });
 
@@ -1343,6 +1383,9 @@ mod tests {
         assert_eq!(call["execution"], "client");
         assert_eq!(call["arguments"]["query"], "mail");
         assert!(call.get("name").is_none());
+        let native_call = &response["response"]["output"][1];
+        assert_eq!(native_call["type"], "function_call");
+        assert_eq!(native_call["name"], TOOL_SEARCH_NATIVE_TYPE);
     }
 
     #[test]

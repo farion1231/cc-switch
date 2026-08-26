@@ -10,9 +10,9 @@
 //! - `transform_responses.rs`: Anthropic request → Responses request, Responses response → Anthropic response
 //! - this module:               Responses request → Anthropic request, Anthropic response → Responses response
 
-use super::transform_codex_chat::{
-    build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
-    response_tool_call_item_id_from_chat_name, CodexToolContext,
+use super::codex_tool_bridge::{
+    build_codex_tool_context_from_request, response_tool_call_item_from_upstream_name,
+    response_tool_call_item_id_from_upstream_name, CodexToolContext, TOOL_SEARCH_PROXY_NAME,
 };
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
@@ -26,7 +26,6 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
 pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
-const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 
 /// Maps Codex's reasoning.effort to the token budget for Anthropic thinking.
 ///
@@ -225,12 +224,21 @@ fn responses_system_text(item: &Value) -> Vec<String> {
     }
 }
 
+#[allow(dead_code)]
 pub fn responses_request_to_anthropic(
     body: Value,
     default_max_tokens: u64,
 ) -> Result<Value, ProxyError> {
+    let tool_context = build_codex_tool_context_from_request(&body)?;
+    responses_request_to_anthropic_with_tool_context(body, default_max_tokens, &tool_context)
+}
+
+pub(crate) fn responses_request_to_anthropic_with_tool_context(
+    body: Value,
+    default_max_tokens: u64,
+    tool_context: &CodexToolContext,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
-    let tool_context = build_codex_tool_context_from_request(&body);
     let model = body
         .get("model")
         .and_then(|value| value.as_str())
@@ -266,7 +274,7 @@ pub fn responses_request_to_anthropic(
 
     // input → messages
     let mut messages = match body.get("input") {
-        Some(Value::Array(items)) => convert_input_to_messages(items, &tool_context)?,
+        Some(Value::Array(items)) => convert_input_to_messages(items, tool_context)?,
         Some(Value::String(text)) if is_meaningful_text(text) => vec![json!({
             "role": "user",
             "content": [{ "type": "text", "text": text }]
@@ -382,7 +390,7 @@ pub fn responses_request_to_anthropic(
     // Reuse the Codex tool context so function, namespace, custom, tool_search, and
     // dynamically loaded tools all receive stable flat names upstream.
     let anth_tools: Vec<Value> = tool_context
-        .chat_tools()
+        .function_tools()
         .iter()
         .filter_map(chat_tool_to_anthropic_tool)
         .collect();
@@ -397,7 +405,7 @@ pub fn responses_request_to_anthropic(
     // unsupported hosted tools (for example web_search) must drop tool_choice too.
     if has_tools {
         if let Some(tc) = body.get("tool_choice") {
-            let mapped = map_tool_choice_to_anthropic(tc, &tool_context);
+            let mapped = map_tool_choice_to_anthropic(tc, tool_context)?;
             let forced = matches!(
                 mapped.get("type").and_then(|value| value.as_str()),
                 Some("any" | "tool")
@@ -466,8 +474,11 @@ fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
 }
 
 /// tool_choice: Responses → Anthropic (the reverse of `map_tool_choice_to_responses`)
-fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolContext) -> Value {
-    match tool_choice {
+fn map_tool_choice_to_anthropic(
+    tool_choice: &Value,
+    tool_context: &CodexToolContext,
+) -> Result<Value, ProxyError> {
+    let mapped = match tool_choice {
         Value::String(s) => match s.as_str() {
             "required" => json!({ "type": "any" }),
             "auto" => json!({ "type": "auto" }),
@@ -478,15 +489,25 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolCon
             Some("function") => {
                 let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 let namespace = obj.get("namespace").and_then(|value| value.as_str());
-                let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
+                let upstream_name =
+                    tool_context.require_published_response_function(name, namespace)?;
                 json!({ "type": "tool", "name": upstream_name })
             }
-            Some("custom") => json!({
-                "type": "tool",
-                "name": obj.get("name").and_then(|value| value.as_str()).unwrap_or("")
-            }),
+            Some("custom") => {
+                let name = obj
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let upstream_name = tool_context.require_published_custom_tool(name)?;
+                json!({ "type": "tool", "name": upstream_name })
+            }
             Some("tool_search") => {
-                json!({ "type": "tool", "name": TOOL_SEARCH_PROXY_NAME })
+                if tool_context.uses_codex_private_tools() {
+                    let upstream_name = tool_context.require_published_tool_search()?;
+                    json!({ "type": "tool", "name": upstream_name })
+                } else {
+                    json!({ "type": "auto" })
+                }
             }
             // Other object shapes (allowed_tools / hosted-tool selectors, etc.) are
             // not recognized by Anthropic; downgrade to auto to avoid passing OpenAI's
@@ -494,7 +515,8 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolCon
             _ => json!({ "type": "auto" }),
         },
         _ => json!({ "type": "auto" }),
-    }
+    };
+    Ok(mapped)
 }
 
 /// Re-nests the flat Responses input[] back into Anthropic messages.
@@ -512,11 +534,9 @@ fn convert_input_to_messages(
 
     for item in items {
         let item_type = item.get("type").and_then(|t| t.as_str());
-        if matches!(
-            item_type,
-            Some("function_call" | "custom_tool_call" | "tool_search_call")
-        ) && item.get("status").and_then(Value::as_str) == Some("incomplete")
-        {
+        let is_tool_call = matches!(item_type, Some("function_call" | "custom_tool_call"))
+            || (tool_context.uses_codex_private_tools() && item_type == Some("tool_search_call"));
+        if is_tool_call && item.get("status").and_then(Value::as_str) == Some("incomplete") {
             log::warn!(
                 "[Codex/Anthropic] Dropping incomplete historical tool call: type={}, call_id={}",
                 item_type.unwrap_or("unknown"),
@@ -537,7 +557,8 @@ fn convert_input_to_messages(
                     .unwrap_or("");
                 let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let namespace = item.get("namespace").and_then(|value| value.as_str());
-                let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
+                let upstream_name =
+                    tool_context.upstream_name_for_response_function(name, namespace);
                 let args_str = item.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
                 let input: Value = if args_str.trim().is_empty() {
                     json!({})
@@ -587,7 +608,7 @@ fn convert_input_to_messages(
                     }),
                 );
             }
-            Some("tool_search_call") => {
+            Some("tool_search_call") if tool_context.uses_codex_private_tools() => {
                 let call_id = item
                     .get("call_id")
                     .and_then(|value| value.as_str())
@@ -609,7 +630,11 @@ fn convert_input_to_messages(
                     }),
                 );
             }
-            Some("function_call_output" | "custom_tool_call_output" | "tool_search_output") => {
+            Some("function_call_output" | "custom_tool_call_output")
+            | Some("tool_search_output")
+                if item_type != Some("tool_search_output")
+                    || tool_context.uses_codex_private_tools() =>
+            {
                 let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
                 let output = tool_result_content_from_responses_item(item);
                 let mut block = json!({
@@ -1326,8 +1351,8 @@ pub(crate) fn anthropic_response_to_responses_with_context(
                     let input = block.get("input").cloned().unwrap_or(json!({}));
                     let input = sanitize_anthropic_tool_use_input(name, input);
                     let item_id =
-                        response_tool_call_item_id_from_chat_name(call_id, name, tool_context);
-                    output.push(response_tool_call_item_from_chat_name(
+                        response_tool_call_item_id_from_upstream_name(call_id, name, tool_context);
+                    output.push(response_tool_call_item_from_upstream_name(
                         &item_id,
                         "completed",
                         call_id,
@@ -1695,6 +1720,100 @@ mod tests {
     }
 
     #[test]
+    fn test_request_keeps_native_tool_search_distinct_from_proxy() {
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "input": [{"role": "user", "content": "find tools"}],
+            "tools": [
+                {"type": "tool_search"},
+                {"type": "function", "name": "tool_search", "parameters": {}}
+            ],
+            "tool_choice": {"type": "tool_search"}
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let names = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![TOOL_SEARCH_PROXY_NAME, "tool_search"]);
+        assert_eq!(result["tool_choice"]["name"], TOOL_SEARCH_PROXY_NAME);
+    }
+
+    #[test]
+    fn standard_responses_history_does_not_proxy_codex_tool_search_items() {
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "tools": [{"type": "tool_search"}],
+            "input": [
+                {"role": "user", "content": "hello"},
+                {
+                    "type": "tool_search_call",
+                    "call_id": "call_private",
+                    "arguments": {"query": "mail"}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "call_private",
+                    "tools": [{"type": "function", "name": "private_loaded"}]
+                }
+            ]
+        });
+        let context =
+            super::super::codex_tool_bridge::build_standard_responses_tool_context_from_request(
+                &input,
+            )
+            .unwrap();
+
+        let result =
+            responses_request_to_anthropic_with_tool_context(input, 4096, &context).unwrap();
+        assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+        assert!(result.get("tools").is_none());
+    }
+
+    #[test]
+    fn standard_tool_search_choice_downgrades_to_auto() {
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "tools": [
+                {"type": "tool_search"},
+                {"type": "function", "name": "plain", "parameters": {}}
+            ],
+            "tool_choice": {"type": "tool_search"},
+            "input": "hello"
+        });
+        let context =
+            super::super::codex_tool_bridge::build_standard_responses_tool_context_from_request(
+                &input,
+            )
+            .unwrap();
+
+        let result =
+            responses_request_to_anthropic_with_tool_context(input, 4096, &context).unwrap();
+        assert_eq!(result["tool_choice"], json!({"type": "auto"}));
+        assert_eq!(result["tools"][0]["name"], "plain");
+    }
+
+    #[test]
+    fn test_request_rejects_cross_kind_name_collision() {
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "input": [{"role": "user", "content": "use a tool"}],
+            "tools": [
+                {"type": "function", "name": "same", "parameters": {}},
+                {"type": "custom", "name": "same"}
+            ]
+        });
+        assert!(responses_request_to_anthropic(input, 4096).is_err());
+    }
+
+    #[test]
     fn test_request_tools_and_filtering() {
         let input = json!({
             "model": "claude",
@@ -1777,6 +1896,29 @@ mod tests {
                 .unwrap()["tool_choice"],
             json!({"type": "tool", "name": "x"})
         );
+    }
+
+    #[test]
+    fn test_request_rejects_choice_for_unloaded_deferred_tool() {
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "input": [{"role": "user", "content": "search docs"}],
+            "tools": [
+                {"type": "tool_search"},
+                {
+                    "type": "function",
+                    "name": "search_docs",
+                    "defer_loading": true,
+                    "parameters": {"type": "object"}
+                }
+            ],
+            "tool_choice": {"type": "function", "name": "search_docs"}
+        });
+
+        let error = responses_request_to_anthropic(input, 4096).unwrap_err();
+        assert!(matches!(error, ProxyError::InvalidRequest(_)));
+        assert!(error.to_string().contains("search_docs"));
     }
 
     #[test]
@@ -2646,7 +2788,8 @@ mod tests {
                 "name": "mcp_files",
                 "tools": [{"type": "function", "name": "read", "parameters": {"type": "object"}}]
             }]
-        }));
+        }))
+        .unwrap();
         let response = anthropic_response_to_responses_with_context(
             json!({
                 "id": "msg_ns",

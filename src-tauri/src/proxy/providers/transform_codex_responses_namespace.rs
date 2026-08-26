@@ -30,9 +30,9 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::transform_codex_chat::flatten_namespace_tool_name;
+use super::codex_tool_bridge::flatten_namespace_tool_name;
 use crate::proxy::error::ProxyError;
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 
@@ -329,17 +329,11 @@ fn rewrite_namespace_qualified_calls(value: &mut Value, owners: &HashMap<String,
     match value {
         Value::Array(items) => {
             for item in items {
-                rewrite_namespace_qualified_calls(item, owners);
+                rewrite_namespace_qualified_call(item, owners);
             }
         }
-        Value::Object(obj) => {
-            if obj.get("type").and_then(Value::as_str) == Some("function_call") {
-                rewrite_namespace_qualified_call(value, owners);
-                return;
-            }
-            for child in obj.values_mut() {
-                rewrite_namespace_qualified_calls(child, owners);
-            }
+        Value::Object(_) => {
+            rewrite_namespace_qualified_call(value, owners);
         }
         _ => {}
     }
@@ -379,30 +373,44 @@ fn rewrite_namespace_qualified_call(
 }
 
 fn restore_value(value: &mut Value, map: &HashMap<String, NamespacedName>) -> bool {
+    if restore_direct_function_call(value, map) {
+        return true;
+    }
+    let Some(obj) = value.as_object_mut() else {
+        return false;
+    };
+
     let mut changed = false;
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                changed |= restore_value(item, map);
-            }
+    if let Some(item) = obj.get_mut("item") {
+        changed |= restore_direct_function_call(item, map);
+    }
+    if let Some(output) = obj.get_mut("output").and_then(Value::as_array_mut) {
+        for item in output {
+            changed |= restore_direct_function_call(item, map);
         }
-        Value::Object(obj) => {
-            if obj.get("type").and_then(Value::as_str) == Some("function_call") {
-                if let Some(flat) = obj.get("name").and_then(Value::as_str) {
-                    if let Some(entry) = map.get(flat) {
-                        obj.insert("name".to_string(), json!(entry.name));
-                        obj.insert("namespace".to_string(), json!(entry.namespace));
-                        changed = true;
-                    }
-                }
-            }
-            for child in obj.values_mut() {
-                changed |= restore_value(child, map);
-            }
-        }
-        _ => {}
+    }
+    if let Some(response) = obj.get_mut("response") {
+        changed |= restore_value(response, map);
     }
     changed
+}
+
+fn restore_direct_function_call(value: &mut Value, map: &HashMap<String, NamespacedName>) -> bool {
+    let Some(obj) = value.as_object_mut() else {
+        return false;
+    };
+    if obj.get("type").and_then(Value::as_str) != Some("function_call") {
+        return false;
+    }
+    let Some(flat) = obj.get("name").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(entry) = map.get(flat) else {
+        return false;
+    };
+    obj.insert("name".to_string(), json!(entry.name));
+    obj.insert("namespace".to_string(), json!(entry.namespace));
+    true
 }
 
 /// Wrap a native Responses SSE byte stream, restoring flattened `function_call`
@@ -757,6 +765,61 @@ mod tests {
         assert_eq!(call["type"], "function_call");
         assert_eq!(call["name"], "tool_search");
         assert_eq!(call["namespace"], "mcp__tools__");
+    }
+
+    #[test]
+    fn restore_tool_calls_keeps_namespaced_child_named_proxy_shim() {
+        let request = json!({
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__tools__",
+                    "tools": [{
+                        "type": "function",
+                        "name": "ccswitch_tool_search",
+                        "parameters": {}
+                    }]
+                }]
+            }]
+        });
+        let map = namespace_restore_map(&request);
+        let mut response = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "mcp__tools____ccswitch_tool_search",
+                "call_id": "c1",
+                "arguments": "{}"
+            }]
+        });
+
+        assert!(restore_response_tool_calls(&mut response, &map, true));
+        let call = &response["output"][0];
+        assert_eq!(call["type"], "function_call");
+        assert_eq!(call["name"], "ccswitch_tool_search");
+        assert_eq!(call["namespace"], "mcp__tools__");
+    }
+
+    #[test]
+    fn restore_does_not_rewrite_nested_business_json() {
+        let map = namespace_restore_map(&namespace_request());
+        let nested = json!({
+            "type": "function_call",
+            "name": "mcp__files____read",
+            "call_id": "business-data"
+        });
+        let mut response = json!({
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "metadata": nested.clone()}]
+            }]
+        });
+
+        assert!(!restore_response_namespaces(&mut response, &map));
+        assert_eq!(response["output"][0]["content"][0]["metadata"], nested);
     }
 
     #[test]

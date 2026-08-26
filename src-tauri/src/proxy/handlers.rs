@@ -19,7 +19,7 @@ use super::{
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
-        get_adapter, get_claude_api_format,
+        codex_tool_bridge, get_adapter, get_claude_api_format,
         streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
             create_responses_sse_stream_from_anthropic_with_context,
@@ -875,13 +875,21 @@ async fn handle_responses_for_app(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    let client_uses_codex_private_tools =
+        super::providers::client_uses_codex_private_tools(&app_type);
+    // Build eagerly from the original request, but surface bridge-only
+    // collisions only when this provider actually needs a flat-tool adapter.
+    let codex_tool_context = super::providers::responses_tool_context_for_client(&app_type, &body);
     // Captured before `body` is moved into the forwarder: the flat-name →
     // {namespace, name} map used to restore the native Responses upstream's
     // function-call names (see the namespace-restore dispatch below).
-    let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
-    let restore_tool_search =
-        transform_codex_responses_xai_tool_search::request_offers_tool_search(&body);
+    let namespace_restore_map = if client_uses_codex_private_tools {
+        transform_codex_responses_namespace::namespace_restore_map(&body)
+    } else {
+        Default::default()
+    };
+    let restore_tool_search = client_uses_codex_private_tools
+        && transform_codex_responses_xai_tool_search::request_offers_tool_search(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -918,7 +926,7 @@ async fn handle_responses_for_app(
             &state,
             is_stream,
             connection_guard,
-            codex_tool_context,
+            codex_tool_context?,
         )
         .await;
     }
@@ -930,7 +938,7 @@ async fn handle_responses_for_app(
             &state,
             is_stream,
             connection_guard,
-            codex_tool_context,
+            codex_tool_context?,
         )
         .await;
     }
@@ -1080,10 +1088,16 @@ async fn handle_responses_compact_for_app(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
-    let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
-    let restore_tool_search =
-        transform_codex_responses_xai_tool_search::request_offers_tool_search(&body);
+    let client_uses_codex_private_tools =
+        super::providers::client_uses_codex_private_tools(&app_type);
+    let codex_tool_context = super::providers::responses_tool_context_for_client(&app_type, &body);
+    let namespace_restore_map = if client_uses_codex_private_tools {
+        transform_codex_responses_namespace::namespace_restore_map(&body)
+    } else {
+        Default::default()
+    };
+    let restore_tool_search = client_uses_codex_private_tools
+        && transform_codex_responses_xai_tool_search::request_offers_tool_search(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -1120,7 +1134,7 @@ async fn handle_responses_compact_for_app(
             &state,
             is_stream,
             connection_guard,
-            codex_tool_context,
+            codex_tool_context?,
         )
         .await;
     }
@@ -1132,7 +1146,7 @@ async fn handle_responses_compact_for_app(
             &state,
             is_stream,
             connection_guard,
-            codex_tool_context,
+            codex_tool_context?,
         )
         .await;
     }
@@ -1318,7 +1332,7 @@ async fn handle_codex_chat_to_responses_transform(
     state: &ProxyState,
     is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
-    tool_context: transform_codex_chat::CodexToolContext,
+    tool_context: codex_tool_bridge::CodexToolContext,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -1557,7 +1571,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     state: &ProxyState,
     is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
-    codex_tool_context: transform_codex_chat::CodexToolContext,
+    codex_tool_context: codex_tool_bridge::CodexToolContext,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
