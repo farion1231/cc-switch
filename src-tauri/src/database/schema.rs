@@ -549,6 +549,11 @@ impl Database {
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
                     }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（截断存量超长错误消息）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1595,6 +1600,46 @@ impl Database {
                 "last_tail_fingerprint",
                 "INTEGER",
             )?;
+        }
+        Ok(())
+    }
+
+    /// v18 -> v19: truncate legacy oversized `error_message` values that were
+    /// stored verbatim before the logger-side cap existed (#6706).
+    /// `substr`/`length` operate on characters, matching `MAX_ERROR_MESSAGE_CHARS`.
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        // The migration chain also runs on legacy layouts where the table or
+        // the column does not exist yet; fresh creates and the logger-side
+        // cap cover those rows, so there is nothing to truncate here.
+        // `pragma_table_info` on a missing table returns an empty set, which
+        // covers both cases in one query.
+        let has_error_column: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM pragma_table_info('proxy_request_logs')
+                    WHERE name = 'error_message'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(format!("检查 error_message 列失败: {e}")))?;
+        if !has_error_column {
+            return Ok(());
+        }
+
+        let max_chars = crate::proxy::usage::logger::MAX_ERROR_MESSAGE_CHARS;
+        let changed = conn
+            .execute(
+                &format!(
+                    "UPDATE proxy_request_logs
+                     SET error_message = substr(error_message, 1, {max_chars})
+                     WHERE error_message IS NOT NULL AND length(error_message) > {max_chars}"
+                ),
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("截断存量超长错误消息失败: {e}")))?;
+        if changed > 0 {
+            log::info!("Truncated {changed} oversized proxy_request_logs.error_message values");
         }
         Ok(())
     }
@@ -3709,6 +3754,50 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_truncates_oversized_error_messages() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute(
+            "CREATE TABLE proxy_request_logs (
+                request_id TEXT PRIMARY KEY,
+                error_message TEXT
+            )",
+            [],
+        )?;
+        let max_chars = crate::proxy::usage::logger::MAX_ERROR_MESSAGE_CHARS;
+        let oversized = "e".repeat(max_chars * 500);
+        let multibyte = "汉".repeat(max_chars + 500);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (request_id, error_message) VALUES ('oversized', ?1)",
+            [&oversized],
+        )?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (request_id, error_message) VALUES ('multibyte', ?1)",
+            [&multibyte],
+        )?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (request_id, error_message) VALUES ('short', 'ok')",
+            [],
+        )?;
+        Database::set_user_version(&conn, 18)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let (oversized_len, multibyte_len, short): (i64, i64, Option<String>) = conn.query_row(
+            "SELECT
+                (SELECT length(error_message) FROM proxy_request_logs WHERE request_id = 'oversized'),
+                (SELECT length(error_message) FROM proxy_request_logs WHERE request_id = 'multibyte'),
+                (SELECT error_message FROM proxy_request_logs WHERE request_id = 'short')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(oversized_len, max_chars as i64);
+        assert_eq!(multibyte_len, max_chars as i64);
+        assert_eq!(short, Some("ok".to_string()));
         Ok(())
     }
 }
