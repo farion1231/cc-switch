@@ -27,6 +27,9 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
                     // temporarily unreadable; never turn a read failure into
                     // destructive cleanup.
                     log::warn!("Failed to read Pi /login providers: {error}");
+                    if let Err(error) = mark_native_login_origins_pending(state, &native) {
+                        log::warn!("Failed to preserve pending Pi /login origins: {error}");
+                    }
                 }
             }
         }
@@ -398,6 +401,35 @@ fn sync_login_locked(
             state.db.save_provider(PI_APP, &restored)?;
             changed += 1;
         }
+    }
+
+    Ok(changed)
+}
+
+fn mark_native_login_origins_pending(
+    state: &AppState,
+    native: &IndexMap<String, Value>,
+) -> Result<usize, AppError> {
+    let saved = state.db.get_all_providers(PI_APP)?;
+    let mut changed = 0;
+
+    for id in native.keys() {
+        let Some(provider) = saved.get(id) else {
+            continue;
+        };
+        if has_pi_login_origin(provider) {
+            continue;
+        }
+
+        // auth.json 不可读时无法判断显式节点是否同时具有登录来源。先保留一个
+        // 待核对标记；下一次成功读取 auth.json 后，sync_login_locked 会确认
+        // 登录来源，或在未登录时清除此标记并保留普通 Provider。
+        let mut pending = provider.clone();
+        let meta = pending.meta.get_or_insert_with(ProviderMeta::default);
+        meta.pi_login_origin = Some(true);
+        meta.pi_login_synthetic = Some(false);
+        state.db.save_provider(PI_APP, &pending)?;
+        changed += 1;
     }
 
     Ok(changed)
@@ -895,6 +927,43 @@ mod tests {
         fs::write(&models_path, r#"{"providers":{}}"#).expect("remove explicit provider");
         let providers = ProviderService::list(&state, AppType::Pi)
             .expect("restore login provider after explicit removal");
+        let deepseek = &providers["deepseek"];
+        assert!(is_pi_login_provider(deepseek));
+        assert!(!is_synthetic_pi_login_provider(deepseek));
+        assert_eq!(deepseek.settings_config["futureField"], json!(true));
+    }
+
+    #[test]
+    #[serial]
+    fn initial_auth_read_failure_preserves_native_login_origin_for_recovery() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        let models_path = agent_dir.join("models.json");
+        let auth_path = agent_dir.join("auth.json");
+        fs::write(
+            &models_path,
+            r#"{"providers":{"deepseek":{"name":"Explicit DeepSeek","futureField":true}}}"#,
+        )
+        .expect("write explicit provider");
+        fs::write(&auth_path, "{").expect("write invalid auth");
+
+        let providers = ProviderService::list(&state, AppType::Pi)
+            .expect("sync native provider while auth is unreadable");
+        let deepseek = &providers["deepseek"];
+        assert!(!is_pi_login_provider(deepseek));
+        assert!(has_pi_login_origin(deepseek));
+
+        fs::write(&models_path, r#"{"providers":{}}"#).expect("remove explicit provider");
+        fs::write(
+            &auth_path,
+            r#"{"deepseek":{"type":"api_key","key":"secret"}}"#,
+        )
+        .expect("repair auth");
+
+        let providers = ProviderService::list(&state, AppType::Pi)
+            .expect("restore login provider after auth recovery");
         let deepseek = &providers["deepseek"];
         assert!(is_pi_login_provider(deepseek));
         assert!(!is_synthetic_pi_login_provider(deepseek));

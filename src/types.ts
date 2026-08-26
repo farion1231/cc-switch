@@ -234,7 +234,7 @@ export interface ProviderMeta {
   liveConfigManaged?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
-  // Pi Provider 是否最初来自 /login 投影。
+  // Pi Provider 是否来自 /login 投影，或因 auth.json 暂时不可读而待核对。
   piLoginOrigin?: boolean;
   // Pi /login 卡片是否只包含 CC Switch 生成的展示配置。
   piLoginSynthetic?: boolean;

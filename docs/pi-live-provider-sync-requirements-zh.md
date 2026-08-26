@@ -100,7 +100,13 @@ Pi 额外需要支持同名内置供应商的显式覆盖：只要供应商节�
 - 启用和移除操作；
 - 页面刷新后的状态更新。
 
-不增加数据库 Schema，也不建立新的 ownership 状态。
+不增加数据库 Schema。允许在 Provider `meta` 中保存最小来源状态：
+
+- `providerType = pi_login`：当前卡片由 Pi `/login` 管理，只读；
+- `piLoginOrigin`：卡片具有登录来源，或在 `auth.json` 暂时不可读时等待下次成功读取核对；
+- `piLoginSynthetic`：卡片是否仅包含 CC Switch 生成的展示配置，用于决定 `/logout` 后删除纯投影还是保留最后一份显式配置。
+
+这些元数据不得写入 Pi 原生文件，也不得包含任何凭证内容。
 
 明确不做：
 

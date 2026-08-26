@@ -548,7 +548,7 @@ pub struct ProviderMeta {
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
     pub provider_type: Option<String>,
-    /// 该 Pi Provider 是否最初来自 `/login` 投影。
+    /// 该 Pi Provider 是否来自 `/login` 投影，或因 auth.json 暂时不可读而待核对。
     /// 显式 models.json 覆盖期间保留此标记，用于覆盖移除后恢复只读来源。
     #[serde(rename = "piLoginOrigin", skip_serializing_if = "Option::is_none")]
     pub pi_login_origin: Option<bool>,
