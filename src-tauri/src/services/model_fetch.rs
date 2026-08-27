@@ -25,11 +25,42 @@ pub struct FetchedModel {
 ///
 /// `models` 收成 `Value` 而非强类型：部分供应商会在 `data` 旁附带任意形状的
 /// `models`，而 serde 反序列化的是整个结构体，强类型字段一旦对不上就会连带
-/// `data` 一起解析失败（#7593）。
+/// `data` 一起解析失败（#7593）。`msg`/`error` 同理：供应商的 200 错误信封
+/// （HTTP 200 + success:false，如智谱 GLM）字段形状不稳定，收成 `Value` 后
+/// 仅在形状符合预期时提取信息，既不影响 `data` 解析，也避免 serde 报错文本
+/// 携带信封原文（可能含未脱敏密钥）。
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
     models: Option<serde_json::Value>,
+    /// 供应商错误信封（HTTP 200 + success:false）携带的错误信息，如智谱 GLM。
+    #[serde(default)]
+    msg: Option<serde_json::Value>,
+    /// OpenAI 风格错误对象 `{"error":{"message":"..."}}`。
+    #[serde(default)]
+    error: Option<serde_json::Value>,
+}
+
+impl ModelsResponse {
+    /// 从错误信封提取人类可读信息：`msg` 为字符串、或 `error.message` 为
+    /// 字符串时返回；形状不符返回 `None`（调用方回退为截断的原始响应体）。
+    fn error_message(&self) -> Option<String> {
+        if let Some(msg) = self
+            .msg
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+        {
+            return Some(msg.to_string());
+        }
+        self.error
+            .as_ref()
+            .and_then(|v| v.get("message")?.as_str())
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,27 +166,8 @@ pub async fn fetch_models(
         let status = response.status();
 
         if status.is_success() {
-            let resp: ModelsResponse = response
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse response: {e}"))?;
-
-            let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
-                data.into_iter()
-                    .map(|m| FetchedModel {
-                        id: m.id,
-                        owned_by: m.owned_by,
-                    })
-                    .collect()
-            } else {
-                catalog_model_ids(resp.models)
-                    .into_iter()
-                    .map(|id| FetchedModel { id, owned_by: None })
-                    .collect()
-            };
-
-            models.sort_by(|a, b| a.id.cmp(&b.id));
-            return Ok(models);
+            let body = response.text().await.unwrap_or_default();
+            return parse_models_response(&body);
         }
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
@@ -182,6 +194,40 @@ pub async fn fetch_models(
 
 fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> String {
     truncate_body(crate::redact_known_secrets_strict(&body, known_secrets))
+}
+
+/// 解析 OpenAI 兼容的 /models 响应。
+///
+/// 成功响应有两种列表字段：OpenAI/Anthropic 兼容接口的 `data` 与智谱 OpenAI
+/// Responses 接口的 `models`（slug）。部分供应商（如智谱 GLM 的 `/api/v1`
+/// 端点）在鉴权失败等场景下返回 HTTP 200 但携带错误信封（两个列表字段均缺
+/// 失）。此时必须透出信封中的错误信息，而不是静默返回空列表——否则用户在
+/// UI 上看到「获取成功但没有模型」，无法定位是鉴权失败还是端点问题。
+fn parse_models_response(body: &str) -> Result<Vec<FetchedModel>, String> {
+    let resp: ModelsResponse = serde_json::from_str(body)
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+    let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
+        data.into_iter()
+            .map(|m| FetchedModel {
+                id: m.id,
+                owned_by: m.owned_by,
+            })
+            .collect()
+    } else if resp.models.is_some() {
+        catalog_model_ids(resp.models)
+            .into_iter()
+            .map(|id| FetchedModel { id, owned_by: None })
+            .collect()
+    } else {
+        let detail = resp
+            .error_message()
+            .unwrap_or_else(|| truncate_body(body.to_string()));
+        return Err(format!("Model fetch failed: {detail}"));
+    };
+
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(models)
 }
 
 fn build_model_fetch_headers(
@@ -711,6 +757,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_models_response_rejects_http_200_error_envelope() {
+        // 智谱 GLM 的 /api/v1/models 在鉴权失败时返回 HTTP 200 + 错误信封
+        // （无 data 字段）。旧逻辑静默返回空列表，用户在 UI 上看不到任何失败原因。
+        let body = r#"{"code":1001,"msg":"Header中未收到Authorization参数，无法进行身份验证。","success":false}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(
+            err.contains("Authorization"),
+            "error should surface the envelope msg, got: {err}"
+        );
+    }
+
+    #[test]
     fn test_parse_response_tolerates_any_models_shape() {
         // #7593：data 合法时，任意形状的 models 都不能让整体解析失败
         for models in [
@@ -728,5 +786,27 @@ mod tests {
         let resp: ModelsResponse =
             serde_json::from_str(r#"{"models":[{"slug":"glm","id":123}]}"#).unwrap();
         assert_eq!(catalog_model_ids(resp.models), vec!["glm".to_string()]);
+    }
+
+    #[test]
+    fn parse_models_response_rejects_openai_style_error_object() {
+        let body = r#"{"error":{"message":"Invalid token","type":"invalid_request_error"}}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(err.contains("Invalid token"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_models_response_accepts_openai_list() {
+        let body = r#"{"object":"list","data":[{"id":"glm-4.6","object":"model","owned_by":"zhipu"}]}"#;
+        let models = parse_models_response(body).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "glm-4.6");
+        assert_eq!(models[0].owned_by.as_deref(), Some("zhipu"));
+    }
+
+    #[test]
+    fn parse_models_response_accepts_empty_data_array() {
+        let models = parse_models_response(r#"{"object":"list","data":[]}"#).unwrap();
+        assert!(models.is_empty());
     }
 }
