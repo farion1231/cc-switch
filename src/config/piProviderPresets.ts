@@ -1470,6 +1470,35 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "aws",
     iconColor: "#FF9900",
   },
+  {
+    name: "PPIO",
+    providerKey: "cc-switch-ppio",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      name: "PPIO",
+      baseUrl: "https://api.ppio.com/openai/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek/deepseek-v4-flash-0731",
+            name: "Deepseek V4 Flash 0731",
+            contextWindow: 1_048_576,
+            maxTokens: 393_216,
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...DEEPSEEK_THINKING_COMPAT },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(

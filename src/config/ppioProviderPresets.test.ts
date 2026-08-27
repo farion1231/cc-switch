@@ -6,6 +6,7 @@ import { codexProviderPresets } from "./codexProviderPresets";
 import { hermesProviderPresets } from "./hermesProviderPresets";
 import { openclawProviderPresets } from "./openclawProviderPresets";
 import { opencodeProviderPresets } from "./opencodeProviderPresets";
+import { piProviderPresets } from "./piProviderPresets";
 import { getIcon, getIconMetadata } from "../icons/extracted";
 
 const ppioPresetCollections = [
@@ -15,6 +16,7 @@ const ppioPresetCollections = [
   ["OpenCode", opencodeProviderPresets],
   ["OpenClaw", openclawProviderPresets],
   ["Hermes", hermesProviderPresets],
+  ["Pi", piProviderPresets],
 ] as const;
 
 const ppioModelId = "deepseek/deepseek-v4-flash-0731";
@@ -22,6 +24,7 @@ const ppioModelName = "Deepseek V4 Flash 0731";
 const ppioAnthropicEndpoint = "https://api.ppio.com/anthropic";
 const ppioOpenAiEndpoint = "https://api.ppio.com/openai/v1";
 const ppioChatCompletionsEndpoint = `${ppioOpenAiEndpoint}/chat/completions`;
+const ppioModelsEndpoint = `${ppioOpenAiEndpoint}/models`;
 const ppioBrandFields = {
   websiteUrl: "https://ppio.com",
   apiKeyUrl: "https://ppio.com/activity/ccswitch",
@@ -61,8 +64,8 @@ describe("PPIO provider presets", () => {
         },
       },
       endpointCandidates: [ppioAnthropicEndpoint],
+      modelsUrl: ppioModelsEndpoint,
     });
-    expect(claude).not.toHaveProperty("modelsUrl");
   });
 
   it("configures Claude Desktop with the native Anthropic endpoint", () => {
@@ -190,6 +193,47 @@ describe("PPIO provider presets", () => {
       },
     });
     expect(`${hermes.settingsConfig.base_url}/chat/completions`).toBe(
+      ppioChatCompletionsEndpoint,
+    );
+  });
+
+  it("configures Pi with a versioned OpenAI Chat base", () => {
+    const pi = getPpioPreset(piProviderPresets)!;
+    expect(pi).toMatchObject({
+      ...ppioBrandFields,
+      providerKey: "cc-switch-ppio",
+      settingsConfig: {
+        name: "PPIO",
+        baseUrl: ppioOpenAiEndpoint,
+        api: "openai-completions",
+        apiKey: "",
+        models: [
+          {
+            id: ppioModelId,
+            name: ppioModelName,
+            reasoning: true,
+            input: ["text"],
+            contextWindow: 1048576,
+            maxTokens: 393216,
+            thinkingLevelMap: {
+              minimal: null,
+              low: null,
+              medium: null,
+              high: "high",
+              max: "max",
+            },
+            compat: {
+              supportsStore: false,
+              supportsDeveloperRole: false,
+              maxTokensField: "max_tokens",
+              requiresReasoningContentOnAssistantMessages: true,
+              thinkingFormat: "deepseek",
+            },
+          },
+        ],
+      },
+    });
+    expect(`${pi.settingsConfig.baseUrl}/chat/completions`).toBe(
       ppioChatCompletionsEndpoint,
     );
   });
