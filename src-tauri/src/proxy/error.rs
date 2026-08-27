@@ -204,37 +204,31 @@ pub(crate) fn is_upstream_model_unavailable(error: &ProxyError) -> bool {
         return false;
     };
 
-    let raw = body.to_ascii_lowercase();
-    if has_model_unavailable_phrase(&raw) {
-        return true;
-    }
-
-    let message = extract_upstream_error_text(body).to_ascii_lowercase();
-    has_model_unavailable_phrase(&message)
+    extract_upstream_error_fields(body)
+        .into_iter()
+        .any(|field| has_model_unavailable_phrase(&field.to_ascii_lowercase()))
 }
 
-fn extract_upstream_error_text(body: &str) -> String {
+/// JSON 只看公认的错误字段，避免把回显的请求体/诊断上下文当成模型下线信号。
+/// 非 JSON 时整段 body 就是错误文本。
+fn extract_upstream_error_fields(body: &str) -> Vec<String> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return body.to_string();
+        return vec![body.to_string()];
     };
 
-    let candidates = [
-        value.pointer("/error/message"),
-        value.pointer("/error/code"),
-        value.pointer("/error/type"),
-        value.pointer("/message"),
-        value.pointer("/detail"),
-        value.pointer("/error"),
+    const POINTERS: &[&str] = &[
+        "/error/message",
+        "/error/code",
+        "/error/type",
+        "/message",
+        "/detail",
+        "/error",
     ];
-    if let Some(message) = candidates
-        .into_iter()
-        .flatten()
-        .find_map(|value| value.as_str())
-    {
-        return message.to_string();
-    }
-
-    serde_json::to_string(&value).unwrap_or_else(|_| body.to_string())
+    POINTERS
+        .iter()
+        .filter_map(|pointer| value.pointer(pointer).and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect()
 }
 
 fn has_model_unavailable_phrase(text: &str) -> bool {
@@ -321,6 +315,22 @@ mod tests {
         assert!(!is_upstream_model_unavailable(&unavailable_error(
             401,
             r#"{"error":{"message":"Model is unavailable."}}"#
+        )));
+    }
+
+    #[test]
+    fn echoed_request_body_is_not_treated_as_model_unavailable() {
+        let body = r#"{"error":{"message":"invalid json schema"},"input":"please retry if model not found"}"#;
+        assert!(!is_upstream_model_unavailable(&unavailable_error(
+            400, body
+        )));
+    }
+
+    #[test]
+    fn plain_text_body_is_scanned() {
+        assert!(is_upstream_model_unavailable(&unavailable_error(
+            400,
+            "Model is unavailable."
         )));
     }
 }
