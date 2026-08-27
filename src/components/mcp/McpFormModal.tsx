@@ -20,7 +20,7 @@ import {
   mcpServerToToml,
 } from "@/utils/tomlUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
-import { parseSmartMcpJson } from "@/utils/formatters";
+import { normalizeMcpServerSpec, parseSmartMcpJson } from "@/utils/formatters";
 import { useMcpValidation } from "./useMcpValidation";
 import { useUpsertMcpServer } from "@/hooks/useMcp";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
@@ -338,7 +338,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       } else {
         try {
           const result = parseSmartMcpJson(formConfig);
-          serverSpec = result.config as McpServerSpec;
+          serverSpec = normalizeMcpServerSpec(result.config) as McpServerSpec;
         } catch (e: any) {
           const errorMessage = e?.message || String(e);
           setConfigError(t("mcp.error.jsonInvalid") + ": " + errorMessage);
@@ -348,13 +348,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       }
     }
 
-    if (serverSpec?.type === "stdio" && !serverSpec?.command?.trim()) {
+    // 校验采用类型安全写法：command/url 可能被粘贴成数组/数字等非字符串
+    // （如 OpenCode 原生条目的 command 数组），直接调用 .trim() 会抛 TypeError。
+    // 数组 command 视为有效（normalizeMcpServerSpec 已拆分为 command + args）。
+    const commandValue = (serverSpec as any)?.command;
+    const hasCommand =
+      (typeof commandValue === "string" && commandValue.trim().length > 0) ||
+      (Array.isArray(commandValue) && commandValue.length > 0);
+    if (serverSpec?.type === "stdio" && !hasCommand) {
       toast.error(t("mcp.error.commandRequired"), { duration: 3000 });
       return;
     }
+    const urlValue = (serverSpec as any)?.url;
+    const hasUrl = typeof urlValue === "string" && urlValue.trim().length > 0;
     if (
       (serverSpec?.type === "http" || serverSpec?.type === "sse") &&
-      !serverSpec?.url?.trim()
+      !hasUrl
     ) {
       toast.error(t("mcp.wizard.urlRequired"), { duration: 3000 });
       return;

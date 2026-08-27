@@ -23,6 +23,41 @@ export function formatJSON(value: string): string {
  * @returns { id?: string, config: object, formattedConfig: string }
  * @throws 如果 JSON 格式无效
  */
+/**
+ * 规范化 MCP 服务器 JSON 为统一格式（McpServerSpec）。
+ *
+ * 兼容 OpenCode 原生条目形状（用户常直接粘贴）：
+ * - `command` 为数组（如 ["blender-mcp"]）→ 拆分出 command + args
+ * - `environment` 而非 `env` → 映射为 env
+ *
+ * 非对象/数组输入原样返回，不做校验（校验由调用方负责）。
+ */
+export function normalizeMcpServerSpec(spec: unknown): unknown {
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+    return spec;
+  }
+  const result: Record<string, unknown> = {
+    ...(spec as Record<string, unknown>),
+  };
+
+  if (Array.isArray(result.command)) {
+    const [cmd, ...rest] = result.command as unknown[];
+    result.command = typeof cmd === "string" ? cmd : "";
+    if (rest.length > 0) {
+      const existing = Array.isArray(result.args)
+        ? (result.args as unknown[])
+        : [];
+      result.args = [...existing, ...rest];
+    }
+  }
+
+  if (result.environment != null && result.env == null) {
+    result.env = result.environment;
+  }
+
+  return result;
+}
+
 export function parseSmartMcpJson(jsonText: string): {
   id?: string;
   config: any;

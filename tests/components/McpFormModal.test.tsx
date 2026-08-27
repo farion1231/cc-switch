@@ -505,4 +505,105 @@ type = "stdio"
     resolveUpsert?.();
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
   });
+
+  // Issue #6882：用户粘贴 OpenCode 原生 MCP 条目（command 为数组）时，
+  // handleSubmit 校验行 `!serverSpec?.command?.trim()` 对数组调用 trim() 抛
+  // TypeError，且位于 try/catch 之外 → async 函数返回 rejected promise →
+  // onClick 不 await → window unhandledrejection，toast/upsert 全部不执行
+  // （用户症状：点击添加完全没反应）。
+  // 修复后：数组 command 被 normalize 为 command + args，environment 映射为
+  // env，添加直接成功。
+  it("#6882：OpenCode 数组格式 command 可正常添加，无 unhandledrejection", async () => {
+    const rejections: unknown[] = [];
+    const handler = (event: PromiseRejectionEvent) =>
+      rejections.push(event.reason);
+    window.addEventListener("unhandledrejection", handler);
+    try {
+      renderForm();
+
+      fireEvent.change(
+        screen.getByPlaceholderText("mcp.form.titlePlaceholder"),
+        { target: { value: "blender-mcp" } },
+      );
+      // 用户从 OpenCode 配置里复制的原生条目：command 是数组
+      fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+        target: {
+          value: JSON.stringify({
+            type: "stdio",
+            command: ["blender-mcp"],
+            enabled: true,
+            environment: { BLENDER_HOST: "localhost", BLENDER_PORT: "9876" },
+          }),
+        },
+      });
+
+      fireEvent.click(screen.getByText("common.add"));
+
+      await waitFor(() => expect(upsertMock).toHaveBeenCalledTimes(1));
+      const [entry] = upsertMock.mock.calls.at(-1) ?? [];
+
+      // 数组 command 拆分：首个元素为 command，其余为 args
+      expect(entry.server.command).toBe("blender-mcp");
+      expect(entry.server.args).toBeUndefined();
+      // environment 映射为统一格式的 env
+      expect(entry.server.env).toEqual({
+        BLENDER_HOST: "localhost",
+        BLENDER_PORT: "9876",
+      });
+      // 宽松字段保留
+      expect(entry.server.enabled).toBe(true);
+      // 没有用户无感的 rejection
+      expect(rejections).toEqual([]);
+      expect(toastErrorMock).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("unhandledrejection", handler);
+    }
+  });
+
+  it("#6882：多元素 command 数组拆分出 args，仍可正常添加", async () => {
+    renderForm();
+
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.titlePlaceholder"), {
+      target: { value: "blender-mcp-args" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+      target: {
+        value: JSON.stringify({
+          type: "stdio",
+          command: ["npx", "-y", "blender-mcp"],
+          environment: { BLENDER_PORT: "9876" },
+        }),
+      },
+    });
+
+    fireEvent.click(screen.getByText("common.add"));
+
+    await waitFor(() => expect(upsertMock).toHaveBeenCalledTimes(1));
+    const [entry] = upsertMock.mock.calls.at(-1) ?? [];
+    expect(entry.server.command).toBe("npx");
+    expect(entry.server.args).toEqual(["-y", "blender-mcp"]);
+    expect(entry.server.env).toEqual({ BLENDER_PORT: "9876" });
+  });
+
+  it("#6882：非字符串非数组的 command 仍被拒绝并提示", async () => {
+    renderForm();
+
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.titlePlaceholder"), {
+      target: { value: "bad-command" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+      target: {
+        value: JSON.stringify({ type: "stdio", command: 42 }),
+      },
+    });
+
+    fireEvent.click(screen.getByText("common.add"));
+
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith("mcp.error.commandRequired", {
+        duration: 3000,
+      }),
+    );
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
 });
