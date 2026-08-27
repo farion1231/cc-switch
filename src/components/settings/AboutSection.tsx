@@ -245,8 +245,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   const [showInstallCommands, setShowInstallCommands] = useState(false);
 
-  const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
-    useUpdate();
+  const {
+    hasUpdate,
+    updateInfo,
+    checkUpdate,
+    resetDismiss,
+    isChecking,
+    appUpdatesDisabled,
+  } = useUpdate();
 
   const [wslShellByTool, setWslShellByTool] = useState<
     Record<string, WslShellPreference>
@@ -933,41 +939,48 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               <ExternalLink className="h-3.5 w-3.5" />
               {t("settings.releaseNotes")}
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleCheckUpdate}
-              disabled={isChecking || isDownloading}
-              className="h-8 gap-1.5 text-xs"
-            >
-              {isDownloading ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {t("settings.updating")}
-                </>
-              ) : hasUpdate ? (
-                <>
-                  <Download className="h-3.5 w-3.5" />
-                  {t("settings.updateTo", {
-                    version: updateInfo?.availableVersion ?? "",
-                  })}
-                </>
-              ) : isChecking ? (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  {t("settings.checking")}
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  {t("settings.checkForUpdates")}
-                </>
-              )}
-            </Button>
+            {appUpdatesDisabled ? (
+              <Badge variant="secondary" className="h-8 gap-1.5 px-3">
+                <Info className="h-3.5 w-3.5" />
+                {t("settings.localFixedBuild")}
+              </Badge>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleCheckUpdate}
+                disabled={isChecking || isDownloading}
+                className="h-8 gap-1.5 text-xs"
+              >
+                {isDownloading ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {t("settings.updating")}
+                  </>
+                ) : hasUpdate ? (
+                  <>
+                    <Download className="h-3.5 w-3.5" />
+                    {t("settings.updateTo", {
+                      version: updateInfo?.availableVersion ?? "",
+                    })}
+                  </>
+                ) : isChecking ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    {t("settings.checking")}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {t("settings.checkForUpdates")}
+                  </>
+                )}
+              </Button>
+            )}
           </div>
         </div>
 
-        {hasUpdate && updateInfo && (
+        {!appUpdatesDisabled && hasUpdate && updateInfo && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}

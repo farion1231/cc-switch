@@ -114,7 +114,10 @@ lto = "thin"
 opt-level = "s"
 # 使用 unwind 以便 panic hook 能捕获 backtrace（abort 会直接终止无法捕获）
 panic = "unwind"
-strip = "symbols"
+# macOS 27 rejects proc-macro dylibs produced by the current symbol-strip step
+# because their LINKEDIT string table is only 4-byte aligned. Keep symbols in
+# this local fixed build so release dependencies remain loadable by dyld.
+strip = "none"
 
 [dev-dependencies]
 serial_test = "3"

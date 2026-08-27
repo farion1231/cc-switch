@@ -13,6 +13,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getAppUpdatesDisabled } from "@/lib/updater";
 
 const RELEASES_URL = "https://github.com/farion1231/cc-switch/releases";
 
@@ -30,8 +31,15 @@ interface DatabaseUpgradeProps {
 // upgradable: 有可用更新，升级应用即可解决
 // incompatible: 已是最新版本但数据库仍过新（可能来自第三方客户端），升级无法解决
 // updating: 正在下载/安装更新
+// pinned: 本地固定版已停用应用更新
 // error: 升级过程出错
-type Phase = "checking" | "upgradable" | "incompatible" | "updating" | "error";
+type Phase =
+  | "checking"
+  | "upgradable"
+  | "incompatible"
+  | "pinned"
+  | "updating"
+  | "error";
 
 interface DownloadProgress {
   downloaded: number;
@@ -41,7 +49,8 @@ interface DownloadProgress {
 /**
  * 数据库版本过新（应用过旧）时的应用内恢复界面。
  *
- * 启动时先检查是否有可用更新：
+ * 启动时先读取后端更新策略，再检查是否有可用更新：
+ * - 固定版禁用更新 → 展示手动恢复说明，不提供安装入口。
  * - 有 → 提供「升级应用」一键下载+安装+重启，并展示下载进度条。
  * - 无 → 说明当前已是最新版本但数据库仍不兼容（通常由第三方客户端或更高版本创建），
  *   升级无法解决，及时提醒用户备份后改用兼容客户端或等待官方支持。
@@ -61,6 +70,19 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      try {
+        const disabled = await getAppUpdatesDisabled();
+        if (cancelled) return;
+        if (disabled) {
+          setPhase("pinned");
+          return;
+        }
+      } catch (error) {
+        console.error("[DatabaseUpgrade] Failed to read update policy", error);
+        if (!cancelled) setPhase("pinned");
+        return;
+      }
+
       try {
         const version = await invoke<string | null>(
           "check_app_update_available",
@@ -89,6 +111,17 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
   }, []);
 
   const startUpgrade = useCallback(async () => {
+    try {
+      if (await getAppUpdatesDisabled()) {
+        setPhase("pinned");
+        return;
+      }
+    } catch (error) {
+      console.error("[DatabaseUpgrade] Failed to confirm update policy", error);
+      setPhase("pinned");
+      return;
+    }
+
     setPhase("updating");
     setProgress(null);
     setErrorMsg(null);
@@ -121,7 +154,7 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
       : null;
   const fmtMB = (n: number) => (n / 1024 / 1024).toFixed(1);
 
-  const isIncompatible = phase === "incompatible";
+  const isIncompatible = phase === "incompatible" || phase === "pinned";
   const accent = isIncompatible
     ? {
         chip: "bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400",
@@ -147,10 +180,15 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
               {t("dbUpgrade.title", "数据库版本过新")}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {t(
-                "dbUpgrade.description",
-                "当前数据库由更新版本的 CC Switch 创建，需要升级应用后才能继续使用。升级不会删除你的数据。",
-              )}
+              {phase === "pinned"
+                ? t(
+                    "dbUpgrade.fixedBuildDescription",
+                    "当前数据库版本高于本地固定版支持范围。为保留本地补丁，应用自动更新已停用。",
+                  )
+                : t(
+                    "dbUpgrade.description",
+                    "当前数据库由更新版本的 CC Switch 创建，需要升级应用后才能继续使用。升级不会删除你的数据。",
+                  )}
             </p>
             {dbVersion != null && supportedVersion != null && (
               <p className="pt-0.5 text-xs text-muted-foreground tabular-nums">
@@ -204,6 +242,20 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
                 defaultValue:
                   "你已是最新版本，但数据库版本（v{{db}}）仍高于本应用支持的版本（v{{supported}}）。该数据库可能由第三方客户端或更高版本创建，升级当前官方应用也无法兼容。",
               })}
+            </p>
+          </div>
+        )}
+
+        {phase === "pinned" && (
+          <div className="space-y-2 rounded-lg border border-red-300/60 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300">
+            <p className="font-medium">
+              {t("dbUpgrade.fixedBuildTitle", "本地固定版不能自动升级")}
+            </p>
+            <p className="leading-relaxed">
+              {t(
+                "dbUpgrade.fixedBuildRecovery",
+                "请退出后手动换用兼容此数据库的应用版本；当前固定版不会下载或安装更新。",
+              )}
             </p>
           </div>
         )}
@@ -263,7 +315,9 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
             </Button>
           )}
 
-          {(phase === "incompatible" || phase === "error") && (
+          {(phase === "incompatible" ||
+            phase === "pinned" ||
+            phase === "error") && (
             <Button
               variant="outline"
               className="gap-2"

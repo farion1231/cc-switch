@@ -18,6 +18,13 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_
 
 </div>
 
+> [!IMPORTANT]
+> **Personal fixed fork / 个人固定版 fork.** This branch is based on official
+> CC Switch v3.20.0 and is not an official release. It disables automatic local
+> session-usage log scanning by default and removes application self-update
+> capability so the local patch cannot be overwritten. See
+> [LOCAL_FIXED_BUILD.md](LOCAL_FIXED_BUILD.md) for behavior and build details.
+
 ## ❤️Sponsor
 
 > [Want to appear here?](mailto:farion1231@gmail.com)
