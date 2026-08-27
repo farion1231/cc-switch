@@ -1662,9 +1662,6 @@ impl RequestForwarder {
                     provider.id
                 );
             }
-            // Collaboration mailbox items are a separate rewrite: xAI has no
-            // `agent_message` ModelInput variant, so V2 spawn/wait 422s unless
-            // they become ordinary `message` items.
             if super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_agent_message_input_items(
                 &mut request_body,
             ) {

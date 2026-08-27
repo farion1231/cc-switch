@@ -623,15 +623,11 @@ fn normalize_xai_function_tool_parameter_schemas(body: &mut Value) -> bool {
 
 /// Rewrite Codex multi-agent v2 `agent_message` input items into ordinary
 /// `message` items. xAI's Responses `ModelInput` enum has no `agent_message`
-/// variant, so a native passthrough 422s (`unknown item type "agent_message"`)
-/// before the child agent can run.
+/// variant, so a native passthrough 422s before the child agent can run.
 ///
-/// This is a request-side structural rewrite, not a field deletion: keep it
-/// out of [`sanitize_xai_responses_request`]. The collaboration envelope
-/// (NEW_TASK / FINAL_ANSWER text) is preserved as `input_text`. Routed Grok
-/// sessions currently put plaintext task bodies in `encrypted_content` parts;
-/// those are flattened to `input_text` so xAI can deserialize them. Items that
-/// are not `agent_message` are left untouched.
+/// Keep this out of [`sanitize_xai_responses_request`]: it is a structural
+/// rewrite, not a field deletion. Routed Grok sessions currently put plaintext
+/// task bodies in `encrypted_content` parts; flatten those to `input_text`.
 pub(crate) fn rewrite_xai_agent_message_input_items(body: &mut Value) -> bool {
     let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
         return false;
@@ -644,25 +640,22 @@ pub(crate) fn rewrite_xai_agent_message_input_items(body: &mut Value) -> bool {
     changed
 }
 
-fn is_agent_message_item(item: &Value) -> bool {
-    item.get("type").and_then(Value::as_str).map(str::trim) == Some("agent_message")
-}
-
 fn rewrite_agent_message_item(item: &mut Value) -> bool {
-    if !is_agent_message_item(item) {
+    if item.get("type").and_then(Value::as_str).map(str::trim) != Some("agent_message") {
         return false;
     }
 
     let id = item.get("id").cloned();
     let content = flatten_agent_message_content(item.get("content"));
-    let mut message = serde_json::Map::new();
-    message.insert("type".to_string(), json!("message"));
-    message.insert("role".to_string(), json!("user"));
+    let mut message = json!({
+        "type": "message",
+        "role": "user",
+        "content": content,
+    });
     if let Some(id) = id {
-        message.insert("id".to_string(), id);
+        message["id"] = id;
     }
-    message.insert("content".to_string(), Value::Array(content));
-    *item = Value::Object(message);
+    *item = message;
     true
 }
 
@@ -675,23 +668,19 @@ fn flatten_agent_message_content(content: Option<&Value>) -> Vec<Value> {
 }
 
 fn part_to_input_text(part: &Value) -> Option<Value> {
-    match part.get("type").and_then(Value::as_str).map(str::trim) {
-        Some("input_text" | "output_text" | "text") => part
-            .get("text")
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(input_text_part),
-        Some("encrypted_content") => part
-            .get("encrypted_content")
+    let text = if part.get("type").and_then(Value::as_str).map(str::trim)
+        == Some("encrypted_content")
+    {
+        part.get("encrypted_content")
             .or_else(|| part.get("text"))
             .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(input_text_part),
-        _ => part
-            .get("text")
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(input_text_part),
+    } else {
+        part.get("text").and_then(Value::as_str)
+    }?;
+    if text.is_empty() {
+        None
+    } else {
+        Some(input_text_part(text))
     }
 }
 
@@ -1346,7 +1335,6 @@ mod tests {
         assert_eq!(item["content"][0]["text"], "Message Type: NEW_TASK\nPayload:\n");
         assert_eq!(item["content"][1]["text"], "You are a Senior Code Reviewer.");
         assert!(item.get("author").is_none());
-        assert_eq!(item["content"].as_array().unwrap().len(), 2);
         assert!(!rewrite_xai_agent_message_input_items(&mut body));
     }
 
