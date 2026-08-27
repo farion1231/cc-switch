@@ -63,7 +63,7 @@ export function useApiKeyState({
       setApiKey(key);
 
       const configString = setApiKeyInConfig(
-        getConfig?.() || initialConfig || "{}",
+        getConfig ? getConfig() || "{}" : initialConfig || "{}",
         key.trim(),
         {
           // 最佳实践：仅在"非官方/非云厂商类别"时补齐缺失字段

@@ -341,7 +341,7 @@ export function useCommonConfigSnippet({
 
     try {
       const extracted = await configApi.extractCommonConfigSnippet("claude", {
-        settingsConfig,
+        settingsConfig: getSettingsConfig?.() ?? settingsConfig,
       });
 
       if (!extracted || extracted === "{}") {
@@ -369,7 +369,7 @@ export function useCommonConfigSnippet({
     } finally {
       setIsExtracting(false);
     }
-  }, [settingsConfig, t]);
+  }, [getSettingsConfig, settingsConfig, t]);
 
   return {
     useCommonConfig,

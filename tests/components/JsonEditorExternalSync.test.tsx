@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import JsonEditor from "@/components/JsonEditor";
@@ -83,17 +83,17 @@ describe("JsonEditor 外部同步不得回吐成用户输入", () => {
       expect(document.querySelector(".cm-content")).toBeTruthy(),
     );
 
-    screen.getByText("swap").click();
+    fireEvent.click(screen.getByText("swap"));
 
     // 模拟用户输入：直接改 CodeMirror 文档（非外部同步事务）
     const view = (
-      document.querySelector(".cm-editor") as HTMLElement & {
+      document.querySelector(".cm-content") as HTMLElement & {
         cmView?: { view: { dispatch: (spec: unknown) => void } };
       }
     )?.cmView?.view;
+    expect(view).toBeTruthy();
     if (!view) {
-      // 拿不到内部实例时跳过断言，避免测试依赖 CodeMirror 私有属性而变脆
-      return;
+      throw new Error("CodeMirror view was not attached to .cm-content");
     }
     view.dispatch({ changes: { from: 0, to: 0, insert: " " } });
 

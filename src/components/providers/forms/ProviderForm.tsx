@@ -560,10 +560,7 @@ function ProviderFormFull({
     let parsedBaseUrl: string | null = null;
     try {
       const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
-      const candidate =
-        appId === "gemini"
-          ? parsed.env?.GOOGLE_GEMINI_BASE_URL
-          : parsed.env?.ANTHROPIC_BASE_URL;
+      const candidate = parsed.env?.ANTHROPIC_BASE_URL;
       parsedBaseUrl = typeof candidate === "string" ? candidate.trim() : "";
     } catch {
       // The JSON validator will report malformed input; retain hook state for
