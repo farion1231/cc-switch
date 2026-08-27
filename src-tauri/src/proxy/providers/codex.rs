@@ -207,16 +207,40 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
 }
 
 /// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
-/// tool declarations flattened before forwarding.
+/// tool declarations flattened before forwarding, plus xAI schema sanitization.
 ///
 /// Codex 0.142+ emits ChatGPT-backend-private `{"type":"namespace",…}` tool
 /// shapes that strict third-party Responses gateways reject with
-/// `422 unknown variant "namespace"`. Only providers whose upstream is such a
-/// strict native gateway need the flatten+restore pass; the Chat/Anthropic
-/// transform paths already unwrap namespaces on their own. Currently that is the
-/// managed xAI (Grok) OAuth provider — the first strict gateway cc-switch hit.
+/// `422 unknown variant "namespace"`. xAI also rejects root `oneOf`/`anyOf`
+/// function schemas (notably `mcp__codex_app__automation_update`). The
+/// Chat/Anthropic transform paths already unwrap namespaces, so this only
+/// fires on native Responses passthrough.
+///
+/// Covers managed xAI OAuth *and* API-key providers whose live upstream is
+/// `api.x.ai` with `wire_api = "responses"`. See farion1231/cc-switch#6815.
 pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
-    provider.is_xai_oauth()
+    provider.is_xai_oauth() || provider_is_xai_native_responses(provider)
+}
+
+/// True when this Codex provider talks native Responses to first-party xAI
+/// (`api.x.ai`), including API-key Grok cards that are not `xai_oauth`.
+fn provider_is_xai_native_responses(provider: &Provider) -> bool {
+    let config_text = provider
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let Some(wire_api) = extract_codex_wire_api_from_toml(config_text) else {
+        return false;
+    };
+    if !wire_api.eq_ignore_ascii_case("responses") {
+        return false;
+    }
+
+    extract_codex_base_url_from_toml(config_text)
+        .map(|url| url.to_ascii_lowercase())
+        .is_some_and(|url| url.contains("api.x.ai"))
 }
 
 fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
@@ -2056,8 +2080,7 @@ wire_api = "responses"
     }
 
     #[test]
-    fn namespace_flatten_gate_only_fires_for_xai_oauth() {
-        // xAI OAuth: strict native gateway → needs namespace flattening.
+    fn namespace_flatten_gate_fires_for_xai_oauth_and_api_xai_responses() {
         let mut xai = create_provider(json!({ "auth": {}, "config": "" }));
         xai.meta = Some(crate::provider::ProviderMeta {
             provider_type: Some("xai_oauth".to_string()),
@@ -2065,11 +2088,30 @@ wire_api = "responses"
         });
         assert!(provider_needs_responses_namespace_flatten(&xai));
 
-        // A plain third-party API-key Codex provider must not be flattened.
-        let plain = create_provider(json!({
+        // API-key Grok cards (no xai_oauth meta) still talk to api.x.ai Responses.
+        let grok_key = create_provider(json!({
             "auth": { "OPENAI_API_KEY": "sk-x" },
-            "config": "base_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\""
+            "config": r#"
+model_provider = "custom"
+model = "grok-4.6"
+
+[model_providers.custom]
+name = "xai"
+base_url = "https://api.x.ai/v1"
+wire_api = "responses"
+"#
         }));
-        assert!(!provider_needs_responses_namespace_flatten(&plain));
+        assert!(provider_needs_responses_namespace_flatten(&grok_key));
+
+        // A non-xAI Responses provider must not be flattened.
+        let other = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "sk-x" },
+            "config": r#"
+[model_providers.custom]
+base_url = "https://api.deepseek.com"
+wire_api = "responses"
+"#
+        }));
+        assert!(!provider_needs_responses_namespace_flatten(&other));
     }
 }

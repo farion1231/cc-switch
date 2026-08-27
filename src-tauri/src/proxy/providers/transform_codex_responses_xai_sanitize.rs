@@ -1,5 +1,4 @@
-//! xAI (Grok) `Responses` request field sanitization for native Responses
-//! upstreams.
+//! xAI (Grok) native Responses compatibility for Codex Desktop.
 //!
 //! Codex 0.142+ sends `wire_api="responses"` requests carrying a handful of
 //! OpenAI-backend-private fields and tool carriers that xAI's strict
@@ -8,22 +7,35 @@
 //! *native* Responses passthrough forwards the body verbatim, so we scrub them
 //! here.
 //!
-//! This is a faithful port of sub2api's `patchGrokResponsesBody`
-//! (`backend/internal/service/openai_gateway_grok.go`), the production Go
-//! gateway that routes Codex → Grok subscriptions. Every transform is a
-//! deterministic field removal or structural lift — no semantic rewriting — so
-//! the same input always yields the same output and the upstream prompt-cache
-//! prefix stays stable across requests. Gated on the xAI OAuth path only (see
-//! [`super::codex::provider_needs_responses_namespace_flatten`]), so no other
-//! provider is ever touched.
+//! Request-side [`sanitize_xai_responses_request`] is a faithful port of
+//! sub2api's `patchGrokResponsesBody`
+//! (`backend/internal/service/openai_gateway_grok.go`) plus the #6815 schema
+//! collapse for root `oneOf`/`anyOf` function parameters. Field removal and
+//! that schema rewrite stay in that function; return-path whole-float tool
+//! argument rewrites are a separate entry point so they cannot be mistaken
+//! for "just delete a field". Gated on
+//! [`super::codex::provider_needs_responses_namespace_flatten`], which covers
+//! xAI OAuth *and* API-key cards whose live upstream is `api.x.ai` Responses.
 //!
-//! Run this *after* namespace flattening: by then Codex's `namespace` tools are
-//! already lifted to top-level `function` tools, so the tool-type whitelist
-//! below keeps them instead of dropping them.
+//! Run request sanitizers *after* namespace flattening: by then Codex's
+//! `namespace` tools are already lifted to top-level `function` tools, so the
+//! tool-type whitelist below keeps them instead of dropping them.
+//!
+//! Isolation for upstream rebases: keep request sanitizers, schema collapse,
+//! and return-path integer rewriting in this file. Call sites in `forwarder`,
+//! `handlers`, and [`super::codex::provider_needs_responses_namespace_flatten`]
+//! must stay thin so `git rebase upstream/main` only conflicts at those gates.
+//! If upstream later lands equivalent sanitization, delete this layer rather
+//! than dual-pathing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use serde_json::Value;
+use bytes::Bytes;
+use futures::stream::{Stream, StreamExt};
+use serde_json::{json, Map, Number, Value};
+
+use super::transform_codex_responses_namespace::{restore_sse_event_namespaces, NamespacedName};
+use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 
 /// Codex plugin-private fields removed recursively at any nesting depth.
 const RECURSIVE_UNSUPPORTED_FIELDS: &[&str] = &["external_web_access"];
@@ -97,6 +109,14 @@ pub(crate) fn sanitize_xai_responses_request(body: &mut Value) -> bool {
 
     // 6. Whitelist the tool types and clean a now-dangling `tool_choice`.
     changed |= filter_unsupported_tools(body);
+
+    // 7. Normalize function tool parameter schemas that xAI rejects before
+    //    sampling starts — notably Codex's built-in `automation_update`, which
+    //    arrives flattened as `mcp__codex_app__automation_update` with a root
+    //    `oneOf`/`anyOf` union containing a `null` branch. The Responses→Chat
+    //    bridge already coerces these, but the native Responses passthrough did
+    //    not until this step.
+    changed |= normalize_xai_function_tool_parameter_schemas(body);
 
     changed
 }
@@ -344,6 +364,491 @@ fn should_drop_tool_choice(body: &Value, tools: &[Value]) -> bool {
     false
 }
 
+/// Whether a Responses function tool declares parameters that xAI's strict
+/// validator rejects before sampling begins.
+fn xai_function_parameters_need_simplification(params: &Value) -> bool {
+    match params {
+        Value::Null => true,
+        Value::Object(obj) if obj.is_empty() => true,
+        Value::Object(obj) => {
+            match obj.get("type") {
+                None | Some(Value::Null) => return true,
+                Some(Value::String(type_name)) if type_name != "object" => return true,
+                _ => {}
+            }
+
+            for union_key in ["oneOf", "anyOf"] {
+                let Some(branches) = obj.get(union_key).and_then(Value::as_array) else {
+                    continue;
+                };
+                if branches.is_empty() {
+                    continue;
+                }
+                if branches
+                    .iter()
+                    .any(|branch| branch.get("type").and_then(Value::as_str) != Some("object"))
+                {
+                    return true;
+                }
+            }
+
+            false
+        }
+        _ => true,
+    }
+}
+
+/// Collapse a root-level `oneOf`/`anyOf` union into a plain object schema.
+fn flatten_union_branches_to_object(branches: &[Value]) -> Value {
+    let object_branches: Vec<&Value> = branches
+        .iter()
+        .filter(|branch| branch.get("type").and_then(Value::as_str) == Some("object"))
+        .collect();
+
+    if object_branches.len() == 1 {
+        let mut result = object_branches[0].clone();
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("type".to_string(), json!("object"));
+            obj.entry("properties".to_string())
+                .or_insert_with(|| json!({}));
+        }
+        return result;
+    }
+
+    if !object_branches.is_empty() {
+        let mut merged_properties = Map::new();
+        let mut merged_required = Vec::new();
+        for branch in object_branches {
+            if let Some(properties) = branch.get("properties").and_then(Value::as_object) {
+                for (key, value) in properties {
+                    merged_properties
+                        .entry(key.clone())
+                        .or_insert_with(|| value.clone());
+                }
+            }
+            if let Some(required) = branch.get("required").and_then(Value::as_array) {
+                for item in required {
+                    if !merged_required.iter().any(|existing| existing == item) {
+                        merged_required.push(item.clone());
+                    }
+                }
+            }
+        }
+
+        let mut result = json!({
+            "type": "object",
+            "properties": Value::Object(merged_properties),
+        });
+        if !merged_required.is_empty() {
+            result["required"] = Value::Array(merged_required);
+        }
+        return result;
+    }
+
+    json!({
+        "type": "object",
+        "properties": {},
+        "additionalProperties": true
+    })
+}
+
+/// Rewrite a function tool's JSON Schema parameters into an xAI-compatible root
+/// object schema.
+fn simplify_xai_function_parameters(params: Option<&Value>) -> Value {
+    match params {
+        None | Some(Value::Null) => {
+            json!({"type": "object", "properties": {}, "additionalProperties": true})
+        }
+        Some(Value::Object(obj)) if obj.is_empty() => {
+            json!({"type": "object", "properties": {}, "additionalProperties": true})
+        }
+        Some(Value::Object(obj)) => {
+            for union_key in ["oneOf", "anyOf"] {
+                if let Some(branches) = obj.get(union_key).and_then(Value::as_array) {
+                    if branches
+                        .iter()
+                        .any(|branch| branch.get("type").and_then(Value::as_str) != Some("object"))
+                    {
+                        return flatten_union_branches_to_object(branches);
+                    }
+                }
+            }
+
+            let mut result = Value::Object(obj.clone());
+            if let Some(obj) = result.as_object_mut() {
+                match obj.get("type").and_then(Value::as_str) {
+                    Some("object") => {}
+                    _ => {
+                        obj.insert("type".to_string(), json!("object"));
+                        obj.entry("properties".to_string())
+                            .or_insert_with(|| json!({}));
+                    }
+                }
+            }
+            result
+        }
+        _ => json!({"type": "object", "properties": {}, "additionalProperties": true}),
+    }
+}
+
+fn function_tool_name(tool: &Value) -> &str {
+    tool.get("name")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            tool.get("function")
+                .and_then(|function| function.get("name"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("")
+        .trim()
+}
+
+fn is_automation_update_tool(name: &str) -> bool {
+    name == "codex_app__automation_update"
+        || name == "mcp__codex_app__automation_update"
+        || name.ends_with("__automation_update")
+}
+
+fn rewrite_function_tool_parameters(tool: &mut Value, params: Option<&Value>) -> bool {
+    let simplified = simplify_xai_function_parameters(params);
+    if params == Some(&simplified) {
+        return false;
+    }
+
+    if let Some(obj) = tool.as_object_mut() {
+        if obj.contains_key("parameters") || params.is_some() {
+            obj.insert("parameters".to_string(), simplified);
+            return true;
+        }
+        if let Some(function) = obj.get_mut("function").and_then(Value::as_object_mut) {
+            function.insert("parameters".to_string(), simplified);
+            return true;
+        }
+    }
+
+    false
+}
+
+fn xai_safe_empty_object_schema() -> Value {
+    json!({"type": "object", "properties": {}, "additionalProperties": true})
+}
+
+fn normalize_xai_function_tool_parameters(tool: &mut Value) -> bool {
+    if tool.get("type").and_then(Value::as_str) != Some("function") {
+        return false;
+    }
+
+    // Codex Desktop always injects automation_update with a root oneOf/anyOf
+    // that includes a non-object (null) branch. xAI rejects the whole turn
+    // (farion1231/cc-switch#6815). Keep the tool callable, but force a plain
+    // object root the way CLIProxyAPI does.
+    if is_automation_update_tool(function_tool_name(tool)) {
+        let safe = xai_safe_empty_object_schema();
+        let needs_rewrite = {
+            let current = tool.get("parameters").or_else(|| {
+                tool.get("function")
+                    .and_then(|function| function.get("parameters"))
+            });
+            current != Some(&safe)
+        };
+        let mut changed = needs_rewrite;
+        if let Some(obj) = tool.as_object_mut() {
+            if needs_rewrite {
+                if obj.contains_key("parameters") || obj.get("function").is_none() {
+                    obj.insert("parameters".to_string(), safe);
+                } else if let Some(function) =
+                    obj.get_mut("function").and_then(Value::as_object_mut)
+                {
+                    function.insert("parameters".to_string(), safe);
+                }
+            }
+            if obj.get("strict") == Some(&json!(true)) {
+                obj.insert("strict".to_string(), json!(false));
+                changed = true;
+            }
+            if let Some(function) = obj.get_mut("function").and_then(Value::as_object_mut) {
+                if function.get("strict") == Some(&json!(true)) {
+                    function.insert("strict".to_string(), json!(false));
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+
+    let params = tool
+        .get("parameters")
+        .or_else(|| {
+            tool.get("function")
+                .and_then(|function| function.get("parameters"))
+        })
+        .cloned();
+
+    let changed = match params.as_ref() {
+        Some(params) if xai_function_parameters_need_simplification(params) => {
+            rewrite_function_tool_parameters(tool, Some(params))
+        }
+        None => rewrite_function_tool_parameters(tool, None),
+        _ => false,
+    };
+
+    if changed && is_automation_update_tool(function_tool_name(tool)) {
+        if let Some(obj) = tool.as_object_mut() {
+            if obj.get("strict") == Some(&json!(true)) {
+                obj.insert("strict".to_string(), json!(false));
+            }
+            if let Some(function) = obj.get_mut("function").and_then(Value::as_object_mut) {
+                if function.get("strict") == Some(&json!(true)) {
+                    function.insert("strict".to_string(), json!(false));
+                }
+            }
+        }
+    }
+
+    changed
+}
+
+fn normalize_xai_function_tool_parameter_schemas(body: &mut Value) -> bool {
+    let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+    for tool in tools.iter_mut() {
+        changed |= normalize_xai_function_tool_parameters(tool);
+    }
+    changed
+}
+
+/// Rewrite whole-number JSON floats (`92116.0`) to integers (`92116`) on
+/// completed function-call argument payloads. Grok emits JSON Number floats for
+/// integer tool fields; Codex Desktop then fails local serde (`expected i32` /
+/// `expected u64`) and never runs the tool.
+///
+/// Applies only to `response.function_call_arguments.done` and completed
+/// `function_call` items. SSE `*.delta` fragments are left untouched because
+/// they are not complete JSON. Parse/rewrite failures pass the original bytes
+/// through so Codex still surfaces the error — never replace arguments with
+/// `{}` or otherwise swallow the failure.
+pub(crate) fn normalize_xai_function_call_integer_arguments(value: &mut Value) -> bool {
+    normalize_xai_function_call_integer_arguments_value(value)
+}
+
+fn normalize_xai_function_call_integer_arguments_value(value: &mut Value) -> bool {
+    match value {
+        Value::Array(items) => {
+            let mut changed = false;
+            for item in items {
+                changed |= normalize_xai_function_call_integer_arguments_value(item);
+            }
+            changed
+        }
+        Value::Object(obj) => {
+            let event_type = obj
+                .get("type")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            if event_type.as_deref() == Some("response.function_call_arguments.delta") {
+                return false;
+            }
+
+            let mut changed = false;
+            if event_type.as_deref() == Some("response.function_call_arguments.done")
+                || event_type.as_deref() == Some("function_call")
+            {
+                changed |= normalize_function_call_arguments_field(obj);
+            }
+            for child in obj.values_mut() {
+                changed |= normalize_xai_function_call_integer_arguments_value(child);
+            }
+            changed
+        }
+        _ => false,
+    }
+}
+
+fn normalize_function_call_arguments_field(obj: &mut Map<String, Value>) -> bool {
+    match obj.get_mut("arguments") {
+        Some(Value::String(arguments)) => match rewrite_whole_float_arguments_json(arguments) {
+            Ok(Some(rewritten)) => {
+                *arguments = rewritten;
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                log::debug!(
+                    "[Codex] xAI function_call arguments were not rewritten; passing through unchanged: {error}"
+                );
+                false
+            }
+        },
+        Some(other) => rewrite_whole_number_floats(other),
+        None => false,
+    }
+}
+
+fn rewrite_whole_float_arguments_json(
+    arguments: &str,
+) -> Result<Option<String>, serde_json::Error> {
+    let mut value: Value = serde_json::from_str(arguments)?;
+    if !rewrite_whole_number_floats(&mut value) {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::to_string(&value)?))
+}
+
+fn rewrite_whole_number_floats(value: &mut Value) -> bool {
+    match value {
+        Value::Number(number) => {
+            if let Some(integer) = whole_float_to_json_int(number) {
+                *number = integer;
+                true
+            } else {
+                false
+            }
+        }
+        Value::Array(items) => {
+            let mut changed = false;
+            for item in items {
+                changed |= rewrite_whole_number_floats(item);
+            }
+            changed
+        }
+        Value::Object(map) => {
+            let mut changed = false;
+            for child in map.values_mut() {
+                changed |= rewrite_whole_number_floats(child);
+            }
+            changed
+        }
+        _ => false,
+    }
+}
+
+/// Convert a JSON Number that is a finite whole float (`92116.0`) into an
+/// integer Number. Non-whole values (`1.5`), actual integers, infinities, and
+/// values that cannot round-trip stay unchanged.
+fn whole_float_to_json_int(number: &Number) -> Option<Number> {
+    if number.is_i64() || number.is_u64() {
+        return None;
+    }
+    let float = number.as_f64()?;
+    if !float.is_finite() || float.fract() != 0.0 {
+        return None;
+    }
+    if float >= 0.0 {
+        if float > u64::MAX as f64 {
+            return None;
+        }
+        let integer = float as u64;
+        if integer as f64 != float {
+            return None;
+        }
+        Some(Number::from(integer))
+    } else {
+        if float < i64::MIN as f64 {
+            return None;
+        }
+        let integer = float as i64;
+        if integer as f64 != float {
+            return None;
+        }
+        Some(Number::from(integer))
+    }
+}
+
+/// Wrap a native Responses SSE byte stream: restore flattened namespace names
+/// and rewrite completed function-call argument JSON. Delta fragments that are
+/// not complete JSON pass through unchanged.
+pub(crate) fn create_xai_native_responses_sse_stream<E>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    restore_map: HashMap<String, NamespacedName>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
+where
+    E: std::error::Error + Send + 'static,
+{
+    async_stream::stream! {
+        let mut buffer = String::new();
+        let mut utf8_remainder: Vec<u8> = Vec::new();
+
+        tokio::pin!(stream);
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    while let Some(block) = take_sse_block(&mut buffer) {
+                        if block.trim().is_empty() {
+                            continue;
+                        }
+                        yield Ok(rewrite_xai_native_sse_block(&block, &restore_map));
+                    }
+                }
+                Err(e) => {
+                    yield Err(std::io::Error::other(e.to_string()));
+                    return;
+                }
+            }
+        }
+
+        if !utf8_remainder.is_empty() {
+            buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
+        }
+        let tail = std::mem::take(&mut buffer);
+        if !tail.trim().is_empty() {
+            yield Ok(rewrite_xai_native_sse_block(&tail, &restore_map));
+        }
+    }
+}
+
+fn rewrite_xai_native_sse_block(
+    block: &str,
+    restore_map: &HashMap<String, NamespacedName>,
+) -> Bytes {
+    let mut event_name: Option<&str> = None;
+    let mut data_parts: Vec<&str> = Vec::new();
+    for line in block.lines() {
+        if let Some(event) = strip_sse_field(line, "event") {
+            event_name = Some(event.trim());
+        }
+        if let Some(data) = strip_sse_field(line, "data") {
+            data_parts.push(data);
+        }
+    }
+
+    if data_parts.is_empty() {
+        return Bytes::from(format!("{block}\n\n"));
+    }
+
+    let data = data_parts.join("\n");
+    if data.trim() == "[DONE]" {
+        return Bytes::from(format!("{block}\n\n"));
+    }
+
+    let mut event: Value = match serde_json::from_str(&data) {
+        Ok(value) => value,
+        Err(_) => return Bytes::from(format!("{block}\n\n")),
+    };
+
+    let mut changed = restore_sse_event_namespaces(&mut event, restore_map);
+    changed |= normalize_xai_function_call_integer_arguments(&mut event);
+    if !changed {
+        return Bytes::from(format!("{block}\n\n"));
+    }
+
+    let restored = serde_json::to_string(&event).unwrap_or(data);
+    let mut out = String::new();
+    if let Some(name) = event_name {
+        out.push_str("event: ");
+        out.push_str(name);
+        out.push('\n');
+    }
+    out.push_str("data: ");
+    out.push_str(&restored);
+    out.push_str("\n\n");
+    Bytes::from(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,5 +1040,201 @@ mod tests {
         assert!(sanitize_xai_responses_request(&mut body));
         // second pass finds nothing left to change
         assert!(!sanitize_xai_responses_request(&mut body));
+    }
+
+    #[test]
+    fn simplifies_flattened_automation_update_one_of_null_root() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [{
+                "type": "function",
+                "name": "mcp__codex_app__automation_update",
+                "strict": true,
+                "parameters": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"action": {"type": "string"}},
+                            "required": ["action"]
+                        },
+                        {"type": "null"}
+                    ]
+                }
+            }]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+
+        let tool = &body["tools"][0];
+        assert_eq!(tool["strict"], json!(false));
+        assert_eq!(
+            tool["parameters"],
+            json!({"type": "object", "properties": {}, "additionalProperties": true})
+        );
+    }
+
+    #[test]
+    fn simplifies_null_tool_parameters_without_touching_valid_tools() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "codex_app__automation_update",
+                    "parameters": null
+                },
+                {
+                    "type": "function",
+                    "name": "echo_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}}
+                    }
+                }
+            ]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+
+        assert_eq!(
+            body["tools"][0]["parameters"],
+            json!({"type": "object", "properties": {}, "additionalProperties": true})
+        );
+        assert_eq!(
+            body["tools"][1]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {"message": {"type": "string"}}
+            })
+        );
+    }
+
+    #[test]
+    fn automation_update_schema_normalization_is_idempotent() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [{
+                "type": "function",
+                "name": "mcp__codex_app__automation_update",
+                "parameters": {
+                    "oneOf": [
+                        {"type": "object", "properties": {"action": {"type": "string"}}},
+                        {"type": "null"}
+                    ]
+                }
+            }]
+        });
+
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert!(!sanitize_xai_responses_request(&mut body));
+    }
+
+    #[test]
+    fn whole_floats_92116_and_120000_become_integers() {
+        let mut value: Value =
+            serde_json::from_str(r#"{"session_id":92116.0,"yield_time_ms":120000.0,"wait":1.5}"#)
+                .unwrap();
+        assert!(rewrite_whole_number_floats(&mut value));
+        assert_eq!(value["session_id"].as_i64(), Some(92116));
+        assert_eq!(value["yield_time_ms"].as_u64(), Some(120000));
+        assert_eq!(value["wait"].as_f64(), Some(1.5));
+        assert!(value["wait"].as_i64().is_none());
+
+        let encoded = serde_json::to_string(&value).unwrap();
+        assert!(encoded.contains(r#""session_id":92116"#));
+        assert!(encoded.contains(r#""yield_time_ms":120000"#));
+        assert!(!encoded.contains("92116.0"));
+        assert!(!encoded.contains("120000.0"));
+        assert!(encoded.contains("1.5"));
+    }
+
+    #[test]
+    fn function_call_arguments_done_rewrites_whole_floats_recursively() {
+        let mut event = json!({
+            "type": "response.function_call_arguments.done",
+            "item_id": "fc_exec",
+            "arguments": r#"{"session_id":92116.0,"yield_time_ms":120000.0,"nested":{"n":92116.0},"arr":[120000.0,1.5]}"#
+        });
+
+        assert!(normalize_xai_function_call_integer_arguments(&mut event));
+        let arguments: Value = serde_json::from_str(event["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments["session_id"].as_i64(), Some(92116));
+        assert_eq!(arguments["yield_time_ms"].as_u64(), Some(120000));
+        assert_eq!(arguments["nested"]["n"].as_i64(), Some(92116));
+        assert_eq!(arguments["arr"][0].as_u64(), Some(120000));
+        assert_eq!(arguments["arr"][1].as_f64(), Some(1.5));
+        assert!(arguments["arr"][1].as_i64().is_none());
+    }
+
+    #[test]
+    fn completed_function_call_item_rewrites_whole_float_arguments() {
+        let mut body = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "write_stdin",
+                "arguments": r#"{"session_id":92116.0,"yield_time_ms":120000.0}"#
+            }]
+        });
+
+        assert!(normalize_xai_function_call_integer_arguments(&mut body));
+        let arguments: Value =
+            serde_json::from_str(body["output"][0]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments["session_id"].as_i64(), Some(92116));
+        assert_eq!(arguments["yield_time_ms"].as_u64(), Some(120000));
+    }
+
+    #[test]
+    fn function_call_argument_deltas_are_not_rewritten() {
+        let mut event = json!({
+            "type": "response.function_call_arguments.delta",
+            "delta": r#"{"session_id":92116.0"#,
+            "item": {
+                "type": "function_call",
+                "arguments": r#"{"session_id":92116.0}"#
+            }
+        });
+        let original = event.clone();
+        assert!(!normalize_xai_function_call_integer_arguments(&mut event));
+        assert_eq!(event, original);
+    }
+
+    #[test]
+    fn invalid_function_call_arguments_pass_through() {
+        let mut event = json!({
+            "type": "response.function_call_arguments.done",
+            "arguments": r#"{"session_id":92116.0"#
+        });
+        assert!(!normalize_xai_function_call_integer_arguments(&mut event));
+        assert_eq!(event["arguments"], r#"{"session_id":92116.0"#);
+    }
+
+    #[test]
+    fn sse_done_event_rewrites_whole_floats_but_delta_bytes_stay_intact() {
+        let done = concat!(
+            "event: response.function_call_arguments.done\n",
+            r#"data: {"type":"response.function_call_arguments.done","arguments":"{\"session_id\":92116.0,\"yield_time_ms\":120000.0}"}"#,
+        );
+        let rewritten = rewrite_xai_native_sse_block(done, &HashMap::new());
+        let rewritten = String::from_utf8(rewritten.to_vec()).unwrap();
+        let data = rewritten
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap();
+        let event: Value = serde_json::from_str(data).unwrap();
+        let arguments: Value = serde_json::from_str(event["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments["session_id"].as_i64(), Some(92116));
+        assert_eq!(arguments["yield_time_ms"].as_u64(), Some(120000));
+        assert!(!rewritten.contains("92116.0"));
+        assert!(!rewritten.contains("120000.0"));
+
+        let delta = concat!(
+            "event: response.function_call_arguments.delta\n",
+            r#"data: {"type":"response.function_call_arguments.delta","delta":"{\"session_id\":92116.0"}"#,
+        );
+        let passed = rewrite_xai_native_sse_block(delta, &HashMap::new());
+        assert_eq!(
+            String::from_utf8(passed.to_vec()).unwrap(),
+            format!("{delta}\n\n")
+        );
     }
 }

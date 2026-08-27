@@ -1645,10 +1645,10 @@ impl RequestForwarder {
         // Same native-Responses path: scrub the OpenAI-backend-private fields
         // and tool carriers (`external_web_access`, `prompt_cache_retention`,
         // `additional_tools`, `tool_search`, …) that xAI's strict serde parser
-        // rejects with 400/422. Deterministic field removals only, gated on the
-        // xAI OAuth path, so the prompt-cache prefix stays stable and no other
-        // provider is affected. Runs after the flatten above so lifted
-        // `namespace` tools survive the tool-type whitelist.
+        // rejects with 400/422, plus the #6815 schema collapse. Gated on the
+        // xAI native Responses path so no other provider is affected. Runs after
+        // the flatten above so lifted `namespace` tools survive the tool-type
+        // whitelist.
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
