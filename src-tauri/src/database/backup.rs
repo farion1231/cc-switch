@@ -615,10 +615,48 @@ impl Database {
         }
     }
 
+    /// 删除备份 `.db` 的 SQLite 侧车文件（`-journal`/`-wal`/`-shm`）。
+    /// 只删本体不删侧车时，残留会永久滞留在 backups 目录里（#6706 的目录
+    /// 截图中即有一个孤儿 `-journal`）。
+    fn remove_backup_sidecars(db_path: &Path) {
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let mut name = db_path.as_os_str().to_os_string();
+            name.push(suffix);
+            let sidecar = PathBuf::from(name);
+            match fs::remove_file(&sidecar) {
+                Ok(()) => log::info!("删除数据库备份侧车文件 {}", sidecar.display()),
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                    log::warn!("删除数据库备份侧车文件失败 {}: {}", sidecar.display(), err);
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
     /// 清理旧的数据库备份：先按份数保留最新的 N 个，再把目录总大小压到
     /// `backup_max_total_mb` 上限内（至少保留 1 份）。protected_paths
     /// （新建备份/恢复源）在两轮中都绝不删除。
     fn cleanup_db_backups(dir: &Path, protected_paths: &[&Path]) -> Result<(), AppError> {
+        // 先清掉已无对应 `.db` 的孤儿侧车（如恢复中断后遗留的 `-journal`）；
+        // `.db` 仍在的侧车可能是活跃恢复过程的一部分，保持不动。
+        if let Ok(orphan_iter) = fs::read_dir(dir) {
+            for entry in orphan_iter.filter_map(|entry| entry.ok()) {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                let Some(base) = ["-journal", "-wal", "-shm"]
+                    .iter()
+                    .find_map(|suffix| name.strip_suffix(suffix))
+                else {
+                    continue;
+                };
+                if base.ends_with(".db") && !dir.join(base).exists() {
+                    Self::remove_backup_sidecars(&dir.join(base));
+                }
+            }
+        }
+
         let retain = crate::settings::effective_backup_retain_count();
         let mut entries = match fs::read_dir(dir) {
             Ok(iter) => iter
@@ -657,6 +695,7 @@ impl Database {
                 match fs::remove_file(&path) {
                     Ok(()) => {
                         removed += 1;
+                        Self::remove_backup_sidecars(&path);
                         false
                     }
                     Err(err) => {
@@ -700,6 +739,7 @@ impl Database {
                         "删除超限数据库备份 {}（目录总大小超过上限）",
                         path.display()
                     );
+                    Self::remove_backup_sidecars(&path);
                 }
                 Err(err) => {
                     log::warn!("删除超限数据库备份失败 {}: {}", path.display(), err);
@@ -1423,6 +1463,65 @@ mod tests {
         assert!(
             !oldest.exists(),
             "oldest backup over the size cap must be removed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_db_backups_removes_sqlite_sidecars() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+        let _cap = SettingsGuard::with_backup_max_total_mb(1);
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            900 * 1024,
+            3 * 86400,
+        )?;
+        // 侧车与本体一起会被删除（份数/大小两条路径共用 remove_backup_sidecars）。
+        std::fs::write(
+            backup_dir.join("db_backup_20260801_000001.db-journal"),
+            b"x",
+        )
+        .map_err(|e| AppError::io(&oldest, e))?;
+        // 已无对应 .db 的孤儿侧车必须被清掉；活备份的侧车保持不动。
+        std::fs::write(
+            backup_dir.join("db_backup_20260807_203829.db-journal"),
+            b"x",
+        )
+        .map_err(|e| AppError::io(&backup_dir, e))?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260803_000003.db",
+            900 * 1024,
+            86400,
+        )?;
+        let newest_journal = backup_dir.join("db_backup_20260803_000003.db-wal");
+        std::fs::write(&newest_journal, b"x").map_err(|e| AppError::io(&newest, e))?;
+
+        Database::cleanup_db_backups(&backup_dir, &[])?;
+
+        assert!(!oldest.exists(), "over-cap backup must be removed");
+        assert!(
+            !backup_dir
+                .join("db_backup_20260801_000001.db-journal")
+                .exists(),
+            "sidecar of a removed backup must be removed with it"
+        );
+        assert!(
+            !backup_dir
+                .join("db_backup_20260807_203829.db-journal")
+                .exists(),
+            "orphan sidecar without its .db must be swept"
+        );
+        assert!(newest.exists(), "newest backup must be kept");
+        assert!(
+            newest_journal.exists(),
+            "sidecar of a surviving backup must be left alone"
         );
         Ok(())
     }
