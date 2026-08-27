@@ -1016,8 +1016,6 @@ pub fn reveal_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        window.open_devtools();
-        log::info!("已打开 WebView inspector");
         #[cfg(target_os = "linux")]
         {
             crate::linux_fix::nudge_main_window(window.clone());
