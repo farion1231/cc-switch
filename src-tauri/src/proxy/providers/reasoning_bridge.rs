@@ -69,12 +69,18 @@ pub(crate) fn decode_openai_reasoning_item(encoded: &str) -> Option<Value> {
 }
 
 pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option<Value> {
-    anthropic_block_from_openai_reasoning_item_for_client(item)
+    anthropic_block_from_openai_reasoning_item_for_client(item, true)
 }
 
 /// Convert an opaque Responses reasoning item into a replayable Anthropic thinking block.
+///
+/// Encrypted reasoning without a visible summary needs a home for the replay
+/// envelope. Claude VSCode cannot render `redacted_thinking`, so those clients
+/// (`preserve_redacted_thinking = false`) get an empty thinking block; every
+/// other client keeps the historical `redacted_thinking` shape.
 pub(crate) fn anthropic_block_from_openai_reasoning_item_for_client(
     item: &Value,
+    preserve_redacted_thinking: bool,
 ) -> Option<Value> {
     if item.get("type").and_then(Value::as_str) != Some("reasoning") {
         return None;
@@ -89,6 +95,12 @@ pub(crate) fn anthropic_block_from_openai_reasoning_item_for_client(
     if has_encrypted_content {
         let envelope = encode_openai_reasoning_item(item)?;
         if text.is_empty() {
+            if preserve_redacted_thinking {
+                return Some(json!({
+                    "type": "redacted_thinking",
+                    "data": envelope
+                }));
+            }
             // Responses reasoning may be encrypted without a visible summary. Keep
             // the replay envelope in a valid thinking block instead of exposing the
             // unsupported redacted_thinking content type or a fake placeholder.
@@ -148,14 +160,14 @@ mod tests {
     }
 
     #[test]
-    fn encrypted_item_without_summary_uses_empty_thinking_signature() {
+    fn encrypted_item_without_summary_uses_empty_thinking_signature_for_vscode() {
         let item = json!({
             "id": "rs_2",
             "type": "reasoning",
             "summary": [],
             "encrypted_content": "opaque"
         });
-        let block = anthropic_block_from_openai_reasoning_item(&item).unwrap();
+        let block = anthropic_block_from_openai_reasoning_item_for_client(&item, false).unwrap();
         assert_eq!(block["type"], "thinking");
         assert_eq!(block["thinking"], "");
         assert!(block.get("data").is_none());
@@ -166,16 +178,16 @@ mod tests {
     }
 
     #[test]
-    fn encrypted_item_without_summary_uses_thinking_for_compatible_clients() {
+    fn encrypted_item_without_summary_keeps_redacted_thinking_for_compatible_clients() {
         let item = json!({
             "id": "rs_compat",
             "type": "reasoning",
             "summary": [],
             "encrypted_content": "opaque"
         });
-        let block = anthropic_block_from_openai_reasoning_item_for_client(&item).unwrap();
-        assert_eq!(block["type"], "thinking");
-        assert_eq!(block["thinking"], "");
+        let block = anthropic_block_from_openai_reasoning_item_for_client(&item, true).unwrap();
+        assert_eq!(block["type"], "redacted_thinking");
+        assert!(block["data"].as_str().is_some_and(|value| value.starts_with("ccswitch-openai-reasoning-v1:")));
         assert_eq!(
             openai_reasoning_item_from_anthropic_block(&block),
             Some(item)

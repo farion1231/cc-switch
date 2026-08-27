@@ -2280,7 +2280,10 @@ fn responses_sse_reasoning_summary_key(
     Some(key)
 }
 
-/// Reconcile incremental deltas with cumulative done/part snapshots without duplicating text.
+/// Reconcile cumulative done/part snapshots with what we already collected,
+/// without duplicating text. Raw `...text.delta` events bypass this: they are
+/// authoritative increments and must always be appended verbatim, otherwise
+/// overlapping chunks would be silently dropped.
 fn merge_responses_sse_reasoning_summary_part(current: &mut String, incoming: &str) {
     if incoming.is_empty() {
         return;
@@ -2494,15 +2497,15 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
                         .get("summary_index")
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    merge_responses_sse_reasoning_summary_part(
-                        reasoning_summaries
-                            .entry(key)
-                            .or_default()
-                            .parts
-                            .entry(summary_index)
-                            .or_default(),
-                        text,
-                    );
+                    // Deltas are authoritative increments: append verbatim instead
+                    // of reconciling, so repeated or overlapping chunks stay intact.
+                    reasoning_summaries
+                        .entry(key)
+                        .or_default()
+                        .parts
+                        .entry(summary_index)
+                        .or_default()
+                        .push_str(text);
                 }
             }
             "response.reasoning_summary_text.done" | "response.reasoning_text.done" => {
@@ -3884,6 +3887,35 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
         .unwrap();
         assert_eq!(anthropic["content"][0]["type"], "thinking");
         assert_eq!(anthropic["content"][0]["thinking"], "Need a tool.");
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_appends_repeated_and_overlapping_deltas() {
+        // Upstreams that only speak incremental chunks can repeat or overlap
+        // them. Prefix/suffix reconciliation would drop the second chunk; deltas
+        // must append verbatim ("foo" + "foo" + "oo" → "foofoooo").
+        let sse = r#"event: response.output_item.added
+ data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_delta","type":"reasoning","summary":[]}}
+
+ event: response.reasoning_summary_text.delta
+ data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_delta","output_index":0,"summary_index":0,"delta":"foo"}
+
+ event: response.reasoning_summary_text.delta
+ data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_delta","output_index":0,"summary_index":0,"delta":"foo"}
+
+ event: response.reasoning_summary_text.delta
+ data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_delta","output_index":0,"summary_index":0,"delta":"oo"}
+
+ event: response.output_item.done
+ data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_delta","type":"reasoning","summary":[],"encrypted_content":"opaque"}}
+
+ event: response.completed
+ data: {"type":"response.completed","response":{"id":"resp_delta","status":"completed","model":"gpt-5.6","output":[]}}
+
+"#;
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+        assert_eq!(response["output"][0]["summary"][0]["text"], "foofoooo");
     }
 
     #[test]

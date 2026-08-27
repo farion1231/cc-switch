@@ -2530,7 +2530,7 @@ pub(crate) fn responses_to_anthropic_with_web_search_options_for_client(
     body: Value,
     hosted_web_search_name: Option<&str>,
     max_web_search_uses: Option<u64>,
-    _preserve_redacted_thinking: bool,
+    preserve_redacted_thinking: bool,
 ) -> Result<Value, ProxyError> {
     // A Responses failure can arrive inside an HTTP 2xx response object. Reject it
     // before looking at `output`; otherwise `{status:"failed", output:[]}` becomes
@@ -2791,6 +2791,7 @@ pub(crate) fn responses_to_anthropic_with_web_search_options_for_client(
             "reasoning" => {
                 if let Some(block) = anthropic_block_from_openai_reasoning_item_for_client(
                     item,
+                    preserve_redacted_thinking,
                 ) {
                     content.push(block);
                 }
@@ -4719,7 +4720,7 @@ mod tests {
             input,
             None,
             None,
-            true,
+            false,
         )
         .unwrap();
         assert_eq!(result["content"][0]["type"], "thinking");
@@ -4727,6 +4728,34 @@ mod tests {
         assert!(result["content"][0]["signature"]
             .as_str()
             .is_some_and(|value| value.starts_with("ccswitch-openai-reasoning-v1:")));
+    }
+
+    #[test]
+    fn test_encrypted_reasoning_without_summary_keeps_redacted_thinking_for_compatible_clients() {
+        let input = json!({
+            "id": "resp_reasoning_compat",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [{
+                "type": "reasoning",
+                "id": "rs_compat",
+                "summary": [],
+                "encrypted_content": "opaque-ciphertext"
+            }]
+        });
+
+        let result = responses_to_anthropic_with_web_search_options_for_client(
+            input,
+            None,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(result["content"][0]["type"], "redacted_thinking");
+        assert!(result["content"][0]["data"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ccswitch-openai-reasoning-v1:")));
+        assert!(result["content"][0].get("signature").is_none());
     }
 
     #[test]

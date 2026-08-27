@@ -76,13 +76,13 @@ fn responses_json_to_anthropic_sse_for_client(
     body: Value,
     hosted_web_search_name: Option<&str>,
     max_web_search_uses: Option<u64>,
-    _preserve_redacted_thinking: bool,
+    preserve_redacted_thinking: bool,
 ) -> Vec<Bytes> {
     let message = match responses_to_anthropic_with_web_search_options_for_client(
         body,
         hosted_web_search_name,
         max_web_search_uses,
-        _preserve_redacted_thinking,
+        preserve_redacted_thinking,
     ) {
         Ok(message) => message,
         Err(error) => {
@@ -4191,6 +4191,20 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                                         "delta":{"type":"signature_delta","signature":envelope}
                                                     }),
                                                 ));
+                                            } else if preserve_redacted_thinking {
+                                                // No visible summary was streamed, so the
+                                                // replay envelope needs a fresh block. Claude
+                                                // VSCode cannot render redacted_thinking; other
+                                                // clients keep the historical shape.
+                                                yield Ok(anthropic_sse(
+                                                    "content_block_start",
+                                                    &json!({
+                                                        "type":"content_block_start",
+                                                        "index":index,
+                                                        "content_block":{"type":"redacted_thinking","data":envelope}
+                                                    }),
+                                                ));
+                                                open_indices.insert(index);
                                             } else {
                                                 yield Ok(anthropic_sse(
                                                     "content_block_start",
@@ -4779,6 +4793,23 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                                     let signature_sse = format!("event: content_block_delta\ndata: {}\n\n",
                                                         serde_json::to_string(&signature_event).unwrap_or_default());
                                                     yield Ok(Bytes::from(signature_sse));
+                                                } else if preserve_redacted_thinking {
+                                                    // No visible summary was streamed, so the
+                                                    // replay envelope needs a fresh block. Claude
+                                                    // VSCode cannot render redacted_thinking; other
+                                                    // clients keep the historical shape.
+                                                    let start_event = json!({
+                                                        "type": "content_block_start",
+                                                        "index": index,
+                                                        "content_block": {
+                                                            "type": "redacted_thinking",
+                                                            "data": envelope
+                                                        }
+                                                    });
+                                                    let start_sse = format!("event: content_block_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&start_event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(start_sse));
+                                                    open_indices.insert(index);
                                                 } else {
                                                     let start_event = json!({
                                                         "type": "content_block_start",
@@ -7399,7 +7430,7 @@ mod tests {
             upstream,
             None,
             None,
-            true,
+            false,
         )
         .collect::<Vec<_>>()
         .await
@@ -7411,6 +7442,38 @@ mod tests {
         assert!(merged.contains("\"type\":\"thinking\""));
         assert!(!merged.contains("[redacted thinking]"));
         assert!(merged.contains("\"type\":\"signature_delta\""));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_stream_encrypted_reasoning_keeps_redacted_thinking_for_compatible_clients() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_redacted_compat\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_redacted_compat\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_redacted_compat\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"opaque\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
+        let merged = create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
+            upstream,
+            None,
+            None,
+            true,
+        )
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+        .collect::<String>();
+
+        assert!(merged.contains("\"type\":\"redacted_thinking\""));
+        assert!(merged.contains("\"data\":\"ccswitch-openai-reasoning-v1:"));
+        assert!(!merged.contains("\"type\":\"signature_delta\""));
+        assert!(merged.contains("event: content_block_stop"));
         assert!(merged.contains("event: message_stop"));
     }
 
