@@ -1665,10 +1665,26 @@ impl RequestForwarder {
             if super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_agent_message_input_items(
                 &mut request_body,
             ) {
-                log::debug!(
+                log::info!(
                     "[Codex] Rewrote xAI-unsupported agent_message input items (provider={})",
                     provider.id
                 );
+            }
+            if let Some(upstream_model) = super::providers::codex_provider_upstream_model(provider)
+            {
+                let allowed = super::providers::transform_codex_responses_xai_sanitize::collect_xai_catalog_model_ids(
+                    &provider.settings_config,
+                );
+                if let Some((from, to)) = super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_unknown_request_model(
+                    &mut request_body,
+                    &upstream_model,
+                    &allowed,
+                ) {
+                    log::info!(
+                        "[Codex] Rewrote xAI-unknown request model {from} -> {to} (provider={})",
+                        provider.id
+                    );
+                }
             }
         }
 

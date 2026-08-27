@@ -22,8 +22,9 @@
 //! tool-type whitelist below keeps them instead of dropping them.
 //!
 //! Isolation for upstream rebases: keep request sanitizers, schema collapse,
-//! collaboration `agent_message` rewriting, and return-path integer rewriting
-//! in this file. Call sites in `forwarder`, `handlers`, and
+//! collaboration `agent_message` rewriting, unknown-model remapping onto the
+//! provider's configured model, and return-path integer rewriting in this file.
+//! Call sites in `forwarder`, `handlers`, and
 //! [`super::codex::provider_needs_responses_namespace_flatten`] must stay thin
 //! so `git rebase upstream/main` only conflicts at those gates. If upstream
 //! later lands equivalent sanitization, delete this layer rather than
@@ -621,23 +622,113 @@ fn normalize_xai_function_tool_parameter_schemas(body: &mut Value) -> bool {
     changed
 }
 
-/// Rewrite Codex multi-agent v2 `agent_message` input items into ordinary
-/// `message` items. xAI's Responses `ModelInput` enum has no `agent_message`
-/// variant, so a native passthrough 422s before the child agent can run.
+/// Rewrite Codex multi-agent v2 `agent_message` items into ordinary `message`
+/// items. xAI's Responses `ModelInput` enum has no `agent_message` variant, so
+/// a native passthrough 422s (`input[N]: unknown item type "agent_message"`)
+/// before the child agent can run.
 ///
-/// Keep this out of [`sanitize_xai_responses_request`]: it is a structural
-/// rewrite, not a field deletion. Routed Grok sessions currently put plaintext
-/// task bodies in `encrypted_content` parts; flatten those to `input_text`.
+/// Walk the whole request body, not only the top-level `input` array: Codex
+/// may nest the same item under later collaboration turns. Keep this out of
+/// [`sanitize_xai_responses_request`]: it is a structural rewrite, not a field
+/// deletion. Routed Grok sessions currently put plaintext task bodies in
+/// `encrypted_content` parts; flatten those to `input_text`.
 pub(crate) fn rewrite_xai_agent_message_input_items(body: &mut Value) -> bool {
-    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
-        return false;
-    };
+    rewrite_agent_message_value(body)
+}
 
-    let mut changed = false;
-    for item in input.iter_mut() {
-        changed |= rewrite_agent_message_item(item);
+fn rewrite_agent_message_value(value: &mut Value) -> bool {
+    match value {
+        Value::Array(items) => {
+            let mut changed = false;
+            for item in items {
+                changed |= rewrite_agent_message_value(item);
+            }
+            changed
+        }
+        Value::Object(_) => {
+            if rewrite_agent_message_item(value) {
+                true
+            } else {
+                let Some(obj) = value.as_object_mut() else {
+                    return false;
+                };
+                let mut changed = false;
+                for child in obj.values_mut() {
+                    changed |= rewrite_agent_message_value(child);
+                }
+                changed
+            }
+        }
+        _ => false,
     }
-    changed
+}
+
+/// Remap a request `model` that xAI will not serve onto the provider's
+/// configured model (the live main-agent model). Catalog `model`/`slug`/`id`
+/// values are preserved so a user who picked `grok-4.5` is not forced onto
+/// `grok-4.6`. Unknown OpenAI role SKUs such as `gpt-5.6-sol` are rewritten.
+///
+/// Returns `Some((from, to))` when the field changed. Missing or empty
+/// `model` is filled with `upstream_model`. An empty upstream model is a
+/// no-op so we never invent a name.
+pub(crate) fn rewrite_xai_unknown_request_model(
+    body: &mut Value,
+    upstream_model: &str,
+    allowed_models: &HashSet<String>,
+) -> Option<(String, String)> {
+    let upstream = upstream_model.trim();
+    if upstream.is_empty() {
+        return None;
+    }
+
+    let Some(obj) = body.as_object_mut() else {
+        return None;
+    };
+    let request = obj
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+
+    if !request.is_empty()
+        && (request.eq_ignore_ascii_case(upstream)
+            || allowed_models
+                .iter()
+                .any(|id| id.eq_ignore_ascii_case(&request)))
+    {
+        return None;
+    }
+
+    obj.insert("model".to_string(), Value::String(upstream.to_string()));
+    Some((request, upstream.to_string()))
+}
+
+/// Collect catalog model identifiers from a Codex provider's settings.
+/// Grok catalogs store the live id on `slug`; other providers may use
+/// `model` or `id`. All three are accepted so a catalog hit is not missed.
+pub(crate) fn collect_xai_catalog_model_ids(settings: &Value) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let Some(models) = settings
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(Value::as_array)
+    else {
+        return ids;
+    };
+    for entry in models {
+        for key in ["model", "slug", "id"] {
+            if let Some(id) = entry
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids
 }
 
 fn rewrite_agent_message_item(item: &mut Value) -> bool {
@@ -668,15 +759,14 @@ fn flatten_agent_message_content(content: Option<&Value>) -> Vec<Value> {
 }
 
 fn part_to_input_text(part: &Value) -> Option<Value> {
-    let text = if part.get("type").and_then(Value::as_str).map(str::trim)
-        == Some("encrypted_content")
-    {
-        part.get("encrypted_content")
-            .or_else(|| part.get("text"))
-            .and_then(Value::as_str)
-    } else {
-        part.get("text").and_then(Value::as_str)
-    }?;
+    let text =
+        if part.get("type").and_then(Value::as_str).map(str::trim) == Some("encrypted_content") {
+            part.get("encrypted_content")
+                .or_else(|| part.get("text"))
+                .and_then(Value::as_str)
+        } else {
+            part.get("text").and_then(Value::as_str)
+        }?;
     if text.is_empty() {
         None
     } else {
@@ -921,6 +1011,7 @@ fn rewrite_xai_native_sse_block(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::HashSet;
 
     #[test]
     fn strips_external_web_access_recursively() {
@@ -1332,8 +1423,14 @@ mod tests {
         assert_eq!(item["role"], "user");
         assert_eq!(item["id"], "amsg_child");
         assert_eq!(item["content"][0]["type"], "input_text");
-        assert_eq!(item["content"][0]["text"], "Message Type: NEW_TASK\nPayload:\n");
-        assert_eq!(item["content"][1]["text"], "You are a Senior Code Reviewer.");
+        assert_eq!(
+            item["content"][0]["text"],
+            "Message Type: NEW_TASK\nPayload:\n"
+        );
+        assert_eq!(
+            item["content"][1]["text"],
+            "You are a Senior Code Reviewer."
+        );
         assert!(item.get("author").is_none());
         assert!(!rewrite_xai_agent_message_input_items(&mut body));
     }
@@ -1383,5 +1480,109 @@ mod tests {
         let original = body.clone();
         assert!(!rewrite_xai_agent_message_input_items(&mut body));
         assert_eq!(body, original);
+    }
+
+    #[test]
+    fn rewrites_agent_message_at_input_index_matching_xai_422() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]},
+                {"type": "function_call", "name": "spawn_agent", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "ok"},
+                {"type": "reasoning", "summary": []},
+                {
+                    "type": "agent_message",
+                    "id": "amsg_child",
+                    "author": "/root",
+                    "recipient": "/root/review_uncommitted",
+                    "content": [
+                        {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+                        {"type": "encrypted_content", "encrypted_content": "Review the diff."}
+                    ]
+                }
+            ]
+        });
+
+        assert!(rewrite_xai_agent_message_input_items(&mut body));
+        assert_eq!(body["input"][4]["type"], "message");
+        assert_eq!(body["input"][4]["role"], "user");
+        assert_eq!(body["input"][4]["content"][1]["text"], "Review the diff.");
+        assert!(body["input"][4].get("author").is_none());
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][1]["type"], "function_call");
+    }
+
+    #[test]
+    fn rewrites_nested_agent_message_inside_object_wrapper() {
+        let mut body = json!({
+            "input": {
+                "items": [{
+                    "type": "agent_message",
+                    "content": [{"type": "input_text", "text": "nested"}]
+                }]
+            }
+        });
+        assert!(rewrite_xai_agent_message_input_items(&mut body));
+        assert_eq!(body["input"]["items"][0]["type"], "message");
+        assert_eq!(body["input"]["items"][0]["role"], "user");
+    }
+
+    #[test]
+    fn remaps_unknown_openai_role_model_to_upstream() {
+        let allowed = collect_xai_catalog_model_ids(&json!({
+            "modelCatalog": {
+                "models": [
+                    {"slug": "grok-4.6"},
+                    {"slug": "grok-4.5"}
+                ]
+            }
+        }));
+        let mut body = json!({"model": "gpt-5.6-sol", "input": []});
+        assert_eq!(
+            rewrite_xai_unknown_request_model(&mut body, "grok-4.6", &allowed),
+            Some(("gpt-5.6-sol".to_string(), "grok-4.6".to_string()))
+        );
+        assert_eq!(body["model"], "grok-4.6");
+    }
+
+    #[test]
+    fn preserves_catalog_slug_instead_of_forcing_upstream() {
+        let allowed = collect_xai_catalog_model_ids(&json!({
+            "modelCatalog": {
+                "models": [
+                    {"slug": "grok-4.6"},
+                    {"slug": "grok-4.5"}
+                ]
+            }
+        }));
+        let mut body = json!({"model": "grok-4.5"});
+        assert_eq!(
+            rewrite_xai_unknown_request_model(&mut body, "grok-4.6", &allowed),
+            None
+        );
+        assert_eq!(body["model"], "grok-4.5");
+    }
+
+    #[test]
+    fn fills_missing_model_with_upstream() {
+        let allowed = HashSet::new();
+        let mut body = json!({"input": []});
+        assert_eq!(
+            rewrite_xai_unknown_request_model(&mut body, "grok-4.6", &allowed),
+            Some(("".to_string(), "grok-4.6".to_string()))
+        );
+        assert_eq!(body["model"], "grok-4.6");
+    }
+
+    #[test]
+    fn leaves_model_unchanged_when_upstream_is_empty() {
+        let allowed = HashSet::new();
+        let mut body = json!({"model": "gpt-5.6-sol"});
+        assert_eq!(
+            rewrite_xai_unknown_request_model(&mut body, "  ", &allowed),
+            None
+        );
+        assert_eq!(body["model"], "gpt-5.6-sol");
     }
 }
