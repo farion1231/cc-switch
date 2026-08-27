@@ -177,6 +177,27 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+pub(crate) fn prepare_claude_settings_for_write(
+    existing_disk: Option<&Value>,
+    provider_settings: &Value,
+) -> Value {
+    let sanitized = sanitize_claude_settings_for_live(provider_settings);
+    if let (Some(disk_val), Some(new_obj)) = (existing_disk, sanitized.as_object()) {
+        if let Some(disk_obj) = disk_val.as_object() {
+            let mut merged = disk_obj.clone();
+            for (k, v) in new_obj {
+                merged.insert(k.clone(), v.clone());
+            }
+            merged.remove("api_format");
+            merged.remove("apiFormat");
+            merged.remove("openrouter_compat_mode");
+            merged.remove("openrouterCompatMode");
+            return Value::Object(merged);
+        }
+    }
+    sanitized
+}
+
 pub(crate) fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
@@ -1225,7 +1246,12 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let existing: Option<serde_json::Value> = if path.exists() {
+                read_json_file(&path).ok()
+            } else {
+                None
+            };
+            let settings = prepare_claude_settings_for_write(existing.as_ref(), &provider.settings_config);
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {
@@ -3157,5 +3183,45 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    #[test]
+    fn test_prepare_claude_settings_for_write_preserves_unmanaged_fields() {
+        let disk = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "old-token"
+            },
+            "hooks": {
+                "preToolUse": ["orca-hook-1"]
+            },
+            "statusLine": "active",
+            "permissions": {"allowAll": true}
+        });
+        let provider_settings = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "new-token",
+                "ANTHROPIC_BASE_URL": "https://api.example.com"
+            },
+            "api_format": "anthropic"
+        });
+
+        let prepared = prepare_claude_settings_for_write(Some(&disk), &provider_settings);
+
+        assert_eq!(
+            prepared.get("env"),
+            Some(&json!({
+                "ANTHROPIC_AUTH_TOKEN": "new-token",
+                "ANTHROPIC_BASE_URL": "https://api.example.com"
+            }))
+        );
+        assert_eq!(
+            prepared.get("hooks"),
+            Some(&json!({
+                "preToolUse": ["orca-hook-1"]
+            }))
+        );
+        assert_eq!(prepared.get("statusLine"), Some(&json!("active")));
+        assert_eq!(prepared.get("permissions"), Some(&json!({"allowAll": true})));
+        assert!(prepared.get("api_format").is_none());
     }
 }
