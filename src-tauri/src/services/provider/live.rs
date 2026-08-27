@@ -177,6 +177,18 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+/// Merge incoming Claude Code settings onto existing live settings, preserving
+/// non-managed user fields such as `enabledPlugins`, `permissions`, `model`, etc.
+pub(crate) fn merge_claude_settings_with_existing_live(target: &mut Value, existing_live: &Value) {
+    if let (Some(target_obj), Some(live_obj)) = (target.as_object_mut(), existing_live.as_object()) {
+        for (key, val) in live_obj {
+            if !target_obj.contains_key(key) {
+                target_obj.insert(key.clone(), val.clone());
+            }
+        }
+    }
+}
+
 pub(crate) fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
@@ -1225,7 +1237,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            if let Ok(existing) = read_json_file::<Value>(&path) {
+                merge_claude_settings_with_existing_live(&mut settings, &existing);
+            }
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {
@@ -3157,5 +3172,37 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    #[test]
+    fn merge_claude_settings_preserves_enabled_plugins_and_other_fields() {
+        let mut target = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.example.com",
+                "ANTHROPIC_API_KEY": "sk-123"
+            }
+        });
+        let existing_live = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://old.example.com",
+                "ANTHROPIC_API_KEY": "old-key"
+            },
+            "enabledPlugins": {
+                "superpowers": true,
+                "context7": true
+            },
+            "model": "claude-3-7-sonnet"
+        });
+
+        merge_claude_settings_with_existing_live(&mut target, &existing_live);
+
+        assert_eq!(
+            target["env"]["ANTHROPIC_BASE_URL"],
+            "https://api.example.com"
+        );
+        assert_eq!(target["env"]["ANTHROPIC_API_KEY"], "sk-123");
+        assert_eq!(target["enabledPlugins"]["superpowers"], true);
+        assert_eq!(target["enabledPlugins"]["context7"], true);
+        assert_eq!(target["model"], "claude-3-7-sonnet");
     }
 }
