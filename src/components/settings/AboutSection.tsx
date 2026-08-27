@@ -61,6 +61,7 @@ interface ToolVersion {
 
 const TOOL_NAMES = [
   "claude",
+  "codefree",
   "codex",
   "gemini",
   "grok",
@@ -128,6 +129,8 @@ const HERMES_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy B
 
 const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${posixScriptInstallCommand("https://claude.ai/install.sh")} || npm i -g @anthropic-ai/claude-code@latest
+# CodeFree-O
+npm i -g @srdcloud/codefree-o@latest --registry=https://registry.npmjs.org/
 # Codex
 npm i -g @openai/codex@latest
 # Gemini CLI
@@ -145,6 +148,8 @@ npm i -g @earendil-works/pi-coding-agent@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
+# CodeFree-O
+npm i -g @srdcloud/codefree-o@latest --registry=https://registry.npmjs.org/
 # Codex
 npm i -g @openai/codex@latest
 # Gemini CLI
@@ -166,6 +171,7 @@ const ONE_CLICK_INSTALL_COMMANDS = isWindows()
 
 const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
+  codefree: "CodeFree-O",
   codex: "Codex",
   gemini: "Gemini CLI",
   grok: "Grok Build",
@@ -183,6 +189,7 @@ function toolDisplayName(tool: string): string {
 
 const TOOL_APP_IDS: Record<ToolName, AppId> = {
   claude: "claude",
+  codefree: "codefree",
   codex: "codex",
   gemini: "gemini",
   grok: "grokbuild",

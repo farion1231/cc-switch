@@ -127,6 +127,7 @@ const makeInstalledSkill = (
     opencode: false,
     openclaw: false,
     hermes: false,
+    codefree: false,
     pi: false,
   };
   const { apps, ...skillOverrides } = overrides;

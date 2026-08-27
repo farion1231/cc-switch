@@ -91,6 +91,7 @@ type ProviderFilter =
   | "openclaw"
   | "gemini"
   | "hermes"
+  | "codefree"
   | "pi";
 
 type SessionListViewMode = "flat" | "grouped";
@@ -1112,6 +1113,26 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 </span>
                               </div>
                             </SelectItem>
+                            <SelectItem value="claude">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="claude"
+                                  name="claude"
+                                  size={14}
+                                />
+                                <span>Claude Code</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="codefree">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="codefree"
+                                  name="CodeFree"
+                                  size={14}
+                                />
+                                <span>CodeFree</span>
+                              </div>
+                            </SelectItem>
                             <SelectItem value="codex">
                               <div className="flex items-center gap-2">
                                 <ProviderIcon
@@ -1130,16 +1151,6 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Grok Build</span>
-                              </div>
-                            </SelectItem>
-                            <SelectItem value="claude">
-                              <div className="flex items-center gap-2">
-                                <ProviderIcon
-                                  icon="claude"
-                                  name="claude"
-                                  size={14}
-                                />
-                                <span>Claude Code</span>
                               </div>
                             </SelectItem>
                             <SelectItem value="opencode">

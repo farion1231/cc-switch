@@ -779,6 +779,8 @@
     "browsePlaceholderApp": "例: C:\\\\Users\\\\Administrator\\\\.cc-switch",
     "claudeConfigDir": "Claude Code 設定ディレクトリ",
     "claudeConfigDirDescription": "Claude の設定ディレクトリ（settings.json）を上書きします。カスタムディレクトリでは .claude.json（MCP）をその中に保存し、既定の ~/.claude では Claude Code の既定どおり ~/.claude.json を使います。",
+    "codefreeConfigDir": "CodeFree 設定ディレクトリ",
+    "codefreeConfigDirDescription": "CodeFree の設定ディレクトリを上書きします。",
     "codexConfigDir": "Codex 設定ディレクトリ",
     "codexConfigDirDescription": "Codex の設定ディレクトリを上書きします。",
     "geminiConfigDir": "Gemini 設定ディレクトリ",
@@ -800,6 +802,7 @@
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderCodefree": "例: C:\\\\Users\\\\<your-username>\\\\.codefree-o",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
@@ -906,6 +909,7 @@
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
+    "codefree": "CodeFree",
     "codex": "Codex",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
@@ -1072,7 +1076,7 @@
   },
   "sessionManager": {
     "title": "セッション管理",
-    "subtitle": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi のセッションを管理",
+    "subtitle": "Claude Code / CodeFree / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
@@ -1714,6 +1718,7 @@
     "appFilter": {
       "all": "すべて",
       "claude": "Claude Code",
+      "codefree": "CodeFree",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
@@ -2010,6 +2015,7 @@
       "noSearchResults": "検索に一致する MCP サーバーがありません",
       "apps": {
         "claude": "Claude",
+        "codefree": "CodeFree",
         "codex": "Codex",
         "gemini": "Gemini",
         "grokbuild": "Grok Build",
@@ -2626,6 +2632,7 @@
     },
     "apps": {
       "claude": "Claude",
+      "codefree": "CodeFree",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",

@@ -94,6 +94,7 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
                         grokbuild: false,
                         opencode: false,
                         hermes: false,
+                        codefree: false,
                     },
                     description: None,
                     homepage: None,

@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 8] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi",
+const VALID_TOOLS: [&str; 9] = [
+    "claude", "codefree", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -427,6 +427,7 @@ fn build_tool_lifecycle_command(
 fn tool_display_name(tool: &str) -> &'static str {
     match tool {
         "claude" => "Claude Code",
+        "codefree" => "CodeFree-O",
         "codex" => "Codex",
         "gemini" => "Gemini CLI",
         "grok" => "Grok Build",
@@ -509,6 +510,9 @@ enum LifecycleCommandShell {
 fn npm_install_command_for(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" => Some("npm i -g @anthropic-ai/claude-code@latest"),
+        "codefree" => {
+            Some("npm i -g @srdcloud/codefree-o@latest --registry=https://registry.npmjs.org/")
+        }
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "grok" => Some("npm i -g @xai-official/grok@latest"),
@@ -522,6 +526,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" | "codex" | "grok" | "hermes" => Some("update"),
+        "codefree" => Some("upgrade"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         _ => None,
@@ -808,6 +813,7 @@ async fn get_single_tool_version_impl(
         "claude" => {
             fetch_npm_latest_for_tool(&client, "@anthropic-ai/claude-code", tool, local).await
         }
+        "codefree" => fetch_npm_latest_for_tool(&client, "@srdcloud/codefree-o", tool, local).await,
         "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
         "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
         "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
@@ -1519,6 +1525,16 @@ fn grok_extra_search_paths(
     paths
 }
 
+fn codefree_extra_search_paths(home: &Path) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut paths, home.join(".codefree-o").join("bin"));
+    }
+
+    paths
+}
+
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -1527,6 +1543,10 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
             dir.join(format!("{tool}.cmd")),
             dir.join(format!("{tool}.exe")),
         ];
+        if tool == "codefree" {
+            candidates.push(dir.join("codefree-o.cmd"));
+            candidates.push(dir.join("codefree-o.exe"));
+        }
         if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
             candidates.push(extensionless);
         }
@@ -1535,7 +1555,11 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
 
     #[cfg(not(target_os = "windows"))]
     {
-        vec![dir.join(tool)]
+        let mut candidates = vec![dir.join(tool)];
+        if tool == "codefree" {
+            candidates.push(dir.join("codefree-o"));
+        }
+        candidates
     }
 }
 
@@ -1845,6 +1869,14 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             std::env::var_os("XDG_BIN_DIR"),
             std::env::var_os("GOPATH"),
         );
+
+        for path in extra_paths {
+            push_unique_path(&mut search_paths, path);
+        }
+    }
+
+    if tool == "codefree" {
+        let extra_paths = codefree_extra_search_paths(&home);
 
         for path in extra_paths {
             push_unique_path(&mut search_paths, path);
@@ -2450,6 +2482,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 fn npm_package_for(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" => Some("@anthropic-ai/claude-code"),
+        "codefree" => Some("@srdcloud/codefree-o"),
         "codex" => Some("@openai/codex"),
         "gemini" => Some("@google/gemini-cli"),
         "grok" => Some("@xai-official/grok"),
@@ -3644,6 +3677,7 @@ pub async fn probe_tool_installations(
 fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     let override_dir = match tool {
         "claude" => crate::settings::get_claude_override_dir(),
+        "codefree" => crate::settings::get_codefree_override_dir(),
         "codex" => crate::settings::get_codex_override_dir(),
         "gemini" => crate::settings::get_gemini_override_dir(),
         "grok" => crate::settings::get_grok_override_dir(),
