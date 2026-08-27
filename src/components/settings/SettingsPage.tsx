@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { ToggleRow } from "@/components/ui/toggle-row";
 import { settingsApi } from "@/lib/api";
 import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
@@ -260,6 +261,17 @@ export function SettingsPage({
                     <AppVisibilitySettings
                       settings={settings}
                       onChange={handleAutoSave}
+                    />
+                    <ToggleRow
+                      icon={<Database className="h-4 w-4 text-amber-500" />}
+                      title={t("settings.enableSessionUsageSync")}
+                      description={t(
+                        "settings.enableSessionUsageSyncDescription",
+                      )}
+                      checked={settings.enableSessionUsageSync ?? false}
+                      onCheckedChange={(enableSessionUsageSync) =>
+                        handleAutoSave({ enableSessionUsageSync })
+                      }
                     />
                     <SkillStorageLocationSettings
                       value={settings.skillStorageLocation ?? "cc_switch"}

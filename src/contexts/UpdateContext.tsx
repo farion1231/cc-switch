@@ -15,6 +15,7 @@ interface UpdateContextValue {
   updateInfo: UpdateInfo | null;
   isChecking: boolean;
   error: string | null;
+  appUpdatesDisabled: boolean;
 
   // 提示状态
   isDismissed: boolean;
@@ -36,6 +37,9 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
+  // Fail closed until the backend policy is known, so the installer is never
+  // exposed during startup or if the policy command fails.
+  const [appUpdatesDisabled, setAppUpdatesDisabled] = useState(true);
 
   // 从 localStorage 读取已关闭的版本
   useEffect(() => {
@@ -67,6 +71,16 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     try {
       const result = await checkForUpdate({ timeout: 30000 });
 
+      if (result.status === "disabled") {
+        setAppUpdatesDisabled(true);
+        setHasUpdate(false);
+        setUpdateInfo(null);
+        setIsDismissed(false);
+        return false;
+      }
+
+      setAppUpdatesDisabled(false);
+
       if (result.status === "available") {
         setHasUpdate(true);
         setUpdateInfo(result.info);
@@ -92,6 +106,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.error("检查更新失败:", err);
       setError(err instanceof Error ? err.message : "检查更新失败");
+      setAppUpdatesDisabled(true);
       setHasUpdate(false);
       throw err; // 抛出错误让调用方处理
     } finally {
@@ -130,6 +145,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     updateInfo,
     isChecking,
     error,
+    appUpdatesDisabled,
     isDismissed,
     dismissUpdate,
     checkUpdate,

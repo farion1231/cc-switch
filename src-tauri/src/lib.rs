@@ -501,18 +501,6 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             set_windows_app_user_model_id(app.handle());
 
-            // 注册 Updater 插件（桌面端）；放在 logger 之后，确保失败可诊断。
-            #[cfg(desktop)]
-            {
-                if let Err(e) = app
-                    .handle()
-                    .plugin(tauri_plugin_updater::Builder::new().build())
-                {
-                    // 若配置不完整（如缺少 pubkey），跳过 Updater 而不中断应用
-                    log::warn!("初始化 Updater 插件失败，已跳过：{e}");
-                }
-            }
-
             // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
             // 也能向前端推送 `usage-log-recorded`。
             // 放在日志系统初始化之后，确保 init 的日志能正常输出。
@@ -1267,16 +1255,39 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
 
-                    async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
+                    async fn run_usage_cost_backfill(
+                        db: std::sync::Arc<crate::database::Database>,
+                    ) {
                         let _guard = crate::services::session_usage::session_sync_mutex()
                             .lock()
                             .await;
                         let task = tauri::async_runtime::spawn_blocking(move || {
-                            if backfill {
-                                if let Err(error) = db.backfill_missing_usage_costs() {
-                                    log::warn!("Usage cost startup backfill failed: {error}");
-                                }
+                            db.backfill_missing_usage_costs()
+                        });
+                        match task.await {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(error)) => {
+                                log::warn!("Usage cost startup backfill failed: {error}");
                             }
+                            Err(error) => {
+                                log::warn!("Usage cost startup backfill task failed: {error}");
+                            }
+                        }
+                    }
+
+                    async fn run_session_sync(db: std::sync::Arc<crate::database::Database>) {
+                        if !crate::settings::session_usage_sync_enabled() {
+                            return;
+                        }
+                        let _guard = crate::services::session_usage::session_sync_mutex()
+                            .lock()
+                            .await;
+                        // The setting may have changed while this task waited behind a manual
+                        // sync or rebuild. Recheck before touching any local session logs.
+                        if !crate::settings::session_usage_sync_enabled() {
+                            return;
+                        }
+                        let task = tauri::async_runtime::spawn_blocking(move || {
                             crate::services::session_usage::sync_all_unlocked(&db)
                         });
                         match task.await {
@@ -1291,8 +1302,14 @@ pub fn run() {
                         }
                     }
 
-                    // 首次同步（含费用回填）
-                    run_session_sync(db_for_session_sync.clone(), true).await;
+                    // 费用回填只读取应用数据库，与本地会话日志扫描开关无关。
+                    run_usage_cost_backfill(db_for_session_sync.clone()).await;
+
+                    // 首次同步
+                    if !crate::settings::session_usage_sync_enabled() {
+                        log::info!("自动会话用量同步已禁用；后台不会扫描本地会话日志");
+                    }
+                    run_session_sync(db_for_session_sync.clone()).await;
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1302,7 +1319,7 @@ pub fn run() {
                     interval.tick().await; // skip immediate first tick
                     loop {
                         interval.tick().await;
-                        run_session_sync(db_for_session_sync.clone(), false).await;
+                        run_session_sync(db_for_session_sync.clone()).await;
                     }
                 });
             });
@@ -1407,6 +1424,7 @@ pub fn run() {
             commands::set_log_config,
             commands::restart_app,
             commands::install_update_and_restart,
+            commands::app_updates_disabled,
             commands::check_app_update_available,
             commands::check_for_updates,
             commands::is_portable_mode,

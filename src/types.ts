@@ -377,6 +377,8 @@ export interface Settings {
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
   usageDashboardRefreshIntervalMs?: number;
+  // Automatically scan local CLI sessions and import usage statistics
+  enableSessionUsageSync?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header

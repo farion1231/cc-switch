@@ -1,4 +1,5 @@
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 
 export type UpdateChannel = "stable" | "beta";
 
@@ -22,11 +23,21 @@ export async function getCurrentVersion(): Promise<string> {
   }
 }
 
+export async function getAppUpdatesDisabled(): Promise<boolean> {
+  return await invoke<boolean>("app_updates_disabled");
+}
+
 export async function checkForUpdate(
   opts: CheckOptions = {},
 ): Promise<
-  { status: "up-to-date" } | { status: "available"; info: UpdateInfo }
+  | { status: "disabled" }
+  | { status: "up-to-date" }
+  | { status: "available"; info: UpdateInfo }
 > {
+  if (await getAppUpdatesDisabled()) {
+    return { status: "disabled" };
+  }
+
   // 动态引入，避免在未安装插件时导致打包期问题
   const { check } = await import("@tauri-apps/plugin-updater");
 

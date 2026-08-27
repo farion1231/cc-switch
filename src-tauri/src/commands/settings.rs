@@ -3,6 +3,23 @@
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
+// This local build is intentionally pinned so an upstream application update
+// cannot overwrite the session-usage scanning patch. Tool updates are separate.
+const APP_UPDATES_DISABLED: bool = true;
+
+fn ensure_app_updates_enabled() -> Result<(), String> {
+    if APP_UPDATES_DISABLED {
+        Err("本地固定版已停用应用更新".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn app_updates_disabled() -> bool {
+    APP_UPDATES_DISABLED
+}
+
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
 #[derive(Clone, serde::Serialize)]
 struct UpdateDownloadProgress {
@@ -196,6 +213,8 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
+    ensure_app_updates_enabled()?;
+
     let updater = app
         .updater_builder()
         .build()
@@ -273,6 +292,10 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 /// 升级无法解决，而不是让其反复尝试。
 #[tauri::command]
 pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>, String> {
+    if APP_UPDATES_DISABLED {
+        return Ok(None);
+    }
+
     let updater = app
         .updater_builder()
         .build()
@@ -314,12 +337,18 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_settings_for_save;
+    use super::{app_updates_disabled, ensure_app_updates_enabled, merge_settings_for_save};
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn local_fixed_build_disables_app_updates() {
+        assert!(app_updates_disabled());
+        assert!(ensure_app_updates_enabled().is_err());
+    }
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {

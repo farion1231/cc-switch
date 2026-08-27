@@ -375,6 +375,10 @@ pub struct AppSettings {
     pub usage_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_dashboard_refresh_interval_ms: Option<u32>,
+    /// Automatically import local CLI session logs into usage statistics.
+    /// Opt-in for this local build so large histories are not scanned in the background.
+    #[serde(default)]
+    pub enable_session_usage_sync: bool,
     /// Whether to show the failover toggle independently on the main page
     #[serde(default)]
     pub enable_failover_toggle: bool,
@@ -522,6 +526,7 @@ impl Default for AppSettings {
             proxy_confirmed: None,
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,
+            enable_session_usage_sync: false,
             enable_failover_toggle: false,
             show_profile_switcher: true,
             preserve_codex_official_auth_on_switch: false,
@@ -982,6 +987,16 @@ pub fn unify_codex_session_history() -> bool {
         .unify_codex_session_history
 }
 
+pub fn session_usage_sync_enabled() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .enable_session_usage_sync
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -1217,5 +1232,21 @@ mod tests {
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
         );
+    }
+
+    #[test]
+    fn automatic_session_usage_sync_is_opt_in() {
+        assert!(!AppSettings::default().enable_session_usage_sync);
+
+        let existing: AppSettings = serde_json::from_value(serde_json::json!({}))
+            .expect("existing settings without the new field");
+        assert!(!existing.enable_session_usage_sync);
+
+        let enabled: AppSettings = serde_json::from_value(serde_json::json!({
+            "enableSessionUsageSync": true
+        }))
+        .expect("settings with automatic session usage sync enabled");
+
+        assert!(enabled.enable_session_usage_sync);
     }
 }
