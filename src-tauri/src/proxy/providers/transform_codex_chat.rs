@@ -1265,6 +1265,30 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
+/// Recursively sanitize JSON Schema nodes that contain `$ref` by stripping sibling keywords.
+///
+/// In JSON Schema draft-07 (used by Moonshot/Kimi and other strict validators),
+/// an object containing `$ref` must not have sibling keywords like `type` or `description`.
+fn sanitize_schema_refs(value: &mut Value) {
+    match value {
+        Value::Object(obj) => {
+            if obj.contains_key("$ref") && obj.len() > 1 {
+                obj.retain(|k, _| k == "$ref");
+            } else {
+                for v in obj.values_mut() {
+                    sanitize_schema_refs(v);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                sanitize_schema_refs(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
 ///
 /// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
@@ -1274,6 +1298,7 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
+    sanitize_schema_refs(&mut params);
     if let Some(obj) = params.as_object_mut() {
         match obj.get("type").and_then(|v| v.as_str()) {
             Some("object") => {}
@@ -4863,5 +4888,39 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    #[test]
+    fn responses_request_to_chat_sanitizes_ref_siblings() {
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "exec_cmd",
+                "description": "Execute command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "$ref": "#/$defs/Mode",
+                            "type": "string",
+                            "description": "which mode"
+                        }
+                    },
+                    "$defs": {
+                        "Mode": {
+                            "type": "string",
+                            "enum": ["a", "b"]
+                        }
+                    }
+                }
+            }],
+            "input": "test"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let mode_schema = &result["tools"][0]["function"]["parameters"]["properties"]["mode"];
+        assert_eq!(mode_schema.as_object().unwrap().len(), 1);
+        assert_eq!(mode_schema["$ref"], "#/$defs/Mode");
     }
 }
