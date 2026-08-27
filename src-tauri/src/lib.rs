@@ -376,6 +376,8 @@ pub fn run() {
 
             // Show and focus window regardless
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "macos")]
+                tray::apply_tray_policy(app, true);
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -1779,10 +1781,10 @@ pub fn run() {
                         {
                             let _ = window.set_skip_taskbar(false);
                         }
+                        tray::apply_tray_policy(app_handle, true);
                         let _ = window.unminimize();
                         let _ = window.show();
                         let _ = window.set_focus();
-                        tray::apply_tray_policy(app_handle, true);
                     } else if crate::lightweight::is_lightweight_mode() {
                         if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
                             log::error!("退出轻量模式重建窗口失败: {e}");

@@ -1003,16 +1003,19 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 {
                     let _ = window.set_skip_taskbar(false);
                 }
+                #[cfg(target_os = "macos")]
+                {
+                    // Accessory + hidden (silent startup) must become Regular
+                    // before show(), otherwise macOS can present an empty
+                    // WKWebView and the proxy keeps running in the background.
+                    apply_tray_policy(app, true);
+                }
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
                 #[cfg(target_os = "linux")]
                 {
                     crate::linux_fix::nudge_main_window(window.clone());
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    apply_tray_policy(app, true);
                 }
             } else if crate::lightweight::is_lightweight_mode() {
                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
