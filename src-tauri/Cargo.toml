@@ -18,6 +18,7 @@ doctest = false
 [features]
 default = []
 test-hooks = []
+custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }

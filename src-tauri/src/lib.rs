@@ -394,7 +394,7 @@ pub fn run() {
             if startup_page_handled.swap(true, Ordering::Relaxed) {
                 return;
             }
-            if crate::settings::get_settings().silent_startup {
+            if crate::settings::get_settings().silent_startup && !cfg!(debug_assertions) {
                 log::info!("主页面加载完成（静默启动，保持隐藏）");
                 return;
             }
@@ -1332,7 +1332,7 @@ pub fn run() {
                 // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
                 #[cfg(target_os = "linux")]
                 let _ = window.set_decorations(!settings.use_app_window_controls);
-                if settings.silent_startup {
+                if settings.silent_startup && !cfg!(debug_assertions) {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
