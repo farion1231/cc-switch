@@ -98,6 +98,12 @@ impl Database {
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
     pub fn init() -> Result<Self, AppError> {
+        // Run backup retention before touching the database connection: on a
+        // full disk (#6706), a large schema migration below can hard-fail on
+        // SQLITE_FULL before ever reaching post-init cleanup, so retention
+        // must free space first rather than depend on init succeeding.
+        Self::preflight_backup_retention();
+
         let db_path = get_app_config_dir().join("cc-switch.db");
         let db_exists = db_path.exists();
 
