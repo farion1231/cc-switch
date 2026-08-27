@@ -75,6 +75,7 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         "deepseek-reasoner",
         "deepseek-v4-flash",
         "deepseek-v4-pro",
+        "glm-5",
         "glm-5.1",
         // Exact rather than prefix matching: GLM visual models use a `v`
         // suffix (for example glm-5.2v), which must remain image-capable.
