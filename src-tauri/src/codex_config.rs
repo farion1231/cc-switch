@@ -1054,11 +1054,57 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
             .any(|reserved| reserved.eq_ignore_ascii_case(id))
 }
 
+/// Merge unmanaged tables and custom settings from an existing live `config.toml` into `new_config_toml`.
+///
+/// Managed fields by CC Switch:
+/// - `model`
+/// - `model_provider`
+/// - `base_url`
+/// - `experimental_bearer_token`
+/// - `[model_providers.<active_provider>]`
+///
+/// All other top-level keys and tables (such as `[projects]`, `[permissions]`, `[telemetry]`,
+/// and non-active `[model_providers.*]` tables) from existing live config are preserved.
+pub fn merge_unmanaged_codex_config(existing_toml: &str, new_toml: &str) -> String {
+    if existing_toml.trim().is_empty() {
+        return new_toml.to_string();
+    }
+    let Ok(mut existing_doc) = existing_toml.parse::<toml_edit::DocumentMut>() else {
+        return new_toml.to_string();
+    };
+    let Ok(new_doc) = new_toml.parse::<toml_edit::DocumentMut>() else {
+        return new_toml.to_string();
+    };
+
+    for managed_key in ["model", "model_provider", "base_url", "experimental_bearer_token"] {
+        if let Some(val) = new_doc.get(managed_key) {
+            existing_doc.insert(managed_key, val.clone());
+        } else if new_doc.is_empty() {
+            existing_doc.remove(managed_key);
+        }
+    }
+
+    if let Some(new_model_providers) = new_doc.get("model_providers").and_then(|v| v.as_table_like()) {
+        let existing_model_providers = existing_doc
+            .entry("model_providers")
+            .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_like_mut();
+
+        if let Some(existing_mps) = existing_model_providers {
+            for (key, item) in new_model_providers.iter() {
+                existing_mps.insert(key, item.clone());
+            }
+        }
+    }
+
+    existing_doc.to_string()
+}
+
 /// Write only Codex `config.toml` for provider switching.
 ///
 /// Codex login state lives in `auth.json`; provider routing, endpoint, model,
 /// and provider-scoped bearer tokens live in `config.toml`. Provider switches
-/// should not overwrite the user's ChatGPT login cache.
+/// should not overwrite the user's ChatGPT login cache or unmanaged custom tables (e.g. [projects]).
 pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
     let config_path = get_codex_config_path();
     let cfg_text = match config_text_opt {
@@ -1070,7 +1116,17 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
     }
 
-    write_text_file(&config_path, &cfg_text)
+    let final_text = if config_path.exists() {
+        if let Ok(existing) = std::fs::read_to_string(&config_path) {
+            merge_unmanaged_codex_config(&existing, &cfg_text)
+        } else {
+            cfg_text
+        }
+    } else {
+        cfg_text
+    };
+
+    write_text_file(&config_path, &final_text)
 }
 
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
@@ -5825,5 +5881,42 @@ model_catalog_json = "cc-switch-model-catalog.json"
             result.is_err(),
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
+    }
+
+    #[test]
+    fn merge_unmanaged_codex_config_preserves_custom_tables_and_keys() {
+        let existing = r#"model = "gpt-4o"
+model_provider = "openai"
+
+[projects."/Users/dev/project"]
+trust = true
+
+[permissions]
+allow_bash = true
+
+[model_providers.custom_internal]
+name = "Internal"
+base_url = "https://internal.example.com/v1"
+"#;
+
+        let new_cfg = r#"model = "kimi-k3"
+model_provider = "kimi"
+
+[model_providers.kimi]
+name = "Kimi"
+base_url = "https://api.moonshot.cn/v1"
+"#;
+
+        let merged = merge_unmanaged_codex_config(existing, new_cfg);
+        let parsed: toml::Table = toml::from_str(&merged).expect("valid toml");
+
+        assert_eq!(parsed.get("model").and_then(|v| v.as_str()), Some("kimi-k3"));
+        assert_eq!(parsed.get("model_provider").and_then(|v| v.as_str()), Some("kimi"));
+        assert!(parsed.get("projects").is_some());
+        assert!(parsed.get("permissions").is_some());
+
+        let model_providers = parsed.get("model_providers").and_then(|v| v.as_table()).expect("model_providers table");
+        assert!(model_providers.get("kimi").is_some(), "new provider kimi must exist");
+        assert!(model_providers.get("custom_internal").is_some(), "custom_internal provider must be preserved");
     }
 }
