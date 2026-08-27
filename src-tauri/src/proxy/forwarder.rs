@@ -1653,14 +1653,26 @@ impl RequestForwarder {
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && super::providers::provider_needs_responses_namespace_flatten(provider)
-            && super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
-                &mut request_body,
-            )
         {
-            log::debug!(
-                "[Codex] Sanitized xAI-unsupported Responses fields (provider={})",
-                provider.id
-            );
+            if super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
+                &mut request_body,
+            ) {
+                log::debug!(
+                    "[Codex] Sanitized xAI-unsupported Responses fields (provider={})",
+                    provider.id
+                );
+            }
+            // Collaboration mailbox items are a separate rewrite: xAI has no
+            // `agent_message` ModelInput variant, so V2 spawn/wait 422s unless
+            // they become ordinary `message` items.
+            if super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_agent_message_input_items(
+                &mut request_body,
+            ) {
+                log::debug!(
+                    "[Codex] Rewrote xAI-unsupported agent_message input items (provider={})",
+                    provider.id
+                );
+            }
         }
 
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {

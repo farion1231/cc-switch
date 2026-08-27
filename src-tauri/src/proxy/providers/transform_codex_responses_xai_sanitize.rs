@@ -11,9 +11,9 @@
 //! sub2api's `patchGrokResponsesBody`
 //! (`backend/internal/service/openai_gateway_grok.go`) plus the #6815 schema
 //! collapse for root `oneOf`/`anyOf` function parameters. Field removal and
-//! that schema rewrite stay in that function; return-path whole-float tool
-//! argument rewrites are a separate entry point so they cannot be mistaken
-//! for "just delete a field". Gated on
+//! that schema rewrite stay in that function. Collaboration `agent_message`
+//! items and return-path whole-float tool argument rewrites are separate
+//! entry points so they cannot be mistaken for "just delete a field". Gated on
 //! [`super::codex::provider_needs_responses_namespace_flatten`], which covers
 //! xAI OAuth *and* API-key cards whose live upstream is `api.x.ai` Responses.
 //!
@@ -22,11 +22,12 @@
 //! tool-type whitelist below keeps them instead of dropping them.
 //!
 //! Isolation for upstream rebases: keep request sanitizers, schema collapse,
-//! and return-path integer rewriting in this file. Call sites in `forwarder`,
-//! `handlers`, and [`super::codex::provider_needs_responses_namespace_flatten`]
-//! must stay thin so `git rebase upstream/main` only conflicts at those gates.
-//! If upstream later lands equivalent sanitization, delete this layer rather
-//! than dual-pathing.
+//! collaboration `agent_message` rewriting, and return-path integer rewriting
+//! in this file. Call sites in `forwarder`, `handlers`, and
+//! [`super::codex::provider_needs_responses_namespace_flatten`] must stay thin
+//! so `git rebase upstream/main` only conflicts at those gates. If upstream
+//! later lands equivalent sanitization, delete this layer rather than
+//! dual-pathing.
 
 use std::collections::{HashMap, HashSet};
 
@@ -618,6 +619,84 @@ fn normalize_xai_function_tool_parameter_schemas(body: &mut Value) -> bool {
         changed |= normalize_xai_function_tool_parameters(tool);
     }
     changed
+}
+
+/// Rewrite Codex multi-agent v2 `agent_message` input items into ordinary
+/// `message` items. xAI's Responses `ModelInput` enum has no `agent_message`
+/// variant, so a native passthrough 422s (`unknown item type "agent_message"`)
+/// before the child agent can run.
+///
+/// This is a request-side structural rewrite, not a field deletion: keep it
+/// out of [`sanitize_xai_responses_request`]. The collaboration envelope
+/// (NEW_TASK / FINAL_ANSWER text) is preserved as `input_text`. Routed Grok
+/// sessions currently put plaintext task bodies in `encrypted_content` parts;
+/// those are flattened to `input_text` so xAI can deserialize them. Items that
+/// are not `agent_message` are left untouched.
+pub(crate) fn rewrite_xai_agent_message_input_items(body: &mut Value) -> bool {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+    for item in input.iter_mut() {
+        changed |= rewrite_agent_message_item(item);
+    }
+    changed
+}
+
+fn is_agent_message_item(item: &Value) -> bool {
+    item.get("type").and_then(Value::as_str).map(str::trim) == Some("agent_message")
+}
+
+fn rewrite_agent_message_item(item: &mut Value) -> bool {
+    if !is_agent_message_item(item) {
+        return false;
+    }
+
+    let id = item.get("id").cloned();
+    let content = flatten_agent_message_content(item.get("content"));
+    let mut message = serde_json::Map::new();
+    message.insert("type".to_string(), json!("message"));
+    message.insert("role".to_string(), json!("user"));
+    if let Some(id) = id {
+        message.insert("id".to_string(), id);
+    }
+    message.insert("content".to_string(), Value::Array(content));
+    *item = Value::Object(message);
+    true
+}
+
+fn flatten_agent_message_content(content: Option<&Value>) -> Vec<Value> {
+    match content {
+        Some(Value::Array(parts)) => parts.iter().filter_map(part_to_input_text).collect(),
+        Some(Value::String(text)) if !text.is_empty() => vec![input_text_part(text)],
+        _ => Vec::new(),
+    }
+}
+
+fn part_to_input_text(part: &Value) -> Option<Value> {
+    match part.get("type").and_then(Value::as_str).map(str::trim) {
+        Some("input_text" | "output_text" | "text") => part
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(input_text_part),
+        Some("encrypted_content") => part
+            .get("encrypted_content")
+            .or_else(|| part.get("text"))
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(input_text_part),
+        _ => part
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(input_text_part),
+    }
+}
+
+fn input_text_part(text: &str) -> Value {
+    json!({ "type": "input_text", "text": text })
 }
 
 /// Rewrite whole-number JSON floats (`92116.0`) to integers (`92116`) on
@@ -1236,5 +1315,85 @@ mod tests {
             String::from_utf8(passed.to_vec()).unwrap(),
             format!("{delta}\n\n")
         );
+    }
+
+    #[test]
+    fn rewrites_agent_message_new_task_with_encrypted_content_part() {
+        let mut body = json!({
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "review"}]},
+                {
+                    "type": "agent_message",
+                    "id": "amsg_child",
+                    "author": "/root",
+                    "recipient": "/root/code_review",
+                    "content": [
+                        {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+                        {"type": "encrypted_content", "encrypted_content": "You are a Senior Code Reviewer."}
+                    ]
+                }
+            ]
+        });
+
+        assert!(!sanitize_xai_responses_request(&mut body));
+        assert!(rewrite_xai_agent_message_input_items(&mut body));
+        assert_eq!(body["input"][0]["type"], "message");
+        let item = &body["input"][1];
+        assert_eq!(item["type"], "message");
+        assert_eq!(item["role"], "user");
+        assert_eq!(item["id"], "amsg_child");
+        assert_eq!(item["content"][0]["type"], "input_text");
+        assert_eq!(item["content"][0]["text"], "Message Type: NEW_TASK\nPayload:\n");
+        assert_eq!(item["content"][1]["text"], "You are a Senior Code Reviewer.");
+        assert!(item.get("author").is_none());
+        assert_eq!(item["content"].as_array().unwrap().len(), 2);
+        assert!(!rewrite_xai_agent_message_input_items(&mut body));
+    }
+
+    #[test]
+    fn rewrites_agent_message_final_answer_without_dropping_neighbors() {
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "function_call",
+                    "name": "wait_agent",
+                    "arguments": "{\"timeout_ms\":180000}"
+                },
+                {
+                    "type": "agent_message",
+                    "id": "amsg_parent",
+                    "author": "/root/code_review",
+                    "recipient": "/root",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Message Type: FINAL_ANSWER\nPayload:\nAgent errored: unexpected status 422"
+                    }]
+                }
+            ]
+        });
+
+        assert!(rewrite_xai_agent_message_input_items(&mut body));
+        assert_eq!(body["input"][0]["type"], "function_call");
+        assert_eq!(body["input"][0]["name"], "wait_agent");
+        assert_eq!(body["input"][1]["type"], "message");
+        assert_eq!(body["input"][1]["role"], "user");
+        assert!(body["input"][1]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("FINAL_ANSWER"));
+    }
+
+    #[test]
+    fn leaves_ordinary_messages_unchanged() {
+        let mut body = json!({
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }]
+        });
+        let original = body.clone();
+        assert!(!rewrite_xai_agent_message_input_items(&mut body));
+        assert_eq!(body, original);
     }
 }
