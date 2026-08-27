@@ -135,6 +135,19 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#6366F1",
   },
   {
+    name: "HopsAPI",
+    websiteUrl: "https://hopsapi.com",
+    apiKeyUrl: "https://hopsapi.com/keys?from=cc-switch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://hopsapi.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://hopsapi.com"],
+    category: "third_party",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
     apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
