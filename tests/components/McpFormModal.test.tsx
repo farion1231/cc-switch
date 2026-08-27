@@ -585,6 +585,28 @@ type = "stdio"
     expect(entry.server.env).toEqual({ BLENDER_PORT: "9876" });
   });
 
+  it("#6882：粘贴数组 command 时编辑校验不误报 JSON 无效", async () => {
+    renderForm();
+
+    fireEvent.change(
+      screen.getByPlaceholderText("mcp.form.jsonPlaceholder"),
+      {
+        target: {
+          value: JSON.stringify({
+            type: "stdio",
+            command: ["blender-mcp"],
+            environment: { BLENDER_HOST: "localhost" },
+          }),
+        },
+      },
+    );
+
+    // validateJsonConfig 对数组 command 视为有效：不出现错误文案
+    expect(
+      screen.queryByText(/mcp\.error\./),
+    ).not.toBeInTheDocument();
+  });
+
   it("#6882：非字符串非数组的 command 仍被拒绝并提示", async () => {
     renderForm();
 
