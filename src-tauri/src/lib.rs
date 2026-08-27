@@ -72,7 +72,7 @@ pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
 #[cfg(target_os = "macos")]
@@ -375,33 +375,32 @@ pub fn run() {
             }
 
             // Show and focus window regardless
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(target_os = "macos")]
-                tray::apply_tray_policy(app, true);
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "linux")]
-                {
-                    linux_fix::nudge_main_window(window.clone());
-                }
-            }
+            tray::reveal_main_window(app);
         }));
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         let startup_page_handled = AtomicBool::new(false);
         builder = builder.on_page_load(move |webview, payload| {
-            if webview.label() == "main"
-                && payload.event() == tauri::webview::PageLoadEvent::Finished
-                && payload.url().scheme() != "about"
-                && !startup_page_handled.swap(true, Ordering::Relaxed)
-                && !crate::settings::get_settings().silent_startup
+            if webview.label() != "main"
+                || payload.event() != tauri::webview::PageLoadEvent::Finished
+                || payload.url().scheme() == "about"
             {
-                let _ = webview.window().show();
-                log::info!("主页面加载完成，主窗口已显示");
+                return;
             }
+            tray::mark_main_page_ready();
+            if startup_page_handled.swap(true, Ordering::Relaxed) {
+                return;
+            }
+            if crate::settings::get_settings().silent_startup {
+                log::info!("主页面加载完成（静默启动，保持隐藏）");
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            tray::apply_tray_policy(webview.app_handle(), true);
+            let _ = webview.window().show();
+            log::info!("主页面加载完成，主窗口已显示");
         });
     }
 
@@ -1341,19 +1340,14 @@ pub fn run() {
                     tray::apply_tray_policy(app.handle(), false);
                     log::info!("静默启动模式：主窗口已隐藏");
                 } else {
-                    // 正常启动模式：显示窗口
-                    #[cfg(not(target_os = "windows"))]
-                    let _ = window.show();
-                    #[cfg(target_os = "windows")]
+                    // Windows/macOS: wait for the first real page load before
+                    // showing, so a blank WKWebView/WebView2 is not exposed.
+                    #[cfg(any(target_os = "windows", target_os = "macos"))]
                     log::info!("正常启动模式：等待主页面加载完成后显示主窗口");
-                    #[cfg(not(target_os = "windows"))]
-                    log::info!("正常启动模式：主窗口已显示");
-
-                    // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
-                    // 启动时 webview 未获取焦点 + surface 尺寸协商失败，导致点击无效。
-                    // 这里做 set_focus + 伪 resize，等价于无视觉版本的"最大化-还原"。
                     #[cfg(target_os = "linux")]
                     {
+                        let _ = window.show();
+                        log::info!("正常启动模式：主窗口已显示");
                         linux_fix::nudge_main_window(window.clone());
                     }
                 }
@@ -1776,20 +1770,7 @@ pub fn run() {
             match event {
                 // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口
                 RunEvent::Reopen { .. } => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        #[cfg(target_os = "windows")]
-                        {
-                            let _ = window.set_skip_taskbar(false);
-                        }
-                        tray::apply_tray_policy(app_handle, true);
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    } else if crate::lightweight::is_lightweight_mode() {
-                        if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
-                            log::error!("退出轻量模式重建窗口失败: {e}");
-                        }
-                    }
+                    tray::reveal_main_window(app_handle);
                 }
                 // 处理通过自定义 URL 协议触发的打开事件（例如 ccswitch://...）
                 RunEvent::Opened { urls } => {

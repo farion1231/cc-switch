@@ -992,37 +992,54 @@ pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
     }
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static MAIN_PAGE_READY: AtomicBool = AtomicBool::new(false);
+
+pub fn mark_main_page_ready() {
+    MAIN_PAGE_READY.store(true, Ordering::Release);
+}
+
+/// Bring the main window on-screen. On macOS, a window that stayed hidden
+/// from silent startup can paint as a blank WKWebView; reload once if the
+/// first page load never finished while hidden.
+pub fn reveal_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = window.set_skip_taskbar(false);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            apply_tray_policy(app, true);
+        }
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_fix::nudge_main_window(window.clone());
+        }
+        #[cfg(target_os = "macos")]
+        if !MAIN_PAGE_READY.load(Ordering::Acquire) {
+            log::warn!("主窗口已显示但页面尚未加载完成，正在重新加载");
+            if let Err(err) = window.reload() {
+                log::warn!("重新加载主窗口失败: {err}");
+            }
+        }
+    } else if crate::lightweight::is_lightweight_mode() {
+        if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            log::error!("退出轻量模式重建窗口失败: {e}");
+        }
+    }
+}
+
 /// 处理托盘菜单事件
 pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("处理托盘菜单事件: {event_id}");
 
     match event_id {
-        "show_main" => {
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = window.set_skip_taskbar(false);
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    // Accessory + hidden (silent startup) must become Regular
-                    // before show(), otherwise macOS can present an empty
-                    // WKWebView and the proxy keeps running in the background.
-                    apply_tray_policy(app, true);
-                }
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "linux")]
-                {
-                    crate::linux_fix::nudge_main_window(window.clone());
-                }
-            } else if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式重建窗口失败: {e}");
-                }
-            }
-        }
+        "show_main" => reveal_main_window(app),
         "open_website" => {
             if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
                 log::error!("打开官方网站失败: {e}");
