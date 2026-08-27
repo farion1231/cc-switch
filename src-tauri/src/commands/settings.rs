@@ -1,14 +1,7 @@
 #![allow(non_snake_case)]
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tauri_plugin_updater::UpdaterExt;
-
-/// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
-#[derive(Clone, serde::Serialize)]
-struct UpdateDownloadProgress {
-    downloaded: u64,
-    total: Option<u64>,
-}
 
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
@@ -196,74 +189,14 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let updater = app
-        .updater_builder()
-        .build()
-        .map_err(|e| format!("初始化更新器失败: {e}"))?;
+    crate::services::app_update::install_staged_or_download_and_restart(&app).await
+}
 
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|e| format!("检查更新失败: {e}"))?
-    else {
-        return Ok(false);
-    };
-
-    log::info!("开始下载应用更新: {}", update.version);
-    let progress_handle = app.clone();
-    let mut downloaded: u64 = 0;
-    let bytes = update
-        .download(
-            move |chunk_len, content_len| {
-                downloaded = downloaded.saturating_add(chunk_len as u64);
-                let _ = progress_handle.emit(
-                    "update-download-progress",
-                    UpdateDownloadProgress {
-                        downloaded,
-                        total: content_len,
-                    },
-                );
-            },
-            || {},
-        )
-        .await
-        .map_err(|e| format!("下载更新失败: {e}"))?;
-
-    log::info!("开始安装应用更新: {}", update.version);
-
-    #[cfg(target_os = "windows")]
-    {
-        // Windows updater 会在 install() 内启动安装器并直接退出当前进程
-        // （插件内部 std::process::exit(0)，绕过 TrayIcon::drop、不发
-        // NIM_DELETE，会残留死图标——与托盘"退出"路径相同的问题）。
-        // 因此清理只能放在 install 前执行，且必须显式移除托盘图标。
-        crate::save_window_state_before_exit(&app);
-        crate::cleanup_before_exit(&app).await;
-        crate::remove_tray_icon_before_exit(&app);
-        crate::destroy_single_instance_lock(&app);
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        update.install(bytes).map_err(|e| {
-            format!(
-                "Windows 更新安装失败: {e}。已执行退出前清理，代理或 Live 接管可能已暂停；请重启应用或重新开启代理后再试。"
-            )
-        })?;
-        Ok(true)
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        // macOS/Linux install() 会返回；先安装，避免安装失败时误停代理/撤回接管。
-        update
-            .install(bytes)
-            .map_err(|e| format!("安装更新失败: {e}"))?;
-
-        crate::save_window_state_before_exit(&app);
-        crate::cleanup_before_exit(&app).await;
-
-        log::info!("应用更新安装完成，正在重启应用");
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        crate::restart_process(&app);
-    }
+/// 前端检查到新版本后的显式触发：后端后台预下载安装包，让「点升级」时
+/// 无需现场下载。失败对用户无感（安装命令会回退为现场下载）。
+#[tauri::command]
+pub async fn prestage_app_update(app: AppHandle) -> Result<(), String> {
+    crate::services::app_update::prestage_on_demand(&app).await
 }
 
 /// 检查是否有可用的应用更新，返回可用的新版本号（无更新时返回 None）。

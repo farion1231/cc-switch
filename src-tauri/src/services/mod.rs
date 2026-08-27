@@ -1,3 +1,4 @@
+pub mod app_update;
 pub mod balance;
 pub mod codex_oauth_models;
 pub mod coding_plan;
