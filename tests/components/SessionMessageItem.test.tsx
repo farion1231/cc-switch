@@ -38,6 +38,27 @@ describe("SessionMessageItem tool message collapsing", () => {
     expect(screen.queryByRole("button", { name: /展开完整内容/ })).toBeNull();
   });
 
+  it("keeps a tool message that only ends with a newline intact", () => {
+    const { container } = renderMessage("ok\n");
+
+    expect(container.textContent).not.toContain("…");
+    expect(screen.queryByRole("button", { name: /展开完整内容/ })).toBeNull();
+  });
+
+  it("ignores blank tail lines when deciding to collapse", () => {
+    renderMessage(["first line", "second line", "", "  ", ""].join("\n"));
+
+    expect(screen.queryByRole("button", { name: /展开完整内容/ })).toBeNull();
+  });
+
+  it("ignores trailing blank lines in the line count", () => {
+    renderMessage(`${lines(40)}\n\n`);
+
+    expect(
+      screen.getByRole("button", { name: /展开完整内容/ }),
+    ).toHaveTextContent("40");
+  });
+
   it("drops a trailing blank line from the preview", () => {
     const { container } = renderMessage(
       ["heading", "", "body line"].join("\n"),

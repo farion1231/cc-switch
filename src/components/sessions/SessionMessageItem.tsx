@@ -32,7 +32,13 @@ const clampToLines = (content: string, maxLines: number, maxChars: number) => {
   const lines = content.split("\n");
   // 尾部空行不带信息量，去掉可以让预览更紧凑
   const head = lines.slice(0, maxLines).join("\n").trimEnd();
-  return head.length > maxChars ? head.slice(0, maxChars) : head;
+  if (head.length > maxChars) {
+    return { text: head.slice(0, maxChars), truncated: true };
+  }
+  // 命令输出常以换行收尾，被裁掉的部分若只剩空白，展开后并不会多出内容，
+  // 这类消息不应该显示省略号和展开按钮
+  const rest = lines.slice(maxLines).join("\n");
+  return { text: head, truncated: rest.trim().length > 0 };
 };
 
 interface SessionMessageItemProps {
@@ -60,11 +66,11 @@ export const SessionMessageItem = memo(function SessionMessageItem({
             TOOL_PREVIEW_LINES,
             TOOL_PREVIEW_MAX_CHARS,
           )
-        : "",
+        : { text: "", truncated: false },
     [isTool, message.content],
   );
   const isLong = isTool
-    ? toolPreview.length < message.content.length
+    ? toolPreview.truncated
     : message.content.length > COLLAPSE_THRESHOLD;
   const hasSearchMatch =
     isLong &&
@@ -74,7 +80,7 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   const collapsed = isLong && !expanded && !hasSearchMatch;
   const displayContent = collapsed
     ? isTool
-      ? `${toolPreview}…`
+      ? `${toolPreview.text}…`
       : message.content.slice(0, COLLAPSED_LENGTH) + "…"
     : message.content;
 
@@ -153,7 +159,7 @@ export const SessionMessageItem = memo(function SessionMessageItem({
                 (
                 {isTool
                   ? t("sessionManager.lineCount", {
-                      lines: message.content.split("\n").length,
+                      lines: message.content.trimEnd().split("\n").length,
                       defaultValue: "{{lines}} 行",
                     })
                   : `${Math.round(message.content.length / 1000)}k`}
