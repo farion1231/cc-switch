@@ -397,6 +397,24 @@ fn thread_id_from_filename(path: &Path) -> Option<String> {
         .map(|value| value.hyphenated().to_string())
 }
 
+/// 双段文件名（`rollout-…-<threadId>_<sessionId>.jsonl`）里下划线前的线程
+/// 本体 UUID；单段文件名返回 `None`。
+///
+/// Codex 恢复线程时新建的双段 rollout：文件名末段是新会话 ID，但 root meta
+/// 的 `id` 仍是原线程 ID，一致性校验需同时接受两个 UUID。
+fn leading_thread_id_from_filename(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    let len = stem.len();
+    // 布局尾部：…<uuidA>_<uuidB>。uuidB 占 36 字符，其前是 '_'（共 37）
+    if !stem.get(len.checked_sub(37)?..)?.starts_with('_') {
+        return None;
+    }
+    let candidate = stem.get(len.checked_sub(73)?..len.checked_sub(37)?)?;
+    uuid::Uuid::parse_str(candidate)
+        .ok()
+        .map(|value| value.hyphenated().to_string())
+}
+
 fn explicit_parent_from_meta(payload: &serde_json::Value) -> ParentResolution {
     let forked_from = non_empty_string(payload.get("forked_from_id"));
     let spawned_from = payload
@@ -823,7 +841,10 @@ fn parse_codex_file(
                         .or_else(|| payload.get("threadId")),
                 );
                 if let (Some(filename_id), Some(meta_id)) = (&root_thread_id, meta_thread_id) {
-                    if filename_id != &meta_id {
+                    let leading_id = leading_thread_id_from_filename(file_path);
+                    let matches =
+                        filename_id == &meta_id || leading_id.as_deref() == Some(meta_id.as_str());
+                    if !matches {
                         parent = ParentResolution::Deferred(format!(
                             "文件名线程 ID ({filename_id}) 与 root meta ID ({meta_id}) 不一致"
                         ));
@@ -1653,6 +1674,58 @@ mod tests {
             .collect::<Vec<_>>();
         let mut pass = CodexSyncPass::load(db)?;
         sync_single_codex_file(db, file, &build_rollout_index(&files), &mut pass)
+    }
+
+    /// 恢复会话的 rollout 是 `<threadId>_<sessionId>` 双段文件名，root meta 的
+    /// id 是原线程 ID（第一个 UUID）、forked_from_id 为空。旧校验只认末尾 UUID，
+    /// 会把这类文件永久 deferred，恢复会话后的用量全部丢失。
+    #[test]
+    fn test_resumed_rollout_meta_id_matching_leading_uuid_is_not_deferred() -> Result<(), AppError>
+    {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join(format!(
+            "rollout-2026-08-26T17-18-13-{PARENT_ID}_{CHILD_A_ID}.jsonl"
+        ));
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_at(100, 50, 20, "2026-08-26T09:18:20Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, thread_id_from_filename(&file))?;
+
+        // 恢复会话没有显式 parent，不应因 ID 不一致被拒
+        assert!(
+            !matches!(parsed.parent, ParentResolution::Deferred(_)),
+            "恢复会话不应被 deferred，实际: {:?}",
+            parsed.parent
+        );
+        assert_eq!(parsed.root_thread_id.as_deref(), Some(CHILD_A_ID));
+        assert!(parsed.has_billable_tokens);
+        Ok(())
+    }
+
+    /// 单段文件名的不一致仍要拒收。
+    #[test]
+    fn test_single_uuid_filename_meta_mismatch_still_deferred() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        // meta 里写的是另一个线程的 ID —— 这不是恢复会话能解释的形态
+        write_jsonl(
+            &file,
+            &[
+                session_meta(CHILD_B_ID),
+                turn_context(),
+                token_count_at(1, 1, 1, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, thread_id_from_filename(&file))?;
+        assert!(matches!(parsed.parent, ParentResolution::Deferred(_)));
+        Ok(())
     }
 
     #[test]
