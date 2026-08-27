@@ -22,6 +22,36 @@ pub struct FetchedModel {
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
+    /// 供应商错误信封（HTTP 200 + success:false）携带的错误信息，如智谱 GLM。
+    #[serde(default)]
+    msg: Option<String>,
+    /// OpenAI 风格错误对象 `{"error":{"message":"..."}}`。
+    #[serde(default)]
+    error: Option<ModelFetchError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelFetchError {
+    #[serde(default)]
+    message: Option<String>,
+}
+
+impl ModelsResponse {
+    fn error_message(&self) -> Option<String> {
+        self.msg
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                self.error
+                    .as_ref()
+                    .and_then(|e| e.message.as_deref())
+                    .map(str::trim)
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+            })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,23 +123,8 @@ pub async fn fetch_models(
         let status = response.status();
 
         if status.is_success() {
-            let resp: ModelsResponse = response
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse response: {e}"))?;
-
-            let mut models: Vec<FetchedModel> = resp
-                .data
-                .unwrap_or_default()
-                .into_iter()
-                .map(|m| FetchedModel {
-                    id: m.id,
-                    owned_by: m.owned_by,
-                })
-                .collect();
-
-            models.sort_by(|a, b| a.id.cmp(&b.id));
-            return Ok(models);
+            let body = response.text().await.unwrap_or_default();
+            return parse_models_response(&body);
         }
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
@@ -136,6 +151,37 @@ pub async fn fetch_models(
 
 fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> String {
     truncate_body(crate::redact_known_secrets_strict(&body, known_secrets))
+}
+
+/// 解析 OpenAI 兼容的 /models 响应。
+///
+/// 部分供应商（如智谱 GLM 的 `/api/v1` 端点）在鉴权失败等场景下返回 HTTP 200
+/// 但携带错误信封（无 `data` 字段）。此时必须透出信封中的错误信息，而不是
+/// 静默返回空列表——否则用户在 UI 上看到「获取成功但没有模型」，无法定位
+/// 是鉴权失败还是端点问题。
+fn parse_models_response(body: &str) -> Result<Vec<FetchedModel>, String> {
+    let resp: ModelsResponse = serde_json::from_str(body)
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+    let data = match resp.data {
+        Some(data) => data,
+        None => {
+            let detail = resp
+                .error_message()
+                .unwrap_or_else(|| truncate_body(body.to_string()));
+            return Err(format!("Model fetch failed: {detail}"));
+        }
+    };
+
+    let mut models: Vec<FetchedModel> = data
+        .into_iter()
+        .map(|m| FetchedModel {
+            id: m.id,
+            owned_by: m.owned_by,
+        })
+        .collect();
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(models)
 }
 
 fn build_model_fetch_headers(
@@ -613,5 +659,39 @@ mod tests {
         let json = r#"{"object":"list","data":[]}"#;
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
         assert!(resp.data.unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_models_response_rejects_http_200_error_envelope() {
+        // 智谱 GLM 的 /api/v1/models 在鉴权失败时返回 HTTP 200 + 错误信封
+        // （无 data 字段）。旧逻辑静默返回空列表，用户在 UI 上看不到任何失败原因。
+        let body = r#"{"code":1001,"msg":"Header中未收到Authorization参数，无法进行身份验证。","success":false}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(
+            err.contains("Authorization"),
+            "error should surface the envelope msg, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_models_response_rejects_openai_style_error_object() {
+        let body = r#"{"error":{"message":"Invalid token","type":"invalid_request_error"}}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(err.contains("Invalid token"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_models_response_accepts_openai_list() {
+        let body = r#"{"object":"list","data":[{"id":"glm-4.6","object":"model","owned_by":"zhipu"}]}"#;
+        let models = parse_models_response(body).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "glm-4.6");
+        assert_eq!(models[0].owned_by.as_deref(), Some("zhipu"));
+    }
+
+    #[test]
+    fn parse_models_response_accepts_empty_data_array() {
+        let models = parse_models_response(r#"{"object":"list","data":[]}"#).unwrap();
+        assert!(models.is_empty());
     }
 }
