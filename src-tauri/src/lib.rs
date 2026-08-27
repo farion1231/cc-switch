@@ -390,6 +390,7 @@ pub fn run() {
                 return;
             }
             tray::mark_main_page_ready();
+            log::info!("主窗口 page load finished: {}", payload.url());
             if startup_page_handled.swap(true, Ordering::Relaxed) {
                 return;
             }

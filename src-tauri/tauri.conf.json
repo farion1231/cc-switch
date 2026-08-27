@@ -20,6 +20,7 @@
         "minWidth": 900,
         "minHeight": 600,
         "visible": false,
+        "devtools": true,
         "resizable": true,
         "fullscreen": false,
         "center": true
