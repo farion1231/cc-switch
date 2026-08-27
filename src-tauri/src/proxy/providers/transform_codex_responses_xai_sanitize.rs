@@ -21,12 +21,10 @@
 //! `namespace` tools are already lifted to top-level `function` tools, so the
 //! tool-type whitelist below keeps them instead of dropping them.
 //!
-//! Isolation for upstream rebases: keep request sanitizers, schema collapse,
-//! collaboration `agent_message` rewriting, unknown-model remapping onto the
-//! provider's configured model, and return-path integer rewriting in this file.
-//! Call sites in `forwarder`, `handlers`, and
-//! [`super::codex::provider_needs_responses_namespace_flatten`] must stay thin
-//! so `git rebase upstream/main` only conflicts at those gates. If upstream
+//! Isolation for upstream rebases: keep every xAI-only rewrite in this file.
+//! `forwarder` should call [`apply_xai_native_responses_request_compat`] once;
+//! `handlers` should only wrap SSE/non-stream restore. The live gate is
+//! [`super::codex::provider_needs_responses_namespace_flatten`]. If upstream
 //! later lands equivalent sanitization, delete this layer rather than
 //! dual-pathing.
 
@@ -622,6 +620,36 @@ fn normalize_xai_function_tool_parameter_schemas(body: &mut Value) -> bool {
     changed
 }
 
+/// One request-side entry point for the xAI native Responses gate.
+///
+/// `forwarder` stays a thin `if provider_needs_responses_namespace_flatten`
+/// call so `git rebase upstream/main` conflicts here or at that single site,
+/// not across inlined sanitizers. Logging stays here for the same reason.
+pub(crate) fn apply_xai_native_responses_request_compat(
+    body: &mut Value,
+    provider_id: &str,
+    upstream_model: Option<&str>,
+    settings: &Value,
+) {
+    if sanitize_xai_responses_request(body) {
+        log::debug!("[Codex] Sanitized xAI-unsupported Responses fields (provider={provider_id})");
+    }
+    if rewrite_xai_agent_message_input_items(body) {
+        log::info!(
+            "[Codex] Rewrote xAI-unsupported agent_message input items (provider={provider_id})"
+        );
+    }
+    let Some(upstream_model) = upstream_model else {
+        return;
+    };
+    let allowed = collect_xai_catalog_model_ids(settings);
+    if let Some((from, to)) = rewrite_xai_unknown_request_model(body, upstream_model, &allowed) {
+        log::info!(
+            "[Codex] Rewrote xAI-unknown request model {from} -> {to} (provider={provider_id})"
+        );
+    }
+}
+
 /// Rewrite Codex multi-agent v2 `agent_message` items into ordinary `message`
 /// items. xAI's Responses `ModelInput` enum has no `agent_message` variant, so
 /// a native passthrough 422s (`input[N]: unknown item type "agent_message"`)
@@ -637,6 +665,9 @@ pub(crate) fn rewrite_xai_agent_message_input_items(body: &mut Value) -> bool {
 }
 
 fn rewrite_agent_message_value(value: &mut Value) -> bool {
+    if rewrite_agent_message_item(value) {
+        return true;
+    }
     match value {
         Value::Array(items) => {
             let mut changed = false;
@@ -645,19 +676,12 @@ fn rewrite_agent_message_value(value: &mut Value) -> bool {
             }
             changed
         }
-        Value::Object(_) => {
-            if rewrite_agent_message_item(value) {
-                true
-            } else {
-                let Some(obj) = value.as_object_mut() else {
-                    return false;
-                };
-                let mut changed = false;
-                for child in obj.values_mut() {
-                    changed |= rewrite_agent_message_value(child);
-                }
-                changed
+        Value::Object(obj) => {
+            let mut changed = false;
+            for child in obj.values_mut() {
+                changed |= rewrite_agent_message_value(child);
             }
+            changed
         }
         _ => false,
     }
@@ -691,12 +715,7 @@ pub(crate) fn rewrite_xai_unknown_request_model(
         .unwrap_or("")
         .to_string();
 
-    if !request.is_empty()
-        && (request.eq_ignore_ascii_case(upstream)
-            || allowed_models
-                .iter()
-                .any(|id| id.eq_ignore_ascii_case(&request)))
-    {
+    if !request.is_empty() && request_model_is_allowed(&request, upstream, allowed_models) {
         return None;
     }
 
@@ -731,8 +750,23 @@ pub(crate) fn collect_xai_catalog_model_ids(settings: &Value) -> HashSet<String>
     ids
 }
 
+fn request_model_is_allowed(
+    request: &str,
+    upstream: &str,
+    allowed_models: &HashSet<String>,
+) -> bool {
+    request.eq_ignore_ascii_case(upstream)
+        || allowed_models
+            .iter()
+            .any(|id| id.eq_ignore_ascii_case(request))
+}
+
+fn json_type(value: &Value) -> Option<&str> {
+    value.get("type").and_then(Value::as_str).map(str::trim)
+}
+
 fn rewrite_agent_message_item(item: &mut Value) -> bool {
-    if item.get("type").and_then(Value::as_str).map(str::trim) != Some("agent_message") {
+    if json_type(item) != Some("agent_message") {
         return false;
     }
 
@@ -759,14 +793,13 @@ fn flatten_agent_message_content(content: Option<&Value>) -> Vec<Value> {
 }
 
 fn part_to_input_text(part: &Value) -> Option<Value> {
-    let text =
-        if part.get("type").and_then(Value::as_str).map(str::trim) == Some("encrypted_content") {
-            part.get("encrypted_content")
-                .or_else(|| part.get("text"))
-                .and_then(Value::as_str)
-        } else {
-            part.get("text").and_then(Value::as_str)
-        }?;
+    let text = if json_type(part) == Some("encrypted_content") {
+        part.get("encrypted_content")
+            .or_else(|| part.get("text"))
+            .and_then(Value::as_str)
+    } else {
+        part.get("text").and_then(Value::as_str)
+    }?;
     if text.is_empty() {
         None
     } else {
@@ -1526,6 +1559,25 @@ mod tests {
         assert!(rewrite_xai_agent_message_input_items(&mut body));
         assert_eq!(body["input"]["items"][0]["type"], "message");
         assert_eq!(body["input"]["items"][0]["role"], "user");
+    }
+
+    #[test]
+    fn request_compat_rewrites_agent_message_and_unknown_model_together() {
+        let mut body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [{
+                "type": "agent_message",
+                "content": [{"type": "input_text", "text": "hi"}]
+            }]
+        });
+        let settings = json!({
+            "modelCatalog": {"models": [{"slug": "grok-4.6"}, {"slug": "grok-4.5"}]}
+        });
+        apply_xai_native_responses_request_compat(&mut body, "grok", Some("grok-4.6"), &settings);
+        assert_eq!(body["model"], "grok-4.6");
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(body["input"][0]["content"][0]["text"], "hi");
     }
 
     #[test]

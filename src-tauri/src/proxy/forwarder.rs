@@ -1621,71 +1621,29 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // Native Responses passthrough to a strict third-party gateway (xAI):
-        // flatten Codex's private `namespace`/plugin tool declarations into
-        // top-level function tools so the upstream's strict serde parser does
-        // not 422 on `unknown variant "namespace"`. The Chat/Anthropic paths
-        // above already unwrap namespaces, so this only fires on the native
-        // passthrough. The response handler restores the flat names using a map
-        // re-derived from the same request tools.
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && !codex_responses_to_chat
-            && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
-            && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
-                &mut request_body,
-            )?
-        {
-            log::debug!(
-                "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
-                provider.id
-            );
-        }
-
-        // Same native-Responses path: scrub the OpenAI-backend-private fields
-        // and tool carriers (`external_web_access`, `prompt_cache_retention`,
-        // `additional_tools`, `tool_search`, …) that xAI's strict serde parser
-        // rejects with 400/422, plus the #6815 schema collapse. Gated on the
-        // xAI native Responses path so no other provider is affected. Runs after
-        // the flatten above so lifted `namespace` tools survive the tool-type
-        // whitelist.
+        // Native Responses passthrough to a strict third-party gateway (xAI).
+        // One gate so rebase conflicts stay here plus the isolate file, not
+        // scattered across sanitizers. Flatten namespaces first; then apply
+        // xAI request rewrites (schema, agent_message, unknown models).
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && super::providers::provider_needs_responses_namespace_flatten(provider)
         {
-            if super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
+            if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
                 &mut request_body,
-            ) {
+            )? {
                 log::debug!(
-                    "[Codex] Sanitized xAI-unsupported Responses fields (provider={})",
+                    "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
                     provider.id
                 );
             }
-            if super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_agent_message_input_items(
+            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
                 &mut request_body,
-            ) {
-                log::info!(
-                    "[Codex] Rewrote xAI-unsupported agent_message input items (provider={})",
-                    provider.id
-                );
-            }
-            if let Some(upstream_model) = super::providers::codex_provider_upstream_model(provider)
-            {
-                let allowed = super::providers::transform_codex_responses_xai_sanitize::collect_xai_catalog_model_ids(
-                    &provider.settings_config,
-                );
-                if let Some((from, to)) = super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_unknown_request_model(
-                    &mut request_body,
-                    &upstream_model,
-                    &allowed,
-                ) {
-                    log::info!(
-                        "[Codex] Rewrote xAI-unknown request model {from} -> {to} (provider={})",
-                        provider.id
-                    );
-                }
-            }
+                &provider.id,
+                super::providers::codex_provider_upstream_model(provider).as_deref(),
+                &provider.settings_config,
+            );
         }
 
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
