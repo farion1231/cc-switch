@@ -132,13 +132,24 @@ export function estimateTrendBucketCount(
   }
 }
 
+/** 与后端 DETAIL_RETENTION_DAYS 一致：子天档只读明细表，越界老数据只剩日汇总。 */
+export const TREND_DETAIL_RETENTION_SECONDS = 30 * 86_400;
+
 /** 该档位在当前范围下是否可选择（auto 恒可选，后端负责解析+护栏）。 */
 export function isGranularitySelectable(
   startDate: number,
   endDate: number,
   granularity: TrendGranularityOption,
+  nowTs: number = Math.floor(Date.now() / 1000),
 ): boolean {
   if (granularity === "auto") return true;
+  // 子天档位要求范围起点落在明细保留期内（镜像后端保留期护栏）
+  if (
+    MINUTE_AND_HOUR_GRANULARITIES.has(granularity) &&
+    startDate < nowTs - TREND_DETAIL_RETENTION_SECONDS
+  ) {
+    return false;
+  }
   return (
     estimateTrendBucketCount(startDate, endDate, granularity) <=
     TREND_BUCKET_LIMIT
@@ -200,17 +211,21 @@ export function formatTrendBucketTooltipLabel(
   });
 }
 
-/** Recharts 宽表行：xKey/label + 每系列一列。 */
+/** Recharts 宽表行：元数据字段 + 每系列一个 value{i} 数值列。 */
 export interface TrendSeriesChartRow {
   xKey: string;
   label: string;
   tooltipLabel: string;
-  [seriesKey: string]: string | number;
+  [column: string]: string | number;
 }
 
 export interface TrendSeriesChartModel {
   rows: TrendSeriesChartRow[];
+  /** 原始系列名（图例/颜色/标签用）。 */
   seriesKeys: string[];
+  /** 与 seriesKeys 平行的行内数值列名（value0…），
+   *  与用户可见的系列名彻底隔离，杜绝真实模型/Provider 名撞上元数据字段。 */
+  columns: string[];
 }
 
 function pointValue(point: UsageTrendSeriesPoint, metric: TrendMetric): number {
@@ -241,7 +256,7 @@ export function buildTrendSeriesChart(
   const { groupBy, metric, dateLocale, topN = TREND_TOP_N } = options;
   const buckets = response?.buckets ?? [];
   if (buckets.length === 0) {
-    return { rows: [], seriesKeys: [] };
+    return { rows: [], seriesKeys: [], columns: [] };
   }
   const granularity = response?.granularity ?? "day";
 
@@ -257,13 +272,19 @@ export function buildTrendSeriesChart(
       );
     }
   }
-  const ranked = [...unionKeys].sort(
-    (a, b) => (totals.get(b) ?? 0) - (totals.get(a) ?? 0) || a.localeCompare(b),
-  );
+  // 防御：真实系列名与合成 key 撞名时把该系列折进“其他”，避免同名双系列
+  const ranked = [...unionKeys]
+    .filter((key) => key !== OTHER_SERIES_KEY)
+    .sort(
+      (a, b) =>
+        (totals.get(b) ?? 0) - (totals.get(a) ?? 0) || a.localeCompare(b),
+    );
   const topKeys =
     groupBy === "token_type" ? [...TOKEN_TYPE_SERIES] : ranked.slice(0, topN);
-  const hasOther = groupBy !== "token_type" && ranked.length > topKeys.length;
+  // 并集大小（含被防御折叠的撞名系列）决定是否需要“其他”桶
+  const hasOther = groupBy !== "token_type" && unionKeys.size > topKeys.length;
   const seriesKeys = hasOther ? [...topKeys, OTHER_SERIES_KEY] : [...topKeys];
+  const columns = seriesKeys.map((_, index) => `value${index}`);
 
   // 天/周标签：范围跨年才带年份
   const firstYear = new Date(buckets[0].bucketStart).getFullYear();
@@ -293,13 +314,13 @@ export function buildTrendSeriesChart(
         dateLocale,
       ),
     };
-    for (const key of seriesKeys) {
-      row[key] = acc.get(key) ?? 0;
+    for (const [index, key] of seriesKeys.entries()) {
+      row[columns[index]] = acc.get(key) ?? 0;
     }
     return row;
   });
 
-  return { rows, seriesKeys };
+  return { rows, seriesKeys, columns };
 }
 
 interface UsageStackedBarChartProps {
@@ -377,7 +398,7 @@ export function UsageStackedBarChart({
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const dateLocale = getLocaleFromLanguage(language);
 
-  const { rows, seriesKeys } = useMemo(
+  const { rows, seriesKeys, columns } = useMemo(
     () => buildTrendSeriesChart(response, { groupBy, metric, dateLocale }),
     [response, groupBy, metric, dateLocale],
   );
@@ -433,8 +454,8 @@ export function UsageStackedBarChart({
     }
     const row = payload[0]?.payload as TrendSeriesChartRow | undefined;
     const heading = row?.tooltipLabel ?? "";
-    const total = seriesKeys.reduce(
-      (sum, key) => sum + (Number(row?.[key] ?? 0) || 0),
+    const total = columns.reduce(
+      (sum, column) => sum + (Number(row?.[column] ?? 0) || 0),
       0,
     );
     return (
@@ -594,10 +615,10 @@ export function UsageStackedBarChart({
                   }
                 />
                 <Tooltip content={<CustomTooltip />} />
-                {seriesKeys.map((key) => (
+                {seriesKeys.map((key, index) => (
                   <Bar
                     key={key}
-                    dataKey={key}
+                    dataKey={columns[index]}
                     name={seriesLabels.get(key) ?? key}
                     stackId="usage"
                     fill={seriesColor(key, groupBy)}
