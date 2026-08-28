@@ -21,7 +21,7 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    load_sync_cursors, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use crate::zcode_config::get_zcode_usage_db_path;
@@ -73,7 +73,9 @@ pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
     }
 
-    let (last_modified, _last_offset) = get_sync_state(db, &db_path_str)?;
+    let last_modified = load_sync_cursors(db)?
+        .get(&db_path_str)
+        .map_or(0, |c| c.last_modified);
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
