@@ -1606,12 +1606,19 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                let transform_session_id = if api_format == "gemini_native" {
+                    // Gemini shadow replay needs an internal session even when
+                    // the client did not provide one directly.
+                    Some(self.session_id.as_str())
+                } else {
+                    self.session_client_provided
+                        .then_some(self.session_id.as_str())
+                };
                 super::providers::transform_claude_request_for_api_format(
                     mapped_body,
                     provider,
                     api_format,
-                    self.session_client_provided
-                        .then_some(self.session_id.as_str()),
+                    transform_session_id,
                     Some(self.gemini_shadow.as_ref()),
                 )?
             } else {

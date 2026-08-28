@@ -11,6 +11,7 @@
 //! - 其他: 生成新的 UUID
 
 use axum::http::HeaderMap;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 // ============================================================================
@@ -73,7 +74,7 @@ pub fn extract_session_id(
     body: &serde_json::Value,
     client_format: &str,
 ) -> SessionIdResult {
-    if client_format == "claude" {
+    if matches!(client_format, "claude" | "claude-desktop") {
         if let Some(result) = extract_claude_session(headers, body) {
             return result;
         }
@@ -95,6 +96,19 @@ pub fn extract_session_id(
     // Claude 请求：从 metadata 提取
     if let Some(result) = extract_from_metadata(body) {
         return result;
+    }
+
+    // Claude Desktop may omit a session header. Derive a stable internal key
+    // so Gemini shadow replay works across requests in the same conversation.
+    if client_format == "claude-desktop" {
+        if let Some(session_id) = derive_claude_desktop_shadow_session(body) {
+            return SessionIdResult {
+                session_id,
+                source: SessionIdSource::Generated,
+                // This is an internal key, not an upstream prompt-cache identity.
+                client_provided: false,
+            };
+        }
     }
 
     // 兜底：生成新 Session ID
@@ -121,6 +135,33 @@ fn extract_claude_session(
     }
 
     extract_from_metadata(body)
+}
+
+fn derive_claude_desktop_shadow_session(body: &serde_json::Value) -> Option<String> {
+    let messages = body.get("messages")?.as_array()?;
+    let first_user_content = messages
+        .iter()
+        .find(|message| message.get("role").and_then(|value| value.as_str()) == Some("user"))?
+        .get("content")?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"cc-switch:claude-desktop-shadow:v1\0");
+    if let Some(user_id) = body
+        .get("metadata")
+        .and_then(|metadata| metadata.get("user_id"))
+        .and_then(|value| value.as_str())
+    {
+        hasher.update(user_id.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(serde_json::to_vec(first_user_content).ok()?);
+    let digest = hasher.finalize();
+    let short_hash = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    Some(format!("claude-desktop-shadow-{short_hash}"))
 }
 
 /// 提取 Responses 客户端的 Session ID
@@ -234,6 +275,36 @@ mod tests {
     use serde_json::json;
 
     // ========== Session ID 提取测试 ==========
+
+    #[test]
+    fn test_claude_desktop_without_header_uses_stable_shadow_session() {
+        let headers = HeaderMap::new();
+        let first_request = json!({
+            "model": "claude-opus-4-8",
+            "messages": [{"role": "user", "content": "Search the web"}]
+        });
+        let second_request = json!({
+            "model": "claude-opus-4-8",
+            "messages": [
+                {"role": "user", "content": "Search the web"},
+                {"role": "assistant", "content": [{
+                    "type": "tool_use", "id": "call_123", "name": "WebSearch",
+                    "input": {"query": "test"}
+                }]},
+                {"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": "call_123", "content": "result"
+                }]}
+            ]
+        });
+
+        let first = extract_session_id(&headers, &first_request, "claude-desktop");
+        let second = extract_session_id(&headers, &second_request, "claude-desktop");
+
+        assert_eq!(first.session_id, second.session_id);
+        assert_eq!(first.source, SessionIdSource::Generated);
+        assert!(!first.client_provided);
+        assert!(!second.client_provided);
+    }
 
     #[test]
     fn test_extract_session_from_claude_metadata_user_id() {
