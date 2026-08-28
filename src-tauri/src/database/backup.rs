@@ -2,6 +2,7 @@
 //!
 //! 提供 SQL 导出/导入和二进制快照备份功能。
 
+use super::dao::usage_rollup::DETAIL_RETENTION_DAYS;
 use super::{lock_conn, Database};
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
@@ -454,7 +455,7 @@ impl Database {
                 log::warn!("Periodic stream_check_logs cleanup failed: {e}");
             }
         }
-        match self.rollup_and_prune(30) {
+        match self.rollup_and_prune(DETAIL_RETENTION_DAYS) {
             Ok(deleted) => {
                 reclaimed_rows += deleted;
             }

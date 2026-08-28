@@ -2,7 +2,7 @@
 //!
 //! 提供使用量数据的聚合查询功能
 
-use crate::database::{lock_conn, Database};
+use crate::database::{lock_conn, Database, DETAIL_RETENTION_DAYS};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{
@@ -205,8 +205,15 @@ fn estimate_trend_bucket_count(start_ts: i64, end_ts: i64, granularity: TrendGra
 }
 
 /// 解析趋势颗粒度：非法输入回落 auto；"auto" 按范围时长选档；随后套桶数
-/// 护栏（估算桶数 > 1000 时向粗逐级升档直到达标或已到最粗）。
-fn resolve_trend_granularity(start_ts: i64, end_ts: i64, requested: &str) -> TrendGranularity {
+/// 护栏（估算桶数 > 1000 时向粗逐级升档直到达标或已到最粗）；最后套
+/// 保留期护栏（子天桶只读明细表，范围起点早于保留期边界时升到天桶，
+/// 由日历路径合并明细与日汇总，避免已归档区间被画成零）。
+fn resolve_trend_granularity(
+    start_ts: i64,
+    end_ts: i64,
+    now_ts: i64,
+    requested: &str,
+) -> TrendGranularity {
     let duration = (end_ts - start_ts).max(0);
     let mut resolved = match TrendGranularity::parse(requested) {
         Some(g) => g,
@@ -230,6 +237,10 @@ fn resolve_trend_granularity(start_ts: i64, end_ts: i64, requested: &str) -> Tre
             Some(next) => resolved = next,
             None => break,
         }
+    }
+
+    if resolved.bucket_seconds().is_some() && start_ts < now_ts - DETAIL_RETENTION_DAYS * 86_400 {
+        resolved = TrendGranularity::Day;
     }
     resolved
 }
@@ -1939,7 +1950,8 @@ impl Database {
             start_ts = end_ts - 24 * 60 * 60;
         }
 
-        let resolved = resolve_trend_granularity(start_ts, end_ts, granularity);
+        let resolved =
+            resolve_trend_granularity(start_ts, end_ts, Local::now().timestamp(), granularity);
         let group = TrendGroupBy::parse(group_by).unwrap_or(TrendGroupBy::TokenType);
 
         let buckets = match resolved {
@@ -4072,56 +4084,155 @@ mod tests {
         let base = local_ts(2026, 8, 1, 0, 0, 0);
         let at_hours = |hours: i64| base + hours * 3600;
         let at_days = |days: i64| base + days * 86_400;
+        // 观察时刻取 base + 30d：范围均在保留期内，保留期护栏不介入
+        let now = at_days(30);
 
         // auto 阶梯边界（含）
         assert_eq!(
-            resolve_trend_granularity(base, at_hours(3), "auto"),
+            resolve_trend_granularity(base, at_hours(3), now, "auto"),
             TrendGranularity::Min15
         );
         assert_eq!(
-            resolve_trend_granularity(base, at_hours(3) + 1, "auto"),
+            resolve_trend_granularity(base, at_hours(3) + 1, now, "auto"),
             TrendGranularity::Hour
         );
         assert_eq!(
-            resolve_trend_granularity(base, at_days(2), "auto"),
+            resolve_trend_granularity(base, at_days(2), now, "auto"),
             TrendGranularity::Hour
         );
         assert_eq!(
-            resolve_trend_granularity(base, at_days(60), "auto"),
+            resolve_trend_granularity(base, at_days(60), now, "auto"),
             TrendGranularity::Day
         );
         assert_eq!(
-            resolve_trend_granularity(base, at_days(730), "auto"),
+            resolve_trend_granularity(base, at_days(730), now, "auto"),
             TrendGranularity::Week
         );
         assert_eq!(
-            resolve_trend_granularity(base, at_days(731), "auto"),
+            resolve_trend_granularity(base, at_days(731), now, "auto"),
             TrendGranularity::Month
         );
 
         // 非法输入回落 auto 语义
         assert_eq!(
-            resolve_trend_granularity(base, at_hours(3), "bogus"),
+            resolve_trend_granularity(base, at_hours(3), now, "bogus"),
             TrendGranularity::Min15
         );
 
         // 手动档触发护栏：30 天选 1min → 逐级升档到 hour（720 桶）
         assert_eq!(
-            resolve_trend_granularity(base, at_days(30), "1min"),
+            resolve_trend_granularity(base, at_days(30), now, "1min"),
             TrendGranularity::Hour
         );
 
         // month 已是最粗，20 年也不再升档
         assert_eq!(
-            resolve_trend_granularity(base, at_days(20 * 365), "month"),
+            resolve_trend_granularity(base, at_days(20 * 365), now, "month"),
             TrendGranularity::Month
         );
     }
 
     #[test]
+    fn test_resolve_trend_granularity_retention_guardrail() {
+        let base = local_ts(2026, 8, 1, 0, 0, 0);
+        let at_days = |days: i64| base + days * 86_400;
+        // 45 天后运行：范围起点早于保留期边界（now - 30d）
+        let now = at_days(45);
+
+        // 跨过保留期的子天请求升到天桶（旧明细只剩日汇总）
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(5), now, "hour"),
+            TrendGranularity::Day
+        );
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(5), now, "15min"),
+            TrendGranularity::Day
+        );
+        // 范围整体落在保留期内：子天档不受影响
+        assert_eq!(
+            resolve_trend_granularity(at_days(43), now, now, "hour"),
+            TrendGranularity::Hour
+        );
+        // 天及以上档不经保留期护栏
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(5), now, "week"),
+            TrendGranularity::Week
+        );
+    }
+
+    #[test]
+    fn test_trend_series_sub_day_past_retention_coarsens_to_day() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        // 锚定真实当前时刻：35 天跨度的 hour 请求（841 桶，未触桶数护栏）
+        // 起点已越过保留期，应升到天桶并用日汇总补齐归档区间
+        let now = Local::now().timestamp();
+        let old_day = local_datetime_from_timestamp(now - 33 * 86_400)?.date_naive();
+        let recent_ts = now - 3_600;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES
+                    (?1, 'claude', 'prov-x', 'model-old', 5, 5, 500, 50, 0, 0, '5.0', 100)",
+                params![old_day.format("%Y-%m-%d").to_string()],
+            )?;
+            insert_usage_log(
+                &conn,
+                "r-1",
+                "claude",
+                "prov-x",
+                "model-new",
+                "proxy",
+                recent_ts,
+                100,
+                10,
+                0,
+                0,
+                200,
+                "1.0",
+            )?;
+        }
+
+        let resp = db.get_usage_trend_series(
+            Some(now - 35 * 86_400),
+            Some(now),
+            "hour",
+            "model",
+            None,
+            None,
+            None,
+        )?;
+
+        assert_eq!(resp.granularity, "day");
+        // 归档日来自日汇总，不再是静默的零
+        let old_bucket = resp
+            .buckets
+            .iter()
+            .find(|b| b.bucket_start == local_day_start_rfc3339(old_day))
+            .expect("归档日有桶");
+        assert_eq!(old_bucket.series.len(), 1);
+        assert_eq!(old_bucket.series[0].key, "model-old");
+        assert_eq!(old_bucket.series[0].input_tokens, 500);
+        // 保留期内的明细走原路径
+        let recent_day = local_datetime_from_timestamp(recent_ts)?.date_naive();
+        let recent_bucket = resp
+            .buckets
+            .iter()
+            .find(|b| b.bucket_start == local_day_start_rfc3339(recent_day))
+            .expect("当天有桶");
+        assert_eq!(recent_bucket.series[0].key, "model-new");
+        assert_eq!(recent_bucket.series[0].input_tokens, 100);
+        Ok(())
+    }
+
+    #[test]
     fn test_trend_series_token_type_explodes_four_points() -> Result<(), AppError> {
         let db = Database::memory()?;
-        let ts = local_ts(2026, 8, 10, 9, 30, 0);
+        // hour 桶只读明细表，范围须落在当前时刻的保留期内（见保留期护栏）
+        let ts = Local::now().timestamp() - 3_600;
         {
             let conn = lock_conn!(db.conn);
             insert_usage_log(
@@ -4168,7 +4279,7 @@ mod tests {
     #[test]
     fn test_trend_series_hour_by_model_splits_and_skips_empty_buckets() -> Result<(), AppError> {
         let db = Database::memory()?;
-        let t0 = local_ts(2026, 8, 10, 9, 0, 0);
+        let t0 = Local::now().timestamp() - 4 * 3_600;
         {
             let conn = lock_conn!(db.conn);
             insert_usage_log(
@@ -4230,7 +4341,7 @@ mod tests {
     #[test]
     fn test_trend_series_provider_grouping_uses_display_names() -> Result<(), AppError> {
         let db = Database::memory()?;
-        let ts = local_ts(2026, 8, 10, 9, 0, 0);
+        let ts = Local::now().timestamp() - 3_600;
         {
             let conn = lock_conn!(db.conn);
             conn.execute(
@@ -4294,7 +4405,7 @@ mod tests {
     #[test]
     fn test_trend_series_model_grouping_prefers_pricing_model() -> Result<(), AppError> {
         let db = Database::memory()?;
-        let ts = local_ts(2026, 8, 10, 9, 0, 0);
+        let ts = Local::now().timestamp() - 3_600;
         {
             let conn = lock_conn!(db.conn);
             insert_usage_log(
@@ -4358,7 +4469,7 @@ mod tests {
     #[test]
     fn test_trend_series_filters_apply() -> Result<(), AppError> {
         let db = Database::memory()?;
-        let ts = local_ts(2026, 8, 10, 9, 0, 0);
+        let ts = Local::now().timestamp() - 3_600;
         {
             let conn = lock_conn!(db.conn);
             conn.execute(
