@@ -8,9 +8,9 @@
 //!
 //! 与 Chat Completions 的 delta chunk 模型完全不同，需要独立的状态机处理。
 
-use super::reasoning_bridge::{encode_openai_reasoning_item, reasoning_summary_text};
 #[cfg(test)]
 use super::reasoning_bridge::decode_openai_reasoning_item;
+use super::reasoning_bridge::{encode_openai_reasoning_item, reasoning_summary_text};
 use super::transform_responses::{
     build_anthropic_usage_from_responses, map_responses_stop_reason,
     merge_web_search_result_metadata, responses_to_anthropic_with_web_search_options_for_client,
@@ -2289,7 +2289,8 @@ fn merge_reasoning_items(previous: Option<&Value>, current: &Value) -> Value {
         return current.clone();
     };
     let mut merged = current.clone();
-    let (Some(merged_object), Some(previous_object)) = (merged.as_object_mut(), previous.as_object())
+    let (Some(merged_object), Some(previous_object)) =
+        (merged.as_object_mut(), previous.as_object())
     else {
         return merged;
     };
@@ -2507,12 +2508,14 @@ fn order_anthropic_web_search_result_stream(
 ///
 /// 状态机跟踪: message_id, current_model, has_sent_message_start, item/content index map
 /// SSE 解析支持 named events (event: + data: 行)
+#[cfg(test)]
 pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     create_anthropic_sse_stream_from_responses_with_web_search_options(stream, None, None)
 }
 
+#[cfg(test)]
 pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_options<
     E: std::error::Error + Send + 'static,
 >(
@@ -7427,10 +7430,7 @@ mod tests {
         );
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
         let merged = create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
-            upstream,
-            None,
-            None,
-            false,
+            upstream, None, None, false,
         )
         .collect::<Vec<_>>()
         .await
@@ -7459,10 +7459,7 @@ mod tests {
         );
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
         let merged = create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
-            upstream,
-            None,
-            None,
-            true,
+            upstream, None, None, true,
         )
         .collect::<Vec<_>>()
         .await
@@ -7520,7 +7517,8 @@ mod tests {
                     .map(ToString::to_string)
             })
             .expect("reasoning signature should be emitted");
-        let restored = decode_openai_reasoning_item(&signature).expect("signature should round-trip");
+        let restored =
+            decode_openai_reasoning_item(&signature).expect("signature should round-trip");
         assert_eq!(restored["summary"][0]["text"], "Added snapshot");
     }
 
@@ -7578,7 +7576,8 @@ mod tests {
                     .map(ToString::to_string)
             })
             .expect("reasoning signature should be emitted");
-        let restored = decode_openai_reasoning_item(&signature).expect("signature should round-trip");
+        let restored =
+            decode_openai_reasoning_item(&signature).expect("signature should round-trip");
         assert_eq!(restored["summary"][0]["text"], "Part snapshot");
     }
 
@@ -7612,7 +7611,8 @@ mod tests {
                     .map(ToString::to_string)
             })
             .expect("reasoning signature should be emitted");
-        let restored = decode_openai_reasoning_item(&signature).expect("signature should round-trip");
+        let restored =
+            decode_openai_reasoning_item(&signature).expect("signature should round-trip");
         assert_eq!(restored["summary"][0]["text"], "First \nSecond");
     }
 
@@ -7763,7 +7763,8 @@ mod tests {
                     .map(ToString::to_string)
             })
             .expect("reasoning signature should be emitted");
-        let restored = decode_openai_reasoning_item(&signature).expect("signature should round-trip");
+        let restored =
+            decode_openai_reasoning_item(&signature).expect("signature should round-trip");
         assert_eq!(restored["summary"][0]["text"], "foofoo");
     }
 

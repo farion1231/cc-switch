@@ -18,8 +18,9 @@ use crate::proxy::{
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
+#[cfg(test)]
+use super::reasoning_bridge::anthropic_block_from_openai_reasoning_item;
 use super::reasoning_bridge::{
-    anthropic_block_from_openai_reasoning_item,
     anthropic_block_from_openai_reasoning_item_for_client,
     openai_reasoning_item_from_anthropic_block,
 };
@@ -4716,13 +4717,9 @@ mod tests {
             }]
         });
 
-        let result = responses_to_anthropic_with_web_search_options_for_client(
-            input,
-            None,
-            None,
-            false,
-        )
-        .unwrap();
+        let result =
+            responses_to_anthropic_with_web_search_options_for_client(input, None, None, false)
+                .unwrap();
         assert_eq!(result["content"][0]["type"], "thinking");
         assert_eq!(result["content"][0]["thinking"], "");
         assert!(result["content"][0]["signature"]
@@ -4744,13 +4741,9 @@ mod tests {
             }]
         });
 
-        let result = responses_to_anthropic_with_web_search_options_for_client(
-            input,
-            None,
-            None,
-            true,
-        )
-        .unwrap();
+        let result =
+            responses_to_anthropic_with_web_search_options_for_client(input, None, None, true)
+                .unwrap();
         assert_eq!(result["content"][0]["type"], "redacted_thinking");
         assert!(result["content"][0]["data"]
             .as_str()

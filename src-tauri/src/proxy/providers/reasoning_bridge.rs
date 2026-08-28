@@ -68,6 +68,7 @@ pub(crate) fn decode_openai_reasoning_item(encoded: &str) -> Option<Value> {
     (item.get("type").and_then(Value::as_str) == Some("reasoning")).then_some(item)
 }
 
+#[cfg(test)]
 pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option<Value> {
     anthropic_block_from_openai_reasoning_item_for_client(item, true)
 }
@@ -187,7 +188,9 @@ mod tests {
         });
         let block = anthropic_block_from_openai_reasoning_item_for_client(&item, true).unwrap();
         assert_eq!(block["type"], "redacted_thinking");
-        assert!(block["data"].as_str().is_some_and(|value| value.starts_with("ccswitch-openai-reasoning-v1:")));
+        assert!(block["data"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ccswitch-openai-reasoning-v1:")));
         assert_eq!(
             openai_reasoning_item_from_anthropic_block(&block),
             Some(item)

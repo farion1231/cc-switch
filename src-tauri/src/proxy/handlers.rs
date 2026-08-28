@@ -245,16 +245,16 @@ async fn handle_messages_for_app(
 
     // Claude 特有：格式转换处理
     if needs_transform {
-        return handle_claude_transform(
+        return handle_claude_transform(ClaudeTransformRequest {
             response,
-            &ctx,
-            &state,
-            &body,
+            ctx: &ctx,
+            state: &state,
+            original_body: &body,
             is_stream,
-            &api_format,
+            api_format: &api_format,
             preserve_redacted_thinking,
             connection_guard,
-        )
+        })
         .await;
     }
 
@@ -383,16 +383,30 @@ fn spawn_claude_usage_log(
     });
 }
 
-async fn handle_claude_transform(
+struct ClaudeTransformRequest<'a> {
     response: super::hyper_client::ProxyResponse,
-    ctx: &RequestContext,
-    state: &ProxyState,
-    original_body: &Value,
+    ctx: &'a RequestContext,
+    state: &'a ProxyState,
+    original_body: &'a Value,
     is_stream: bool,
-    api_format: &str,
+    api_format: &'a str,
     preserve_redacted_thinking: bool,
     connection_guard: Option<ActiveConnectionGuard>,
+}
+
+async fn handle_claude_transform(
+    request: ClaudeTransformRequest<'_>,
 ) -> Result<axum::response::Response, ProxyError> {
+    let ClaudeTransformRequest {
+        response,
+        ctx,
+        state,
+        original_body,
+        is_stream,
+        api_format,
+        preserve_redacted_thinking,
+        connection_guard,
+    } = request;
     let status = response.status();
     let is_codex_oauth = ctx
         .provider
@@ -2180,6 +2194,7 @@ fn should_use_claude_transform_streaming(
     requested_streaming || upstream_is_sse || (is_codex_oauth && api_format == "openai_responses")
 }
 
+#[cfg(test)]
 async fn responses_sse_stream_to_anthropic_message(
     stream: impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     hosted_web_search_name: Option<String>,
@@ -2204,12 +2219,13 @@ async fn responses_sse_stream_to_anthropic_message_for_client(
     preserve_redacted_thinking: bool,
 ) -> Result<Value, ProxyError> {
     let collect = async move {
-        let converted = create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
-            stream,
-            hosted_web_search_name,
-            max_web_search_uses,
-            preserve_redacted_thinking,
-        );
+        let converted =
+            create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
+                stream,
+                hosted_web_search_name,
+                max_web_search_uses,
+                preserve_redacted_thinking,
+            );
         tokio::pin!(converted);
 
         let mut body = Vec::new();
@@ -2290,9 +2306,7 @@ fn merge_responses_sse_reasoning_summary_part(current: &mut String, incoming: &s
     }
     if current.is_empty() || incoming.starts_with(current.as_str()) {
         *current = incoming.to_string();
-    } else if current.starts_with(incoming) || current.ends_with(incoming) {
-        return;
-    } else {
+    } else if !current.starts_with(incoming) && !current.ends_with(incoming) {
         current.push_str(incoming);
     }
 }
@@ -2317,11 +2331,9 @@ fn collect_responses_sse_reasoning_item_summary(
     if item.get("type").and_then(Value::as_str) != Some("reasoning") {
         return;
     }
-    let Some(key) = responses_sse_reasoning_summary_key(
-        data,
-        keys_by_item_id,
-        keys_by_output_index,
-    ) else {
+    let Some(key) =
+        responses_sse_reasoning_summary_key(data, keys_by_item_id, keys_by_output_index)
+    else {
         return;
     };
     let state = summaries.entry(key).or_default();
@@ -2346,10 +2358,7 @@ fn collect_responses_sse_reasoning_item_summary(
         }
         Some(Value::Object(object)) => {
             if let Some(text) = object.get("text").and_then(Value::as_str) {
-                merge_responses_sse_reasoning_summary_part(
-                    state.parts.entry(0).or_default(),
-                    text,
-                );
+                merge_responses_sse_reasoning_summary_part(state.parts.entry(0).or_default(), text);
             }
         }
         _ => {}
@@ -2368,11 +2377,9 @@ fn enrich_responses_sse_reasoning_item(
     {
         return;
     }
-    let Some(key) = responses_sse_reasoning_summary_key(
-        data,
-        keys_by_item_id,
-        keys_by_output_index,
-    ) else {
+    let Some(key) =
+        responses_sse_reasoning_summary_key(data, keys_by_item_id, keys_by_output_index)
+    else {
         return;
     };
     let text = responses_sse_reasoning_summary_text(summaries, &key);
@@ -2395,7 +2402,8 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     let mut buffer = body.trim_start_matches('\u{feff}').to_string();
     let mut completed_response: Option<Value> = None;
     let mut output_items: Vec<(Option<u64>, Value)> = Vec::new();
-    let mut reasoning_summaries: HashMap<String, ResponsesSseReasoningSummaryState> = HashMap::new();
+    let mut reasoning_summaries: HashMap<String, ResponsesSseReasoningSummaryState> =
+        HashMap::new();
     let mut reasoning_keys_by_item_id: HashMap<String, String> = HashMap::new();
     let mut reasoning_keys_by_output_index: HashMap<u64, String> = HashMap::new();
 
@@ -2474,10 +2482,7 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
                         &mut reasoning_keys_by_item_id,
                         &mut reasoning_keys_by_output_index,
                     );
-                    output_items.push((
-                        data.get("output_index").and_then(Value::as_u64),
-                        item,
-                    ));
+                    output_items.push((data.get("output_index").and_then(Value::as_u64), item));
                 }
             }
             "response.reasoning_summary_text.delta"
@@ -3188,8 +3193,7 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, is_claude_vscode_client,
-        responses_sse_stream_to_anthropic_message,
+        codex_proxy_error_json, is_claude_vscode_client, responses_sse_stream_to_anthropic_message,
         responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
         upstream_body_parse_error,
     };
@@ -3873,18 +3877,13 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 "#;
 
         let response = responses_sse_to_response_value(sse).unwrap();
-        assert_eq!(
-            response["output"][0]["summary"][0]["text"],
-            "Need a tool."
-        );
+        assert_eq!(response["output"][0]["summary"][0]["text"], "Need a tool.");
 
-        let anthropic = transform_responses::responses_to_anthropic_with_web_search_options_for_client(
-            response,
-            None,
-            None,
-            false,
-        )
-        .unwrap();
+        let anthropic =
+            transform_responses::responses_to_anthropic_with_web_search_options_for_client(
+                response, None, None, false,
+            )
+            .unwrap();
         assert_eq!(anthropic["content"][0]["type"], "thinking");
         assert_eq!(anthropic["content"][0]["thinking"], "Need a tool.");
     }
@@ -3935,10 +3934,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 "#;
 
         let response = responses_sse_to_response_value(sse).unwrap();
-        assert_eq!(
-            response["output"][0]["summary"][0]["text"],
-            "First\nSecond"
-        );
+        assert_eq!(response["output"][0]["summary"][0]["text"], "First\nSecond");
     }
 
     #[test]
