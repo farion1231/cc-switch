@@ -34,9 +34,11 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { settingsApi } from "@/lib/api";
+import { enqueueSettingsSave } from "@/lib/settingsSaveQueue";
 import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
+import { HomePageSettings } from "@/components/settings/HomePageSettings";
 import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
 import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
 import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
@@ -56,7 +58,9 @@ import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import type { HomePageMode } from "@/components/settings/HomePageSettings";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -210,6 +214,26 @@ export function SettingsPage({
     [autoSaveSettings, settings, t, updateSettings],
   );
 
+  // 首页显示模式：与使用统计首页共用全局串行队列（任务执行时读取最新后端
+  // 设置再合并本次字段），避免陈旧缓存或并发全量保存覆盖其他入口的修改。
+  const queryClient = useQueryClient();
+  const handleHomePageModeChange = async (
+    homePageMode: HomePageMode,
+  ): Promise<boolean> => {
+    const res = await enqueueSettingsSave({ homePageMode });
+    if (res.ok) {
+      updateSettings({ homePageMode });
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    } else {
+      toast.error(
+        t("settings.saveFailedGeneric", {
+          defaultValue: "保存失败，请重试",
+        }),
+      );
+    }
+    return res.ok;
+  };
+
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
 
   return (
@@ -257,6 +281,10 @@ export function SettingsPage({
                       onChange={(lang) => handleAutoSave({ language: lang })}
                     />
                     <ThemeSettings />
+                    <HomePageSettings
+                      value={settings.homePageMode ?? "default"}
+                      onChange={handleHomePageModeChange}
+                    />
                     <AppVisibilitySettings
                       settings={settings}
                       onChange={handleAutoSave}

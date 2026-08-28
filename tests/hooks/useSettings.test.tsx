@@ -14,9 +14,12 @@ const updateTrayMenuMock = vi.fn();
 const getCurrentMock = vi.fn();
 const getAllMock = vi.fn();
 const getQueryDataMock = vi.fn();
+const invalidateQueriesMock = vi.fn();
 const invalidatePiDirectoryCachesMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastSuccessMock = vi.fn();
+const settingsGetMock = vi.fn();
+const settingsSaveMock = vi.fn();
 
 let settingsFormMock: any;
 let directorySettingsMock: any;
@@ -60,12 +63,15 @@ vi.mock("@tanstack/react-query", async () => {
     ...actual,
     useQueryClient: () => ({
       getQueryData: (...args: unknown[]) => getQueryDataMock(...args),
+      invalidateQueries: (...args: unknown[]) => invalidateQueriesMock(...args),
     }),
   };
 });
 
 vi.mock("@/lib/api", () => ({
   settingsApi: {
+    get: (...args: unknown[]) => settingsGetMock(...args),
+    save: (...args: unknown[]) => settingsSaveMock(...args),
     setAppConfigDirOverride: (...args: unknown[]) =>
       setAppConfigDirOverrideMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
@@ -155,8 +161,11 @@ describe("useSettings hook", () => {
     getCurrentMock.mockReset();
     getAllMock.mockReset();
     getQueryDataMock.mockReset();
+    invalidateQueriesMock.mockReset();
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
+    settingsGetMock.mockReset();
+    settingsSaveMock.mockReset();
     window.localStorage.clear();
 
     serverSettings = {
@@ -198,6 +207,10 @@ describe("useSettings hook", () => {
     getAllMock.mockResolvedValue({});
     // 默认将 queryClient 缓存对齐到 serverSettings，既有断言的 "prev === data" 语义保持不变
     getQueryDataMock.mockImplementation(() => serverSettings);
+    invalidateQueriesMock.mockResolvedValue(undefined);
+    // 共享保存队列读取的最新后端设置对齐到 serverSettings
+    settingsGetMock.mockImplementation(() => serverSettings);
+    settingsSaveMock.mockResolvedValue(true);
   });
 
   it("auto-saves and applies Claude onboarding skip when toggled on", async () => {
@@ -253,6 +266,34 @@ describe("useSettings hook", () => {
     });
 
     expect(clearClaudeOnboardingSkipMock).toHaveBeenCalledTimes(1);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves server directory overrides when autosaving an unrelated field", async () => {
+    serverSettings = {
+      ...serverSettings,
+      claudeConfigDir: "/server/claude",
+      codexConfigDir: "/server/codex",
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+    settingsFormMock = createSettingsFormMock({
+      settings: { ...serverSettings, language: "zh" },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      // 本次只改语言，不含任何目录字段：目录覆盖必须原样保留
+      await result.current.autoSaveSettings({ language: "en" });
+    });
+
+    const calls = settingsSaveMock.mock.calls;
+    const saved = calls[calls.length - 1]?.[0] as Settings;
+    expect(saved.claudeConfigDir).toBe("/server/claude");
+    expect(saved.codexConfigDir).toBe("/server/codex");
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
