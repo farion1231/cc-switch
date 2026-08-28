@@ -3721,4 +3721,58 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "PZERO",
+    websiteUrl: "https://pzero.studio/agents",
+    apiKeyUrl: "https://pzero.studio/agents",
+    settingsConfig: {
+      baseUrl: "https://api.pzero.studio/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 200000,
+          maxTokens: 64000,
+          cost: { input: 3, output: 15 },
+        },
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 200000,
+          maxTokens: 64000,
+          cost: { input: 15, output: 75 },
+        },
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 200000,
+          maxTokens: 64000,
+          cost: { input: 2.5, output: 10 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "pzero",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "pzero_...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "pzero/claude-sonnet-5" },
+      modelCatalog: {
+        "pzero/claude-sonnet-5": { alias: "Claude Sonnet 5" },
+      },
+    },
+  },
 ];

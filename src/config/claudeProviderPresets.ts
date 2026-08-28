@@ -1811,4 +1811,22 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "PZERO",
+    websiteUrl: "https://pzero.studio/agents",
+    apiKeyUrl: "https://pzero.studio/agents",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.pzero.studio/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5-20251001",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.pzero.studio/v1"],
+    icon: "pzero",
+  },
 ];
