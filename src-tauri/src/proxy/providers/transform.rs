@@ -180,7 +180,6 @@ pub fn anthropic_to_openai_with_reasoning_content(
         }
     }
 
-    normalize_openai_system_messages(&mut messages);
     result["messages"] = json!(messages);
 
     // 转换参数 — o-series 模型需要 max_completion_tokens
@@ -302,57 +301,6 @@ fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
             _ => tool_choice.clone(),
         },
         _ => tool_choice.clone(),
-    }
-}
-
-fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
-    let system_count = messages
-        .iter()
-        .filter(|message| message.get("role").and_then(|value| value.as_str()) == Some("system"))
-        .count();
-
-    if system_count == 0 {
-        return;
-    }
-
-    if system_count == 1 {
-        if let Some(index) = messages.iter().position(|message| {
-            message.get("role").and_then(|value| value.as_str()) == Some("system")
-        }) {
-            if index > 0 {
-                let message = messages.remove(index);
-                messages.insert(0, message);
-            }
-        }
-        return;
-    }
-
-    let mut parts = Vec::new();
-    messages.retain(|message| {
-        if message.get("role").and_then(|value| value.as_str()) != Some("system") {
-            return true;
-        }
-
-        match message.get("content") {
-            Some(Value::String(text)) if !text.is_empty() => parts.push(text.clone()),
-            Some(Value::Array(content_parts)) => {
-                let text = content_parts
-                    .iter()
-                    .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !text.is_empty() {
-                    parts.push(text);
-                }
-            }
-            _ => {}
-        }
-
-        false
-    });
-
-    if !parts.is_empty() {
-        messages.insert(0, json!({"role": "system", "content": parts.join("\n")}));
     }
 }
 
