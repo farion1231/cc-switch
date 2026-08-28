@@ -705,9 +705,7 @@ pub(crate) fn rewrite_xai_unknown_request_model(
         return None;
     }
 
-    let Some(obj) = body.as_object_mut() else {
-        return None;
-    };
+    let obj = body.as_object_mut()?;
     let request = obj
         .get("model")
         .and_then(Value::as_str)

@@ -338,6 +338,7 @@ fn restore_value(value: &mut Value, map: &HashMap<String, NamespacedName>) -> bo
 /// names in each event back to their namespace identity. Events that carry no
 /// affected function call pass through with their inner content preserved
 /// verbatim (only the block delimiter is normalized to `\n\n`).
+#[allow(dead_code)]
 pub(crate) fn create_namespace_restore_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     map: HashMap<String, NamespacedName>,
@@ -384,6 +385,7 @@ where
 /// Restore one SSE block. When the block's `data:` JSON carries an affected
 /// function call, re-serialize just that line; otherwise the original block text
 /// is preserved and only the `\n\n` delimiter re-appended.
+#[allow(dead_code)]
 fn restore_sse_block(block: &str, map: &HashMap<String, NamespacedName>) -> Bytes {
     let mut event_name: Option<&str> = None;
     let mut data_parts: Vec<&str> = Vec::new();

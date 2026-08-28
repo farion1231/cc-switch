@@ -992,10 +992,13 @@ pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
     }
 }
 
+#[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(target_os = "macos")]
 static MAIN_PAGE_READY: AtomicBool = AtomicBool::new(false);
 
+#[cfg(target_os = "macos")]
 pub fn mark_main_page_ready() {
     MAIN_PAGE_READY.store(true, Ordering::Release);
 }
