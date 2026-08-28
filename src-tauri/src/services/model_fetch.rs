@@ -124,7 +124,7 @@ pub async fn fetch_models(
 
         if status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return parse_models_response(&body);
+            return parse_models_response(&body, &known_secrets);
         }
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
@@ -159,16 +159,22 @@ fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> Stri
 /// 但携带错误信封（无 `data` 字段）。此时必须透出信封中的错误信息，而不是
 /// 静默返回空列表——否则用户在 UI 上看到「获取成功但没有模型」，无法定位
 /// 是鉴权失败还是端点问题。
-fn parse_models_response(body: &str) -> Result<Vec<FetchedModel>, String> {
-    let resp: ModelsResponse = serde_json::from_str(body)
-        .map_err(|e| format!("Failed to parse response: {e}"))?;
+fn parse_models_response(
+    body: &str,
+    known_secrets: &[String],
+) -> Result<Vec<FetchedModel>, String> {
+    let resp: ModelsResponse =
+        serde_json::from_str(body).map_err(|e| format!("Failed to parse response: {e}"))?;
 
     let data = match resp.data {
         Some(data) => data,
         None => {
-            let detail = resp
-                .error_message()
-                .unwrap_or_else(|| truncate_body(body.to_string()));
+            // 错误信息会经 Tauri 传到 UI 并可能被 console.warn 持久化，
+            // 必须先脱敏——供应商信封可能回显 API key 或自定义鉴权头。
+            let detail = match resp.error_message() {
+                Some(msg) => crate::redact_known_secrets_strict(&msg, known_secrets),
+                None => truncate_body(crate::redact_known_secrets_strict(body, known_secrets)),
+            };
             return Err(format!("Model fetch failed: {detail}"));
         }
     };
@@ -666,7 +672,7 @@ mod tests {
         // 智谱 GLM 的 /api/v1/models 在鉴权失败时返回 HTTP 200 + 错误信封
         // （无 data 字段）。旧逻辑静默返回空列表，用户在 UI 上看不到任何失败原因。
         let body = r#"{"code":1001,"msg":"Header中未收到Authorization参数，无法进行身份验证。","success":false}"#;
-        let err = parse_models_response(body).unwrap_err();
+        let err = parse_models_response(body, &[]).unwrap_err();
         assert!(
             err.contains("Authorization"),
             "error should surface the envelope msg, got: {err}"
@@ -676,14 +682,15 @@ mod tests {
     #[test]
     fn parse_models_response_rejects_openai_style_error_object() {
         let body = r#"{"error":{"message":"Invalid token","type":"invalid_request_error"}}"#;
-        let err = parse_models_response(body).unwrap_err();
+        let err = parse_models_response(body, &[]).unwrap_err();
         assert!(err.contains("Invalid token"), "got: {err}");
     }
 
     #[test]
     fn parse_models_response_accepts_openai_list() {
-        let body = r#"{"object":"list","data":[{"id":"glm-4.6","object":"model","owned_by":"zhipu"}]}"#;
-        let models = parse_models_response(body).unwrap();
+        let body =
+            r#"{"object":"list","data":[{"id":"glm-4.6","object":"model","owned_by":"zhipu"}]}"#;
+        let models = parse_models_response(body, &[]).unwrap();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "glm-4.6");
         assert_eq!(models[0].owned_by.as_deref(), Some("zhipu"));
@@ -691,7 +698,36 @@ mod tests {
 
     #[test]
     fn parse_models_response_accepts_empty_data_array() {
-        let models = parse_models_response(r#"{"object":"list","data":[]}"#).unwrap();
+        let models = parse_models_response(r#"{"object":"list","data":[]}"#, &[]).unwrap();
         assert!(models.is_empty());
+    }
+
+    #[test]
+    fn parse_models_response_redacts_secrets_in_error_envelope() {
+        // 供应商错误信封可能回显 API key（如 "Invalid api key: sk-..."）；
+        // 错误信息会经 Tauri 传到 UI 并被 console.warn 持久化，必须先脱敏。
+        let secret = "sk-secret-1234567890";
+        let body = format!(r#"{{"code":1001,"msg":"Invalid api key: {secret}","success":false}}"#);
+        let err = parse_models_response(&body, &[secret.to_string()]).unwrap_err();
+        assert!(
+            !err.contains(secret),
+            "error must not leak the api key, got: {err}"
+        );
+        assert!(
+            err.contains("Invalid api key"),
+            "error should still surface the envelope msg, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_models_response_redacts_secrets_in_raw_body_fallback() {
+        // 无信封字段时回退为截断的原始 body，同样必须脱敏。
+        let secret = "sk-secret-1234567890";
+        let body = format!(r#"{{"unexpected":"{secret}"}}"#);
+        let err = parse_models_response(&body, &[secret.to_string()]).unwrap_err();
+        assert!(
+            !err.contains(secret),
+            "error must not leak the api key, got: {err}"
+        );
     }
 }
