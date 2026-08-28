@@ -437,6 +437,7 @@ pub struct AppSettings {
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zcode_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
