@@ -43,6 +43,12 @@ fn prestage_action(staged: Option<&str>, available: Option<&str>) -> PrestageAct
     }
 }
 
+/// `set_ready` 的发布守卫：只有当前 Downloading 槽位仍属于同版本时才允许发布。
+/// 后到的旧版本任务完成（已被更新版本取代）不得覆盖新状态。
+fn should_publish_ready(current: &StageInner, version: &str) -> bool {
+    matches!(current, StageInner::Downloading { version: v, .. } if v == version)
+}
+
 /// 已就绪的预下载产物：`Update` 对象 + 安装包落盘路径。
 struct ReadyUpdate {
     update: Update,
@@ -128,7 +134,15 @@ impl AppUpdateStage {
     }
 
     fn set_ready(&self, version: String, ready: Box<ReadyUpdate>) {
-        *self.lock() = StageInner::Ready { version, ready };
+        let mut inner = self.lock();
+        if should_publish_ready(&inner, &version) {
+            *inner = StageInner::Ready { version, ready };
+        } else {
+            // 一个已被更新版本取代的预下载任务后到完成：不发布（否则会把
+            // 更新的 Downloading/Ready 顶掉，点升级时装到被取代的旧版），
+            // 并清掉刚写盘的过期产物。
+            let _ = std::fs::remove_file(&ready.installer);
+        }
     }
 
     /// 预下载失败：只在仍处于同版本 Downloading 时退回 Idle（不覆盖新版本就绪态）。
@@ -370,7 +384,7 @@ async fn install_ready_update(
 
 #[cfg(test)]
 mod tests {
-    use super::{prestage_action, PrestageAction};
+    use super::{prestage_action, should_publish_ready, PrestageAction, StageInner};
 
     #[test]
     fn prestage_action_matrix() {
@@ -380,5 +394,20 @@ mod tests {
         assert_eq!(prestage_action(None, Some("3.30.0")), Start);
         assert_eq!(prestage_action(Some("3.30.0"), Some("3.30.0")), Keep);
         assert_eq!(prestage_action(Some("3.30.0"), Some("3.31.0")), Start);
+    }
+
+    #[test]
+    fn stale_prestage_completion_never_supersedes_newer_state() {
+        use tokio::sync::oneshot;
+
+        let downloading = |version: &str| StageInner::Downloading {
+            version: version.to_string(),
+            done: Some(oneshot::channel().1),
+        };
+        // 只有仍处于同版本 Downloading 时才发布就绪。
+        assert!(should_publish_ready(&downloading("3.30.0"), "3.30.0"));
+        // 后到的旧版本完成不得覆盖更新版本的下载/就绪，也不得在 Idle（更新消失）时发布。
+        assert!(!should_publish_ready(&downloading("3.31.0"), "3.30.0"));
+        assert!(!should_publish_ready(&StageInner::Idle, "3.30.0"));
     }
 }
