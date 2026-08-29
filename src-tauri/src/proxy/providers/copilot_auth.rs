@@ -198,6 +198,9 @@ pub struct CopilotModel {
     pub vendor: String,
     /// 是否在模型选择器中显示
     pub model_picker_enabled: bool,
+    /// 该模型在 Copilot 上声明支持的推理端点。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_endpoints: Vec<String>,
 }
 
 /// Copilot Models API 响应
@@ -213,6 +216,8 @@ struct CopilotModelsResponseItem {
     name: String,
     vendor: String,
     model_picker_enabled: bool,
+    #[serde(default)]
+    supported_endpoints: Vec<String>,
 }
 
 /// Copilot 认证错误
@@ -865,6 +870,7 @@ impl CopilotAuthManager {
                 name: m.name,
                 vendor: m.vendor,
                 model_picker_enabled: m.model_picker_enabled,
+                supported_endpoints: m.supported_endpoints,
             })
             .collect();
 
@@ -873,15 +879,23 @@ impl CopilotAuthManager {
         Ok(models)
     }
 
+    pub async fn get_model_for_account(
+        &self,
+        account_id: &str,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        let models = self.fetch_models_for_account(account_id).await?;
+        Ok(models.into_iter().find(|model| model.id == model_id))
+    }
+
     pub async fn get_model_vendor_for_account(
         &self,
         account_id: &str,
         model_id: &str,
     ) -> Result<Option<String>, CopilotAuthError> {
-        let models = self.fetch_models_for_account(account_id).await?;
-        Ok(models
-            .into_iter()
-            .find(|model| model.id == model_id)
+        Ok(self
+            .get_model_for_account(account_id, model_id)
+            .await?
             .map(|model| model.vendor))
     }
 
@@ -893,14 +907,21 @@ impl CopilotAuthManager {
         }
     }
 
+    pub async fn get_model(
+        &self,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_model_for_account(&id, model_id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
     pub async fn get_model_vendor(
         &self,
         model_id: &str,
     ) -> Result<Option<String>, CopilotAuthError> {
-        match self.resolve_default_account_id().await {
-            Some(id) => self.get_model_vendor_for_account(&id, model_id).await,
-            None => Err(CopilotAuthError::GitHubTokenInvalid),
-        }
+        Ok(self.get_model(model_id).await?.map(|model| model.vendor))
     }
 
     /// 获取指定账号的 Copilot 使用量信息
@@ -1731,12 +1752,14 @@ mod tests {
                         name: "GPT-5.4".to_string(),
                         vendor: "OpenAI".to_string(),
                         model_picker_enabled: true,
+                        supported_endpoints: vec!["/responses".to_string()],
                     },
                     CopilotModel {
                         id: "claude-sonnet-4".to_string(),
                         name: "Claude Sonnet 4".to_string(),
                         vendor: "Anthropic".to_string(),
                         model_picker_enabled: true,
+                        supported_endpoints: vec!["/chat/completions".to_string()],
                     },
                 ],
             );
@@ -1747,6 +1770,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(vendor.as_deref(), Some("OpenAI"));
+
+        let model = manager
+            .get_model_for_account("12345", "gpt-5.4")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(model.supported_endpoints, vec!["/responses"]);
 
         let default_vendor = manager.get_model_vendor("claude-sonnet-4").await.unwrap();
         assert_eq!(default_vendor.as_deref(), Some("Anthropic"));
