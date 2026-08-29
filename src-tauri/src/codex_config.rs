@@ -68,6 +68,8 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
     "longcat.chat",   // Meituan LongCat (api.longcat.chat)
     "minimax.io",     // MiniMax global (api.minimax.io)
     "minimaxi.com",   // MiniMax CN (api.minimaxi.com)
+    "bigmodel.cn",    // Zhipu GLM CN (open.bigmodel.cn)
+    "z.ai",           // Zhipu GLM global (api.z.ai)
 ];
 
 /// Brand prefixes of models whose native gateways reject `web_search`, matched
@@ -75,7 +77,7 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
 /// `MiniMaxAI/MiniMax-M3` are caught. Exact brand names (not a fuzzy heuristic),
 /// so a supporting gateway is never wrongly matched.
 const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] =
-    &["mimo", "longcat", "minimax", "qwen3-coder"];
+    &["mimo", "longcat", "minimax", "qwen3-coder", "glm"];
 
 /// Top-level `model` id from a Codex `config.toml`.
 fn codex_top_level_model(config_text: &str) -> Option<String> {

@@ -10,22 +10,8 @@ const expectedChatPresets = new Map<
   string,
   { baseUrl: string; contextWindows: Record<string, number> }
 >([
-  // 火山 Agent Plan / Coding Plan 与 BytePlus 国际站（coding/v3）均已切
+  // 火山 Agent Plan / Coding Plan 与 BytePlus 国际站（coding/v3）、智谱 GLM 均已切
   // 原生 Responses，见下方 native 清单
-  [
-    "Zhipu GLM",
-    {
-      baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
-      contextWindows: { "glm-5.2": 200000 },
-    },
-  ],
-  [
-    "Zhipu GLM en",
-    {
-      baseUrl: "https://api.z.ai/api/coding/paas/v4",
-      contextWindows: { "glm-5.2": 200000 },
-    },
-  ],
   [
     "Baidu Qianfan Coding Plan",
     {
@@ -209,8 +195,7 @@ describe("Codex Chat provider presets", () => {
           },
         },
       ],
-      [
-        "Xiaomi MiMo Token Plan (China)",
+      ["Xiaomi MiMo Token Plan (China)",
         {
           contextWindows: {
             "mimo-v2.5-pro": 1048576,
@@ -218,6 +203,8 @@ describe("Codex Chat provider presets", () => {
           },
         },
       ],
+      ["Zhipu GLM", { contextWindows: { "glm-5.2": 200000 } }],
+      ["Zhipu GLM en", { contextWindows: { "glm-5.2": 200000 } }],
     ]);
 
     for (const [name, expected] of nativeResponsesPresets) {

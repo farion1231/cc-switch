@@ -1150,13 +1150,11 @@ requires_openai_auth = true`,
       "https://open.bigmodel.cn/api/coding/paas/v4",
       "glm-5.2",
     ),
-    endpointCandidates: ["https://open.bigmodel.cn/api/coding/paas/v4"],
-    apiFormat: "openai_chat",
+    // 智谱 GLM 编程套餐原生支持 Responses 协议（wire_api=responses 对自家 base_url），
+    // 且上游反序列化仅允许 function/web_search_preview/code_interpreter/mcp，
+    // 不支持 freeform custom 工具（如 apply_patch），因此使用 NativeResponses profile。
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      // Chat 路由 supportsEffort:false：档位值不进 wire，none=注入
-      // thinking:{type:"disabled"} 关思考，其余档一律等价于开思考。只暴露真实
-      // 两态；不填的话 gpt5_5 模板默认 low/medium/high/xhigh 全是假差异档，
-      // 且没有 none，用户在 Codex 里反而关不掉思考
       {
         model: "glm-5.2",
         displayName: "GLM-5.2",
@@ -1164,13 +1162,6 @@ requires_openai_auth = true`,
         reasoningLevels: ["none", "high"],
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "zhipu",
     iconColor: "#0F62FE",
@@ -1186,12 +1177,9 @@ requires_openai_auth = true`,
       "glm-5.2",
     ),
     endpointCandidates: ["https://api.z.ai/api/coding/paas/v4"],
-    apiFormat: "openai_chat",
+    // 智谱 GLM 国际站编程套餐同上，原生支持 Responses 协议
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      // Chat 路由 supportsEffort:false：档位值不进 wire，none=注入
-      // thinking:{type:"disabled"} 关思考，其余档一律等价于开思考。只暴露真实
-      // 两态；不填的话 gpt5_5 模板默认 low/medium/high/xhigh 全是假差异档，
-      // 且没有 none，用户在 Codex 里反而关不掉思考
       {
         model: "glm-5.2",
         displayName: "GLM-5.2",
@@ -1199,13 +1187,6 @@ requires_openai_auth = true`,
         reasoningLevels: ["none", "high"],
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "zhipu",
     iconColor: "#0F62FE",

@@ -309,6 +309,21 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
     is_fixed_official_id || provider.category.as_deref() == Some("official")
 }
 
+/// Hosts whose native `/responses` gateway strictly rejects freeform custom tools
+/// (e.g. `apply_patch` with `type: "custom"`).
+pub fn is_codex_native_responses_host(host_or_url: &str) -> bool {
+    const NATIVE_RESPONSES_HOSTS: &[&str] = &[
+        "bigmodel.cn",
+        "z.ai",
+        "xiaomimimo.com",
+        "minimaxi.com",
+        "minimax.io",
+        "longcat.chat",
+    ];
+    let lower = host_or_url.to_ascii_lowercase();
+    NATIVE_RESPONSES_HOSTS.iter().any(|h| lower.contains(h))
+}
+
 /// Resolve the model-catalog tool profile for a Codex provider using the SAME
 /// Anthropic detection as the proxy router ([`codex_provider_uses_anthropic`]), so the
 /// generated catalog never disagrees with the routed transform. A provider whose
@@ -331,9 +346,47 @@ pub fn resolve_codex_catalog_tool_profile(
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
     }
-    CodexCatalogToolProfile::from_api_format(
-        provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
-    )
+
+    // Defensive fallback: check if base_url targets a known native Responses host
+    // (e.g. bigmodel.cn, z.ai, xiaomimimo.com, minimaxi.com) that strictly rejects
+    // freeform custom tools. This protects existing user configs saved in SQLite
+    // with legacy api_format values before migration.
+    if let Some(base_url) = provider
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .and_then(extract_codex_base_url_from_toml)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("base_url")
+                .or_else(|| provider.settings_config.get("baseURL"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+        })
+    {
+        if is_codex_native_responses_host(&base_url) {
+            return CodexCatalogToolProfile::NativeResponses;
+        }
+    }
+
+    let api_format = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("apiFormat")
+                .and_then(|v| v.as_str())
+        });
+    CodexCatalogToolProfile::from_api_format(api_format)
 }
 
 /// Extract the real upstream model configured for a Codex provider.
@@ -1432,6 +1485,38 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&chat),
             CodexCatalogToolProfile::ProxyChat
+        );
+
+        // Native Responses host detection (e.g. bigmodel.cn, z.ai) returns NativeResponses
+        // even if apiFormat was legacy "openai_chat" in settings.
+        let bigmodel_provider = create_provider(json!({
+            "apiFormat": "openai_chat",
+            "config": r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "zhipu_glm"
+base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+wire_api = "responses"
+"#
+        }));
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&bigmodel_provider),
+            CodexCatalogToolProfile::NativeResponses
+        );
+
+        let z_ai_provider = create_provider(json!({
+            "apiFormat": "openai_chat",
+            "config": r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "zhipu_glm_en"
+base_url = "https://api.z.ai/api/coding/paas/v4"
+wire_api = "responses"
+"#
+        }));
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&z_ai_provider),
+            CodexCatalogToolProfile::NativeResponses
         );
     }
 
