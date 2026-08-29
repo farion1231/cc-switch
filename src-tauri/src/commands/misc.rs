@@ -7023,20 +7023,17 @@ mod tests {
     fn applescript_builders_safely_quote_special_paths() {
         // First shell-quote the path, then wrap the whole command as an AppleScript string.
         let expected = r#""sh '/Users/me/it'\"'\"'s dir/x.sh'""#;
+        let exec_expected = r#""
+exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#;
         let p = Path::new("/Users/me/it's dir/x.sh");
         assert_eq!(applescript_launcher_command(p), expected);
-        assert_eq!(
-            applescript_exec_launcher_command(p),
-            r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#
-        );
+        assert_eq!(applescript_exec_launcher_command(p), exec_expected);
         assert!(
-            build_macos_terminal_applescript(p)
-                .contains(r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#),
+            build_macos_terminal_applescript(p).contains(exec_expected),
             "Terminal did not quote safely"
         );
         assert!(
-            build_macos_iterm2_applescript(p)
-                .contains(r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#),
+            build_macos_iterm2_applescript(p).contains(exec_expected),
             "iTerm2 did not quote safely"
         );
         assert!(
