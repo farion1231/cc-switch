@@ -1308,10 +1308,37 @@ fn inline_ref_siblings(node: &Value) -> Value {
                 if let (Some(ref_path), true) = (ref_path, has_siblings) {
                     if let Some(name) = ref_path.strip_prefix("#/$defs/") {
                         if !resolving.iter().any(|n| n == name) {
-                            if let Some(target @ Value::Object(_)) = defs.get(name) {
-                                resolving.push(name.to_string());
+                            // Follow bare-ref alias chain: if the target is
+                            // itself a bare $ref (no siblings), follow it so
+                            // siblings merge into the ultimate definition,
+                            // not another $ref-with-siblings.
+                            let mut chain = vec![name.to_string()];
+                            let mut target = defs.get(name);
+                            while let Some(Value::Object(t_obj)) = target {
+                                let t_ref = t_obj.get("$ref").and_then(|v| v.as_str());
+                                let t_has_siblings = t_obj.keys().any(|k| k != "$ref");
+                                if let (Some(t_ref), false) = (t_ref, t_has_siblings) {
+                                    if let Some(next_name) = t_ref.strip_prefix("#/$defs/") {
+                                        if chain.iter().any(|n| n == next_name)
+                                            || resolving.iter().any(|n| n == next_name)
+                                        {
+                                            break; // cycle
+                                        }
+                                        chain.push(next_name.to_string());
+                                        target = defs.get(next_name);
+                                        continue;
+                                    }
+                                }
+                                break;
+                            }
+                            if let Some(target @ Value::Object(_)) = target {
+                                for n in &chain {
+                                    resolving.push(n.clone());
+                                }
                                 let resolved = inner(target, defs, resolving);
-                                resolving.pop();
+                                for _ in &chain {
+                                    resolving.pop();
+                                }
                                 if let Value::Object(mut merged) = resolved {
                                     for (k, v) in obj.iter().filter(|(k, _)| *k != "$ref") {
                                         merged.insert(k.clone(), inner(v, defs, resolving));
@@ -2499,6 +2526,43 @@ mod tests {
             result["tools"][0]["function"]["parameters"]["properties"]["targetThreadId"],
             json!({"$ref": "#/$defs/__schema20"})
         );
+    }
+
+    #[test]
+    fn responses_request_to_chat_follows_bare_ref_aliases_before_inlining_siblings() {
+        // When a sibling-bearing $ref points to a definition that is itself a
+        // bare $ref (an alias), the siblings must merge into the ultimate
+        // target — not into the alias, which would leave a $ref-with-siblings
+        // shape that strict providers reject.
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "set_tag",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "tag": {"$ref": "#/$defs/__alias", "minLength": 1}
+                    },
+                    "$defs": {
+                        "__concrete": {"type": "string", "format": "uuid"},
+                        "__alias": {"$ref": "#/$defs/__concrete"}
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let tag = &result["tools"][0]["function"]["parameters"]["properties"]["tag"];
+
+        assert!(
+            tag.get("$ref").is_none(),
+            "bare-ref alias should be followed so no $ref remains, got: {tag}"
+        );
+        assert_eq!(tag["type"], "string");
+        assert_eq!(tag["format"], "uuid");
+        assert_eq!(tag["minLength"], 1);
     }
 
     #[test]
