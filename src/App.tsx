@@ -202,6 +202,9 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  const managesMcp = settingsData?.managementScope?.mcp ?? true;
+  const managesSkills = settingsData?.managementScope?.skills ?? true;
+  const managesSessions = settingsData?.managementScope?.sessions ?? true;
   const useAppWindowControls =
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
@@ -226,6 +229,15 @@ function App() {
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
+    if (
+      (!managesMcp && currentView === "mcp") ||
+      (!managesSkills &&
+        (currentView === "skills" || currentView === "skillsDiscovery")) ||
+      (!managesSessions && currentView === "sessions")
+    ) {
+      setCurrentView("providers");
+      return;
+    }
     if (currentView === "mcp" && sharedFeatureApp === "pi") {
       setCurrentView("providers");
       return;
@@ -243,7 +255,13 @@ function App() {
     ) {
       setCurrentView("providers");
     }
-  }, [sharedFeatureApp, currentView]);
+  }, [
+    sharedFeatureApp,
+    currentView,
+    managesMcp,
+    managesSessions,
+    managesSkills,
+  ]);
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
@@ -307,17 +325,18 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport = managesSkills && sharedFeatureApp !== "openclaw";
   const hasSessionSupport =
-    sharedFeatureApp === "claude" ||
-    sharedFeatureApp === "codex" ||
-    sharedFeatureApp === "grokbuild" ||
-    sharedFeatureApp === "opencode" ||
-    sharedFeatureApp === "openclaw" ||
-    sharedFeatureApp === "gemini" ||
-    sharedFeatureApp === "hermes" ||
-    sharedFeatureApp === "pi";
-  const hasMcpSupport = sharedFeatureApp !== "pi";
+    managesSessions &&
+    (sharedFeatureApp === "claude" ||
+      sharedFeatureApp === "codex" ||
+      sharedFeatureApp === "grokbuild" ||
+      sharedFeatureApp === "opencode" ||
+      sharedFeatureApp === "openclaw" ||
+      sharedFeatureApp === "gemini" ||
+      sharedFeatureApp === "hermes" ||
+      sharedFeatureApp === "pi");
+  const hasMcpSupport = managesMcp && sharedFeatureApp !== "pi";
 
   const {
     addProvider,
@@ -1031,6 +1050,7 @@ function App() {
         case "hermesMemory":
           return <HermesMemoryPanel />;
         case "skills":
+          if (!managesSkills) return null;
           return (
             <UnifiedSkillsPanel
               ref={unifiedSkillsPanelRef}
@@ -1044,6 +1064,7 @@ function App() {
             />
           );
         case "skillsDiscovery":
+          if (!managesSkills) return null;
           return (
             <SkillsPage
               ref={skillsPageRef}
@@ -1054,6 +1075,7 @@ function App() {
             />
           );
         case "mcp":
+          if (!managesMcp) return null;
           return (
             <UnifiedMcpPanel
               ref={mcpPanelRef}
@@ -1073,6 +1095,7 @@ function App() {
           );
 
         case "sessions":
+          if (!managesSessions) return null;
           return (
             <SessionManagerPage
               key={sharedFeatureApp}
@@ -1582,15 +1605,17 @@ function App() {
                         >
                           {activeApp === "hermes" ? (
                             <>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("skills")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("skills.manage")}
-                              >
-                                <Wrench className="w-4 h-4" />
-                              </Button>
+                              {managesSkills && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("skills")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("skills.manage")}
+                                >
+                                  <Wrench className="w-4 h-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1659,15 +1684,17 @@ function App() {
                               >
                                 <Cpu className="w-4 h-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("sessions")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("sessionManager.title")}
-                              >
-                                <History className="w-4 h-4" />
-                              </Button>
+                              {managesSessions && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("sessions")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("sessionManager.title")}
+                                >
+                                  <History className="w-4 h-4" />
+                                </Button>
+                              )}
                             </>
                           ) : (
                             <>

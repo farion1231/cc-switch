@@ -149,6 +149,8 @@ impl RemoteLayout {
 pub(crate) fn build_local_snapshot(
     db: &crate::database::Database,
 ) -> Result<LocalSnapshot, AppError> {
+    crate::settings::ensure_skills_management_enabled()?;
+
     // Keep the DB's skill rows and the filesystem SSOT at one logical point in
     // time. Skill writers take the matching write guard around both mutations.
     let _skill_state_guard = skill_state_read_guard();
@@ -359,6 +361,8 @@ pub(crate) fn apply_snapshot(
     db_sql: &[u8],
     skills_zip: &[u8],
 ) -> Result<(), AppError> {
+    crate::settings::ensure_skills_management_enabled()?;
+
     let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
         localized(
             "sync.sql_not_utf8",

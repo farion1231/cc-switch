@@ -38,6 +38,7 @@ import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
 import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
+import { ManagementScopeSettings } from "@/components/settings/ManagementScopeSettings";
 import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
 import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
@@ -105,7 +106,9 @@ export function SettingsPage({
     resetStatus,
   } = useImportExport({ onImportSuccess });
 
-  const { data: installedSkills } = useInstalledSkills();
+  const { data: installedSkills } = useInstalledSkills(
+    settings?.managementScope?.skills ?? true,
+  );
 
   const [activeTab, setActiveTab] = useState<string>("general");
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
@@ -257,23 +260,31 @@ export function SettingsPage({
                       onChange={(lang) => handleAutoSave({ language: lang })}
                     />
                     <ThemeSettings />
+                    <ManagementScopeSettings
+                      settings={settings}
+                      onChange={handleAutoSave}
+                    />
                     <AppVisibilitySettings
                       settings={settings}
                       onChange={handleAutoSave}
                     />
-                    <SkillStorageLocationSettings
-                      value={settings.skillStorageLocation ?? "cc_switch"}
-                      installedCount={installedSkills?.length ?? 0}
-                      onMigrated={(location) =>
-                        updateSettings({ skillStorageLocation: location })
-                      }
-                    />
-                    <SkillSyncMethodSettings
-                      value={settings.skillSyncMethod ?? "auto"}
-                      onChange={(method) =>
-                        handleAutoSave({ skillSyncMethod: method })
-                      }
-                    />
+                    {(settings.managementScope?.skills ?? true) && (
+                      <>
+                        <SkillStorageLocationSettings
+                          value={settings.skillStorageLocation ?? "cc_switch"}
+                          installedCount={installedSkills?.length ?? 0}
+                          onMigrated={(location) =>
+                            updateSettings({ skillStorageLocation: location })
+                          }
+                        />
+                        <SkillSyncMethodSettings
+                          value={settings.skillSyncMethod ?? "auto"}
+                          onChange={(method) =>
+                            handleAutoSave({ skillSyncMethod: method })
+                          }
+                        />
+                      </>
+                    )}
                     <CodexAuthSettings
                       settings={settings}
                       onChange={handleAutoSave}

@@ -17,6 +17,8 @@ impl McpService {
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
         let prev_apps = state
             .db
@@ -55,6 +57,8 @@ impl McpService {
 
     /// 删除 MCP 服务器
     pub fn delete_server(state: &AppState, id: &str) -> Result<bool, AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
@@ -75,6 +79,8 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         if let Some(server) = state
             .db
             .update_mcp_server_app_enabled(server_id, &app, enabled)?
@@ -194,6 +200,10 @@ impl McpService {
     /// 应用的 MCP 状态陈旧。全部跑完后若有失败，聚合成一个错误上报，
     /// 保留调用方的可见性。
     pub fn sync_all_enabled(state: &AppState) -> Result<(), AppError> {
+        if !crate::settings::mcp_management_enabled() {
+            return Ok(());
+        }
+
         let servers = Self::get_all_servers(state)?;
 
         let mut failures: Vec<String> = Vec::new();
@@ -218,6 +228,10 @@ impl McpService {
     /// 定向重投影，避免把无关应用的失败面（如 ~/.claude.json 坏 JSON）
     /// 牵连进目标应用的关键路径。
     pub fn sync_enabled_for_app(state: &AppState, app: &AppType) -> Result<(), AppError> {
+        if !crate::settings::mcp_management_enabled() {
+            return Ok(());
+        }
+
         let servers = Self::get_all_servers(state)?;
         Self::project_servers_to_app(state, &servers, app)
     }
@@ -282,6 +296,10 @@ impl McpService {
     /// [已废弃] 同步启用的 MCP 到指定应用（兼容旧 API）
     #[deprecated(since = "3.7.0", note = "Use sync_all_enabled instead")]
     pub fn sync_enabled(state: &AppState, app: AppType) -> Result<(), AppError> {
+        if !crate::settings::mcp_management_enabled() {
+            return Ok(());
+        }
+
         let servers = Self::get_all_servers(state)?;
 
         for server in servers.values() {
@@ -295,6 +313,8 @@ impl McpService {
 
     /// 从 Claude 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_claude(state: &AppState) -> Result<usize, AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -333,6 +353,8 @@ impl McpService {
 
     /// 从 Codex 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_codex(state: &AppState) -> Result<usize, AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -371,6 +393,8 @@ impl McpService {
 
     /// 从 Gemini 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_gemini(state: &AppState) -> Result<usize, AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -409,6 +433,8 @@ impl McpService {
 
     /// 从 Grok Build 的 `[mcp_servers]` 导入 MCP。
     pub fn import_from_grokbuild(state: &AppState) -> Result<usize, AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         let mut temp_config = crate::app_config::MultiAppConfig::default();
         let count = crate::mcp::import_from_grokbuild(&mut temp_config)?;
         let mut new_count = 0;
@@ -435,6 +461,8 @@ impl McpService {
 
     /// 从 OpenCode 导入 MCP（v3.9.2+ 新增）
     pub fn import_from_opencode(state: &AppState) -> Result<usize, AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -473,6 +501,8 @@ impl McpService {
 
     /// 从 Hermes 导入 MCP
     pub fn import_from_hermes(state: &AppState) -> Result<usize, AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -516,6 +546,8 @@ impl McpService {
     /// `unwrap_or(0)` 吞错，坏文件只会表现为"导入成功 0 个"，用户
     /// 无从得知哪个应用出了问题。
     pub fn import_from_all_apps(state: &AppState) -> Result<usize, AppError> {
+        crate::settings::ensure_mcp_management_enabled()?;
+
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 

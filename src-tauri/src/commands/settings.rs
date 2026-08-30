@@ -65,9 +65,16 @@ pub async fn save_settings(
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
-    let unify_codex_changed =
+    let stored_unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
-    let unify_codex_enabled = merged.unify_codex_session_history;
+    if stored_unify_codex_changed && !merged.management_scope.sessions {
+        return Err("CC Switch 的会话管理已关闭，无法修改统一会话历史设置".to_string());
+    }
+    let existing_unify_codex_enabled =
+        existing.management_scope.sessions && existing.unify_codex_session_history;
+    let unify_codex_enabled =
+        merged.management_scope.sessions && merged.unify_codex_session_history;
+    let unify_codex_changed = unify_codex_enabled != existing_unify_codex_enabled;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
@@ -139,6 +146,7 @@ pub struct CodexUnifyHistoryRestoreResult {
 /// 是否存在统一会话开关的迁移备份（决定关闭弹窗里是否显示"恢复备份"勾选）。
 #[tauri::command]
 pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
+    crate::settings::ensure_sessions_management_enabled().map_err(|e| e.to_string())?;
     Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
 }
 
@@ -146,6 +154,7 @@ pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
 /// 由关闭统一会话开关的确认弹窗触发；幂等，可安全重试。
 #[tauri::command]
 pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreResult, String> {
+    crate::settings::ensure_sessions_management_enabled().map_err(|e| e.to_string())?;
     let outcome = tauri::async_runtime::spawn_blocking(|| {
         crate::codex_history_migration::restore_codex_official_history_from_backups()
     })
