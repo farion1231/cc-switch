@@ -438,6 +438,25 @@ pub fn responses_request_to_anthropic(
     Ok(result)
 }
 
+fn sanitize_json_schema_refs(schema: &mut Value) {
+    match schema {
+        Value::Object(map) => {
+            if map.contains_key("$ref") && map.contains_key("type") {
+                map.remove("type");
+            }
+            for value in map.values_mut() {
+                sanitize_json_schema_refs(value);
+            }
+        }
+        Value::Array(list) => {
+            for item in list {
+                sanitize_json_schema_refs(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
     let function = chat_tool.get("function")?;
     let name = function
@@ -451,10 +470,11 @@ fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
         .filter(|value| value.as_object().is_some_and(|object| !object.is_empty()))
         .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
     if let Some(schema) = input_schema.as_object_mut() {
-        if schema.get("type").and_then(Value::as_str) != Some("object") {
+        if !schema.contains_key("$ref") && schema.get("type").and_then(Value::as_str) != Some("object") {
             schema.insert("type".to_string(), json!("object"));
         }
     }
+    sanitize_json_schema_refs(&mut input_schema);
     let mut tool = json!({ "name": name, "input_schema": input_schema });
     if let Some(description) = function.get("description").and_then(|value| value.as_str()) {
         tool["description"] = json!(description);
@@ -1751,6 +1771,55 @@ mod tests {
             input_schema["oneOf"][1]["properties"]["name"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn test_request_tools_sanitizes_schema_refs_type_compatibility() {
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "edit_file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "patch": {
+                                "type": "object",
+                                "$ref": "#/$defs/__schema20"
+                            }
+                        },
+                        "$defs": {
+                            "__schema20": {
+                                "type": "object",
+                                "properties": {
+                                    "lines": {
+                                        "type": "string",
+                                        "$ref": "#/$defs/LinesRef"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        let input_schema = &tools[0]["input_schema"];
+
+        assert_eq!(input_schema["type"], "object");
+        let patch_prop = &input_schema["properties"]["patch"];
+        assert_eq!(patch_prop["$ref"], "#/$defs/__schema20");
+        assert!(patch_prop.get("type").is_none());
+
+        let nested_lines = &input_schema["$defs"]["__schema20"]["properties"]["lines"];
+        assert_eq!(nested_lines["$ref"], "#/$defs/LinesRef");
+        assert!(nested_lines.get("type").is_none());
+
+        assert_eq!(input_schema["$defs"]["__schema20"]["type"], "object");
     }
 
     #[test]
