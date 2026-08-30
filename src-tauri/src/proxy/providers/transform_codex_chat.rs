@@ -1282,6 +1282,7 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
             }
         }
     }
+    super::transform::sanitize_json_schema_for_strict_providers(&mut params);
     params
 }
 
@@ -2442,6 +2443,109 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn responses_request_to_chat_sanitizes_ref_type_siblings_for_moonshot_schema() {
+        let input = json!({
+            "model": "k3",
+            "tools": [{
+                "type": "function",
+                "name": "exec_command",
+                "description": "Run shell command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "cmd": {"type": "string"},
+                        "env": {
+                            "$ref": "#/$defs/__schema20",
+                            "type": "object",
+                            "description": "Environment variables"
+                        }
+                    },
+                    "$defs": {
+                        "__schema20": {
+                            "$ref": "#/$defs/__schema7",
+                            "type": "object"
+                        },
+                        "__schema7": {
+                            "type": "object",
+                            "properties": {
+                                "PATH": {"type": "string"}
+                            }
+                        }
+                    },
+                    "required": []
+                }
+            }],
+            "input": "test"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        // The empty required array should be removed
+        assert!(parameters.get("required").is_none());
+
+        // The property node with $ref should have sibling 'type' and 'description' stripped
+        let env = &parameters["properties"]["env"];
+        assert_eq!(env["$ref"], "#/$defs/__schema20");
+        assert!(env.get("type").is_none());
+        assert!(env.get("description").is_none());
+
+        // The definition __schema20 with $ref should have sibling 'type' stripped
+        let def20 = &parameters["$defs"]["__schema20"];
+        assert_eq!(def20["$ref"], "#/$defs/__schema7");
+        assert!(def20.get("type").is_none());
+
+        // The target definition __schema7 retains its type
+        let def7 = &parameters["$defs"]["__schema7"];
+        assert_eq!(def7["type"], "object");
+        assert_eq!(def7["properties"]["PATH"]["type"], "string");
+    }
+
+    #[test]
+    fn responses_request_to_chat_propagates_missing_type_to_ref_target() {
+        let input = json!({
+            "model": "k3",
+            "tools": [{
+                "type": "function",
+                "name": "write_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "options": {
+                            "$ref": "#/$defs/Options",
+                            "type": "object",
+                            "description": "Write options"
+                        }
+                    },
+                    "$defs": {
+                        "Options": {
+                            "properties": {
+                                "append": {"type": "boolean"}
+                            }
+                        }
+                    }
+                }
+            }],
+            "input": "test"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        // options node has type and description stripped
+        let options = &parameters["properties"]["options"];
+        assert_eq!(options["$ref"], "#/$defs/Options");
+        assert!(options.get("type").is_none());
+        assert!(options.get("description").is_none());
+
+        // Options definition received type and description
+        let def_options = &parameters["$defs"]["Options"];
+        assert_eq!(def_options["type"], "object");
+        assert_eq!(def_options["description"], "Write options");
+        assert_eq!(def_options["properties"]["append"]["type"], "boolean");
     }
 
     #[test]
