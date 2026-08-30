@@ -92,4 +92,33 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
       });
     }
   });
+
+  it("SiliconFlow presets should be available for OpenCode", () => {
+    const expectedPresets = [
+      {
+        name: "SiliconFlow",
+        baseURL: "https://api.siliconflow.cn/v1",
+        modelId: "Pro/MiniMaxAI/MiniMax-M2.7",
+      },
+      {
+        name: "SiliconFlow en",
+        baseURL: "https://api.siliconflow.com/v1",
+        modelId: "MiniMaxAI/MiniMax-M2.7",
+      },
+    ];
+
+    for (const expected of expectedPresets) {
+      const preset = opencodeProviderPresets.find(
+        (candidate) => candidate.name === expected.name,
+      );
+
+      expect(preset).toBeDefined();
+      expect(preset!.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
+      expect(preset!.settingsConfig.options.baseURL).toBe(expected.baseURL);
+      expect(preset!.settingsConfig.models).toHaveProperty(expected.modelId);
+      expect(preset!.category).toBe("aggregator");
+      expect(preset!.partnerPromotionKey).toBe("siliconflow");
+      expect(preset!.icon).toBe("siliconflow");
+    }
+  });
 });
