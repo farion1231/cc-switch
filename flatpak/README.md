@@ -6,22 +6,28 @@ This directory contains the Flatpak manifest (`com.ccswitch.desktop`) for CC Swi
 
 - `flatpak`
 - `flatpak-builder`
-- Flathub remote (for installing `org.gnome.Platform//46` runtime)
+- Flathub remote (for installing `org.gnome.Platform//49` runtime)
 
 For Ubuntu/Debian:
 
 ```bash
 sudo apt install flatpak flatpak-builder
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install -y --user flathub org.gnome.Platform//46 org.gnome.Sdk//46
+flatpak install -y --user flathub org.gnome.Platform//49 org.gnome.Sdk//49
 ```
 
 ## Local Build (Generate .flatpak from .deb)
 
+Quick path (works even if host has no `flatpak`/`flatpak-builder`; falls back to Docker):
+
+```bash
+scripts/build-flatpak-artifact.sh
+```
+
 1) Build the deb on Linux first:
 
 ```bash
-pnpm tauri build -- --bundles deb
+pnpm tauri build --bundles deb
 ```
 
 2) Copy the generated deb to this directory:
