@@ -57,6 +57,47 @@ describe("Grok Build config", () => {
     expect(extractGrokBuildBaseUrl(config)).toBe("https://api.example.com");
   });
 
+  it("supports the shared models endpoint and backend-search overrides", () => {
+    const config = buildGrokBuildConfig(
+      {
+        model: "grok-4.5",
+        baseUrl: "https://relay.example.com/v1",
+        name: "Relay",
+        apiKey: "secret",
+        apiBackend: "responses",
+        contextWindow: 500000,
+      },
+      {
+        baseUrlMode: "models_endpoint",
+        webSearchModel: "grok-4.5",
+        supportsBackendSearch: false,
+      },
+    );
+    const parsed = parseToml(config) as any;
+
+    expect(parsed.models.web_search).toBe("grok-4.5");
+    expect(parsed.endpoints.models_base_url).toBe(
+      "https://relay.example.com/v1",
+    );
+    expect(parsed.model["grok-4.5"]).not.toHaveProperty("base_url");
+    expect(parsed.model["grok-4.5"].supports_backend_search).toBe(false);
+    expect(validateGrokBuildConfig(config)).toBeNull();
+    expect(extractGrokBuildBaseUrl(config)).toBe(
+      "https://relay.example.com/v1",
+    );
+
+    const updated = updateGrokBuildConfig(config, {
+      ...parseGrokBuildConfig(config),
+      baseUrl: "https://updated.example.com/v1",
+    });
+    const updatedParsed = parseToml(updated) as any;
+    expect(updatedParsed.endpoints.models_base_url).toBe(
+      "https://updated.example.com/v1",
+    );
+    expect(updatedParsed.model["grok-4.5"]).not.toHaveProperty("base_url");
+    expect(updatedParsed.model["grok-4.5"].supports_backend_search).toBe(false);
+  });
+
   it("accepts env_key credentials without adding an empty api_key", () => {
     const config = `[models]
 default = "env-profile"
@@ -138,5 +179,45 @@ context_window = 500000
     expect(parsed.models.default).toBe("new-profile");
     expect(parsed.model["new-profile"].model).toBe("grok-upstream");
     expect(parsed.model).not.toHaveProperty("old-profile");
+  });
+
+  it("retargets web_search when both profile and upstream model change", () => {
+    const original = buildGrokBuildConfig(
+      {
+        model: "grok-4.5",
+        upstreamModel: "grok-4.5",
+        baseUrl: "https://www.packyapi.ai/v1",
+        name: "PackyCode",
+        apiKey: "secret",
+        apiBackend: "responses",
+        contextWindow: 500000,
+      },
+      {
+        baseUrlMode: "models_endpoint",
+        webSearchModel: "grok-4.5",
+        supportsBackendSearch: false,
+      },
+    );
+
+    const renamed = updateGrokBuildConfig(
+      original,
+      {
+        ...parseGrokBuildConfig(original),
+        model: "custom-profile",
+        upstreamModel: "grok-4",
+      },
+      {
+        baseUrlMode: "models_endpoint",
+        webSearchModel: "grok-4.5",
+        supportsBackendSearch: false,
+      },
+    );
+    const parsed = parseToml(renamed) as any;
+
+    expect(parsed.models.default).toBe("custom-profile");
+    expect(parsed.models.web_search).toBe("custom-profile");
+    expect(parsed.model["custom-profile"].model).toBe("grok-4");
+    expect(parsed.model).not.toHaveProperty("grok-4.5");
+    expect(validateGrokBuildConfig(renamed)).toBeNull();
   });
 });
