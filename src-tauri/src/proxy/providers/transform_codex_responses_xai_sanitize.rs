@@ -11,7 +11,8 @@
 //! This is a faithful port of sub2api's `patchGrokResponsesBody`
 //! (`backend/internal/service/openai_gateway_grok.go`), the production Go
 //! gateway that routes Codex → Grok subscriptions. Every transform is a
-//! deterministic field removal or structural lift — no semantic rewriting — so
+//! deterministic field removal, structural lift, or function-parameter
+//! schema simplification — never a rewrite of `input` / prompt text — so
 //! the same input always yields the same output and the upstream prompt-cache
 //! prefix stays stable across requests. Gated on the xAI OAuth path only (see
 //! [`super::codex::provider_needs_responses_namespace_flatten`]), so no other
@@ -23,7 +24,7 @@
 
 use std::collections::HashSet;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// Codex plugin-private fields removed recursively at any nesting depth.
 const RECURSIVE_UNSUPPORTED_FIELDS: &[&str] = &["external_web_access"];
@@ -97,6 +98,14 @@ pub(crate) fn sanitize_xai_responses_request(body: &mut Value) -> bool {
 
     // 6. Whitelist the tool types and clean a now-dangling `tool_choice`.
     changed |= filter_unsupported_tools(body);
+
+    // 7. Codex Desktop always injects `automation_update` with a root
+    //    `oneOf`/`anyOf` that includes a `null` branch. xAI rejects that
+    //    before sampling (`invalid_client_tool_schema`). Keep the tool so
+    //    Desktop can still call it; replace only the parameter schema.
+    //    Runs after flatten + the tool whitelist so the name is already
+    //    `mcp__codex_app__automation_update` (or `codex_app__…`).
+    changed |= simplify_incompatible_function_parameters(body);
 
     changed
 }
@@ -344,6 +353,161 @@ fn should_drop_tool_choice(body: &Value, tools: &[Value]) -> bool {
     false
 }
 
+fn schema_type_tokens(value: Option<&Value>) -> Vec<&str> {
+    match value {
+        Some(Value::String(s)) => vec![s.as_str()],
+        Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn type_includes(value: Option<&Value>, wanted: &str) -> bool {
+    schema_type_tokens(value)
+        .iter()
+        .any(|token| *token == wanted)
+}
+
+fn function_tool_name(tool: &Value) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for key in ["namespace", "server_label", "name"] {
+        if let Some(value) = tool.get(key).and_then(Value::as_str) {
+            let value = value.trim();
+            if !value.is_empty() {
+                parts.push(value);
+            }
+        }
+    }
+    if let Some(value) = tool
+        .get("function")
+        .and_then(|function| function.get("name"))
+        .and_then(Value::as_str)
+    {
+        let value = value.trim();
+        if !value.is_empty() {
+            parts.push(value);
+        }
+    }
+    parts.join("__")
+}
+
+fn union_has_non_object_branch(params: &Value) -> bool {
+    let Some(branches) = params
+        .get("oneOf")
+        .or_else(|| params.get("anyOf"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    branches.iter().any(|branch| {
+        if branch.is_null() {
+            return true;
+        }
+        let Some(obj) = branch.as_object() else {
+            return true;
+        };
+        if type_includes(obj.get("type"), "null") {
+            return true;
+        }
+        !type_includes(obj.get("type"), "object")
+    })
+}
+
+fn is_permissive_object_schema(params: &Value) -> bool {
+    let Some(obj) = params.as_object() else {
+        return false;
+    };
+    obj.get("type").and_then(Value::as_str) == Some("object")
+        && obj.get("oneOf").is_none()
+        && obj.get("anyOf").is_none()
+}
+
+fn parameters_are_xai_compatible(params: &Value) -> bool {
+    if !params.is_object() {
+        return false;
+    }
+    if union_has_non_object_branch(params) {
+        return false;
+    }
+    if type_includes(params.get("type"), "null") {
+        return false;
+    }
+    type_includes(params.get("type"), "object")
+}
+
+fn should_replace_parameters(params: Option<&Value>, force: bool) -> bool {
+    match params {
+        None => force,
+        Some(Value::Null) => true,
+        Some(params) if force => !is_permissive_object_schema(params),
+        Some(params) => !parameters_are_xai_compatible(params),
+    }
+}
+
+fn safe_object_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {},
+        "additionalProperties": true
+    })
+}
+
+fn replace_parameters_in(container: &mut Value, force: bool) -> bool {
+    let Some(obj) = container.as_object_mut() else {
+        return false;
+    };
+    if !should_replace_parameters(obj.get("parameters"), force) {
+        return false;
+    }
+    obj.insert("parameters".to_string(), safe_object_parameters());
+    true
+}
+
+fn simplify_function_tool(tool: &mut Value) -> bool {
+    let force = function_tool_name(tool)
+        .to_ascii_lowercase()
+        .contains("automation_update");
+    let mut changed = false;
+    if tool.get("function").is_some_and(Value::is_object) {
+        if let Some(function) = tool.get_mut("function") {
+            changed |= replace_parameters_in(function, force);
+            if changed {
+                if let Some(obj) = function.as_object_mut() {
+                    if obj.get("strict") == Some(&Value::Bool(true)) {
+                        obj.insert("strict".to_string(), json!(false));
+                    }
+                }
+            }
+        }
+    }
+    changed |= replace_parameters_in(tool, force);
+    if changed {
+        if let Some(obj) = tool.as_object_mut() {
+            if obj.get("strict") == Some(&Value::Bool(true)) {
+                obj.insert("strict".to_string(), json!(false));
+            }
+        }
+    }
+    changed
+}
+
+/// Replace function `parameters` roots that xAI rejects (`oneOf`/`anyOf` with a
+/// non-object branch, `type: null`, or a missing/null schema). Keep the tool.
+fn simplify_incompatible_function_parameters(body: &mut Value) -> bool {
+    let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for tool in tools.iter_mut() {
+        changed |= simplify_function_tool(tool);
+        if let Some(nested) = tool.get_mut("tools").and_then(Value::as_array_mut) {
+            for child in nested.iter_mut() {
+                changed |= simplify_function_tool(child);
+            }
+        }
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,5 +699,132 @@ mod tests {
         assert!(sanitize_xai_responses_request(&mut body));
         // second pass finds nothing left to change
         assert!(!sanitize_xai_responses_request(&mut body));
+    }
+
+    fn automation_update_oneof_null_params() -> Value {
+        json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": { "action": { "type": "string" } },
+                    "required": ["action"]
+                },
+                { "type": "null" }
+            ]
+        })
+    }
+
+    fn safe_object_params() -> Value {
+        json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
+        })
+    }
+
+    #[test]
+    fn simplifies_flattened_mcp_automation_update_oneof_null() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [{
+                "type": "function",
+                "name": "mcp__codex_app__automation_update",
+                "strict": true,
+                "parameters": automation_update_oneof_null_params()
+            }]
+        });
+        assert!(sanitize_xai_responses_request(&mut body));
+        let tool = &body["tools"][0];
+        assert_eq!(tool["name"], "mcp__codex_app__automation_update");
+        assert_eq!(tool["parameters"], safe_object_params());
+        assert_eq!(tool["strict"], false);
+        assert!(!sanitize_xai_responses_request(&mut body));
+    }
+
+    #[test]
+    fn simplifies_codex_app_automation_update_without_mcp_prefix() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [{
+                "type": "function",
+                "name": "codex_app__automation_update",
+                "parameters": automation_update_oneof_null_params()
+            }]
+        });
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert_eq!(body["tools"][0]["parameters"], safe_object_params());
+        assert!(!sanitize_xai_responses_request(&mut body));
+    }
+
+    #[test]
+    fn simplifies_nested_function_parameters_on_automation_update() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [{
+                "type": "function",
+                "name": "mcp__codex_app__automation_update",
+                "function": {
+                    "name": "automation_update",
+                    "strict": true,
+                    "parameters": automation_update_oneof_null_params()
+                }
+            }]
+        });
+        assert!(sanitize_xai_responses_request(&mut body));
+        let function = &body["tools"][0]["function"];
+        assert_eq!(function["parameters"], safe_object_params());
+        assert_eq!(function["strict"], false);
+    }
+
+    #[test]
+    fn leaves_sibling_function_tools_unchanged() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "mcp__codex_app__automation_update",
+                    "parameters": automation_update_oneof_null_params()
+                },
+                {
+                    "type": "function",
+                    "name": "read_file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "path": { "type": "string" } },
+                        "required": ["path"]
+                    }
+                }
+            ]
+        });
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert_eq!(body["tools"][0]["parameters"], safe_object_params());
+        assert_eq!(
+            body["tools"][1]["parameters"],
+            json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            })
+        );
+    }
+
+    #[test]
+    fn simplifies_any_function_with_null_union_even_without_automation_name() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "tools": [{
+                "type": "function",
+                "name": "some_other_tool",
+                "parameters": {
+                    "anyOf": [
+                        { "type": "object", "properties": {} },
+                        { "type": "null" }
+                    ]
+                }
+            }]
+        });
+        assert!(sanitize_xai_responses_request(&mut body));
+        assert_eq!(body["tools"][0]["parameters"], safe_object_params());
     }
 }
