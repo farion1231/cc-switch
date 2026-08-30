@@ -479,12 +479,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "teamorouter",
-      base_url: "https://api.teamorouter.com/v1",
+      base_url: "https://api.teamorouter.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
@@ -495,6 +495,35 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "teamorouter",
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "teamorouter" },
+    },
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      name: "ppio",
+      base_url: "https://api.ppio.com/openai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "deepseek/deepseek-v4-flash-0731",
+          name: "Deepseek V4 Flash 0731",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    suggestedDefaults: {
+      model: {
+        default: "deepseek/deepseek-v4-flash-0731",
+        provider: "ppio",
+      },
     },
   },
   {
@@ -1627,33 +1656,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "mimo-v2.5-pro", provider: "xiaomi_mimo_token_plan" },
-    },
-  },
-  {
-    name: "PPIO",
-    websiteUrl: "https://ppio.com",
-    apiKeyUrl: "https://ppio.com/settings/key-management",
-    settingsConfig: {
-      name: "ppio",
-      base_url: "https://api.ppio.com/openai/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [
-        {
-          id: "deepseek/deepseek-v4-flash-0731",
-          name: "Deepseek V4 Flash 0731",
-          context_length: 1048576,
-        },
-      ],
-    },
-    category: "aggregator",
-    icon: "ppio",
-    iconColor: "#2874FF",
-    suggestedDefaults: {
-      model: {
-        default: "deepseek/deepseek-v4-flash-0731",
-        provider: "ppio",
-      },
     },
   },
   {

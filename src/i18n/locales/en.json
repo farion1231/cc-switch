@@ -288,6 +288,7 @@
     "openclawNoModels": "No models configured",
     "openclawModelNotFound": "The selected model no longer exists. Refresh and try again.",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
+    "codexAuthCleanupFailed": "Switched successfully, but auth.json could not be removed — the official login credentials are still on disk; delete auth.json from the Codex config directory to remove them",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
@@ -751,6 +752,7 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
+          "otty": "Otty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
           "warp": "Warp"
@@ -1233,6 +1235,7 @@
       "fenno": "Fenno.ai is a stable, efficient API relay giving you access to a wide range of mainstream models. Exclusive CC Switch offer: subscribe via this link to the $1.99 Trial Plan worth $50 in credits, valid for 7 days!",
       "zetaapi": "ZetaAPI delivers real, undegraded models at as low as 35% of official pricing. Exclusive CC Switch offer: register via this link and use promo code CC-SWITCH for 10% off your first top-up!",
       "teamorouter": "TeamoRouter is an enterprise-grade Agentic LLM gateway with pricing up to 90% off. It offers exclusive benefits for CC Switch users: register via this link as a new user for 10% off your first top-up!",
+      "ppio": "PPIO is a leading independent Agentic Cloud provider in China, serving every flagship open-source model through a single API key. Register via this link and complete identity verification to receive a ¥10 credit voucher.",
       "xycai": "XycAi is an enterprise-grade token factory: one-click access to 200+ global models, automatic SLA compensation, and 100% refunds for abnormal cache charges!"
     },
     "presets": {
@@ -1508,7 +1511,6 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Codex Common Config Snippet",
     "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Apply Common Config' is checked",
-    "enableGoalMode": "Enable Goal mode",
     "enableRemoteCompaction": "Enable remote compaction",
     "remoteCompactionHint": "When enabled, the active model_providers entry name is written as OpenAI so Codex can try remote compaction.",
     "apiUrlLabel": "API Request URL",
@@ -1719,6 +1721,13 @@
       "pi": "Pi"
     },
     "rawInputLabel": "Raw",
+    "sessionSync": {
+      "title": "Auto-Scan Session Logs",
+      "description": "Periodically scans each client's local session logs to track usage; when off, logs are only scanned on manual sync",
+      "syncNow": "Sync Now",
+      "syncCompleted": "Sync completed: {{imported}} imported, {{files}} files scanned, {{errors}} errors",
+      "syncFailed": "Session usage sync failed: {{error}}"
+    },
     "rebuildCodex": {
       "title": "Codex Usage Maintenance",
       "description": "Rebuild Codex session usage from local rollout logs",

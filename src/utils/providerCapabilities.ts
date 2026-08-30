@@ -3,7 +3,10 @@ import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
   extractCodexWireApi,
+  hasExplicitNonOpenAiCodexModelProvider,
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
@@ -14,27 +17,87 @@ export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 export type CodexOfficialIdentity =
   | "native_login"
   | "managed_account"
-  | "unbound";
+  | "api_key";
+
+const nonEmptyString = (value: unknown): boolean =>
+  typeof value === "string" && value.trim().length > 0;
+
+function hasExplicitCodexThirdPartyUpstream(
+  settings: Record<string, unknown>,
+): boolean {
+  const config = typeof settings.config === "string" ? settings.config : "";
+
+  return (
+    nonEmptyString(settings.baseUrl) ||
+    nonEmptyString(settings.baseURL) ||
+    nonEmptyString(settings.base_url) ||
+    Boolean(extractCodexExperimentalBearerToken(config)) ||
+    Boolean(extractCodexBaseUrl(config)) ||
+    hasExplicitNonOpenAiCodexModelProvider(config)
+  );
+}
+
+function hasStoredCodexApiKey(settings: Record<string, unknown>): boolean {
+  const auth = settings.auth as Record<string, unknown> | undefined;
+  return nonEmptyString(auth?.OPENAI_API_KEY);
+}
 
 export function resolveCodexOfficialIdentity(
   appId: AppId,
-  provider: Pick<Provider, "id" | "category" | "meta">,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): CodexOfficialIdentity | null {
-  if (appId !== "codex" || provider.category !== "official") return null;
-  if (provider.id === CODEX_OFFICIAL_PROVIDER_ID) return "native_login";
-  if (resolveManagedAccountId(provider.meta, "codex_oauth")?.trim()) {
+  if (appId !== "codex") return null;
+
+  const managedAccountId = resolveManagedAccountId(
+    provider.meta,
+    "codex_oauth",
+  )?.trim();
+  const hasFixedOfficialId = provider.id === CODEX_OFFICIAL_PROVIDER_ID;
+  if (hasFixedOfficialId && provider.category === "official") {
+    return managedAccountId ? "managed_account" : "native_login";
+  }
+
+  const settings = provider.settingsConfig as Record<string, unknown>;
+  const auth = settings?.auth;
+  const config = settings?.config;
+  if (
+    !auth ||
+    typeof auth !== "object" ||
+    Array.isArray(auth) ||
+    (config != null && typeof config !== "string")
+  ) {
+    return null;
+  }
+
+  if (hasExplicitCodexThirdPartyUpstream(settings)) {
+    return null;
+  }
+
+  if (managedAccountId) {
     return "managed_account";
   }
-  return "unbound";
+  if (hasStoredCodexApiKey(settings)) {
+    return provider.category === "official" ? "api_key" : null;
+  }
+  return hasFixedOfficialId || provider.category === "official"
+    ? "native_login"
+    : null;
 }
 
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
   appId: AppId,
-  provider: Pick<Provider, "id" | "category" | "meta">,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
   const identity = resolveCodexOfficialIdentity(appId, provider);
-  return identity === "native_login" || identity === "managed_account";
+  if (!identity || identity === "api_key") return false;
+  if (
+    provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
+    identity === "managed_account"
+  ) {
+    return true;
+  }
+  return true;
 }
 
 /**
@@ -54,7 +117,11 @@ export function providerNeedsRouting(
   appId: AppId,
   provider: Provider,
 ): boolean {
-  if (provider.category === "official") return false;
+  if (
+    provider.category === "official" ||
+    resolveCodexOfficialIdentity(appId, provider)
+  )
+    return false;
 
   const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
 

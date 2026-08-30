@@ -739,14 +739,14 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "TeamoRouter",
       options: {
-        baseURL: "https://api.teamorouter.com/v1",
+        baseURL: "https://api.teamorouter.cn/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -758,6 +758,37 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "teamorouter",
     icon: "teamorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "PPIO",
+      options: {
+        baseURL: "https://api.ppio.com/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek/deepseek-v4-flash-0731": {
+          name: "Deepseek V4 Flash 0731",
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -2191,35 +2222,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "opencode",
     iconColor: "#6366F1",
     isCustomTemplate: true,
-  },
-  {
-    name: "PPIO",
-    websiteUrl: "https://ppio.com",
-    apiKeyUrl: "https://ppio.com/settings/key-management",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "PPIO",
-      options: {
-        baseURL: "https://api.ppio.com/openai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "deepseek/deepseek-v4-flash-0731": {
-          name: "Deepseek V4 Flash 0731",
-        },
-      },
-    },
-    category: "aggregator",
-    icon: "ppio",
-    iconColor: "#2874FF",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
   },
   {
     name: "JieKou AI",

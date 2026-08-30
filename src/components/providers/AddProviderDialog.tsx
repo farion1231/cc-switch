@@ -35,7 +35,6 @@ interface AddProviderDialogProps {
       providerKey?: string;
       suggestedDefaults?: OpenClawSuggestedDefaults;
       ensureClaudeDesktopOfficialSeed?: boolean;
-      ensureCodexOfficialSeed?: boolean;
       ensureGrokBuildOfficialSeed?: boolean;
     },
   ) => Promise<void> | void;
@@ -165,7 +164,6 @@ export function AddProviderDialog({
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
         ensureClaudeDesktopOfficialSeed?: boolean;
-        ensureCodexOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
       } = {
         name: values.name.trim(),
@@ -183,14 +181,6 @@ export function AddProviderDialog({
         );
         const preset = claudeDesktopProviderPresets[presetIndex];
         providerData.ensureClaudeDesktopOfficialSeed =
-          values.presetCategory === "official" &&
-          preset?.category === "official";
-      }
-
-      if (appId === "codex" && values.presetId) {
-        const presetIndex = parseInt(values.presetId.replace("codex-", ""));
-        const preset = codexProviderPresets[presetIndex];
-        providerData.ensureCodexOfficialSeed =
           values.presetCategory === "official" &&
           preset?.category === "official";
       }

@@ -871,13 +871,14 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("query DeepSeek price");
+    // 从远古价 1.68/3.36/0.14 出发要连跳两级才能到位：
+    //   1.68/3.36/0.14 →(2026-07 条目)→ 0.435/0.87/0.003625
+    //                  →(2026-08-16 峰谷调价条目)→ 1.32/3.96/0.044
+    // 这同时锁住了 repair 条目的顺序：新条目必须排在旧条目之后，
+    // 否则老库会停在中间价位，本断言即会失败。
     assert_eq!(
         deepseek,
-        (
-            "0.435".to_string(),
-            "0.87".to_string(),
-            "0.003625".to_string()
-        )
+        ("1.32".to_string(), "3.96".to_string(), "0.044".to_string())
     );
 
     let glm: (String, String, String) = conn

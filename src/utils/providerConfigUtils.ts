@@ -457,16 +457,14 @@ const TOML_PROVIDER_NAME_PATTERN =
   /^\s*name\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_PROVIDER_NAME_REPLACE_PATTERN =
   /^(\s*name\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
-const TOML_GOALS_FEATURE_PATTERN = /^\s*goals\s*=\s*(true|false)\s*(?:#.*)?$/;
-const TOML_GOALS_FEATURE_REPLACE_PATTERN =
-  /^(\s*goals\s*=\s*)(true|false)(\s*(?:#.*)?)$/;
+// Keep in sync with the backend list in src-tauri/src/codex_config.rs
+// (CODEX_RESERVED_MODEL_PROVIDER_IDS).
 const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
   "amazon-bedrock",
+  "amazon-bedrock-runtime",
   "openai",
   "ollama",
   "lmstudio",
-  "oss",
-  "ollama-chat",
 ]);
 
 interface TomlSectionRange {
@@ -566,6 +564,39 @@ const getCodexModelProviderName = (configText: string): string | undefined => {
   return providerName || undefined;
 };
 
+const isCodexUnifiedSessionProjection = (configText: string): boolean => {
+  try {
+    const parsed = parseToml(normalizeTomlText(configText)) as Record<
+      string,
+      any
+    >;
+    const custom = parsed.model_providers?.custom;
+    return (
+      parsed.model_provider === "custom" &&
+      isPlainObject(custom) &&
+      Object.keys(custom).length === 4 &&
+      custom.name === "OpenAI" &&
+      custom.requires_openai_auth === true &&
+      custom.supports_websockets === true &&
+      custom.wire_api === "responses"
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const hasExplicitNonOpenAiCodexModelProvider = (
+  configText: string | undefined | null,
+): boolean => {
+  if (typeof configText !== "string") return false;
+  if (isCodexUnifiedSessionProjection(configText)) return false;
+  const providerName = getCodexModelProviderName(configText);
+  // Exact match, mirroring the backend: Codex's built-in lookup is
+  // case-sensitive, so `OpenAI` routes to a custom table — a third-party
+  // upstream, not the official provider.
+  return Boolean(providerName && providerName.trim() !== "openai");
+};
+
 const getCodexProviderSectionName = (
   configText: string,
 ): string | undefined => {
@@ -574,7 +605,10 @@ const getCodexProviderSectionName = (
 };
 
 const isCustomCodexModelProviderId = (providerName: string): boolean => {
-  const id = providerName.trim().toLowerCase();
+  // Exact match, mirroring upstream Codex and the backend predicate: the
+  // built-in provider lookup is case-sensitive, so "OpenAI" etc. are
+  // legitimate custom ids whose tables carry the bearer token.
+  const id = providerName.trim();
   return Boolean(id) && !CODEX_RESERVED_MODEL_PROVIDER_IDS.has(id);
 };
 
@@ -713,14 +747,6 @@ const getTopLevelModelProviderLineIndex = (lines: string[]): number => {
 
   return -1;
 };
-
-const hasTomlSectionBodyContent = (
-  lines: string[],
-  sectionRange: TomlSectionRange,
-): boolean =>
-  lines
-    .slice(sectionRange.bodyStartIndex, sectionRange.bodyEndIndex)
-    .some((line) => line.trim() !== "");
 
 const TOML_BASIC_STRING_ESCAPES: Record<string, string> = {
   '"': '\\"',
@@ -926,103 +952,6 @@ export const setCodexWireApi = (
   }
 
   lines.splice(topLevelEndIndex, 0, replacementLine);
-  return finalizeTomlText(lines);
-};
-
-export const isCodexGoalModeEnabled = (
-  configText: string | undefined | null,
-): boolean => {
-  try {
-    const raw = typeof configText === "string" ? configText : "";
-    const text = normalizeTomlText(raw);
-    if (!text) return false;
-
-    try {
-      const parsed = parseToml(text) as Record<string, any>;
-      return parsed.features?.goals === true;
-    } catch {
-      // Fall back to line scanning while the user is editing invalid TOML.
-    }
-
-    const lines = text.split("\n");
-    const featureRange = getTomlSectionRange(lines, "features");
-    if (!featureRange) return false;
-
-    const index = findTomlLineInRange(
-      lines,
-      TOML_GOALS_FEATURE_PATTERN,
-      featureRange.bodyStartIndex,
-      featureRange.bodyEndIndex,
-    );
-    if (index === -1) return false;
-
-    return lines[index].match(TOML_GOALS_FEATURE_PATTERN)?.[1] === "true";
-  } catch {
-    return false;
-  }
-};
-
-export const setCodexGoalMode = (
-  configText: string,
-  enabled: boolean,
-): string => {
-  const normalizedText = normalizeTomlText(configText);
-  const lines = normalizedText ? normalizedText.split("\n") : [];
-  let featureRange = getTomlSectionRange(lines, "features");
-
-  if (featureRange) {
-    const goalLineIndex = findTomlLineInRange(
-      lines,
-      TOML_GOALS_FEATURE_REPLACE_PATTERN,
-      featureRange.bodyStartIndex,
-      featureRange.bodyEndIndex,
-    );
-
-    if (enabled) {
-      if (goalLineIndex !== -1) {
-        lines[goalLineIndex] = lines[goalLineIndex].replace(
-          TOML_GOALS_FEATURE_REPLACE_PATTERN,
-          "$1true$3",
-        );
-      } else {
-        lines.splice(
-          getTomlSectionInsertIndex(lines, featureRange),
-          0,
-          "goals = true",
-        );
-      }
-      return finalizeTomlText(lines);
-    }
-
-    if (goalLineIndex !== -1) {
-      lines.splice(goalLineIndex, 1);
-      featureRange = getTomlSectionRange(lines, "features");
-      if (featureRange && !hasTomlSectionBodyContent(lines, featureRange)) {
-        lines.splice(
-          featureRange.headerLineIndex,
-          featureRange.bodyEndIndex - featureRange.headerLineIndex,
-        );
-      }
-    }
-    return finalizeTomlText(lines);
-  }
-
-  if (!enabled) return normalizedText;
-
-  const topLevelEndIndex = getTopLevelEndIndex(lines);
-  const sectionLines: string[] = [];
-  if (topLevelEndIndex > 0 && lines[topLevelEndIndex - 1].trim() !== "") {
-    sectionLines.push("");
-  }
-  sectionLines.push("[features]", "goals = true");
-  if (
-    topLevelEndIndex < lines.length &&
-    lines[topLevelEndIndex]?.trim() !== ""
-  ) {
-    sectionLines.push("");
-  }
-
-  lines.splice(topLevelEndIndex, 0, ...sectionLines);
   return finalizeTomlText(lines);
 };
 
