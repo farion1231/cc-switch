@@ -1271,6 +1271,193 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key，模型合并两系列；Auto 智能路由调用 ID 是
+    // tc-code-latest。官方未发 Hermes 专属接入页，按工具无关的 /plan/v3
+    // OpenAI Chat 端点收录（与市场线 1300/80643 的 chat_completions 模式
+    // 一致）。kimi-k2.5 官方 2026-08-31 下线不收；minimax-m2.5 真 Key
+    // 实测可用（2026-08-31）照实收
+    name: "Tencent Token Plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    settingsConfig: {
+      name: "tencent_token_plan",
+      base_url: "https://api.lkeap.cloud.tencent.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "tc-code-latest", name: "Auto" },
+        { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro" },
+        { id: "minimax-m2.7", name: "MiniMax M2.7" },
+        { id: "minimax-m2.5", name: "MiniMax M2.5" },
+        { id: "glm-5", name: "GLM-5" },
+        { id: "glm-5.1", name: "GLM-5.1" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "hy3", name: "Hy3" },
+        { id: "hy3-preview", name: "Hy3 Preview" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: { default: "tc-code-latest", provider: "tencent_token_plan" },
+    },
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：Auto
+    // 调用 ID 是 auto（≠国内 tc-code-latest），阵容不同（无 GLM-5/5.1/
+    // Hy3）。端点用国际站文档钦定的 tencentcloudmaas.com 域；Key 按站独立
+    name: "Tencent Token Plan (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      name: "tencent_token_plan_intl",
+      base_url: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "auto", name: "Auto" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "kimi-k2.6", name: "Kimi K2.6" },
+        { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash" },
+        { id: "minimax-m3", name: "MiniMax M3" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: { default: "auto", provider: "tencent_token_plan_intl" },
+    },
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版，广州地域）：
+    // kimi-k2.5 官方 2026-08-31 下线不收；minimax-m2.5 文档已除名但真 Key
+    // 实测可用（2026-08-31），照实收录
+    name: "Tencent Token Plan Enterprise Pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "tencent_token_plan_enterprise_pro",
+      base_url: "https://tokenhub.tencentmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "auto", name: "Auto" },
+        { id: "glm-5.3", name: "GLM-5.3" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "glm-5", name: "GLM-5" },
+        { id: "glm-5.1", name: "GLM-5.1" },
+        { id: "glm-5-turbo", name: "GLM-5 Turbo" },
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
+        { id: "kimi-k2.6", name: "Kimi K2.6" },
+        { id: "minimax-m2.7", name: "MiniMax M2.7" },
+        { id: "minimax-m3", name: "MiniMax M3" },
+        { id: "minimax-m2.5", name: "MiniMax M2.5" },
+        { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731 GA" },
+        { id: "deepseek-v4-pro-0813", name: "DeepSeek V4 Pro 0813 GA" },
+        { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash Official" },
+        { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro Official" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: {
+        default: "auto",
+        provider: "tencent_token_plan_enterprise_pro",
+      },
+    },
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
+    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "tencent_token_plan_enterprise_pro_intl",
+      base_url: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "auto", name: "Auto" },
+        { id: "glm-5.3", name: "GLM-5.3" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "minimax-m3", name: "MiniMax M3" },
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
+        { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731 GA" },
+        { id: "deepseek-v4-pro-0813", name: "DeepSeek V4 Pro 0813 GA" },
+        { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash Official" },
+        { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro Official" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: {
+        default: "auto",
+        provider: "tencent_token_plan_enterprise_pro_intl",
+      },
+    },
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "tencent_token_plan_enterprise_lite",
+      base_url: "https://tokenhub.tencentmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "auto", name: "Auto" }],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: {
+        default: "auto",
+        provider: "tencent_token_plan_enterprise_lite",
+      },
+    },
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
+    // Global），仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "tencent_token_plan_enterprise_lite_intl",
+      base_url: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "auto", name: "Auto" }],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: {
+        default: "auto",
+        provider: "tencent_token_plan_enterprise_lite_intl",
+      },
+    },
+  },
+  {
     // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）：官方
     // Hermes 接入页确认 /v2/tokenplan/personal、默认 deepseek-v4-pro（其
     // api_mode 写 "openai_messages"，本仓 OpenAI Chat 端点惯例统一映射为

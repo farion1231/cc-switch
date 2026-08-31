@@ -919,6 +919,152 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#211E1E",
   },
   {
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key；Auto 智能路由的调用 ID 是 tc-code-latest。
+    // 注意与 TokenHub 按量 API 市场（1823 线，如 Hunyuan 预设的 /v1 端点）
+    // 是两条产品线，订阅 Key 只能走 /plan 端点
+    name: "Tencent Token Plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://api.lkeap.cloud.tencent.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "tc-code-latest",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "tc-code-latest",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "tc-code-latest",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "tc-code-latest",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: ["https://api.lkeap.cloud.tencent.com/plan/anthropic"],
+    // /plan/v3/models 真 Key 实测可用（2026-08-31，返回套餐内 19 个模型含
+    // 别名）；企业/国际端点无 /models（404），故仅此预设覆写
+    modelsUrl: "https://api.lkeap.cloud.tencent.com/plan/v3/models",
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：
+    // Auto 的调用 ID 是 auto（与国内个人版 tc-code-latest 不同），模型阵容
+    // 也与国内不同（无 GLM-5/5.1/Hy3，多 GLM-5.2/MiniMax-M3）。端点用国际站
+    // 文档钦定的 tencentcloudmaas.com 域（DNS 实测解析新加坡节点）；国内站
+    // 文档对新加坡地域给的是 tokenhub-intl.tencentmaas.com，Key 按站独立、
+    // 不跨站通用，故互不作候选
+    name: "Tencent Token Plan (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+    ],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版）：广州地域端点
+    // 为国内站文档钦定的 tencentmaas.com；新加坡地域模型阵容不同且 Key 不
+    // 跨站，见 (Intl) 预设
+    name: "Tencent Token Plan Enterprise Pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenhub.tencentmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: ["https://tokenhub.tencentmaas.com/plan/anthropic"],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版）：新加坡地域，
+    // 模型阵容为广州地域的子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、
+    // MiniMax-M2.7）
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+    ],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenhub.tencentmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: ["https://tokenhub.tencentmaas.com/plan/anthropic"],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围为
+    // Global），仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+    ],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",

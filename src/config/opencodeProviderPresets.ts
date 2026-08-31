@@ -1455,6 +1455,258 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key，模型合并两系列；Auto 智能路由的调用 ID
+    // 是 tc-code-latest。端点 OpenAI 兼容（官方快速入门 1823/130119 未发
+    // OpenCode 专属接入页，按工具无关的 /plan/v3 + 阵容照文档收录）。
+    // kimi-k2.5 官方标注 2026-08-31 下线不收；minimax-m2.5 不在套餐文档
+    // 表内、但 /plan/v3/models 收录且真 Key 实测可用（2026-08-31），照实收
+    name: "Tencent Token Plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan",
+      options: {
+        baseURL: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        "tc-code-latest": { name: "Auto" },
+        "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro" },
+        "minimax-m2.7": { name: "MiniMax M2.7" },
+        "minimax-m2.5": { name: "MiniMax M2.5" },
+        "glm-5": { name: "GLM-5" },
+        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5.2": { name: "GLM-5.2" },
+        hy3: { name: "Hy3" },
+        "hy3-preview": { name: "Hy3 Preview" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        defaultValue: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：Auto
+    // 调用 ID 是 auto（≠国内个人版 tc-code-latest），阵容与国内不同（无
+    // GLM-5/5.1/Hy3，多 GLM-5.2/MiniMax-M3）。端点用国际站文档钦定的
+    // tencentcloudmaas.com 域；Key 按站独立不跨站通用
+    name: "Tencent Token Plan (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "kimi-k2.6": { name: "Kimi K2.6" },
+        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash" },
+        "minimax-m3": { name: "MiniMax M3" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版，广州地域）：
+    // kimi-k2.5 官方标注 2026-08-31 下线不收；minimax-m2.5 型号列表已除名
+    // 但真 Key 实测仍可用（2026-08-31），照实收录
+    name: "Tencent Token Plan Enterprise Pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Pro",
+      options: {
+        baseURL: "https://tokenhub.tencentmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.3": { name: "GLM-5.3" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "glm-5": { name: "GLM-5" },
+        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5-turbo": { name: "GLM-5 Turbo" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "kimi-k2.7-code-highspeed": { name: "Kimi K2.7 Code HighSpeed" },
+        "kimi-k2.6": { name: "Kimi K2.6" },
+        "minimax-m2.7": { name: "MiniMax M2.7" },
+        "minimax-m3": { name: "MiniMax M3" },
+        "minimax-m2.5": { name: "MiniMax M2.5" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash 0731 GA" },
+        "deepseek-v4-pro-0813": { name: "DeepSeek V4 Pro 0813 GA" },
+        "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash Official" },
+        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro Official" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/plan/v3",
+        defaultValue: "https://tokenhub.tencentmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
+    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Pro (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.3": { name: "GLM-5.3" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "minimax-m3": { name: "MiniMax M3" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "kimi-k2.7-code-highspeed": { name: "Kimi K2.7 Code HighSpeed" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash 0731 GA" },
+        "deepseek-v4-pro-0813": { name: "DeepSeek V4 Pro 0813 GA" },
+        "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash Official" },
+        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro Official" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Lite",
+      options: {
+        baseURL: "https://tokenhub.tencentmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/plan/v3",
+        defaultValue: "https://tokenhub.tencentmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
+    // Global），仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Lite (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）：官方
     // OpenCode 接入页确认 /v2/tokenplan/personal + @ai-sdk/openai-compatible；
     // 阵容=Token Plan 主文档 2026-08-14 版六模型（ernie-5.1 8/20 下线不收）
