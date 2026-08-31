@@ -699,27 +699,41 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let media_plan = item
-                .get("output")
-                .cloned()
-                .and_then(plan_chat_tool_output_media);
-            let output = if let Some(media_plan) = media_plan {
-                queue_chat_tool_output_media(pending_media, call_id, media_plan.media_parts);
-                media_plan.tool_content
-            } else {
-                // Cache-sensitive no-media fallback: keep these expressions
-                // byte-for-byte equivalent to the pre-fix conversion.
-                match item.get("output") {
-                    Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
+            if call_id.trim().is_empty() {
+                let text = match item.get("output") {
+                    Some(Value::String(s)) => s.clone(),
                     Some(v) => canonical_json_string(v),
                     None => String::new(),
+                };
+                if !text.trim().is_empty() {
+                    messages.push(json!({
+                        "role": "user",
+                        "content": text
+                    }));
                 }
-            };
-            messages.push(json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": output
-            }));
+            } else {
+                let media_plan = item
+                    .get("output")
+                    .cloned()
+                    .and_then(plan_chat_tool_output_media);
+                let output = if let Some(media_plan) = media_plan {
+                    queue_chat_tool_output_media(pending_media, call_id, media_plan.media_parts);
+                    media_plan.tool_content
+                } else {
+                    // Cache-sensitive no-media fallback: keep these expressions
+                    // byte-for-byte equivalent to the pre-fix conversion.
+                    match item.get("output") {
+                        Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
+                        Some(v) => canonical_json_string(v),
+                        None => String::new(),
+                    }
+                };
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": output
+                }));
+            }
         }
         Some("custom_tool_call_output") | Some("tool_search_output") => {
             flush_pending_tool_calls(
@@ -4864,4 +4878,37 @@ mod tests {
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
     }
+
+    #[test]
+    fn test_responses_to_chat_completions_synthetic_heartbeat_without_call_id() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "start task" }]
+                },
+                {
+                    "type": "function_call_output",
+                    "id": "fco_01a052f8",
+                    "name": "automation_update",
+                    "namespace": "codex_app",
+                    "output": "<heartbeat>\n  <instructions>check progress</instructions>\n</heartbeat>"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "start task");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(
+            messages[1]["content"],
+            "<heartbeat>\n  <instructions>check progress</instructions>\n</heartbeat>"
+        );
+    }
 }
+
