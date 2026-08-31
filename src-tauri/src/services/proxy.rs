@@ -928,6 +928,11 @@ impl ProxyService {
         self.switch_locks.lock_for_app(app_type).await
     }
 
+    /// 该应用是否正有切换 / 接管操作在进行中。见 `SwitchLockManager::is_locked_for_app`。
+    pub(crate) async fn is_switch_in_progress_for_app(&self, app_type: &str) -> bool {
+        self.switch_locks.is_locked_for_app(app_type).await
+    }
+
     /// 启动代理服务器
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
         // 1. 启动时自动设置 proxy_enabled = true
@@ -4660,11 +4665,7 @@ mod tests {
         let state = crate::store::AppState::new(db.clone());
         state
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed",
-                "managed-access",
-                Some("managed-id"),
-            )
+            .add_test_account_with_user_identity("acct-managed", "managed-access", "managed-user")
             .await
             .expect("seed managed account");
 
@@ -5174,11 +5175,7 @@ wire_api = "responses"
         let service = ProxyService::new(db.clone());
         service
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed",
-                "managed-access",
-                Some("managed-id"),
-            )
+            .add_test_account_with_user_identity("acct-managed", "managed-access", "managed-user")
             .await
             .expect("seed managed account");
 
@@ -5231,12 +5228,13 @@ wire_api = "responses"
             .set_takeover_for_app("codex", true)
             .await
             .expect("enable managed takeover");
+        let id_token = crate::codex_config::test_codex_id_token("managed-user");
         crate::config::write_json_file(
             &crate::codex_config::get_codex_auth_path(),
             &crate::codex_config::codex_managed_oauth_auth_value(
                 "acct-managed",
                 "cli-access-r1",
-                Some("cli-id-r1"),
+                Some(&id_token),
                 "cli-refresh-r1",
                 "2099-02-01T00:00:00Z",
             ),
@@ -5289,20 +5287,12 @@ wire_api = "responses"
         let service = ProxyService::new(db.clone());
         service
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed-a",
-                "managed-access-a",
-                Some("managed-id-a"),
-            )
+            .add_test_account_with_user_identity("acct-managed-a", "managed-access-a", "user-a")
             .await
             .expect("seed managed account A");
         service
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed-b",
-                "managed-access-b",
-                Some("managed-id-b"),
-            )
+            .add_test_account_with_user_identity("acct-managed-b", "managed-access-b", "user-b")
             .await
             .expect("seed managed account B");
 
@@ -5356,12 +5346,13 @@ wire_api = "responses"
             .set_takeover_for_app("codex", true)
             .await
             .expect("enable managed A takeover");
+        let id_token_a = crate::codex_config::test_codex_id_token("user-a");
         crate::config::write_json_file(
             &crate::codex_config::get_codex_auth_path(),
             &crate::codex_config::codex_managed_oauth_auth_value(
                 "acct-managed-a",
                 "cli-access-a1",
-                Some("cli-id-a1"),
+                Some(&id_token_a),
                 "cli-refresh-a1",
                 "2099-02-01T00:00:00Z",
             ),
@@ -5440,11 +5431,7 @@ wire_api = "responses"
         let service = ProxyService::new(db.clone());
         service
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed",
-                "managed-access",
-                Some("managed-id"),
-            )
+            .add_test_account_with_user_identity("acct-managed", "managed-access", "managed-user")
             .await
             .expect("seed managed account");
 
@@ -5709,11 +5696,7 @@ wire_api = "responses"
         let service = ProxyService::new(db.clone());
         service
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed",
-                "managed-access",
-                Some("managed-id"),
-            )
+            .add_test_account_with_user_identity("acct-managed", "managed-access", "managed-user")
             .await
             .expect("seed managed account");
 
@@ -6311,7 +6294,7 @@ experimental_bearer_token = "PROXY_MANAGED"
 
     #[test]
     #[serial]
-    fn codex_custom_provider_live_write_can_overwrite_auth_when_preserve_disabled() {
+    fn codex_custom_provider_live_write_removes_auth_when_preserve_disabled() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
         crate::settings::update_settings(crate::settings::AppSettings {
@@ -6377,22 +6360,22 @@ wire_api = "responses"
             .write_codex_live_for_provider(&takeover_settings, Some(&provider))
             .expect("write provider-driven Codex live config");
 
-        let live_auth: Value =
-            crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
-                .expect("read live auth");
-        assert_eq!(
-            live_auth,
-            json!({
-                "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
-            }),
-            "disabled preservation should let third-party switches overwrite auth.json"
+        // Disabled preservation historically overwrote the OAuth login with
+        // the placeholder; config-only switching removes auth.json instead —
+        // the login is equally gone, and the placeholder now travels as the
+        // provider-scoped bearer token that Codex >= 0.149 actually sends.
+        assert!(
+            !crate::codex_config::get_codex_auth_path().exists(),
+            "disabled preservation removes auth.json on a third-party takeover write"
         );
 
         let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
             .expect("read live config");
         assert!(
-            !live_config.contains("experimental_bearer_token"),
-            "provider token should stay in auth.json when preservation is disabled"
+            live_config.contains(&format!(
+                "experimental_bearer_token = \"{PROXY_TOKEN_PLACEHOLDER}\""
+            )),
+            "the placeholder must ride in config.toml as the provider token; got:\n{live_config}"
         );
 
         crate::settings::update_settings(crate::settings::AppSettings::default())
@@ -7321,11 +7304,7 @@ base_url = "https://codex.example/v1"
         let service = ProxyService::new(db.clone());
         service
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed",
-                "managed-token",
-                Some("managed-id-token"),
-            )
+            .add_test_account_with_user_identity("acct-managed", "managed-token", "managed-user")
             .await
             .expect("seed managed Codex OAuth account");
 
@@ -7401,11 +7380,7 @@ base_url = "https://codex.example/v1"
         let service = ProxyService::new(db);
         service
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed",
-                "managed-access",
-                Some("managed-id"),
-            )
+            .add_test_account_with_user_identity("acct-managed", "managed-access", "managed-user")
             .await
             .expect("seed managed account");
 
@@ -8617,11 +8592,7 @@ requires_openai_auth = true
         let service = ProxyService::new(db.clone());
         service
             .codex_oauth_manager
-            .add_test_account_with_access_token(
-                "acct-managed-b",
-                "managed-access-b",
-                Some("managed-id-b"),
-            )
+            .add_test_account_with_user_identity("acct-managed-b", "managed-access-b", "user-b")
             .await
             .expect("seed managed account B");
 

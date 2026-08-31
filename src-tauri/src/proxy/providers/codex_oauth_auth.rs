@@ -1525,6 +1525,18 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
+    pub(crate) async fn add_test_account_with_user_identity(
+        &self,
+        account_id: &str,
+        access_token: &str,
+        subject: &str,
+    ) -> Result<(), CodexOAuthError> {
+        let id_token = crate::codex_config::test_codex_id_token(subject);
+        self.add_test_account_with_access_token(account_id, access_token, Some(&id_token))
+            .await
+    }
+
+    #[cfg(test)]
     pub(crate) async fn add_test_account_with_workspace_and_access_token(
         &self,
         account_id: &str,

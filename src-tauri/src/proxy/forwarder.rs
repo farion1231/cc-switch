@@ -1621,45 +1621,28 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // Native Responses passthrough to a strict third-party gateway (xAI):
-        // flatten Codex's private `namespace`/plugin tool declarations into
-        // top-level function tools so the upstream's strict serde parser does
-        // not 422 on `unknown variant "namespace"`. The Chat/Anthropic paths
-        // above already unwrap namespaces, so this only fires on the native
-        // passthrough. The response handler restores the flat names using a map
-        // re-derived from the same request tools.
+        // Native Responses passthrough to a strict third-party gateway (xAI).
+        // One gate so rebase conflicts stay here plus the isolate file, not
+        // scattered across sanitizers. Flatten namespaces first; then apply
+        // xAI request rewrites (schema, agent_message, unknown models).
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && super::providers::provider_needs_responses_namespace_flatten(provider)
-            && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
-                &mut request_body,
-            )?
         {
-            log::debug!(
-                "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
-                provider.id
-            );
-        }
-
-        // Same native-Responses path: scrub the OpenAI-backend-private fields
-        // and tool carriers (`external_web_access`, `prompt_cache_retention`,
-        // `additional_tools`, `tool_search`, …) that xAI's strict serde parser
-        // rejects with 400/422. Deterministic field removals only, gated on the
-        // xAI OAuth path, so the prompt-cache prefix stays stable and no other
-        // provider is affected. Runs after the flatten above so lifted
-        // `namespace` tools survive the tool-type whitelist.
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && !codex_responses_to_chat
-            && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
-            && super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
+            if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
                 &mut request_body,
-            )
-        {
-            log::debug!(
-                "[Codex] Sanitized xAI-unsupported Responses fields (provider={})",
-                provider.id
+            )? {
+                log::debug!(
+                    "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+                &mut request_body,
+                &provider.id,
+                super::providers::codex_provider_upstream_model(provider).as_deref(),
+                &provider.settings_config,
             );
         }
 

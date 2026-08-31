@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   codexApiFormatFromWireApi,
   isCodexAnthropicWireApi,
+  extractCodexExperimentalBearerToken,
   extractCodexModelName,
   hasCommonConfigSnippet,
   isCodexRemoteCompactionEnabled,
@@ -78,6 +79,19 @@ model = "gpt-5"
 
     expect(setCodexRemoteCompaction(input, true, "OpenAI")).toBe(input);
     expect(isCodexRemoteCompactionEnabled(input)).toBe(false);
+  });
+
+  it("treats amazon-bedrock-runtime as reserved, matching the backend list", () => {
+    // Codex 0.149 reserves this id; the backend never writes a bearer token
+    // into its table, so the frontend must not read one out of it either.
+    const input = `model_provider = "amazon-bedrock-runtime"
+experimental_bearer_token = "top-level-key"
+
+[model_providers.amazon-bedrock-runtime]
+experimental_bearer_token = "stale-table-key"
+`;
+
+    expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
   });
 });
 

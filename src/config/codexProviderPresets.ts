@@ -61,8 +61,15 @@ export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
   modelName = "gpt-5.6-sol",
+  options?: {
+    // 托管 OAuth 预设（requiresOAuth 卡）必须传 false：这类卡无静态 key，
+    // requires_openai_auth = true 会被后端 keyless 安全闸拒绝切换
+    // （provider.codex.config.official_auth_fallback）。
+    requiresOpenAiAuth?: boolean;
+  },
 ): string {
   const tomlString = (value: string) => JSON.stringify(value);
+  const requiresOpenAiAuth = options?.requiresOpenAiAuth ?? true;
 
   return `model_provider = "custom"
 model = ${tomlString(modelName)}
@@ -73,7 +80,7 @@ disable_response_storage = true
 name = ${tomlString(providerName)}
 base_url = ${tomlString(baseUrl)}
 wire_api = "responses"
-requires_openai_auth = true`;
+requires_openai_auth = ${requiresOpenAiAuth}`;
 }
 
 function modelCatalog(
@@ -1789,11 +1796,13 @@ requires_openai_auth = true`,
         contextWindow: 500000,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
-        // xAI Reasoning guide（docs.x.ai，2026-08）模型级枚举 low/medium/high
-        // 默认 high；"Reasoning cannot be disabled" 故无 none 档（模板默认的
-        // none 对 grok-4.5 是无效选项）；xhigh 是 grok-4.6 起才有的档位。
+        // 实测（2026-08-30，native /v1/responses 逐档探测）：grok-4.5 接受
+        // low/medium/high/xhigh，拒绝 max（HTTP 400 "Invalid reasoning
+        // effort"）；"Reasoning cannot be disabled" 故无 none 档。Codex 不按
+        // catalog clamp 越界档位（Desktop UI 选出的 max 会原样发出），此列表
+        // 必须与上游实收集合一致，勿凭文档增删。
         // ⚠️ docs.x.ai/developers/grok-4-5 页面实际渲染的是 grok-4.6 内容勿引
-        reasoningLevels: ["low", "medium", "high"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
       },
     ]),
     category: "third_party",
@@ -1806,7 +1815,11 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     // 托管 OAuth：真实 token 由本地代理按请求注入，CodexAdapter 硬定向
     // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    // requires_openai_auth 必须是 false：keyless + true 会被后端安全闸
+    // 拒绝切换（后端写入层对存量卡也会强制归一为 false）。
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5", {
+      requiresOpenAiAuth: false,
+    }),
     apiFormat: "openai_responses",
     providerType: "xai_oauth",
     requiresOAuth: true,
@@ -1817,11 +1830,13 @@ requires_openai_auth = true`,
         contextWindow: 500000,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
-        // xAI Reasoning guide（docs.x.ai，2026-08）模型级枚举 low/medium/high
-        // 默认 high；"Reasoning cannot be disabled" 故无 none 档（模板默认的
-        // none 对 grok-4.5 是无效选项）；xhigh 是 grok-4.6 起才有的档位。
+        // 实测（2026-08-30，native /v1/responses 逐档探测）：grok-4.5 接受
+        // low/medium/high/xhigh，拒绝 max（HTTP 400 "Invalid reasoning
+        // effort"）；"Reasoning cannot be disabled" 故无 none 档。Codex 不按
+        // catalog clamp 越界档位（Desktop UI 选出的 max 会原样发出），此列表
+        // 必须与上游实收集合一致，勿凭文档增删。
         // ⚠️ docs.x.ai/developers/grok-4-5 页面实际渲染的是 grok-4.6 内容勿引
-        reasoningLevels: ["low", "medium", "high"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
       },
     ]),
     category: "third_party",
