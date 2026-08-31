@@ -1274,11 +1274,14 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
+    super::codex::sanitize_json_schema_refs(&mut params);
     if let Some(obj) = params.as_object_mut() {
         match obj.get("type").and_then(|v| v.as_str()) {
             Some("object") => {}
             _ => {
-                obj.insert("type".to_string(), json!("object"));
+                if !obj.contains_key("$ref") {
+                    obj.insert("type".to_string(), json!("object"));
+                }
             }
         }
     }

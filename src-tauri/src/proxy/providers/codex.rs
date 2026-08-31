@@ -433,6 +433,59 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
+/// Recursively strip invalid sibling keys (such as `type`) from `$ref` nodes in JSON Schema.
+///
+/// Under draft-07 and strict providers (e.g. Moonshot/Kimi `walle` schema validator),
+/// when an object specifies `"$ref"`, `type` must be defined in the referenced schema,
+/// not on the referencing parent schema.
+pub fn sanitize_json_schema_refs(value: &mut JsonValue) -> bool {
+    let mut changed = false;
+    match value {
+        JsonValue::Object(map) => {
+            if map.contains_key("$ref") && map.remove("type").is_some() {
+                changed = true;
+            }
+            for v in map.values_mut() {
+                if sanitize_json_schema_refs(v) {
+                    changed = true;
+                }
+            }
+        }
+        JsonValue::Array(arr) => {
+            for v in arr.iter_mut() {
+                if sanitize_json_schema_refs(v) {
+                    changed = true;
+                }
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+/// Sanitize Codex / Responses tools function parameters schemas.
+pub fn sanitize_codex_responses_tools_schema(body: &mut JsonValue) -> bool {
+    let Some(tools) = body.get_mut("tools").and_then(JsonValue::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for tool in tools.iter_mut() {
+        if let Some(parameters) = tool.get_mut("parameters") {
+            if sanitize_json_schema_refs(parameters) {
+                changed = true;
+            }
+        }
+        if let Some(function) = tool.get_mut("function") {
+            if let Some(parameters) = function.get_mut("parameters") {
+                if sanitize_json_schema_refs(parameters) {
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
@@ -2113,5 +2166,75 @@ wire_api = "responses"
 "#
         }));
         assert!(!provider_needs_responses_namespace_flatten(&other));
+    }
+
+    #[test]
+    fn test_sanitize_json_schema_refs_strips_type_sibling_from_ref_nodes() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "user": {
+                    "$ref": "#/$defs/__schema20",
+                    "type": "object",
+                    "description": "User profile"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/Item",
+                        "type": "string"
+                    }
+                }
+            },
+            "$defs": {
+                "__schema20": {
+                    "$ref": "#/$defs/BaseUser",
+                    "type": "object"
+                }
+            }
+        });
+
+        assert!(sanitize_json_schema_refs(&mut schema));
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"]["user"]["$ref"], "#/$defs/__schema20");
+        assert!(schema["properties"]["user"].get("type").is_none());
+        assert_eq!(
+            schema["properties"]["user"]["description"],
+            "User profile"
+        );
+        assert_eq!(
+            schema["properties"]["items"]["items"]["$ref"],
+            "#/$defs/Item"
+        );
+        assert!(schema["properties"]["items"]["items"].get("type").is_none());
+        assert_eq!(schema["$defs"]["__schema20"]["$ref"], "#/$defs/BaseUser");
+        assert!(schema["$defs"]["__schema20"].get("type").is_none());
+    }
+
+    #[test]
+    fn test_sanitize_codex_responses_tools_schema_sanitizes_nested_function_tools() {
+        let mut body = json!({
+            "model": "k3-256k",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "search_database",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "$ref": "#/$defs/QueryPayload",
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        assert!(sanitize_codex_responses_tools_schema(&mut body));
+        let query_prop = &body["tools"][0]["parameters"]["properties"]["query"];
+        assert_eq!(query_prop["$ref"], "#/$defs/QueryPayload");
+        assert!(query_prop.get("type").is_none());
     }
 }
