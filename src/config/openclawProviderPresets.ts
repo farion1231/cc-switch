@@ -728,11 +728,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
-      baseUrl: "https://api.teamorouter.com/v1",
+      baseUrl: "https://api.teamorouter.cn/v1",
       apiKey: "",
       api: "openai-completions",
       models: [

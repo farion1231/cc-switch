@@ -118,16 +118,16 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
     const config = initialData.settingsConfig;
     if (typeof config === "object" && config !== null) {
-      // 设置 auth.json
-      const auth = (config as any).auth || {};
-      setCodexAuthState(JSON.stringify(auth, null, 2));
-
       // 设置 config.toml
       const configStr =
         typeof (config as any).config === "string"
           ? (config as any).config
           : "";
       setCodexConfigState(configStr);
+
+      // 设置 auth.json
+      const auth = (config as any).auth || {};
+      setCodexAuthState(JSON.stringify(auth, null, 2));
 
       const modelCatalog = (config as any).modelCatalog;
       const rawCatalogModels = Array.isArray(modelCatalog?.models)

@@ -255,7 +255,10 @@ fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
                     .filter(|provider_id| !provider_id.is_empty())
                     .map(str::to_string)
             })
-            .is_some_and(|provider_id| !provider_id.eq_ignore_ascii_case("openai"))
+            // Exact match, mirroring upstream: the built-in lookup is
+            // case-sensitive, so `OpenAI` routes to a custom table — a
+            // third-party upstream, not the official provider.
+            .is_some_and(|provider_id| provider_id != "openai")
 }
 
 /// Codex Official ChatGPT cards receive authentication from the calling Codex

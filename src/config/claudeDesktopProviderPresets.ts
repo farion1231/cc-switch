@@ -403,16 +403,20 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     category: "aggregator",
-    baseUrl: "https://api.teamorouter.com",
+    baseUrl: "https://api.teamorouter.cn",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     isPartner: true,
     partnerPromotionKey: "teamorouter",
+    endpointCandidates: [
+      "https://api.teamorouter.cn",
+      "https://api.teamorouter.com",
+    ],
     icon: "teamorouter",
   },
   {

@@ -19,7 +19,7 @@ use crate::gemini_config::get_gemini_dir;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
@@ -55,8 +55,13 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         return Ok(result);
     }
 
+    let cursors = crate::services::session_usage::load_sync_cursors(db)?;
+
     for file_path in &files {
-        match sync_single_gemini_file(db, file_path) {
+        let last_modified = cursors
+            .get(file_path.to_string_lossy().as_ref())
+            .map_or(0, |c| c.last_modified);
+        match sync_single_gemini_file(db, file_path, last_modified) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -123,17 +128,20 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// 同步单个 Gemini 会话 JSON 文件，返回 (imported, skipped)
-fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+/// 同步单个 Gemini 会话 JSON 文件，返回 (imported, skipped)。
+///
+/// `last_modified` 来自调用方批量预取的游标（见 [`crate::services::session_usage::load_sync_cursors`]）。
+fn sync_single_gemini_file(
+    db: &Database,
+    file_path: &Path,
+    last_modified: i64,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
-
-    // 检查同步状态
-    let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
 
     // 文件未变化则跳过
     if file_modified <= last_modified {

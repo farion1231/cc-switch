@@ -714,6 +714,33 @@ pub(crate) fn write_live_with_common_config_for_state(
     )
 }
 
+/// Validate the target provider's Codex live projection without writing:
+/// build the effective settings exactly like the live write would, then run
+/// the write-layer plan (legacy normalization, safety gates, token
+/// injection, TOML parsing). Called before `current` is committed — a
+/// write-layer refusal after `current` moved would let the next switch
+/// backfill the old live config into the new provider's DB row.
+pub(crate) fn preflight_codex_live_write_for_state(
+    state: &AppState,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    let effective = build_effective_provider_for_live_with_codex_oauth_manager(
+        state.db.as_ref(),
+        &AppType::Codex,
+        provider,
+        &state.codex_oauth_manager,
+    )?;
+    let obj = effective
+        .settings_config
+        .as_object()
+        .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
+    let auth = obj
+        .get("auth")
+        .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
+    let config_str = obj.get("config").and_then(|v| v.as_str());
+    crate::codex_config::preflight_codex_live_write(effective.category.as_deref(), auth, config_str)
+}
+
 pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
     db: &Database,
     app_type: &AppType,
@@ -816,24 +843,6 @@ fn get_codex_managed_oauth_live_auth_value(
 ) -> Result<Value, AppError> {
     std::thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
-            if let Some((refresh_token, id_token, last_refresh_ms)) =
-                crate::codex_config::read_codex_live_auth_refresh_for_account(&account_id)
-            {
-                if let Err(err) = manager
-                    .adopt_account_refresh_token(
-                        &account_id,
-                        refresh_token,
-                        id_token,
-                        last_refresh_ms,
-                    )
-                    .await
-                {
-                    log::warn!(
-                        "读回 Codex CLI 轮换后的 refresh_token 失败（account={account_id}）: {err}"
-                    );
-                }
-            }
-
             let bundle = manager
                 .get_valid_token_bundle_for_account(&account_id)
                 .await
@@ -853,7 +862,7 @@ fn get_codex_managed_oauth_live_auth_value(
                 })?;
 
             Ok::<Value, String>(codex_managed_oauth_live_auth(
-                &account_id,
+                &bundle.chatgpt_account_id,
                 &bundle.access_token,
                 Some(id_token),
                 &bundle.refresh_token,
@@ -887,7 +896,7 @@ pub(crate) fn prepare_codex_managed_oauth_live_auth_switch_away(
 }
 
 pub(crate) fn codex_managed_oauth_live_auth(
-    account_id: &str,
+    chatgpt_account_id: &str,
     access_token: &str,
     id_token: Option<&str>,
     refresh_token: &str,
@@ -897,7 +906,7 @@ pub(crate) fn codex_managed_oauth_live_auth(
     // refresh_token、account_id，并带顶层 last_refresh。**必须**包含 refresh_token，
     // 否则 Codex CLI 在 access_token 过期后无法自刷新（“裸跑 codex” 会静默失效）。
     crate::codex_config::codex_managed_oauth_auth_value(
-        account_id,
+        chatgpt_account_id,
         access_token,
         id_token,
         refresh_token,
@@ -1276,13 +1285,12 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 config_str,
                 profile,
             )?;
-            if provider
+            if let Some(account_id) = provider
                 .meta
                 .as_ref()
                 .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
-                .is_some()
             {
-                crate::codex_config::record_codex_managed_oauth_live_auth(auth)?;
+                crate::codex_config::record_codex_managed_oauth_live_auth(auth, &account_id)?;
             }
         }
         AppType::Gemini => {
@@ -1465,6 +1473,138 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveSyncOutcome {
+    WroteLive,
+    BackupOnly,
+}
+
+/// Return whether proxy takeover currently owns this app's live file.
+///
+/// A backup row by itself is not evidence: stale rows survive crashes and failed
+/// restores. Likewise, an enabled flag left behind by an interrupted teardown
+/// must not suppress a real live write unless there is corroborating evidence.
+fn proxy_owns_live_config(
+    state: &AppState,
+    app_type: &AppType,
+    has_live_backup: bool,
+    live_taken_over: bool,
+) -> bool {
+    if live_taken_over {
+        return true;
+    }
+
+    let takeover_enabled =
+        match futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str())) {
+            Ok(config) => config.enabled,
+            Err(err) => {
+                log::warn!(
+                    "读取 {} 代理接管标志失败，按未接管处理并继续写入 live 配置；\
+                     若该应用此刻确实处于接管状态，本次写入会覆盖接管的 live: {err}",
+                    app_type.as_str()
+                );
+                false
+            }
+        };
+
+    // The enabled flag is only trusted when the proxy is actually running and
+    // the app still has a backup. This avoids treating an interrupted teardown
+    // (enabled=true, ordinary live file, no backup) as proxy ownership. The
+    // per-app lock covers the short activation window before the flag/placeholder
+    // is committed and avoids using a global proxy-running bit for another app.
+    if takeover_enabled
+        && has_live_backup
+        && futures::executor::block_on(state.proxy_service.is_running())
+    {
+        return true;
+    }
+
+    has_live_backup
+        && futures::executor::block_on(
+            state
+                .proxy_service
+                .is_switch_in_progress_for_app(app_type.as_str()),
+        )
+}
+
+/// Sync a provider to live while respecting proxy takeover ownership.
+pub(crate) fn sync_live_for_provider_respecting_takeover(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<LiveSyncOutcome, AppError> {
+    let has_live_backup =
+        match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
+            Ok(backup) => backup.is_some(),
+            Err(err) => {
+                log::warn!(
+                    "读取 {} Live 备份失败，按无备份处理并继续写入 live 配置: {err}",
+                    app_type.as_str()
+                );
+                false
+            }
+        };
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(app_type);
+
+    if !proxy_owns_live_config(state, app_type, has_live_backup, live_taken_over) {
+        // A stale backup must follow the provider too, otherwise a later restore
+        // can resurrect the old URL and undo the live write we are making now.
+        if has_live_backup {
+            if let Err(err) = futures::executor::block_on(
+                state
+                    .proxy_service
+                    .update_live_backup_from_provider(app_type.as_str(), provider),
+            ) {
+                log::warn!(
+                    "刷新 {} 残留 Live 备份失败（不影响本次 live 写入）: {err}",
+                    app_type.as_str()
+                );
+            }
+        }
+        write_live_with_common_config_for_state(state, app_type, provider)?;
+        return Ok(LiveSyncOutcome::WroteLive);
+    }
+
+    // Takeover owns live: update the restore source, and refresh proxy-safe
+    // projections while the proxy is running.
+    futures::executor::block_on(
+        state
+            .proxy_service
+            .update_live_backup_from_provider(app_type.as_str(), provider),
+    )
+    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+
+    if !futures::executor::block_on(state.proxy_service.is_running()) {
+        return Ok(LiveSyncOutcome::BackupOnly);
+    }
+
+    match app_type {
+        AppType::Claude => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_claude_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?,
+        AppType::Codex if live_taken_over => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_codex_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?,
+        AppType::GrokBuild if live_taken_over => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_grok_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Grok Build Live 配置失败: {e}")))?,
+        _ => {}
+    }
+
+    Ok(LiveSyncOutcome::BackupOnly)
+}
+
 fn sync_current_provider_for_app_respecting_takeover(
     state: &AppState,
     app_type: &AppType,
@@ -1479,32 +1619,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     };
 
-    let has_live_backup = futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-        .ok()
-        .flatten()
-        .is_some();
-    let live_taken_over = state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(app_type);
-
-    // `enabled` is set only after takeover writes complete. During that
-    // activation window, backup/live placeholders are the authoritative signal
-    // that normal provider sync must not rewrite the managed live file.
-    if has_live_backup || live_taken_over {
-        if matches!(app_type, AppType::ClaudeDesktop) {
-            write_live_with_common_config_for_state(state, app_type, provider)?;
-        } else {
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-        }
-        return Ok(());
-    }
-
-    write_live_with_common_config_for_state(state, app_type, provider)
+    sync_live_for_provider_respecting_takeover(state, app_type, provider).map(|_| ())
 }
 
 /// Sync current provider to live configuration
@@ -2713,12 +2828,14 @@ base_url = "https://a.example/v1"
     fn category_less_managed_codex_binding_with_null_config_uses_selected_account_token() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manager = Arc::new(CodexOAuthManager::new(temp.path().to_path_buf()));
+        let id_token = crate::codex_config::test_codex_id_token("managed-user");
         tauri::async_runtime::block_on(async {
             manager
-                .add_test_account_with_access_token(
-                    "acct-managed",
+                .add_test_account_with_workspace_and_access_token(
+                    "local-managed",
+                    "workspace-shared",
                     "managed-token",
-                    Some("managed-id-token"),
+                    Some(&id_token),
                 )
                 .await
                 .expect("seed managed account");
@@ -2739,7 +2856,7 @@ base_url = "https://a.example/v1"
             auth_binding: Some(AuthBinding {
                 source: AuthBindingSource::ManagedAccount,
                 auth_provider: Some("codex_oauth".to_string()),
-                account_id: Some("acct-managed".to_string()),
+                account_id: Some("local-managed".to_string()),
             }),
             ..Default::default()
         });
@@ -2762,7 +2879,7 @@ base_url = "https://a.example/v1"
             .expect("tokens object");
         assert_eq!(
             tokens.get("account_id").and_then(|v| v.as_str()),
-            Some("acct-managed")
+            Some("workspace-shared")
         );
         assert_eq!(
             tokens.get("access_token").and_then(|v| v.as_str()),
@@ -2770,7 +2887,7 @@ base_url = "https://a.example/v1"
         );
         assert_eq!(
             tokens.get("id_token").and_then(|v| v.as_str()),
-            Some("managed-id-token")
+            Some(id_token.as_str())
         );
         assert_eq!(
             tokens.get("refresh_token").and_then(|v| v.as_str()),

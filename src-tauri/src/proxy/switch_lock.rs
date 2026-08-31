@@ -39,4 +39,21 @@ impl SwitchLockManager {
         };
         lock.lock_owned().await
     }
+
+    /// 该应用当前是否正有切换 / 接管操作在进行中。
+    ///
+    /// 用途是判定"接管激活窗口"：`set_takeover_for_app` 全程持有本锁，而它在
+    /// 提交 `proxy_config.enabled`、给 live 打上占位符之前就已经写好了恢复备份。
+    /// 那段窗口里只看标志和占位符会误判成"未接管"，从而覆盖正在接管的 live。
+    ///
+    /// 关键在于这个信号是**按应用**的。全局的"代理进程在跑"标志做不到：A 应用
+    /// 开着接管时，B 应用一行残留的备份会被误算成 B 也在接管，于是 B 的保存又
+    /// 只写备份不写文件。
+    pub async fn is_locked_for_app(&self, app_type: &str) -> bool {
+        let locks = self.locks.read().await;
+        match locks.get(app_type) {
+            Some(lock) => lock.try_lock().is_err(),
+            None => false,
+        }
+    }
 }
