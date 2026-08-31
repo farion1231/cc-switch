@@ -57,13 +57,24 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Tencent Token Plan", "tc-code-latest", ["none", "high"]],
     ["Tencent Token Plan", "hy3", ["none", "high"]],
     ["Tencent Token Plan", "minimax-m2.7", ["high"]],
-    ["Tencent Token Plan Enterprise Pro", "glm-5.3", ["low", "high", "max"]],
+    [
+      "Tencent Token Plan Enterprise Pro",
+      "glm-5.3",
+      ["low", "high", "max"],
+      "high",
+    ],
     ["Tencent Token Plan Enterprise Pro", "kimi-k2.7-code", ["high"]],
     ["Tencent Token Plan Enterprise Pro", "auto", ["high"]],
     ["Tencent Token Plan Enterprise Pro", "glm-5.2", ["none", "high"]],
     // 国际站 auto 尊重关思考（与国内 auto 忽略关思考行为不同）
     ["Tencent Token Plan (Intl)", "auto", ["none", "high"]],
     ["Tencent Token Plan Enterprise Pro (Intl)", "auto", ["none", "high"]],
+    [
+      "Tencent Token Plan Enterprise Pro (Intl)",
+      "glm-5.3",
+      ["low", "high", "max"],
+      "high",
+    ],
     ["Tencent Token Plan Enterprise Lite", "auto", ["high"]],
     ["Tencent Token Plan Enterprise Lite (Intl)", "auto", ["none", "high"]],
     // LongCat 无档位可调：全站唯一 effort 证据=官方示例的 high

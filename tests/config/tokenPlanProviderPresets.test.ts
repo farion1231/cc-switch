@@ -34,10 +34,20 @@ const DOMESTIC_PERSONAL_OPENAI = "https://api.lkeap.cloud.tencent.com/plan/v3";
 const DOMESTIC_ENTERPRISE_ANTHROPIC =
   "https://tokenhub.tencentmaas.com/plan/anthropic";
 const DOMESTIC_ENTERPRISE_OPENAI = "https://tokenhub.tencentmaas.com/plan/v3";
+// 国内站企业套餐的新加坡地域端点（1823/130659、131173 双地域表；
+// 与国际站 tencentcloudmaas.com 域是不同后端，仅国内站订阅 Key 可用）
+const DOMESTIC_SINGAPORE_ANTHROPIC =
+  "https://tokenhub-intl.tencentmaas.com/plan/anthropic";
+const DOMESTIC_SINGAPORE_OPENAI =
+  "https://tokenhub-intl.tencentmaas.com/plan/v3";
 // 国际站文档（1300/81489、1300/81490）钦定的新加坡端点域
 const INTL_ANTHROPIC =
   "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic";
 const INTL_OPENAI = "https://tokenhub-intl.tencentcloudmaas.com/plan/v3";
+// 国际站企业套餐的广州地域端点（1300/81489、81490 双地域表）
+const INTL_GUANGZHOU_ANTHROPIC =
+  "https://tokenhub.tencentcloudmaas.com/plan/anthropic";
+const INTL_GUANGZHOU_OPENAI = "https://tokenhub.tencentcloudmaas.com/plan/v3";
 
 const products = [
   {
@@ -45,7 +55,9 @@ const products = [
     site: "domestic" as const,
     apiKeyUrl: DOMESTIC_TOKEN_PLAN_API_KEY_URL,
     anthropicBaseUrl: DOMESTIC_PERSONAL_ANTHROPIC,
+    anthropicCandidates: [DOMESTIC_PERSONAL_ANTHROPIC],
     openaiBaseUrl: DOMESTIC_PERSONAL_OPENAI,
+    openaiCandidates: [DOMESTIC_PERSONAL_OPENAI],
     configProviderName: "tencent_token_plan",
     model: "tc-code-latest",
     // 通用 + Hy 两系列合并（1823/130060，2026-08-21 版）+ /models 实测
@@ -68,7 +80,9 @@ const products = [
     site: "intl" as const,
     apiKeyUrl: INTL_TOKEN_PLAN_API_KEY_URL,
     anthropicBaseUrl: INTL_ANTHROPIC,
+    anthropicCandidates: [INTL_ANTHROPIC],
     openaiBaseUrl: INTL_OPENAI,
+    openaiCandidates: [INTL_OPENAI],
     configProviderName: "tencent_token_plan_intl",
     model: "auto",
     // intl 1300/81315：Auto 调用 ID 是 auto（≠国内个人版 tc-code-latest）
@@ -86,7 +100,13 @@ const products = [
     site: "domestic" as const,
     apiKeyUrl: DOMESTIC_ENTERPRISE_API_KEY_URL,
     anthropicBaseUrl: DOMESTIC_ENTERPRISE_ANTHROPIC,
+    // 企业套餐双地域：广州默认 + 新加坡候选（需开通新加坡地域）
+    anthropicCandidates: [
+      DOMESTIC_ENTERPRISE_ANTHROPIC,
+      DOMESTIC_SINGAPORE_ANTHROPIC,
+    ],
     openaiBaseUrl: DOMESTIC_ENTERPRISE_OPENAI,
+    openaiCandidates: [DOMESTIC_ENTERPRISE_OPENAI, DOMESTIC_SINGAPORE_OPENAI],
     configProviderName: "tencent_token_plan_enterprise_pro",
     model: "auto",
     // 1823/130659 广州地域（2026-08-25 版）；kimi-k2.5 官方标注
@@ -117,7 +137,10 @@ const products = [
     site: "intl" as const,
     apiKeyUrl: INTL_ENTERPRISE_API_KEY_URL,
     anthropicBaseUrl: INTL_ANTHROPIC,
+    // 企业套餐双地域：新加坡默认 + 广州候选（需开通广州地域）
+    anthropicCandidates: [INTL_ANTHROPIC, INTL_GUANGZHOU_ANTHROPIC],
     openaiBaseUrl: INTL_OPENAI,
+    openaiCandidates: [INTL_OPENAI, INTL_GUANGZHOU_OPENAI],
     configProviderName: "tencent_token_plan_enterprise_pro_intl",
     model: "auto",
     // intl 1300/81489 新加坡地域：广州地域的子集
@@ -141,7 +164,12 @@ const products = [
     site: "domestic" as const,
     apiKeyUrl: DOMESTIC_ENTERPRISE_API_KEY_URL,
     anthropicBaseUrl: DOMESTIC_ENTERPRISE_ANTHROPIC,
+    anthropicCandidates: [
+      DOMESTIC_ENTERPRISE_ANTHROPIC,
+      DOMESTIC_SINGAPORE_ANTHROPIC,
+    ],
     openaiBaseUrl: DOMESTIC_ENTERPRISE_OPENAI,
+    openaiCandidates: [DOMESTIC_ENTERPRISE_OPENAI, DOMESTIC_SINGAPORE_OPENAI],
     configProviderName: "tencent_token_plan_enterprise_lite",
     model: "auto",
     catalogModels: ["auto"],
@@ -151,7 +179,9 @@ const products = [
     site: "intl" as const,
     apiKeyUrl: INTL_ENTERPRISE_API_KEY_URL,
     anthropicBaseUrl: INTL_ANTHROPIC,
+    anthropicCandidates: [INTL_ANTHROPIC, INTL_GUANGZHOU_ANTHROPIC],
     openaiBaseUrl: INTL_OPENAI,
+    openaiCandidates: [INTL_OPENAI, INTL_GUANGZHOU_OPENAI],
     configProviderName: "tencent_token_plan_enterprise_lite_intl",
     model: "auto",
     catalogModels: ["auto"],
@@ -174,7 +204,7 @@ describe("Tencent Token Plan provider presets", () => {
           product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
         apiKeyUrl: product.apiKeyUrl,
         category: "cn_official",
-        endpointCandidates: [product.anthropicBaseUrl],
+        endpointCandidates: product.anthropicCandidates,
         icon: "tencent",
       });
       expect(env).toMatchObject({
@@ -201,7 +231,7 @@ describe("Tencent Token Plan provider presets", () => {
         baseUrl: product.anthropicBaseUrl,
         mode: "proxy",
         apiFormat: "anthropic",
-        endpointCandidates: [product.anthropicBaseUrl],
+        endpointCandidates: product.anthropicCandidates,
         icon: "tencent",
       });
       expect(preset?.modelRoutes).toEqual([
@@ -224,7 +254,7 @@ describe("Tencent Token Plan provider presets", () => {
         apiKeyUrl: product.apiKeyUrl,
         category: "cn_official",
         apiFormat: "openai_chat",
-        endpointCandidates: [product.openaiBaseUrl],
+        endpointCandidates: product.openaiCandidates,
         auth: { OPENAI_API_KEY: "" },
         icon: "tencent",
       });
@@ -309,11 +339,19 @@ describe("Tencent Token Plan provider presets", () => {
       expect(
         (preset?.settingsConfig.models ?? []).map((model) => model.id),
       ).toEqual(product.catalogModels);
-      // 订阅套餐无按量单价：cost 留空；窗口按平台模型列表页口径
-      //（78934）——Token Plan 未发订阅线 OpenClaw 接入页，无官方专属口径
+      // 五字段照官方 OpenClaw 接入页（1823/130062、1300/81503）：订阅套餐
+      // cost 全零；超出接入页的模型按平台列表补 maxTokens（注释标边界）
       for (const model of preset?.settingsConfig.models ?? []) {
-        expect(model.cost).toBeUndefined();
+        expect(model.cost).toEqual({
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        });
         expect(model.contextWindow).toBeGreaterThan(0);
+        expect(model.maxTokens).toBeGreaterThan(0);
+        expect(model.reasoning).toBeDefined();
+        expect(model.input).toEqual(["text"]);
       }
     });
   }
@@ -333,25 +371,29 @@ describe("Tencent Token Plan provider presets", () => {
   });
 
   it("keeps domestic and intl endpoints isolated from each other", () => {
-    // 官方明示不支持跨地域、跨站调用：国内预设绝不携带 intl 域名候选，
-    // 反之亦然
+    // 官方明示不支持跨站调用：两站预设绝不携带对方的 tencentcloudmaas /
+    // tencentmaas(含 lkeap) 域族。同站的跨地域候选（国内新加坡
+    // tokenhub-intl.tencentmaas.com、国际广州 tokenhub.tencentcloudmaas.com）
+    // 属同一站点，不算泄漏——所以按域名族判站点而非按 intl 前缀判
     for (const product of products) {
       const preset = codexProviderPresets.find(
         (item) => item.name === product.name,
       );
       const candidates = preset?.endpointCandidates ?? [];
-      const hasIntl = candidates.some((url) => url.includes("tokenhub-intl"));
-      const hasDomestic = candidates.some(
+      const hasIntlSite = candidates.some((url) =>
+        url.includes("tencentcloudmaas.com"),
+      );
+      const hasDomesticSite = candidates.some(
         (url) =>
-          url.includes("tokenhub.tencentmaas.com") ||
+          url.includes("tencentmaas.com") ||
           url.includes("api.lkeap.cloud.tencent.com"),
       );
       if (product.site === "intl") {
-        expect(hasIntl).toBe(true);
-        expect(hasDomestic).toBe(false);
+        expect(hasIntlSite).toBe(true);
+        expect(hasDomesticSite).toBe(false);
       } else {
-        expect(hasDomestic).toBe(true);
-        expect(hasIntl).toBe(false);
+        expect(hasDomesticSite).toBe(true);
+        expect(hasIntlSite).toBe(false);
       }
     }
   });
@@ -454,6 +496,38 @@ describe("Tencent Token Plan provider presets", () => {
     ]) {
       const preset = providerPresets.find((item) => item.name === other);
       expect(preset?.modelsUrl).toBeUndefined();
+    }
+  });
+
+  it("declares the official 196608 context window on every Auto routing row", () => {
+    // Auto 是路由别名，平台模型列表无其窗口；唯一官方口径=OpenClaw 接入页
+    //（1823/130062、1300/81503）的 196608。不声明则后端回落 config.toml
+    // 默认 128K，六个预设的默认模型全部窗口折半
+    for (const product of products) {
+      const preset = codexProviderPresets.find(
+        (item) => item.name === product.name,
+      );
+      const row = preset?.modelCatalog?.find(
+        (entry) => entry.model === product.model,
+      );
+      expect(row, `${product.name} default model row`).toBeDefined();
+      expect(row?.contextWindow).toBe(196608);
+    }
+  });
+
+  it("keeps glm-5.3 off the max-effort default", () => {
+    // glm-5.3 严格枚举 low/high/max 不含模板默认 medium → 回落最高档 max
+    //（最慢最耗额度）；显式 high 兜底（真 Key 实测无厂商默认值证据）
+    for (const name of [
+      "Tencent Token Plan Enterprise Pro",
+      "Tencent Token Plan Enterprise Pro (Intl)",
+    ]) {
+      const preset = codexProviderPresets.find((item) => item.name === name);
+      const row = preset?.modelCatalog?.find(
+        (entry) => entry.model === "glm-5.3",
+      );
+      expect(row?.reasoningLevels).toEqual(["low", "high", "max"]);
+      expect(row?.defaultReasoningLevel).toBe("high");
     }
   });
 

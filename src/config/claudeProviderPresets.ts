@@ -991,7 +991,13 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    endpointCandidates: ["https://tokenhub.tencentmaas.com/plan/anthropic"],
+    // 广州地域为默认端点；国内站企业套餐另可选新加坡地域（1823/130659、
+    // 131173 双地域表：tokenhub-intl.tencentmaas.com，需开通新加坡地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/plan/anthropic",
+      "https://tokenhub-intl.tencentmaas.com/plan/anthropic",
+    ],
     icon: "tencent",
     iconColor: "#0052D9",
   },
@@ -1014,8 +1020,12 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    // 新加坡地域为默认端点；国际站企业套餐另可选广州地域（1300/81489、
+    // 81490 双地域表：tokenhub.tencentcloudmaas.com，需开通广州地域，
+    // 不支持跨地域调用，故仅作候选端点）
     endpointCandidates: [
       "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+      "https://tokenhub.tencentcloudmaas.com/plan/anthropic",
     ],
     icon: "tencent",
     iconColor: "#0052D9",
@@ -1036,7 +1046,13 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    endpointCandidates: ["https://tokenhub.tencentmaas.com/plan/anthropic"],
+    // 广州地域为默认端点；国内站企业套餐另可选新加坡地域（1823/130659、
+    // 131173 双地域表：tokenhub-intl.tencentmaas.com，需开通新加坡地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/plan/anthropic",
+      "https://tokenhub-intl.tencentmaas.com/plan/anthropic",
+    ],
     icon: "tencent",
     iconColor: "#0052D9",
   },
@@ -1058,8 +1074,12 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    // 新加坡地域为默认端点；国际站企业套餐另可选广州地域（1300/81489、
+    // 81490 双地域表：tokenhub.tencentcloudmaas.com，需开通广州地域，
+    // 不支持跨地域调用，故仅作候选端点）
     endpointCandidates: [
       "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+      "https://tokenhub.tencentcloudmaas.com/plan/anthropic",
     ],
     icon: "tencent",
     iconColor: "#0052D9",

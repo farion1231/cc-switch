@@ -1820,11 +1820,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
     // 系列共用同一端点与 API Key；Auto 智能路由调用 ID 是 tc-code-latest。
-    // 官方未发订阅线 OpenClaw 接入页（1300/80642 是市场线 /v1 指南），按
-    // 工具无关的 /plan/v3 OpenAI 兼容端点收录。订阅套餐无按量单价，cost
-    // 留空（千帆 OpenClaw 页 98304 窗口是官方钦定口径，本端点无此口径，
-    // 按平台模型列表页填 contextWindow）。kimi-k2.5 官方 2026-08-31 下线
-    // 不收；minimax-m2.5 真 Key 实测可用（2026-08-31）照实收
+    // 模型条目照官方 OpenClaw 接入页（1823/130062，2026-08-27 版）原样：
+    // cost 全零、ctx/maxTokens 为官方 OpenClaw 口径（≠平台模型列表页，如
+    // deepseek 1000000≠1048576，勿按平台口径"修正"）。kimi-k2.5 官方
+    // 2026-08-31 下线不收（接入页仍列，随阵容口径弃用）。超出接入页的
+    // minimax-m2.7/glm-5.1/glm-5.2/hy3 按平台模型列表页（1300/78934）补
+    // maxTokens；hy3 reasoning:true 与 hy3-preview 一致（Preserved Thinking）
     name: "Tencent Token Plan",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
@@ -1833,24 +1834,101 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
-        { id: "tc-code-latest", name: "Auto", contextWindow: 200000 },
+        {
+          id: "tc-code-latest",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
         {
           id: "deepseek-v4-flash-202605",
           name: "DeepSeek V4 Flash",
-          contextWindow: 1048576,
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1000000,
+          maxTokens: 384000,
         },
         {
           id: "deepseek-v4-pro-202606",
           name: "DeepSeek V4 Pro",
-          contextWindow: 1048576,
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1000000,
+          maxTokens: 384000,
         },
-        { id: "minimax-m2.7", name: "MiniMax M2.7", contextWindow: 200000 },
-        { id: "minimax-m2.5", name: "MiniMax M2.5", contextWindow: 200000 },
-        { id: "glm-5", name: "GLM-5", contextWindow: 200000 },
-        { id: "glm-5.1", name: "GLM-5.1", contextWindow: 200000 },
-        { id: "glm-5.2", name: "GLM-5.2", contextWindow: 1048576 },
-        { id: "hy3", name: "Hy3", contextWindow: 256000 },
-        { id: "hy3-preview", name: "Hy3 Preview", contextWindow: 256000 },
+        // 接入页未列：maxTokens 按平台列表（128k）；reasoning 同族接入页口径
+        {
+          id: "minimax-m2.7",
+          name: "MiniMax M2.7",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        {
+          id: "minimax-m2.5",
+          name: "MiniMax M2.5",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        {
+          id: "glm-5",
+          name: "GLM-5",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 202752,
+          maxTokens: 16384,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）；reasoning 同族接入页口径
+        {
+          id: "glm-5.1",
+          name: "GLM-5.1",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k，与企业版接入页 131072 一致）
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        // 接入页未列：hy3 与 hy3-preview 同模型（preview 调用自动路由至
+        // hy3），reasoning/口径随接入页 hy3-preview；maxTokens 按平台列表
+        {
+          id: "hy3",
+          name: "Hy3",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 131072,
+        },
+        {
+          id: "hy3-preview",
+          name: "Hy3 Preview",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 131072,
+        },
       ],
     },
     category: "cn_official",
@@ -1879,7 +1957,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：Auto
     // 调用 ID 是 auto（≠国内 tc-code-latest），阵容不同（无 GLM-5/5.1/
-    // Hy3）。端点用国际站文档钦定的 tencentcloudmaas.com 域；Key 按站独立
+    // Hy3）。端点用国际站文档钦定的 tencentcloudmaas.com 域；Key 按站独立。
+    // 个人版无国际站专属 OpenClaw 接入页：auto/glm-5.2/minimax-m3 取自
+    // 企业版接入页（1300/81503）口径、deepseek 取自国内个人版接入页
+    //（1823/130062）口径，cost 全零；kimi-k2.6 接入页未列，maxTokens 按
+    // 平台模型列表页（1300/78934，256k）
     name: "Tencent Token Plan (Intl)",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
@@ -1888,20 +1970,61 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
-        { id: "auto", name: "Auto", contextWindow: 200000 },
-        { id: "glm-5.2", name: "GLM-5.2", contextWindow: 1048576 },
-        { id: "kimi-k2.6", name: "Kimi K2.6", contextWindow: 262144 },
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        // 接入页未列：maxTokens 按平台列表（256k）；reasoning 同族接入页口径
+        {
+          id: "kimi-k2.6",
+          name: "Kimi K2.6",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
         {
           id: "deepseek-v4-pro-202606",
           name: "DeepSeek V4 Pro",
-          contextWindow: 1048576,
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1000000,
+          maxTokens: 384000,
         },
         {
           id: "deepseek-v4-flash-202605",
           name: "DeepSeek V4 Flash",
-          contextWindow: 1048576,
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1000000,
+          maxTokens: 384000,
         },
-        { id: "minimax-m3", name: "MiniMax M3", contextWindow: 1048576 },
+        {
+          id: "minimax-m3",
+          name: "MiniMax M3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 32768,
+        },
       ],
     },
     category: "cn_official",
@@ -1929,8 +2052,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版，广州地域）：
-    // kimi-k2.5 官方 2026-08-31 下线不收；minimax-m2.5 文档已除名但真 Key
-    // 实测可用（2026-08-31），照实收录
+    // 模型条目照官方企业版 OpenClaw 接入页（1300/81503，Pro 块）原样
+    //（cost 全零、ctx/maxTokens 为官方 OpenClaw 口径）；glm-5/minimax-m2.5/
+    // deepseek 带日期对取个人版接入页（1823/130062）口径；接入页未列的
+    // glm-5.3/glm-5.1/glm-5-turbo/kimi-k2.6/minimax-m2.7/deepseek-*-0731/
+    // -0813 按平台模型列表页（1300/78934）补 maxTokens、reasoning 随同族
+    // 接入页口径（全 false）。kimi-k2.5 官方 2026-08-31 下线不收；
+    // minimax-m2.5 文档已除名但接入页仍列且真 Key 实测可用，照实收录
     name: "Tencent Token Plan Enterprise Pro",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
@@ -1939,51 +2067,174 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
-        { id: "auto", name: "Auto", contextWindow: 200000 },
-        { id: "glm-5.3", name: "GLM-5.3", contextWindow: 1048576 },
-        { id: "glm-5.2", name: "GLM-5.2", contextWindow: 1048576 },
-        { id: "glm-5", name: "GLM-5", contextWindow: 200000 },
-        { id: "glm-5.1", name: "GLM-5.1", contextWindow: 200000 },
-        { id: "glm-5-turbo", name: "GLM-5 Turbo", contextWindow: 200000 },
-        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", contextWindow: 262144 },
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "glm-5",
+          name: "GLM-5",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 202752,
+          maxTokens: 16384,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "glm-5.1",
+          name: "GLM-5.1",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "glm-5-turbo",
+          name: "GLM-5 Turbo",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
         {
           id: "kimi-k2.7-code-highspeed",
           name: "Kimi K2.7 Code HighSpeed",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 262144,
+          maxTokens: 262144,
         },
-        { id: "kimi-k2.6", name: "Kimi K2.6", contextWindow: 262144 },
-        { id: "minimax-m2.7", name: "MiniMax M2.7", contextWindow: 200000 },
-        { id: "minimax-m3", name: "MiniMax M3", contextWindow: 1048576 },
-        { id: "minimax-m2.5", name: "MiniMax M2.5", contextWindow: 200000 },
+        // 接入页未列：maxTokens 按平台列表（256k）
+        {
+          id: "kimi-k2.6",
+          name: "Kimi K2.6",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "minimax-m2.7",
+          name: "MiniMax M2.7",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        {
+          id: "minimax-m3",
+          name: "MiniMax M3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 32768,
+        },
+        {
+          id: "minimax-m2.5",
+          name: "MiniMax M2.5",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
         {
           id: "deepseek-v4-flash",
           name: "DeepSeek V4 Flash",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
         {
           id: "deepseek-v4-pro",
           name: "DeepSeek V4 Pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
+        // 接入页未列：maxTokens 按平台列表（384k，与企业版接入页同口径）
         {
           id: "deepseek-v4-flash-0731",
           name: "DeepSeek V4 Flash 0731 GA",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
+        // 接入页未列：maxTokens 按平台列表（384k，与企业版接入页同口径）
         {
           id: "deepseek-v4-pro-0813",
           name: "DeepSeek V4 Pro 0813 GA",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
         {
           id: "deepseek-v4-flash-202605",
           name: "DeepSeek V4 Flash Official",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
         {
           id: "deepseek-v4-pro-202606",
           name: "DeepSeek V4 Pro Official",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
       ],
     },
@@ -2012,7 +2263,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
-    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
+    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）。
+    // 模型条目照官方企业版 OpenClaw 接入页（1300/81503，Pro 块）原样
+    //（cost 全零）；接入页未列的 glm-5.3/deepseek-*-0731/-0813 按平台
+    // 模型列表页（1300/78934）补 maxTokens、reasoning 随同族口径
     name: "Tencent Token Plan Enterprise Pro (Intl)",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
@@ -2021,45 +2275,116 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
-        { id: "auto", name: "Auto", contextWindow: 200000 },
-        { id: "glm-5.3", name: "GLM-5.3", contextWindow: 1048576 },
-        { id: "glm-5.2", name: "GLM-5.2", contextWindow: 1048576 },
-        { id: "minimax-m3", name: "MiniMax M3", contextWindow: 1048576 },
-        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", contextWindow: 262144 },
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "minimax-m3",
+          name: "MiniMax M3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 32768,
+        },
+        {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
         {
           id: "kimi-k2.7-code-highspeed",
           name: "Kimi K2.7 Code HighSpeed",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 262144,
+          maxTokens: 262144,
         },
         {
           id: "deepseek-v4-flash",
           name: "DeepSeek V4 Flash",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
         {
           id: "deepseek-v4-pro",
           name: "DeepSeek V4 Pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
+        // 接入页未列：maxTokens 按平台列表（384k，与企业版接入页同口径）
         {
           id: "deepseek-v4-flash-0731",
           name: "DeepSeek V4 Flash 0731 GA",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
+        // 接入页未列：maxTokens 按平台列表（384k，与企业版接入页同口径）
         {
           id: "deepseek-v4-pro-0813",
           name: "DeepSeek V4 Pro 0813 GA",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
         {
           id: "deepseek-v4-flash-202605",
           name: "DeepSeek V4 Flash Official",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
         {
           id: "deepseek-v4-pro-202606",
           name: "DeepSeek V4 Pro Official",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1048576,
+          maxTokens: 393216,
         },
       ],
     },
@@ -2087,7 +2412,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型。
+    // 条目照官方企业版 OpenClaw 接入页（1300/81503，Lite 块）原样
     name: "Tencent Token Plan Enterprise Lite",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
@@ -2095,7 +2421,17 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: "https://tokenhub.tencentmaas.com/plan/v3",
       apiKey: "",
       api: "openai-completions",
-      models: [{ id: "auto", name: "Auto", contextWindow: 200000 }],
+      models: [
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+      ],
     },
     category: "cn_official",
     icon: "tencent",
@@ -2122,7 +2458,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
-    // Global），仅 Auto 模型
+    // Global），仅 Auto 模型。条目照官方企业版 OpenClaw 接入页
+    //（1300/81503，Lite 块）原样
     name: "Tencent Token Plan Enterprise Lite (Intl)",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
@@ -2130,7 +2467,17 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
       apiKey: "",
       api: "openai-completions",
-      models: [{ id: "auto", name: "Auto", contextWindow: 200000 }],
+      models: [
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+      ],
     },
     category: "cn_official",
     icon: "tencent",

@@ -1433,6 +1433,9 @@ requires_openai_auth = true`,
       {
         model: "tc-code-latest",
         displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
         reasoningLevels: ["none", "high"],
       },
       {
@@ -1534,6 +1537,9 @@ requires_openai_auth = true`,
       {
         model: "auto",
         displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
         reasoningLevels: ["none", "high"],
       },
       {
@@ -1593,7 +1599,13 @@ requires_openai_auth = true`,
       "https://tokenhub.tencentmaas.com/plan/v3",
       "auto",
     ),
-    endpointCandidates: ["https://tokenhub.tencentmaas.com/plan/v3"],
+    // 广州地域为默认端点；国内站企业套餐另可选新加坡地域（1823/130659、
+    // 131173 双地域表：tokenhub-intl.tencentmaas.com，需开通新加坡地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/plan/v3",
+      "https://tokenhub-intl.tencentmaas.com/plan/v3",
+    ],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       // 阵容与排序=企业专业版文档广州标签页（2026-08-25 版）。思考档位
@@ -1605,6 +1617,9 @@ requires_openai_auth = true`,
       {
         model: "auto",
         displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
         reasoningLevels: ["high"],
       },
       {
@@ -1612,6 +1627,10 @@ requires_openai_auth = true`,
         displayName: "GLM-5.3",
         contextWindow: 1048576,
         reasoningLevels: ["low", "high", "max"],
+        // 显式默认 high：模板默认 medium 不在严格枚举内会被丢弃，回落
+        // canonical.last()=max——最慢最耗额度，非厂商钦定默认（真 Key 实测
+        // 未发现无参默认值证据），按预算套餐取向选 high
+        defaultReasoningLevel: "high",
       },
       {
         model: "glm-5.2",
@@ -1736,7 +1755,13 @@ requires_openai_auth = true`,
       "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
       "auto",
     ),
-    endpointCandidates: ["https://tokenhub-intl.tencentcloudmaas.com/plan/v3"],
+    // 新加坡地域为默认端点；国际站企业套餐另可选广州地域（1300/81489、
+    // 81490 双地域表：tokenhub.tencentcloudmaas.com，需开通广州地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "https://tokenhub.tencentcloudmaas.com/plan/v3",
+    ],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       // 阵容与排序=国际站企业专业版文档（新加坡地域）。思考档位真 Key
@@ -1746,6 +1771,9 @@ requires_openai_auth = true`,
       {
         model: "auto",
         displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
         reasoningLevels: ["none", "high"],
       },
       {
@@ -1753,6 +1781,10 @@ requires_openai_auth = true`,
         displayName: "GLM-5.3",
         contextWindow: 1048576,
         reasoningLevels: ["low", "high", "max"],
+        // 显式默认 high：模板默认 medium 不在严格枚举内会被丢弃，回落
+        // canonical.last()=max——最慢最耗额度，非厂商钦定默认（真 Key 实测
+        // 未发现无参默认值证据），按预算套餐取向选 high
+        defaultReasoningLevel: "high",
       },
       {
         model: "glm-5.2",
@@ -1839,12 +1871,21 @@ requires_openai_auth = true`,
       "https://tokenhub.tencentmaas.com/plan/v3",
       "auto",
     ),
-    endpointCandidates: ["https://tokenhub.tencentmaas.com/plan/v3"],
+    // 广州地域为默认端点；国内站企业套餐另可选新加坡地域（1823/130659、
+    // 131173 双地域表：tokenhub-intl.tencentmaas.com，需开通新加坡地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/plan/v3",
+      "https://tokenhub-intl.tencentmaas.com/plan/v3",
+    ],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
         model: "auto",
         displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
         reasoningLevels: ["high"],
       },
     ]),
@@ -1871,12 +1912,21 @@ requires_openai_auth = true`,
       "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
       "auto",
     ),
-    endpointCandidates: ["https://tokenhub-intl.tencentcloudmaas.com/plan/v3"],
+    // 新加坡地域为默认端点；国际站企业套餐另可选广州地域（1300/81489、
+    // 81490 双地域表：tokenhub.tencentcloudmaas.com，需开通广州地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "https://tokenhub.tencentcloudmaas.com/plan/v3",
+    ],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
         model: "auto",
         displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
         reasoningLevels: ["none", "high"],
       },
     ]),
