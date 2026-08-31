@@ -910,7 +910,7 @@ fn insert_session_log_entry_on_conn(
             total_cost_usd = excluded.total_cost_usd
         WHERE COALESCE(proxy_request_logs.data_source, 'proxy') = 'session_log'
           AND (
-              (?25 = 1 AND excluded.input_tokens > proxy_request_logs.input_tokens)
+              (?25 = 1 AND excluded.input_tokens <> proxy_request_logs.input_tokens)
               OR excluded.output_tokens > proxy_request_logs.output_tokens
               OR excluded.cache_read_tokens > proxy_request_logs.cache_read_tokens
               OR excluded.cache_creation_tokens > proxy_request_logs.cache_creation_tokens
@@ -1293,13 +1293,13 @@ mod tests {
     }
 
     #[test]
-    fn test_input_only_correction_upgrades_session_snapshot() -> Result<(), AppError> {
+    fn test_terminal_input_only_correction_updates_in_both_directions() -> Result<(), AppError> {
         let db = Database::memory()?;
         let request_id = "session:input_only";
         let mut usage = ParsedAssistantUsage {
             message_id: "input_only".to_string(),
             model: "gpt-5.6-sol".to_string(),
-            input_tokens: 10,
+            input_tokens: 15,
             output_tokens: 20,
             cache_read_tokens: 30,
             cache_creation_tokens: 0,
@@ -1310,7 +1310,8 @@ mod tests {
 
         let conn = lock_conn!(db.conn);
         assert!(insert_session_log_entry_on_conn(&conn, request_id, &usage)?);
-        usage.input_tokens = 15;
+        // Terminal usage may split or otherwise correct an inflated preliminary input downward.
+        usage.input_tokens = 10;
         usage.stop_reason = Some("end_turn".to_string());
         assert!(insert_session_log_entry_on_conn(&conn, request_id, &usage)?);
 
@@ -1319,7 +1320,17 @@ mod tests {
             rusqlite::params![request_id],
             |row| row.get(0),
         )?;
-        assert_eq!(input_tokens, 15);
+        assert_eq!(input_tokens, 10);
+
+        // A later terminal correction in the other direction must also be persisted.
+        usage.input_tokens = 20;
+        assert!(insert_session_log_entry_on_conn(&conn, request_id, &usage)?);
+        let increased_input_tokens: i64 = conn.query_row(
+            "SELECT input_tokens FROM proxy_request_logs WHERE request_id = ?1",
+            rusqlite::params![request_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(increased_input_tokens, 20);
 
         Ok(())
     }
