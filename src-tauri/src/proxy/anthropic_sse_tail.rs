@@ -12,6 +12,7 @@ use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 
 const MAX_SSE_EVENT_BYTES: usize = 1024 * 1024;
+const MAX_SSE_DELIMITER_BYTES: usize = 4;
 const MAX_TRACKED_TOOL_INPUT_BYTES: usize = 4 * 1024 * 1024;
 
 pub(crate) fn repair_anthropic_sse_tail<E: std::error::Error + Send + 'static>(
@@ -78,35 +79,40 @@ struct TailTracker {
 }
 
 impl TailTracker {
-    fn push(&mut self, bytes: &[u8]) {
+    fn push(&mut self, mut bytes: &[u8]) {
         if self.invalid {
             return;
         }
-        if self
-            .buffer
-            .len()
-            .saturating_add(self.utf8_remainder.len())
-            .saturating_add(bytes.len())
-            > MAX_SSE_EVENT_BYTES
-        {
-            self.invalidate();
-            self.buffer.clear();
-            self.utf8_remainder.clear();
-            return;
-        }
-        append_utf8_safe(&mut self.buffer, &mut self.utf8_remainder, bytes);
-        while let Some(block) = take_sse_block(&mut self.buffer) {
-            self.observe_sse_block(&block);
-            if self.invalid {
-                self.buffer.clear();
-                self.utf8_remainder.clear();
+
+        let max_buffer_bytes = MAX_SSE_EVENT_BYTES + MAX_SSE_DELIMITER_BYTES;
+        while !bytes.is_empty() {
+            let buffered_bytes = self.buffer.len().saturating_add(self.utf8_remainder.len());
+            let Some(available_bytes) = max_buffer_bytes.checked_sub(buffered_bytes) else {
+                self.invalidate_and_clear_buffers();
+                return;
+            };
+            if available_bytes == 0 {
+                self.invalidate_and_clear_buffers();
                 return;
             }
-        }
-        if self.buffer.len() > MAX_SSE_EVENT_BYTES {
-            self.invalidate();
-            self.buffer.clear();
-            self.utf8_remainder.clear();
+
+            let consumed_bytes = bytes.len().min(available_bytes);
+            let (next, remaining) = bytes.split_at(consumed_bytes);
+            append_utf8_safe(&mut self.buffer, &mut self.utf8_remainder, next);
+            bytes = remaining;
+
+            while let Some(block) = take_sse_block(&mut self.buffer) {
+                self.observe_sse_block(&block);
+                if self.invalid {
+                    self.invalidate_and_clear_buffers();
+                    return;
+                }
+            }
+
+            if self.buffer.len().saturating_add(self.utf8_remainder.len()) > max_buffer_bytes {
+                self.invalidate_and_clear_buffers();
+                return;
+            }
         }
     }
 
@@ -159,14 +165,22 @@ impl TailTracker {
             self.invalidate();
             return;
         };
-        let Some(event_type) = payload.get("type").and_then(Value::as_str).or(event_name) else {
-            self.invalidate();
-            return;
-        };
         if !payload.is_object() {
             self.invalidate();
             return;
         }
+        let payload_type = payload.get("type").and_then(Value::as_str);
+        if event_name
+            .zip(payload_type)
+            .is_some_and(|(event_name, payload_type)| event_name != payload_type)
+        {
+            self.invalidate();
+            return;
+        }
+        let Some(event_type) = payload_type.or(event_name) else {
+            self.invalidate();
+            return;
+        };
         self.observe_event(event_type, &payload);
     }
 
@@ -329,6 +343,12 @@ impl TailTracker {
     fn invalidate(&mut self) {
         self.invalid = true;
     }
+
+    fn invalidate_and_clear_buffers(&mut self) {
+        self.invalidate();
+        self.buffer.clear();
+        self.utf8_remainder.clear();
+    }
 }
 
 fn encode_events(events: impl IntoIterator<Item = (&'static str, Value)>) -> Option<Vec<Bytes>> {
@@ -438,6 +458,39 @@ mod tests {
         let repaired = String::from_utf8(repaired).expect("output should remain valid UTF-8");
         assert!(repaired.starts_with(&format!("{input}\n\nevent: content_block_stop\n")));
         assert!(repaired.contains("event: message_stop\n"));
+    }
+
+    #[tokio::test]
+    async fn repairs_large_transport_chunk_when_each_sse_event_is_bounded() {
+        let ping = event(
+            "ping",
+            json!({"type": "ping", "padding": "x".repeat(MAX_SSE_EVENT_BYTES / 2)}),
+        );
+        let input = format!(
+            "{}{}{}{}{}",
+            message_start(),
+            ping,
+            ping,
+            tool_start(),
+            tool_delta("{}")
+        );
+        assert!(ping.len() < MAX_SSE_EVENT_BYTES);
+        assert!(input.len() > MAX_SSE_EVENT_BYTES);
+
+        let repaired = output(&input).await;
+
+        assert!(repaired.starts_with(&input));
+        assert!(repaired.ends_with("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"));
+    }
+
+    #[tokio::test]
+    async fn mismatched_event_and_payload_types_remain_unchanged() {
+        let input = format!(
+            "{}event: error\ndata: {{\"type\":\"ping\"}}\n\n",
+            tool_stream("{}")
+        );
+
+        assert_eq!(output(&input).await, input);
     }
 
     #[tokio::test]
