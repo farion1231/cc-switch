@@ -81,7 +81,19 @@ impl Database {
             PRIMARY KEY (id, app_type)
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 5. Skills 表（v3.10.0+ 统一结构）
+        // 5. Skill Groups 表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                color TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6. Skills 表（v3.10.0+ 统一结构）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skills (
             id TEXT PRIMARY KEY,
@@ -92,6 +104,7 @@ impl Database {
             repo_name TEXT,
             repo_branch TEXT DEFAULT 'main',
             readme_url TEXT,
+            group_id TEXT REFERENCES skill_groups(id) ON DELETE SET NULL,
             enabled_claude BOOLEAN NOT NULL DEFAULT 0,
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
@@ -107,7 +120,17 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 6. Skill Repos 表
+        // Existing v18 databases do not receive `group_id` until the migration
+        // below, so only create the index here for fresh/current schemas.
+        if Self::has_column(conn, "skills", "group_id")? {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_skills_group_id ON skills(group_id)",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        // 7. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
@@ -117,7 +140,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 7. Settings 表
+        // 8. Settings 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)",
             [],
@@ -563,6 +586,11 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（添加 Skill 分组）");
+                        Self::migrate_v19_to_v20(conn)?;
+                        Self::set_user_version(conn, 20)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1610,6 +1638,45 @@ impl Database {
                 "last_tail_fingerprint",
                 "INTEGER",
             )?;
+        }
+        Ok(())
+    }
+
+    /// v19 -> v20: add user-defined Skill groups and an optional membership.
+    fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
+        // Earlier development builds used v19 for groups before upstream used
+        // that version for MiniMax Code. Preserve those groups and add its flags.
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_mcode",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS skill_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                color TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+             );",
+        )
+        .map_err(|error| AppError::Database(format!("创建 Skill 分组表失败: {error}")))?;
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "group_id",
+                "TEXT REFERENCES skill_groups(id) ON DELETE SET NULL",
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_skills_group_id ON skills(group_id)",
+                [],
+            )
+            .map_err(|error| AppError::Database(format!("创建 Skill 分组索引失败: {error}")))?;
         }
         Ok(())
     }
@@ -3790,6 +3857,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         assert!(Database::has_column(
             &conn,
             "session_log_sync",
@@ -3808,6 +3876,84 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_both_v19_variants_preserves_groups_and_mcode() -> Result<(), AppError> {
+        for development_groups in [false, true] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute("PRAGMA foreign_keys = ON", [])?;
+            conn.execute("CREATE TABLE skills (id TEXT PRIMARY KEY)", [])?;
+            conn.execute("CREATE TABLE mcp_servers (id TEXT PRIMARY KEY)", [])?;
+            conn.execute("INSERT INTO skills VALUES ('one')", [])?;
+            if development_groups {
+                Database::migrate_v19_to_v20(&conn)?;
+                conn.execute("INSERT INTO skill_groups (id, name, color, created_at) VALUES ('work', 'Work', 'blue', 1)", [])?;
+                conn.execute("UPDATE skills SET group_id = 'work'", [])?;
+                conn.execute("ALTER TABLE skills DROP COLUMN enabled_mcode", [])?;
+                conn.execute("ALTER TABLE mcp_servers DROP COLUMN enabled_mcode", [])?;
+            } else {
+                for table in ["skills", "mcp_servers"] {
+                    Database::add_column_if_missing(
+                        &conn,
+                        table,
+                        "enabled_mcode",
+                        "BOOLEAN NOT NULL DEFAULT 0",
+                    )?;
+                }
+                conn.execute("UPDATE skills SET enabled_mcode = 1", [])?;
+            }
+            Database::set_user_version(&conn, 19)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, 20);
+            let (group, enabled): (Option<String>, bool) = conn.query_row(
+                "SELECT group_id, enabled_mcode FROM skills WHERE id = 'one'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(group.as_deref(), development_groups.then_some("work"));
+            assert_eq!(enabled, !development_groups);
+            assert!(Database::has_column(&conn, "mcp_servers", "enabled_mcode")?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v20_adds_skill_groups_and_nullable_membership() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute("PRAGMA foreign_keys = ON", [])?;
+        conn.execute(
+            "CREATE TABLE skills (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO skills (id, name) VALUES ('skill:one', 'One')",
+            [],
+        )?;
+        Database::set_user_version(&conn, 18)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "skill_groups")?);
+        assert!(Database::has_column(&conn, "skills", "group_id")?);
+        conn.execute(
+            "INSERT INTO skill_groups (id, name, color, created_at)
+             VALUES ('group:one', 'Work', 'blue', 1)",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE skills SET group_id = 'group:one' WHERE id = 'skill:one'",
+            [],
+        )?;
+        conn.execute("DELETE FROM skill_groups WHERE id = 'group:one'", [])?;
+        let group_id: Option<String> = conn.query_row(
+            "SELECT group_id FROM skills WHERE id = 'skill:one'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(group_id, None);
         Ok(())
     }
 }
