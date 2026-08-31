@@ -222,6 +222,9 @@ pub struct InstalledSkill {
     /// README URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readme_url: Option<String>,
+    /// 用户定义的分组 ID；为空时显示在“未分组”区。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
     /// 应用启用状态
     pub apps: SkillApps,
     /// 安装时间（Unix 时间戳）
@@ -232,6 +235,17 @@ pub struct InstalledSkill {
     /// 最近更新时间（Unix 时间戳，0 = 从未更新）
     #[serde(default)]
     pub updated_at: i64,
+}
+
+/// 用户定义的 Skill 分组。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillGroup {
+    pub id: String,
+    pub name: String,
+    /// 预设色板中的稳定颜色键，而不是任意 CSS 值。
+    pub color: String,
+    pub created_at: i64,
 }
 
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）

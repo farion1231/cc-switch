@@ -76,6 +76,7 @@ fn installed_skill(id: &str, directory: &str, claude_enabled: bool) -> Installed
         repo_name: None,
         repo_branch: None,
         readme_url: None,
+        group_id: None,
         apps: SkillApps {
             claude: claude_enabled,
             ..Default::default()
