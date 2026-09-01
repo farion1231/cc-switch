@@ -821,7 +821,7 @@ async fn get_single_tool_version_impl(
             }
         }
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
-        "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
+        "hermes" => fetch_hermes_latest_version(&client).await,
         "pi" => {
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
@@ -988,6 +988,82 @@ async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Op
             }
         }
         Err(_) => None,
+    }
+}
+
+/// Parse a Python project's version from its `pyproject.toml` `[project]` table.
+fn parse_python_project_version(content: &str) -> Option<String> {
+    let pyproject = content.parse::<toml::Value>().ok()?;
+    pyproject
+        .get("project")?
+        .get("version")?
+        .as_str()
+        .map(|version| version.to_string())
+}
+
+/// Fetch the version declared by a Python project tracked directly from GitHub.
+async fn fetch_github_python_project_version(
+    client: &reqwest::Client,
+    repo: &str,
+    branch: &str,
+) -> Option<String> {
+    let url = format!("https://raw.githubusercontent.com/{repo}/{branch}/pyproject.toml");
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let content = resp.text().await.ok()?;
+    parse_python_project_version(&content)
+}
+
+/// Hermes' official installer and `hermes update` track the GitHub `main` checkout,
+/// while the legacy PyPI package can lag behind. Prefer the source version that the
+/// lifecycle command actually installs, and keep PyPI as a network/source fallback.
+async fn fetch_hermes_latest_version(client: &reqwest::Client) -> Option<String> {
+    if let Some(version) =
+        fetch_github_python_project_version(client, "NousResearch/hermes-agent", "main").await
+    {
+        return Some(version);
+    }
+
+    fetch_pypi_latest_version(client, "hermes-agent").await
+}
+
+#[cfg(test)]
+mod hermes_latest_version_tests {
+    use super::parse_python_project_version;
+
+    #[test]
+    fn parses_version_from_project_table() {
+        let pyproject = r#"
+[build-system]
+requires = ["setuptools"]
+
+[project]
+name = "hermes-agent"
+version = "0.21.0"
+"#;
+
+        assert_eq!(
+            parse_python_project_version(pyproject).as_deref(),
+            Some("0.21.0")
+        );
+    }
+
+    #[test]
+    fn ignores_versions_outside_project_table() {
+        let pyproject = r#"
+[tool.example]
+version = "9.9.9"
+
+[project]
+name = "hermes-agent"
+"#;
+
+        assert_eq!(parse_python_project_version(pyproject), None);
     }
 }
 
