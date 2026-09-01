@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -654,6 +654,24 @@ function App() {
     currentViewRef.current = currentView;
   }, [currentView]);
 
+  const navigateTo = useCallback((view: View) => {
+    const proceed = () => setCurrentView(view);
+
+    if (
+      currentViewRef.current === "skills" &&
+      unifiedSkillsPanelRef.current?.confirmLeave(proceed)
+    ) {
+      return;
+    }
+    proceed();
+  }, []);
+
+  const navigateBack = useCallback(() => {
+    navigateTo(
+      currentViewRef.current === "skillsDiscovery" ? "skills" : "providers",
+    );
+  }, [navigateTo]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "," && (event.metaKey || event.ctrlKey)) {
@@ -662,7 +680,7 @@ function App() {
           return;
         }
         event.preventDefault();
-        setCurrentView("settings");
+        navigateTo("settings");
         return;
       }
 
@@ -677,14 +695,14 @@ function App() {
       if (isTextEditableTarget(event.target)) return;
 
       event.preventDefault();
-      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
+      navigateBack();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [navigateBack, navigateTo]);
 
   const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
   const openHermesWebUI = useOpenHermesWebUI(() =>
@@ -1283,13 +1301,7 @@ function App() {
                   variant="outline"
                   size="icon"
                   disabled={managementBusy}
-                  onClick={() =>
-                    setCurrentView(
-                      currentView === "skillsDiscovery"
-                        ? "skills"
-                        : "providers",
-                    )
-                  }
+                  onClick={navigateBack}
                   className={cn(
                     "mr-2 rounded-lg",
                     managementBusy && "disabled:opacity-100",

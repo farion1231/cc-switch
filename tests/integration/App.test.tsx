@@ -18,6 +18,7 @@ const toastErrorMock = vi.fn();
 const skillsPanelMocks = vi.hoisted(() => ({
   checkUpdates: vi.fn(),
   openDiscovery: vi.fn(),
+  confirmLeave: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -161,6 +162,7 @@ vi.mock("@/components/skills/UnifiedSkillsPanel", async () => {
         openInstallFromZip: vi.fn(),
         openRestoreFromBackup: vi.fn(),
         checkUpdates: skillsPanelMocks.checkUpdates,
+        confirmLeave: skillsPanelMocks.confirmLeave,
       }));
       return <div data-testid="unified-skills-panel" />;
     },
@@ -168,6 +170,10 @@ vi.mock("@/components/skills/UnifiedSkillsPanel", async () => {
   MockUnifiedSkillsPanel.displayName = "MockUnifiedSkillsPanel";
   return { default: MockUnifiedSkillsPanel };
 });
+
+vi.mock("@/components/settings/SettingsPage", () => ({
+  SettingsPage: () => <div data-testid="settings-page" />,
+}));
 
 vi.mock("@/components/UpdateBadge", () => ({
   UpdateBadge: ({ onClick }: any) => (
@@ -204,6 +210,7 @@ describe("App integration with MSW", () => {
     toastErrorMock.mockReset();
     skillsPanelMocks.checkUpdates.mockReset();
     skillsPanelMocks.openDiscovery.mockReset();
+    skillsPanelMocks.confirmLeave.mockReset();
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
   });
@@ -476,5 +483,40 @@ describe("App integration with MSW", () => {
 
     expect(skillsPanelMocks.openDiscovery).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
+  });
+
+  it("asks the Skills panel before the settings shortcut leaves the view", async () => {
+    localStorage.setItem("cc-switch-last-view", "skills");
+    skillsPanelMocks.confirmLeave.mockReturnValue(true);
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    expect(
+      await screen.findByTestId("unified-skills-panel"),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+
+    expect(skillsPanelMocks.confirmLeave).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
+  });
+
+  it("runs the settings shortcut when the Skills panel has nothing to confirm", async () => {
+    localStorage.setItem("cc-switch-last-view", "skills");
+    skillsPanelMocks.confirmLeave.mockReturnValue(false);
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    expect(
+      await screen.findByTestId("unified-skills-panel"),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+
+    expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("unified-skills-panel"),
+    ).not.toBeInTheDocument();
+    expect(skillsPanelMocks.confirmLeave).toHaveBeenCalledTimes(1);
   });
 });

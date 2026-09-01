@@ -7,6 +7,8 @@ import {
   RefreshCw,
   Loader2,
   Search,
+  Undo2,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +33,7 @@ import {
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { isTextEditableTarget } from "@/utils/domUtils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
@@ -51,6 +54,12 @@ import {
 
 const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
 
+interface SkillAppToggleStep {
+  ids: string[];
+  app: AppId;
+  enabled: boolean;
+}
+
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
   currentApp: AppId;
@@ -70,6 +79,7 @@ export interface UnifiedSkillsPanelHandle {
   openInstallFromZip: () => void;
   openRestoreFromBackup: () => void;
   checkUpdates: () => void;
+  confirmLeave: (proceed: () => void) => boolean;
 }
 
 function formatSkillBackupDate(unixSeconds: number): string {
@@ -102,6 +112,10 @@ const UnifiedSkillsPanel = React.forwardRef<
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [undoSteps, setUndoSteps] = useState<SkillAppToggleStep[]>([]);
+  const [leaveConfirm, setLeaveConfirm] = useState<{
+    proceed: () => void;
+  } | null>(null);
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = React.useRef(false);
   const checkUpdatesLockRef = React.useRef(false);
@@ -143,7 +157,10 @@ const UnifiedSkillsPanel = React.forwardRef<
     updateSkillMutation.isPending ||
     isUpdatingAll;
   const dialogOpen =
-    importDialogOpen || restoreDialogOpen || confirmDialog !== null;
+    importDialogOpen ||
+    restoreDialogOpen ||
+    confirmDialog !== null ||
+    leaveConfirm !== null;
   const navigationBlocked = writePending || mutationPending || dialogOpen;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
 
@@ -164,6 +181,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   );
 
   const hasSkills = (skills?.length ?? 0) > 0;
+  const canUndo = undoSteps.length > 0;
 
   React.useEffect(() => {
     onCheckUpdatesStateChange?.({
@@ -265,11 +283,28 @@ const UnifiedSkillsPanel = React.forwardRef<
       ? toggleAppMutation.variables?.app
       : null;
 
+  const recordUndoStep = (step: SkillAppToggleStep) => {
+    if (step.ids.length === 0) return;
+    setUndoSteps((steps) => [...steps, step]);
+  };
+
+  const forgetUndoTarget = (id: string) => {
+    setUndoSteps((steps) =>
+      steps
+        .map((step) => ({
+          ...step,
+          ids: step.ids.filter((stepId) => stepId !== id),
+        }))
+        .filter((step) => step.ids.length > 0),
+    );
+  };
+
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     if (!beginWrite()) return;
 
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
+      recordUndoStep({ ids: [id], app, enabled: !enabled });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     } finally {
@@ -294,6 +329,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         app,
         enabled,
       });
+      recordUndoStep({ ids: result.succeeded, app, enabled: !enabled });
       if (result.failed.length > 0) {
         toast.error(
           t("common.bulkToggleFailed", { count: result.failed.length }),
@@ -307,6 +343,95 @@ const UnifiedSkillsPanel = React.forwardRef<
     } finally {
       endWrite();
     }
+  };
+
+  const handleUndoLast = async () => {
+    const step = undoSteps[undoSteps.length - 1];
+    if (!step || !beginWrite()) return;
+
+    try {
+      const result = await bulkToggleAppMutation.mutateAsync(step);
+      const failedIds = result.failed.map((failure) => failure.item);
+      setUndoSteps((steps) =>
+        failedIds.length > 0
+          ? [...steps.slice(0, -1), { ...step, ids: failedIds }]
+          : steps.slice(0, -1),
+      );
+      if (result.failed.length > 0) {
+        toast.error(
+          t("common.bulkToggleFailed", { count: result.failed.length }),
+          { description: String(result.failed[0].error) },
+        );
+      }
+    } catch (error) {
+      toast.error(t("skills.undoFailed"), { description: String(error) });
+    } finally {
+      endWrite();
+    }
+  };
+
+  const undoLastRef = React.useRef(handleUndoLast);
+  undoLastRef.current = handleUndoLast;
+
+  React.useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "z" || event.defaultPrevented) return;
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) {
+        return;
+      }
+      if (isTextEditableTarget(event.target)) return;
+
+      event.preventDefault();
+      void undoLastRef.current();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const requestLeaveConfirm = (proceed: () => void) => {
+    if (!canUndo) return false;
+    setLeaveConfirm({ proceed });
+    return true;
+  };
+
+  const handleKeepChanges = () => {
+    const proceed = leaveConfirm?.proceed;
+    setUndoSteps([]);
+    setLeaveConfirm(null);
+    proceed?.();
+  };
+
+  const handleDiscardChanges = async () => {
+    const proceed = leaveConfirm?.proceed;
+    if (!beginWrite(true)) return;
+
+    let failure: unknown;
+    try {
+      for (const step of [...undoSteps].reverse()) {
+        try {
+          const result = await bulkToggleAppMutation.mutateAsync(step);
+          if (failure === undefined && result.failed.length > 0) {
+            failure = result.failed[0].error;
+          }
+        } catch (error) {
+          if (failure === undefined) failure = error;
+        }
+      }
+    } finally {
+      endWrite();
+    }
+
+    setLeaveConfirm(null);
+    if (failure !== undefined) {
+      toast.error(t("skills.unsavedChanges.discardFailed"), {
+        description: String(failure),
+      });
+      return;
+    }
+
+    setUndoSteps([]);
+    proceed?.();
   };
 
   const handleUninstall = (skill: InstalledSkill) => {
@@ -325,6 +450,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         if (!beginWrite(true)) return;
         try {
           const result = await uninstallMutation.mutateAsync(skill.id);
+          forgetUndoTarget(skill.id);
           setConfirmDialog(null);
           const piCleanupIncomplete =
             result.piCleanupIncomplete || Boolean(result.preservedPiPath);
@@ -606,17 +732,20 @@ const UnifiedSkillsPanel = React.forwardRef<
   React.useImperativeHandle(ref, () => ({
     openDiscovery: () => {
       if (
-        !checkUpdatesLockRef.current &&
-        !writeLockRef.current &&
-        !interactionBlocked
+        checkUpdatesLockRef.current ||
+        writeLockRef.current ||
+        interactionBlocked
       ) {
-        onOpenDiscovery();
+        return;
       }
+      if (requestLeaveConfirm(onOpenDiscovery)) return;
+      onOpenDiscovery();
     },
     openImport: handleOpenImport,
     openInstallFromZip: handleInstallFromZip,
     openRestoreFromBackup: handleOpenRestoreFromBackup,
     checkUpdates: handleCheckUpdates,
+    confirmLeave: requestLeaveConfirm,
   }));
 
   return (
@@ -632,6 +761,27 @@ const UnifiedSkillsPanel = React.forwardRef<
             pendingApp={pendingApp}
             disabled={interactionBlocked}
           />
+        </div>
+        <div
+          className="mb-4 overflow-hidden transition-all duration-300 ease-out"
+          style={{
+            maxWidth: canUndo ? "160px" : "0px",
+            opacity: canUndo ? 1 : 0,
+          }}
+          aria-hidden={!canUndo}
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 whitespace-nowrap text-xs disabled:opacity-100"
+            onClick={handleUndoLast}
+            disabled={interactionBlocked || !canUndo}
+            title={t("skills.undoHint")}
+          >
+            <Undo2 size={12} />
+            {t("skills.undo")}
+          </Button>
         </div>
         <div
           className="mb-4 overflow-hidden transition-all duration-300 ease-out"
@@ -752,11 +902,69 @@ const UnifiedSkillsPanel = React.forwardRef<
         onClose={() => setRestoreDialogOpen(false)}
         open={restoreDialogOpen}
       />
+
+      <UnsavedSkillChangesDialog
+        open={leaveConfirm !== null}
+        pending={writePending}
+        onSave={handleKeepChanges}
+        onDiscard={handleDiscardChanges}
+        onCancel={() => setLeaveConfirm(null)}
+      />
     </div>
   );
 });
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
+
+interface UnsavedSkillChangesDialogProps {
+  open: boolean;
+  pending: boolean;
+  onSave: () => void;
+  onDiscard: () => void;
+  onCancel: () => void;
+}
+
+const UnsavedSkillChangesDialog: React.FC<UnsavedSkillChangesDialogProps> = ({
+  open,
+  pending,
+  onSave,
+  onDiscard,
+  onCancel,
+}) => {
+  const { t } = useTranslation();
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !pending) onCancel();
+      }}
+    >
+      <DialogContent className="max-w-sm" zIndex="top">
+        <DialogHeader className="space-y-3 border-b-0 bg-transparent pb-0">
+          <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            {t("skills.unsavedChanges.title")}
+          </DialogTitle>
+          <DialogDescription className="whitespace-pre-line text-sm leading-relaxed">
+            {t("skills.unsavedChanges.message")}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex gap-2 border-t-0 bg-transparent pt-2 sm:justify-end">
+          <Button variant="outline" onClick={onCancel} disabled={pending}>
+            {t("common.cancel")}
+          </Button>
+          <Button variant="destructive" onClick={onDiscard} disabled={pending}>
+            {t("skills.unsavedChanges.discard")}
+          </Button>
+          <Button onClick={onSave} disabled={pending}>
+            {t("common.save")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
