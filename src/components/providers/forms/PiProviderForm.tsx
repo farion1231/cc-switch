@@ -175,6 +175,12 @@ function optionalNumberText(value: unknown): string {
     : "";
 }
 
+function optionalPositiveNumberText(value: unknown): string | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? String(value)
+    : undefined;
+}
+
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
@@ -842,7 +848,9 @@ export function PiProviderForm({
     );
   };
 
-  const changeModelId = (key: string, id: string) => {
+  const changeModelId = (key: string, id: string, fetched?: FetchedModel) => {
+    const contextWindow = optionalPositiveNumberText(fetched?.maxInputTokens);
+    const maxTokens = optionalPositiveNumberText(fetched?.maxOutputTokens);
     commitModels(
       modelsRef.current.map((model) =>
         model.key === key
@@ -854,6 +862,12 @@ export function PiProviderForm({
                 (model.name.length === 0 || model.name === model.id)
                   ? id
                   : model.name,
+              ...(contextWindow !== undefined
+                ? { contextWindow, hasContextWindow: true }
+                : {}),
+              ...(maxTokens !== undefined
+                ? { maxTokens, hasMaxTokens: true }
+                : {}),
             }
           : model,
       ),
@@ -1578,7 +1592,9 @@ export function PiProviderForm({
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
                                 models={fetchedModels}
-                                onSelect={(id) => changeModelId(model.key, id)}
+                                onSelect={(id, fetched) =>
+                                  changeModelId(model.key, id, fetched)
+                                }
                               />
                             )}
                           </div>
