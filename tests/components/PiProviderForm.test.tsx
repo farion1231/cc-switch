@@ -1003,6 +1003,78 @@ describe("PiProviderForm", () => {
     expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(null);
   });
 
+  it("fills Pi model token limits from fetched model metadata", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "zhipu/glm-5.3",
+            ownedBy: "openai",
+            maxInputTokens: 1_000_000,
+            maxOutputTokens: 128_000,
+          },
+        ]),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save fetched limits"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      {
+        target: { value: "https://models.example/v1" },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    const modelIdGroup = within(modelIdInput.parentElement as HTMLElement);
+    await waitFor(() =>
+      expect(modelIdGroup.getByRole("button")).toBeInTheDocument(),
+    );
+    await user.click(modelIdGroup.getByRole("button"));
+    await user.click(
+      await screen.findByRole("option", { name: "zhipu/glm-5.3" }),
+    );
+
+    expect(modelIdInput).toHaveValue("zhipu/glm-5.3");
+    expect(screen.getByLabelText("pi.form.modelName")).toHaveValue(
+      "zhipu/glm-5.3",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "展开或收起模型详情" }),
+    );
+    expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
+      1_000_000,
+    );
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128_000);
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    expect(JSON.parse(configEditor.value).models[0]).toMatchObject({
+      id: "zhipu/glm-5.3",
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+    });
+  });
+
   it("ignores a stale model-list response after the request config changes", async () => {
     const user = userEvent.setup();
     let slowRequestStarted = false;

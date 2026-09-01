@@ -34,6 +34,9 @@ describe("ModelDropdown", () => {
     });
 
     fireEvent.click(screen.getByRole("option", { name: "gpt-5" }));
-    expect(onSelect).toHaveBeenCalledWith("gpt-5");
+    expect(onSelect).toHaveBeenCalledWith("gpt-5", {
+      id: "gpt-5",
+      ownedBy: "openai",
+    });
   });
 });

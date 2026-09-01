@@ -5,6 +5,8 @@ import { toast } from "sonner";
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
+  maxInputTokens?: number | null;
+  maxOutputTokens?: number | null;
 }
 
 export interface ModelFetchOptions {

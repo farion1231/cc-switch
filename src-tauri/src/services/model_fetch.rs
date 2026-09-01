@@ -16,6 +16,8 @@ use std::time::Duration;
 pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
+    pub max_input_tokens: Option<u64>,
+    pub max_output_tokens: Option<u64>,
 }
 
 /// 模型列表响应的兼容格式。
@@ -32,6 +34,8 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+    max_input_tokens: Option<u64>,
+    max_output_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +116,8 @@ pub async fn fetch_models(
                     .map(|m| FetchedModel {
                         id: m.id,
                         owned_by: m.owned_by,
+                        max_input_tokens: m.max_input_tokens,
+                        max_output_tokens: m.max_output_tokens,
                     })
                     .collect()
             } else {
@@ -121,6 +127,8 @@ pub async fn fetch_models(
                     .map(|m| FetchedModel {
                         id: m.slug,
                         owned_by: None,
+                        max_input_tokens: None,
+                        max_output_tokens: None,
                     })
                     .collect()
             };
@@ -390,6 +398,30 @@ mod tests {
             &secrets,
         );
         assert_eq!(body, "invalid [REDACTED] / [REDACTED]");
+    }
+
+    #[test]
+    fn parses_optional_model_token_limits() {
+        let resp: ModelsResponse = serde_json::from_value(serde_json::json!({
+            "data": [
+                {
+                    "id": "zhipu/glm-5.3",
+                    "object": "model",
+                    "created": 1677610602,
+                    "owned_by": "openai",
+                    "max_input_tokens": 1000000,
+                    "max_output_tokens": 128000
+                }
+            ]
+        }))
+        .unwrap();
+
+        let mut data = resp.data.unwrap();
+        let entry = data.remove(0);
+        assert_eq!(entry.id, "zhipu/glm-5.3");
+        assert_eq!(entry.owned_by.as_deref(), Some("openai"));
+        assert_eq!(entry.max_input_tokens, Some(1_000_000));
+        assert_eq!(entry.max_output_tokens, Some(128_000));
     }
 
     #[test]
