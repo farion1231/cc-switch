@@ -16,6 +16,21 @@ use std::time::Duration;
 pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+}
+
+impl FetchedModel {
+    pub fn new(id: impl Into<String>, owned_by: Option<String>) -> Self {
+        Self {
+            id: id.into(),
+            owned_by,
+            max_input_tokens: None,
+            max_output_tokens: None,
+        }
+    }
 }
 
 /// OpenAI 兼容的 /v1/models 响应格式
@@ -28,6 +43,8 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+    max_input_tokens: Option<u64>,
+    max_output_tokens: Option<u64>,
 }
 
 const FETCH_TIMEOUT_SECS: u64 = 15;
@@ -105,6 +122,8 @@ pub async fn fetch_models(
                 .map(|m| FetchedModel {
                     id: m.id,
                     owned_by: m.owned_by,
+                    max_input_tokens: m.max_input_tokens,
+                    max_output_tokens: m.max_output_tokens,
                 })
                 .collect();
 
@@ -597,6 +616,17 @@ mod tests {
         assert_eq!(data[0].id, "gpt-4");
         assert_eq!(data[0].owned_by.as_deref(), Some("openai"));
         assert_eq!(data[1].id, "claude-3-sonnet");
+    }
+
+    #[test]
+    fn test_parse_response_with_litellm_token_limits() {
+        let json = r#"{"object":"list","data":[{"id":"zhipu/glm-5.3","object":"model","owned_by":"openai","max_input_tokens":1000000,"max_output_tokens":128000}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let data = resp.data.unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].id, "zhipu/glm-5.3");
+        assert_eq!(data[0].max_input_tokens, Some(1000000));
+        assert_eq!(data[0].max_output_tokens, Some(128000));
     }
 
     #[test]
