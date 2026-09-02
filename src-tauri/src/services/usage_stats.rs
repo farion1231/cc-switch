@@ -2,13 +2,13 @@
 //!
 //! 提供使用量数据的聚合查询功能
 
-use crate::database::{lock_conn, Database};
+use crate::database::{lock_conn, Database, DETAIL_RETENTION_DAYS};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{
     fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL,
 };
-use chrono::{Local, NaiveDate, TimeZone, Timelike};
+use chrono::{Datelike, Days, Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -97,6 +97,281 @@ pub struct ModelStats {
     pub total_tokens: u64,
     pub total_cost: String,
     pub avg_cost_per_request: String,
+}
+
+/// 趋势序列颗粒度档位（`get_usage_trend_series` 参数）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrendGranularity {
+    Min1,
+    Min5,
+    Min15,
+    Min30,
+    Hour,
+    Day,
+    Week,
+    Month,
+}
+
+impl TrendGranularity {
+    /// 与前端 TrendGranularityOption 一一对应的字符串值。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrendGranularity::Min1 => "1min",
+            TrendGranularity::Min5 => "5min",
+            TrendGranularity::Min15 => "15min",
+            TrendGranularity::Min30 => "30min",
+            TrendGranularity::Hour => "hour",
+            TrendGranularity::Day => "day",
+            TrendGranularity::Week => "week",
+            TrendGranularity::Month => "month",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "1min" => Some(TrendGranularity::Min1),
+            "5min" => Some(TrendGranularity::Min5),
+            "15min" => Some(TrendGranularity::Min15),
+            "30min" => Some(TrendGranularity::Min30),
+            "hour" => Some(TrendGranularity::Hour),
+            "day" => Some(TrendGranularity::Day),
+            "week" => Some(TrendGranularity::Week),
+            "month" => Some(TrendGranularity::Month),
+            _ => None,
+        }
+    }
+
+    /// 相对桶（锚定 start）的桶宽秒数；日历桶（天及以上）返回 None。
+    pub fn bucket_seconds(self) -> Option<i64> {
+        match self {
+            TrendGranularity::Min1 => Some(60),
+            TrendGranularity::Min5 => Some(5 * 60),
+            TrendGranularity::Min15 => Some(15 * 60),
+            TrendGranularity::Min30 => Some(30 * 60),
+            TrendGranularity::Hour => Some(3_600),
+            _ => None,
+        }
+    }
+
+    /// 护栏升档的下一档（更粗）；Month 已是最粗。
+    pub fn coarser(self) -> Option<Self> {
+        match self {
+            TrendGranularity::Min1 => Some(TrendGranularity::Min5),
+            TrendGranularity::Min5 => Some(TrendGranularity::Min15),
+            TrendGranularity::Min15 => Some(TrendGranularity::Min30),
+            TrendGranularity::Min30 => Some(TrendGranularity::Hour),
+            TrendGranularity::Hour => Some(TrendGranularity::Day),
+            TrendGranularity::Day => Some(TrendGranularity::Week),
+            TrendGranularity::Week => Some(TrendGranularity::Month),
+            TrendGranularity::Month => None,
+        }
+    }
+}
+
+/// 趋势序列堆叠维度（`get_usage_trend_series` 参数）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrendGroupBy {
+    TokenType,
+    Model,
+    Provider,
+}
+
+impl TrendGroupBy {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "token_type" => Some(TrendGroupBy::TokenType),
+            "model" => Some(TrendGroupBy::Model),
+            "provider" => Some(TrendGroupBy::Provider),
+            _ => None,
+        }
+    }
+}
+
+/// 趋势序列桶数护栏：超过该值后自动向粗升档。
+const TREND_MAX_BUCKETS: i64 = 1000;
+
+/// 估算颗粒度在范围上的桶数（护栏预算用，允许与真实日历桶数有 ±1 误差）。
+fn estimate_trend_bucket_count(start_ts: i64, end_ts: i64, granularity: TrendGranularity) -> i64 {
+    let duration = (end_ts - start_ts).max(0);
+    match granularity.bucket_seconds() {
+        Some(secs) => duration / secs + 1,
+        None => match granularity {
+            TrendGranularity::Day => duration / 86_400 + 1,
+            TrendGranularity::Week => duration / (86_400 * 7) + 1,
+            TrendGranularity::Month => duration / (86_400 * 30) + 1,
+            _ => unreachable!("bucket_seconds 为 None 的只有天/周/月"),
+        },
+    }
+}
+
+/// 解析趋势颗粒度：非法输入回落 auto；"auto" 按范围时长选档；随后套桶数
+/// 护栏（估算桶数 > 1000 时向粗逐级升档直到达标或已到最粗）；最后套
+/// 保留期护栏（子天桶只读明细表，范围起点早于保留期边界时升到天桶，
+/// 由日历路径合并明细与日汇总，避免已归档区间被画成零）。
+fn resolve_trend_granularity(
+    start_ts: i64,
+    end_ts: i64,
+    now_ts: i64,
+    requested: &str,
+) -> TrendGranularity {
+    let duration = (end_ts - start_ts).max(0);
+    let mut resolved = match TrendGranularity::parse(requested) {
+        Some(g) => g,
+        None => {
+            if duration <= 3 * 3_600 {
+                TrendGranularity::Min15
+            } else if duration <= 2 * 86_400 {
+                TrendGranularity::Hour
+            } else if duration <= 60 * 86_400 {
+                TrendGranularity::Day
+            } else if duration <= 730 * 86_400 {
+                TrendGranularity::Week
+            } else {
+                TrendGranularity::Month
+            }
+        }
+    };
+
+    while estimate_trend_bucket_count(start_ts, end_ts, resolved) > TREND_MAX_BUCKETS {
+        match resolved.coarser() {
+            Some(next) => resolved = next,
+            None => break,
+        }
+    }
+
+    if resolved.bucket_seconds().is_some() && start_ts < now_ts - DETAIL_RETENTION_DAYS * 86_400 {
+        resolved = TrendGranularity::Day;
+    }
+    resolved
+}
+
+/// 趋势序列单系列点（`get_usage_trend_series` 响应）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTrendSeriesPoint {
+    /// token_type → "input"/"output"/"cacheCreation"/"cacheRead"；
+    /// model → 有效计价模型名；provider → Provider 展示名。
+    pub key: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    /// 该 key 的总成本（6 位小数）；token_type 维度恒为 "0.000000"。
+    pub cost: String,
+}
+
+/// 趋势序列单桶（`get_usage_trend_series` 响应）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTrendBucket {
+    /// RFC3339 本地时间；周桶为所在周周一、月桶为当月 1 号。
+    pub bucket_start: String,
+    pub series: Vec<UsageTrendSeriesPoint>,
+}
+
+/// 趋势序列响应（`get_usage_trend_series`）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTrendSeriesResponse {
+    /// 后端解析后的实际颗粒度（"auto" 也会解析成具体档）。
+    pub granularity: String,
+    pub buckets: Vec<UsageTrendBucket>,
+}
+
+/// 趋势序列聚合中间量：一个 (桶, 系列) 格子的四项 token 与成本。
+#[derive(Debug, Default)]
+struct TrendSeriesAgg {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_creation_tokens: u64,
+    cache_read_tokens: u64,
+    cost: f64,
+}
+
+impl TrendSeriesAgg {
+    fn to_point(&self, key: &str) -> UsageTrendSeriesPoint {
+        UsageTrendSeriesPoint {
+            key: key.to_string(),
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cache_creation_tokens: self.cache_creation_tokens,
+            cache_read_tokens: self.cache_read_tokens,
+            cost: format!("{:.6}", self.cost),
+        }
+    }
+
+    /// token_type 维度：四个固定 key 各取自己的列；分类型成本不可得，恒 0。
+    fn to_token_type_points(&self) -> Vec<UsageTrendSeriesPoint> {
+        vec![
+            UsageTrendSeriesPoint {
+                key: "input".to_string(),
+                input_tokens: self.input_tokens,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                cost: "0.000000".to_string(),
+            },
+            UsageTrendSeriesPoint {
+                key: "output".to_string(),
+                input_tokens: 0,
+                output_tokens: self.output_tokens,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                cost: "0.000000".to_string(),
+            },
+            UsageTrendSeriesPoint {
+                key: "cacheCreation".to_string(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_tokens: self.cache_creation_tokens,
+                cache_read_tokens: 0,
+                cost: "0.000000".to_string(),
+            },
+            UsageTrendSeriesPoint {
+                key: "cacheRead".to_string(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: self.cache_read_tokens,
+                cost: "0.000000".to_string(),
+            },
+        ]
+    }
+}
+
+/// 维度分组键的 SQL 表达式。token_type 不在 SQL 分组（NULL），由
+/// [`TrendSeriesAgg::to_token_type_points`] 在 Rust 侧拆四个固定 key。
+fn trend_group_key_sql(group: TrendGroupBy, log_alias: &str, provider_alias: &str) -> String {
+    match group {
+        TrendGroupBy::TokenType => "NULL".to_string(),
+        TrendGroupBy::Model => effective_model_sql(log_alias),
+        TrendGroupBy::Provider => provider_name_coalesce(log_alias, provider_alias),
+    }
+}
+
+/// 把单个桶的聚合格子转成响应系列：token_type 恒四点，其余维度只输出
+/// 有数据的 key（字典序；缺的 key 由前端补零）。
+fn trend_series_bucket_points(
+    cells: Option<HashMap<String, TrendSeriesAgg>>,
+    group: TrendGroupBy,
+) -> Vec<UsageTrendSeriesPoint> {
+    let Some(cells) = cells else {
+        return Vec::new();
+    };
+    match group {
+        TrendGroupBy::TokenType => cells
+            .values()
+            .next()
+            .map(|agg| agg.to_token_type_points())
+            .unwrap_or_default(),
+        TrendGroupBy::Model | TrendGroupBy::Provider => {
+            let mut keys: Vec<String> = cells.keys().cloned().collect();
+            keys.sort();
+            keys.iter()
+                .map(|k| cells.get(k).expect("key 取自同一 map").to_point(k))
+                .collect()
+        }
+    }
 }
 
 /// 请求日志过滤器
@@ -594,6 +869,397 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
         .unwrap_or_else(Local::now);
 
     local_midnight.to_rfc3339()
+}
+
+/// 分钟/小时相对桶路径：只查明细表（rollup 仅有日粒度，无法贡献子天桶，
+/// 与现有小时趋势口径一致）。
+#[allow(clippy::too_many_arguments)]
+fn trend_series_relative_buckets(
+    conn: &Connection,
+    start_ts: i64,
+    end_ts: i64,
+    granularity: TrendGranularity,
+    group: TrendGroupBy,
+    app_type: Option<&str>,
+    provider_name: Option<&str>,
+    model: Option<&str>,
+) -> Result<Vec<UsageTrendBucket>, AppError> {
+    let bucket_seconds = granularity.bucket_seconds().expect("相对桶颗粒度必有桶宽");
+    let bucket_count = ((end_ts - start_ts + bucket_seconds - 1) / bucket_seconds).max(1);
+
+    let group_key_sql = trend_group_key_sql(group, "l", "p");
+    let detail_join = if provider_name.is_some() || group == TrendGroupBy::Provider {
+        providers_join("l", "p")
+    } else {
+        String::new()
+    };
+
+    let mut extra_conditions: Vec<String> = Vec::new();
+    let mut extra_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(at) = app_type {
+        extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+        extra_params.push(Box::new(at.to_string()));
+    }
+    push_provider_model_filters(
+        &mut extra_conditions,
+        &mut extra_params,
+        "l",
+        "p",
+        provider_name,
+        model,
+    );
+    let extra_filter = extra_conditions
+        .iter()
+        .map(|c| format!("AND {c}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let effective_filter = effective_usage_log_filter("l");
+    let fresh_input = fresh_input_sql("l");
+    let sql = format!(
+        "SELECT
+            CAST((l.created_at - ?1) / ?3 AS INTEGER) as bucket_idx,
+            {group_key_sql} as group_key,
+            COALESCE(SUM({fresh_input}), 0) as input_tokens,
+            COALESCE(SUM(l.output_tokens), 0) as output_tokens,
+            COALESCE(SUM(l.cache_creation_tokens), 0) as cache_creation_tokens,
+            COALESCE(SUM(l.cache_read_tokens), 0) as cache_read_tokens,
+            COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
+        FROM proxy_request_logs l {detail_join}
+        WHERE l.created_at >= ?1 AND l.created_at <= ?2
+          AND {effective_filter} {extra_filter}
+        GROUP BY bucket_idx, group_key
+        ORDER BY bucket_idx ASC, group_key ASC"
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![
+        Box::new(start_ts),
+        Box::new(end_ts),
+        Box::new(bucket_seconds),
+    ];
+    all_params.extend(extra_params);
+    let param_refs: Vec<&dyn rusqlite::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+
+    let mut map: HashMap<i64, HashMap<String, TrendSeriesAgg>> = HashMap::new();
+    let rows = stmt.query_map(param_refs.as_slice(), |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            TrendSeriesAgg {
+                input_tokens: row.get::<_, i64>(2)? as u64,
+                output_tokens: row.get::<_, i64>(3)? as u64,
+                cache_creation_tokens: row.get::<_, i64>(4)? as u64,
+                cache_read_tokens: row.get::<_, i64>(5)? as u64,
+                cost: row.get::<_, f64>(6)?,
+            },
+        ))
+    })?;
+    for row in rows {
+        let (mut idx, key, agg) = row?;
+        if idx < 0 {
+            continue;
+        }
+        if idx >= bucket_count {
+            idx = bucket_count - 1;
+        }
+        let series_key = key.unwrap_or_default(); // token_type 维度 group_key 为 NULL
+        let cell = map.entry(idx).or_default().entry(series_key).or_default();
+        cell.input_tokens += agg.input_tokens;
+        cell.output_tokens += agg.output_tokens;
+        cell.cache_creation_tokens += agg.cache_creation_tokens;
+        cell.cache_read_tokens += agg.cache_read_tokens;
+        cell.cost += agg.cost;
+    }
+
+    let mut buckets = Vec::with_capacity(bucket_count as usize);
+    for i in 0..bucket_count {
+        let bucket_start =
+            local_datetime_from_timestamp(start_ts + i * bucket_seconds)?.to_rfc3339();
+        let series = trend_series_bucket_points(map.remove(&i), group);
+        buckets.push(UsageTrendBucket {
+            bucket_start,
+            series,
+        });
+    }
+    Ok(buckets)
+}
+
+/// 把一个日历桶写进结果（并消费对应格子的聚合）。
+fn push_trend_bucket(
+    buckets: &mut Vec<UsageTrendBucket>,
+    cells: &mut HashMap<String, HashMap<String, TrendSeriesAgg>>,
+    key: String,
+    day: NaiveDate,
+    group: TrendGroupBy,
+) {
+    buckets.push(UsageTrendBucket {
+        bucket_start: local_day_start_rfc3339(day),
+        series: trend_series_bucket_points(cells.remove(&key), group),
+    });
+}
+
+/// 天/周/月日历桶路径：明细表（范围两端的不完整天）+ `usage_daily_rollups`
+/// （完整天）合并，完全镜像 `get_daily_trends` 日路径的合并逻辑
+/// （`compute_rollup_date_bounds` 剔除部分覆盖的边界日，防止重复计数）。
+#[allow(clippy::too_many_arguments)]
+fn trend_series_calendar_buckets(
+    conn: &Connection,
+    start_ts: i64,
+    end_ts: i64,
+    granularity: TrendGranularity,
+    group: TrendGroupBy,
+    app_type: Option<&str>,
+    provider_name: Option<&str>,
+    model: Option<&str>,
+) -> Result<Vec<UsageTrendBucket>, AppError> {
+    let start_day = local_datetime_from_timestamp(start_ts)?.date_naive();
+    let end_day = local_datetime_from_timestamp(end_ts)?.date_naive();
+
+    // 分桶表达式：day 落当日；week 用 SQLite 惯用式落所在周周一；
+    // month 落当月（'YYYY-MM'）。rollup 的 r.date 已是本地 YYYY-MM-DD
+    // 文本，可直接作为 date()/strftime() 输入，无需 unixepoch 修饰。
+    let detail_bucket_sql = match granularity {
+        TrendGranularity::Day => "date(l.created_at, 'unixepoch', 'localtime')".to_string(),
+        TrendGranularity::Week => {
+            "date(l.created_at, 'unixepoch', 'localtime', '-6 days', 'weekday 1')".to_string()
+        }
+        TrendGranularity::Month => {
+            "strftime('%Y-%m', l.created_at, 'unixepoch', 'localtime')".to_string()
+        }
+        _ => unreachable!("日历桶仅支持天/周/月"),
+    };
+    let rollup_bucket_sql = match granularity {
+        TrendGranularity::Day => "r.date".to_string(),
+        TrendGranularity::Week => "date(r.date, '-6 days', 'weekday 1')".to_string(),
+        TrendGranularity::Month => "strftime('%Y-%m', r.date)".to_string(),
+        _ => unreachable!("日历桶仅支持天/周/月"),
+    };
+
+    let mut cells: HashMap<String, HashMap<String, TrendSeriesAgg>> = HashMap::new();
+
+    // ① 明细表（范围两端的不完整天）
+    {
+        let group_key_sql = trend_group_key_sql(group, "l", "p");
+        let detail_join = if provider_name.is_some() || group == TrendGroupBy::Provider {
+            providers_join("l", "p")
+        } else {
+            String::new()
+        };
+        let mut extra_conditions: Vec<String> = Vec::new();
+        let mut extra_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(at) = app_type {
+            extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+            extra_params.push(Box::new(at.to_string()));
+        }
+        push_provider_model_filters(
+            &mut extra_conditions,
+            &mut extra_params,
+            "l",
+            "p",
+            provider_name,
+            model,
+        );
+        let extra_filter = extra_conditions
+            .iter()
+            .map(|c| format!("AND {c}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let effective_filter = effective_usage_log_filter("l");
+        let fresh_input = fresh_input_sql("l");
+        let sql = format!(
+            "SELECT
+                {detail_bucket_sql} as bucket_key,
+                {group_key_sql} as group_key,
+                COALESCE(SUM({fresh_input}), 0) as input_tokens,
+                COALESCE(SUM(l.output_tokens), 0) as output_tokens,
+                COALESCE(SUM(l.cache_creation_tokens), 0) as cache_creation_tokens,
+                COALESCE(SUM(l.cache_read_tokens), 0) as cache_read_tokens,
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
+            FROM proxy_request_logs l {detail_join}
+            WHERE l.created_at >= ?1 AND l.created_at <= ?2
+              AND {effective_filter} {extra_filter}
+            GROUP BY bucket_key, group_key
+            ORDER BY bucket_key ASC, group_key ASC"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let mut all_params: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(start_ts), Box::new(end_ts)];
+        all_params.extend(extra_params);
+        let param_refs: Vec<&dyn rusqlite::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                TrendSeriesAgg {
+                    input_tokens: row.get::<_, i64>(2)? as u64,
+                    output_tokens: row.get::<_, i64>(3)? as u64,
+                    cache_creation_tokens: row.get::<_, i64>(4)? as u64,
+                    cache_read_tokens: row.get::<_, i64>(5)? as u64,
+                    cost: row.get::<_, f64>(6)?,
+                },
+            ))
+        })?;
+        for row in rows {
+            let (bucket_key, key, agg) = row?;
+            let series_key = key.unwrap_or_default();
+            let cell = cells
+                .entry(bucket_key)
+                .or_default()
+                .entry(series_key)
+                .or_default();
+            cell.input_tokens += agg.input_tokens;
+            cell.output_tokens += agg.output_tokens;
+            cell.cache_creation_tokens += agg.cache_creation_tokens;
+            cell.cache_read_tokens += agg.cache_read_tokens;
+            cell.cost += agg.cost;
+        }
+    }
+
+    // ② rollup 表（完整天；分组表达式作用于 r.date）
+    {
+        let group_key_sql = trend_group_key_sql(group, "r", "p2");
+        let rollup_join = if provider_name.is_some() || group == TrendGroupBy::Provider {
+            providers_join("r", "p2")
+        } else {
+            String::new()
+        };
+        let rollup_bounds = compute_rollup_date_bounds(Some(start_ts), Some(end_ts))?;
+        let mut rollup_conditions = Vec::new();
+        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        push_rollup_date_filters(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r.date",
+            &rollup_bounds,
+        );
+        if let Some(at) = app_type {
+            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
+            rollup_params.push(Box::new(at.to_string()));
+        }
+        push_provider_model_filters(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            "p2",
+            provider_name,
+            model,
+        );
+        let rollup_where = if rollup_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", rollup_conditions.join(" AND "))
+        };
+        let fresh_input_rollup = fresh_input_sql("r");
+        let sql = format!(
+            "SELECT
+                {rollup_bucket_sql} as bucket_key,
+                {group_key_sql} as group_key,
+                COALESCE(SUM({fresh_input_rollup}), 0) as input_tokens,
+                COALESCE(SUM(r.output_tokens), 0) as output_tokens,
+                COALESCE(SUM(r.cache_creation_tokens), 0) as cache_creation_tokens,
+                COALESCE(SUM(r.cache_read_tokens), 0) as cache_read_tokens,
+                COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0) as total_cost
+            FROM usage_daily_rollups r {rollup_join}
+            {rollup_where}
+            GROUP BY bucket_key, group_key
+            ORDER BY bucket_key ASC, group_key ASC"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            rollup_params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                TrendSeriesAgg {
+                    input_tokens: row.get::<_, i64>(2)? as u64,
+                    output_tokens: row.get::<_, i64>(3)? as u64,
+                    cache_creation_tokens: row.get::<_, i64>(4)? as u64,
+                    cache_read_tokens: row.get::<_, i64>(5)? as u64,
+                    cost: row.get::<_, f64>(6)?,
+                },
+            ))
+        })?;
+        for row in rows {
+            let (bucket_key, key, agg) = row?;
+            let series_key = key.unwrap_or_default();
+            let cell = cells
+                .entry(bucket_key)
+                .or_default()
+                .entry(series_key)
+                .or_default();
+            cell.input_tokens += agg.input_tokens;
+            cell.output_tokens += agg.output_tokens;
+            cell.cache_creation_tokens += agg.cache_creation_tokens;
+            cell.cache_read_tokens += agg.cache_read_tokens;
+            cell.cost += agg.cost;
+        }
+    }
+
+    // ③ 枚举日历桶（空桶填零：series 为空数组，由前端补零宽表化）
+    let mut buckets: Vec<UsageTrendBucket> = Vec::new();
+    match granularity {
+        TrendGranularity::Day => {
+            let mut day = Some(start_day);
+            while let Some(current) = day {
+                if current > end_day {
+                    break;
+                }
+                push_trend_bucket(
+                    &mut buckets,
+                    &mut cells,
+                    current.format("%Y-%m-%d").to_string(),
+                    current,
+                    group,
+                );
+                day = current.succ_opt();
+            }
+        }
+        TrendGranularity::Week => {
+            let offset = start_day.weekday().num_days_from_monday() as u64;
+            let mut monday = start_day
+                .checked_sub_days(Days::new(offset))
+                .expect("回退最多 6 天，不会溢出");
+            while monday <= end_day {
+                push_trend_bucket(
+                    &mut buckets,
+                    &mut cells,
+                    monday.format("%Y-%m-%d").to_string(),
+                    monday,
+                    group,
+                );
+                monday = monday
+                    .checked_add_days(Days::new(7))
+                    .expect("向前推进 7 天，远未到 chrono 上限");
+            }
+        }
+        TrendGranularity::Month => {
+            let mut year = start_day.year();
+            let mut month = start_day.month();
+            while let Some(first) = NaiveDate::from_ymd_opt(year, month, 1) {
+                if first > end_day {
+                    break;
+                }
+                push_trend_bucket(
+                    &mut buckets,
+                    &mut cells,
+                    first.format("%Y-%m").to_string(),
+                    first,
+                    group,
+                );
+                month += 1;
+                if month > 12 {
+                    month = 1;
+                    year += 1;
+                }
+            }
+        }
+        _ => unreachable!("日历桶仅支持天/周/月"),
+    }
+    Ok(buckets)
 }
 
 impl Database {
@@ -1259,6 +1925,63 @@ impl Database {
         }
 
         Ok(stats)
+    }
+
+    /// 获取趋势序列（堆叠柱状图数据）。
+    ///
+    /// 与 [`Database::get_daily_trends`] 的差异：颗粒度可调（分钟~月）、
+    /// 按 token 类型/模型/Provider 拆分系列。现有趋势图链路不受影响。
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_usage_trend_series(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        granularity: &str,
+        group_by: &str,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<UsageTrendSeriesResponse, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
+        let mut start_ts = start_date.unwrap_or_else(|| end_ts - 24 * 60 * 60);
+        if start_ts >= end_ts {
+            start_ts = end_ts - 24 * 60 * 60;
+        }
+
+        let resolved =
+            resolve_trend_granularity(start_ts, end_ts, Local::now().timestamp(), granularity);
+        let group = TrendGroupBy::parse(group_by).unwrap_or(TrendGroupBy::TokenType);
+
+        let buckets = match resolved {
+            TrendGranularity::Day | TrendGranularity::Week | TrendGranularity::Month => {
+                trend_series_calendar_buckets(
+                    &conn,
+                    start_ts,
+                    end_ts,
+                    resolved,
+                    group,
+                    app_type,
+                    provider_name,
+                    model,
+                )?
+            }
+            relative => trend_series_relative_buckets(
+                &conn,
+                start_ts,
+                end_ts,
+                relative,
+                group,
+                app_type,
+                provider_name,
+                model,
+            )?,
+        };
+        Ok(UsageTrendSeriesResponse {
+            granularity: resolved.as_str().to_string(),
+            buckets,
+        })
     }
 
     /// 获取 Provider 统计
@@ -3353,6 +4076,560 @@ mod tests {
         assert_eq!(logs.total, 1);
         assert_eq!(logs.data[0].request_id, "a-2");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_resolve_trend_granularity_auto_ladder_and_cap() {
+        let base = local_ts(2026, 8, 1, 0, 0, 0);
+        let at_hours = |hours: i64| base + hours * 3600;
+        let at_days = |days: i64| base + days * 86_400;
+        // 观察时刻取 base + 30d：范围均在保留期内，保留期护栏不介入
+        let now = at_days(30);
+
+        // auto 阶梯边界（含）
+        assert_eq!(
+            resolve_trend_granularity(base, at_hours(3), now, "auto"),
+            TrendGranularity::Min15
+        );
+        assert_eq!(
+            resolve_trend_granularity(base, at_hours(3) + 1, now, "auto"),
+            TrendGranularity::Hour
+        );
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(2), now, "auto"),
+            TrendGranularity::Hour
+        );
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(60), now, "auto"),
+            TrendGranularity::Day
+        );
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(730), now, "auto"),
+            TrendGranularity::Week
+        );
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(731), now, "auto"),
+            TrendGranularity::Month
+        );
+
+        // 非法输入回落 auto 语义
+        assert_eq!(
+            resolve_trend_granularity(base, at_hours(3), now, "bogus"),
+            TrendGranularity::Min15
+        );
+
+        // 手动档触发护栏：30 天选 1min → 逐级升档到 hour（720 桶）
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(30), now, "1min"),
+            TrendGranularity::Hour
+        );
+
+        // month 已是最粗，20 年也不再升档
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(20 * 365), now, "month"),
+            TrendGranularity::Month
+        );
+    }
+
+    #[test]
+    fn test_resolve_trend_granularity_retention_guardrail() {
+        let base = local_ts(2026, 8, 1, 0, 0, 0);
+        let at_days = |days: i64| base + days * 86_400;
+        // 45 天后运行：范围起点早于保留期边界（now - 30d）
+        let now = at_days(45);
+
+        // 跨过保留期的子天请求升到天桶（旧明细只剩日汇总）
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(5), now, "hour"),
+            TrendGranularity::Day
+        );
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(5), now, "15min"),
+            TrendGranularity::Day
+        );
+        // 范围整体落在保留期内：子天档不受影响
+        assert_eq!(
+            resolve_trend_granularity(at_days(43), now, now, "hour"),
+            TrendGranularity::Hour
+        );
+        // 天及以上档不经保留期护栏
+        assert_eq!(
+            resolve_trend_granularity(base, at_days(5), now, "week"),
+            TrendGranularity::Week
+        );
+    }
+
+    #[test]
+    fn test_trend_series_sub_day_past_retention_coarsens_to_day() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        // 锚定真实当前时刻：35 天跨度的 hour 请求（841 桶，未触桶数护栏）
+        // 起点已越过保留期，应升到天桶并用日汇总补齐归档区间
+        let now = Local::now().timestamp();
+        let old_day = local_datetime_from_timestamp(now - 33 * 86_400)?.date_naive();
+        let recent_ts = now - 3_600;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES
+                    (?1, 'claude', 'prov-x', 'model-old', 5, 5, 500, 50, 0, 0, '5.0', 100)",
+                params![old_day.format("%Y-%m-%d").to_string()],
+            )?;
+            insert_usage_log(
+                &conn,
+                "r-1",
+                "claude",
+                "prov-x",
+                "model-new",
+                "proxy",
+                recent_ts,
+                100,
+                10,
+                0,
+                0,
+                200,
+                "1.0",
+            )?;
+        }
+
+        let resp = db.get_usage_trend_series(
+            Some(now - 35 * 86_400),
+            Some(now),
+            "hour",
+            "model",
+            None,
+            None,
+            None,
+        )?;
+
+        assert_eq!(resp.granularity, "day");
+        // 归档日来自日汇总，不再是静默的零
+        let old_bucket = resp
+            .buckets
+            .iter()
+            .find(|b| b.bucket_start == local_day_start_rfc3339(old_day))
+            .expect("归档日有桶");
+        assert_eq!(old_bucket.series.len(), 1);
+        assert_eq!(old_bucket.series[0].key, "model-old");
+        assert_eq!(old_bucket.series[0].input_tokens, 500);
+        // 保留期内的明细走原路径
+        let recent_day = local_datetime_from_timestamp(recent_ts)?.date_naive();
+        let recent_bucket = resp
+            .buckets
+            .iter()
+            .find(|b| b.bucket_start == local_day_start_rfc3339(recent_day))
+            .expect("当天有桶");
+        assert_eq!(recent_bucket.series[0].key, "model-new");
+        assert_eq!(recent_bucket.series[0].input_tokens, 100);
+        Ok(())
+    }
+
+    #[test]
+    fn test_trend_series_token_type_explodes_four_points() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        // hour 桶只读明细表，范围须落在当前时刻的保留期内（见保留期护栏）
+        let ts = Local::now().timestamp() - 3_600;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "t-1",
+                "claude",
+                "prov-x",
+                "claude-sonnet-4-6",
+                "proxy",
+                ts,
+                100,
+                10,
+                5,
+                20,
+                200,
+                "1.5",
+            )?;
+        }
+
+        let resp = db.get_usage_trend_series(
+            Some(ts),
+            Some(ts + 3_600 - 1),
+            "hour",
+            "token_type",
+            None,
+            None,
+            None,
+        )?;
+
+        assert_eq!(resp.granularity, "hour");
+        assert_eq!(resp.buckets.len(), 1);
+        let series = &resp.buckets[0].series;
+        let keys: Vec<&str> = series.iter().map(|p| p.key.as_str()).collect();
+        assert_eq!(keys, vec!["input", "output", "cacheCreation", "cacheRead"]);
+        assert_eq!(series[0].input_tokens, 100);
+        assert_eq!(series[1].output_tokens, 10);
+        assert_eq!(series[2].cache_creation_tokens, 20);
+        assert_eq!(series[3].cache_read_tokens, 5);
+        // rollup 无分 token 类型成本，token_type 维度成本恒为 0
+        assert!(series.iter().all(|p| p.cost == "0.000000"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_trend_series_hour_by_model_splits_and_skips_empty_buckets() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let t0 = Local::now().timestamp() - 4 * 3_600;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "m-1",
+                "claude",
+                "prov-x",
+                "model-a",
+                "proxy",
+                t0 + 600,
+                100,
+                10,
+                0,
+                0,
+                200,
+                "1.0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "m-2",
+                "claude",
+                "prov-x",
+                "model-b",
+                "proxy",
+                t0 + 2 * 3_600 + 600,
+                50,
+                5,
+                0,
+                0,
+                200,
+                "0.5",
+            )?;
+        }
+
+        let resp = db.get_usage_trend_series(
+            Some(t0),
+            Some(t0 + 3 * 3_600 - 1),
+            "hour",
+            "model",
+            None,
+            None,
+            None,
+        )?;
+
+        assert_eq!(resp.granularity, "hour");
+        assert_eq!(resp.buckets.len(), 3);
+        assert_eq!(resp.buckets[0].series.len(), 1);
+        assert_eq!(resp.buckets[0].series[0].key, "model-a");
+        assert_eq!(resp.buckets[0].series[0].cost, "1.000000");
+        assert!(resp.buckets[1].series.is_empty(), "空桶不输出系列");
+        assert_eq!(resp.buckets[2].series[0].key, "model-b");
+        assert_eq!(
+            resp.buckets[0].bucket_start,
+            local_datetime_from_timestamp(t0)?.to_rfc3339()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_trend_series_provider_grouping_uses_display_names() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let ts = Local::now().timestamp() - 3_600;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config)
+                 VALUES ('prov-a', 'claude', 'Packy', '{}')",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "p-1",
+                "claude",
+                "prov-a",
+                "claude-sonnet-4-6",
+                "proxy",
+                ts,
+                10,
+                1,
+                0,
+                0,
+                200,
+                "0.1",
+            )?;
+            // 会话占位行：providers 表无此 id，展示名走 CASE 映射。
+            insert_usage_log(
+                &conn,
+                "p-2",
+                "claude",
+                "_session",
+                "claude-sonnet-4-6",
+                "session_log",
+                ts,
+                20,
+                2,
+                0,
+                0,
+                200,
+                "0.2",
+            )?;
+        }
+
+        let resp = db.get_usage_trend_series(
+            Some(ts),
+            Some(ts + 3_600 - 1),
+            "hour",
+            "provider",
+            None,
+            None,
+            None,
+        )?;
+
+        let mut keys: Vec<&str> = resp.buckets[0]
+            .series
+            .iter()
+            .map(|p| p.key.as_str())
+            .collect();
+        keys.sort();
+        assert_eq!(keys, vec!["Claude (Session)", "Packy"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_trend_series_model_grouping_prefers_pricing_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let ts = Local::now().timestamp() - 3_600;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "pm-1",
+                "claude",
+                "prov-x",
+                "alias-model",
+                "proxy",
+                ts,
+                30,
+                3,
+                0,
+                0,
+                200,
+                "0.3",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET pricing_model = 'real-model'
+                 WHERE request_id = 'pm-1'",
+                [],
+            )?;
+        }
+
+        let resp = db.get_usage_trend_series(
+            Some(ts),
+            Some(ts + 3_600 - 1),
+            "hour",
+            "model",
+            None,
+            None,
+            None,
+        )?;
+        assert_eq!(resp.buckets[0].series.len(), 1);
+        assert_eq!(resp.buckets[0].series[0].key, "real-model");
+
+        // 模型筛选按有效计价模型命中：alias-model 查不到，real-model 命中。
+        let none = db.get_usage_trend_series(
+            Some(ts),
+            Some(ts + 3_600 - 1),
+            "hour",
+            "model",
+            None,
+            None,
+            Some("alias-model"),
+        )?;
+        assert!(none.buckets[0].series.is_empty());
+        let hit = db.get_usage_trend_series(
+            Some(ts),
+            Some(ts + 3_600 - 1),
+            "hour",
+            "model",
+            None,
+            None,
+            Some("real-model"),
+        )?;
+        assert_eq!(hit.buckets[0].series[0].key, "real-model");
+        Ok(())
+    }
+
+    #[test]
+    fn test_trend_series_filters_apply() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let ts = Local::now().timestamp() - 3_600;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config)
+                 VALUES ('prov-a', 'claude', 'Packy', '{}')",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "f-1",
+                "claude",
+                "prov-a",
+                "claude-sonnet-4-6",
+                "proxy",
+                ts,
+                100,
+                10,
+                0,
+                0,
+                200,
+                "1.0",
+            )?;
+            insert_usage_log(
+                &conn, "f-2", "codex", "p2", "gpt-5.5", "proxy", ts, 40, 4, 0, 0, 200, "0.4",
+            )?;
+        }
+        let start = Some(ts);
+        let end = Some(ts + 3_600 - 1);
+
+        // appType 过滤
+        let claude_only = db.get_usage_trend_series(
+            start,
+            end,
+            "hour",
+            "token_type",
+            Some("claude"),
+            None,
+            None,
+        )?;
+        assert_eq!(claude_only.buckets[0].series[0].input_tokens, 100);
+        let codex_only =
+            db.get_usage_trend_series(start, end, "hour", "token_type", Some("codex"), None, None)?;
+        assert_eq!(codex_only.buckets[0].series[0].input_tokens, 40);
+
+        // provider 过滤按展示名精确匹配
+        let packy =
+            db.get_usage_trend_series(start, end, "hour", "token_type", None, Some("Packy"), None)?;
+        assert_eq!(packy.buckets[0].series[0].input_tokens, 100);
+        let unknown = db.get_usage_trend_series(
+            start,
+            end,
+            "hour",
+            "token_type",
+            None,
+            Some("Nobody"),
+            None,
+        )?;
+        assert!(unknown.buckets[0].series.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_trend_series_day_buckets_merge_rollups() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let detail_ts = local_ts(2026, 6, 10, 12, 0, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn, "d-1", "claude", "prov-x", "model-a", "proxy", detail_ts, 100, 10, 0, 0,
+                200, "1.0",
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES
+                    ('2026-06-08', 'claude', 'prov-x', 'model-a', 5, 5, 500, 50, 0, 0, '5.0', 100)",
+                [],
+            )?;
+        }
+
+        let start = local_ts(2026, 6, 8, 0, 0, 0);
+        let end = local_ts(2026, 6, 10, 23, 59, 59);
+        let resp =
+            db.get_usage_trend_series(Some(start), Some(end), "day", "model", None, None, None)?;
+
+        assert_eq!(resp.granularity, "day");
+        assert_eq!(resp.buckets.len(), 3);
+        // 06-08：仅 rollup（完整天）
+        assert_eq!(resp.buckets[0].series.len(), 1);
+        assert_eq!(resp.buckets[0].series[0].key, "model-a");
+        assert_eq!(resp.buckets[0].series[0].input_tokens, 500);
+        assert_eq!(resp.buckets[0].series[0].cost, "5.000000");
+        // 06-09：空桶
+        assert!(resp.buckets[1].series.is_empty());
+        // 06-10：仅明细（边界不完整天，rollup 被剔除，不重复计数）
+        assert_eq!(resp.buckets[2].series[0].input_tokens, 100);
+        assert_eq!(resp.buckets[2].series[0].cost, "1.000000");
+        Ok(())
+    }
+
+    #[test]
+    fn test_trend_series_week_buckets_align_to_monday() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        // 2026-08-05 是周三；所在周周一为 2026-08-03。
+        let wed = local_ts(2026, 8, 5, 12, 0, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn, "w-1", "claude", "prov-x", "model-a", "proxy", wed, 10, 1, 0, 0, 200, "0.1",
+            )?;
+        }
+
+        let start = local_ts(2026, 8, 4, 0, 0, 0);
+        let end = local_ts(2026, 8, 6, 23, 59, 59);
+        let resp =
+            db.get_usage_trend_series(Some(start), Some(end), "week", "model", None, None, None)?;
+
+        assert_eq!(resp.buckets.len(), 1);
+        assert_eq!(resp.buckets[0].series[0].key, "model-a");
+        let monday = NaiveDate::from_ymd_opt(2026, 8, 3).expect("2026-08-03 有效");
+        assert_eq!(
+            resp.buckets[0].bucket_start,
+            local_day_start_rfc3339(monday)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_trend_series_month_buckets_span_months() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let jul = local_ts(2026, 7, 15, 12, 0, 0);
+        let aug = local_ts(2026, 8, 20, 12, 0, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn, "mo-1", "claude", "prov-x", "model-a", "proxy", jul, 10, 1, 0, 0, 200, "0.1",
+            )?;
+            insert_usage_log(
+                &conn, "mo-2", "claude", "prov-x", "model-b", "proxy", aug, 20, 2, 0, 0, 200, "0.2",
+            )?;
+        }
+
+        let start = local_ts(2026, 7, 15, 0, 0, 0);
+        let end = local_ts(2026, 8, 31, 23, 59, 59);
+        let resp =
+            db.get_usage_trend_series(Some(start), Some(end), "month", "model", None, None, None)?;
+
+        assert_eq!(resp.buckets.len(), 2);
+        assert_eq!(resp.buckets[0].series[0].key, "model-a");
+        assert_eq!(resp.buckets[1].series[0].key, "model-b");
+        assert_eq!(
+            resp.buckets[0].bucket_start,
+            local_day_start_rfc3339(NaiveDate::from_ymd_opt(2026, 7, 1).expect("有效日期"))
+        );
+        assert_eq!(
+            resp.buckets[1].bucket_start,
+            local_day_start_rfc3339(NaiveDate::from_ymd_opt(2026, 8, 1).expect("有效日期"))
+        );
         Ok(())
     }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UsageHero } from "./UsageHero";
+import { UsageStackedBarChart } from "./UsageStackedBarChart";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
@@ -416,6 +417,14 @@ export function UsageDashboard({
       <UsageTrendChart
         range={range}
         rangeLabel={rangeLabel}
+        appType={appType}
+        providerName={providerName}
+        model={model}
+        refreshIntervalMs={refreshIntervalMs}
+      />
+
+      <UsageStackedBarChart
+        range={range}
         appType={appType}
         providerName={providerName}
         model={model}
