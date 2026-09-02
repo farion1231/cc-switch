@@ -116,6 +116,9 @@ fn parse_provider_deeplink(
 
     // Extract optional fields
     let model = params.get("model").cloned();
+    let supports_websockets = params
+        .get("supports_websockets")
+        .and_then(|value| value.parse::<bool>().ok());
     let notes = params.get("notes").cloned();
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
@@ -153,6 +156,7 @@ fn parse_provider_deeplink(
         api_key,
         icon,
         model,
+        supports_websockets,
         notes,
         haiku_model,
         sonnet_model,
