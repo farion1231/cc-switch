@@ -128,7 +128,16 @@ pub async fn handle_messages(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None).await
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::Claude,
+        "Claude",
+        "claude",
+        None,
+        ClaudeRouteSelector::Active,
+    )
+    .await
 }
 
 pub async fn handle_claude_desktop_messages(
@@ -143,8 +152,54 @@ pub async fn handle_claude_desktop_messages(
         "Claude Desktop",
         "claude-desktop",
         Some("/claude-desktop"),
+        ClaudeRouteSelector::Active,
     )
     .await
+}
+
+// ============================================================================
+// Claude Router 网关处理器（VS Code 模型选择器的确定性路由）
+// ============================================================================
+
+/// GET /claude-router/v1/models — 模型发现目录
+///
+/// 仅返回启用路由的 Claude 供应商配置的公开模型 ID / 显示名，
+/// 不携带端点、凭证等敏感信息；请求期间不访问任何上游。
+pub async fn handle_claude_router_models(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, ProxyError> {
+    let catalog = super::claude_router::model_catalog(state.db.as_ref())?;
+    Ok(Json(catalog))
+}
+
+/// POST /claude-router/v1/messages — 按公开模型 ID 确定性路由的消息请求
+///
+/// 路由目标完全由 body.model 中的公开模型 ID 决定；与 `/v1/messages` 共享
+/// 认证注入、协议转换、SSE 透传与 usage 记录管道，但不读取当前供应商、
+/// 不进入故障转移队列。ID 畸形/未知/禁用时返回 400 Anthropic 错误信封。
+pub async fn handle_claude_router_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::Claude,
+        "Claude Router",
+        "claude",
+        Some("/claude-router"),
+        ClaudeRouteSelector::ModelRoute,
+    )
+    .await
+}
+
+/// Claude 消息请求的供应商选择方式
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeRouteSelector {
+    /// 既有行为：当前供应商 / 故障转移队列
+    Active,
+    /// Claude 网关：按请求体公开模型 ID 确定性路由
+    ModelRoute,
 }
 
 pub async fn handle_claude_desktop_models(
@@ -170,6 +225,7 @@ async fn handle_messages_for_app(
     tag: &'static str,
     app_type_str: &'static str,
     strip_prefix: Option<&'static str>,
+    route_selector: ClaudeRouteSelector,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, body) = request.into_parts();
     let method = parts.method.clone();
@@ -181,11 +237,39 @@ async fn handle_messages_for_app(
         .await
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+    let mut ctx = match route_selector {
+        ClaudeRouteSelector::Active => {
+            RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str)
+                .await?
+        }
+        ClaudeRouteSelector::ModelRoute => {
+            // 公开模型 ID → 确定性路由目标；解析失败即 400（Anthropic 错误信封），
+            // 绝不回退到当前激活供应商
+            let public_model = body
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let target = super::claude_router::resolve_route(state.db.as_ref(), &public_model)?;
+            // 仅改写 model 字段为真实上游模型，其余请求体原样透传
+            body["model"] = Value::String(target.upstream_model.clone());
+            RequestContext::new_routed(
+                &state,
+                &body,
+                &headers,
+                target.provider,
+                target.public_model_id,
+                target.upstream_model,
+                app_type.clone(),
+                tag,
+                app_type_str,
+            )
+            .await?
+        }
+    };
 
     let raw_endpoint = uri
         .path_and_query()
@@ -2017,6 +2101,7 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         ProxyError::UpstreamError { .. } => "cc_switch_upstream_error",
         ProxyError::DatabaseError(_) => "cc_switch_database_error",
         ProxyError::Internal(_) => "cc_switch_internal_error",
+        ProxyError::InvalidRouterModel(_) => "cc_switch_invalid_request",
         ProxyError::AlreadyRunning
         | ProxyError::NotRunning
         | ProxyError::BindFailed(_)

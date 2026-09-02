@@ -305,6 +305,15 @@ impl ProxyServer {
                 "/claude-desktop/v1/messages",
                 post(handlers::handle_claude_desktop_messages),
             )
+            // Claude Router 网关（VS Code 模型选择器的确定性 provider/model 路由）
+            .route(
+                "/claude-router/v1/models",
+                get(handlers::handle_claude_router_models),
+            )
+            .route(
+                "/claude-router/v1/messages",
+                post(handlers::handle_claude_router_messages),
+            )
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))
             .route(
@@ -416,9 +425,12 @@ impl ProxyServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{Provider, ProviderMeta};
+    use crate::app_config::AppType;
+    use crate::provider::{ClaudeRouterConfig, ClaudeRouterModel, Provider, ProviderMeta};
+    use crate::proxy::claude_router::public_model_id;
     use axum::http::{header, HeaderMap, StatusCode};
     use serde_json::{json, Value};
+    use serial_test::serial;
     use tokio::sync::Mutex;
 
     #[derive(Debug)]
@@ -624,5 +636,694 @@ mod tests {
             full_url_request.body["commands"]["search_query"][0]["q"],
             "full URL"
         );
+    }
+
+    // ========================================================================
+    // Claude Router 网关（/claude-router）
+    // ========================================================================
+
+    #[derive(Debug)]
+    struct CapturedClaudeRequest {
+        authorization: Option<String>,
+        x_api_key: Option<String>,
+        model: Option<String>,
+    }
+    const CLAUDE_ROUTER_SSE_BODY: &str = concat!(
+        "event: message_start\n",
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_sse\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"upstream-model-a\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n",
+        "event: content_block_start\n",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
+        "event: content_block_stop\n",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        "event: message_delta\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+        "event: message_stop\n",
+        "data: {\"type\":\"message_stop\"}\n\n",
+    );
+
+    fn claude_router_provider(
+        id: &str,
+        name: &str,
+        base_url: &str,
+        token: &str,
+        sort_index: Option<usize>,
+        router: Option<ClaudeRouterConfig>,
+    ) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            name.to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": token,
+                }
+            }),
+            None,
+        );
+        provider.sort_index = sort_index;
+        if let Some(router) = router {
+            provider.meta = Some(ProviderMeta {
+                claude_router: Some(router),
+                ..ProviderMeta::default()
+            });
+        }
+        provider
+    }
+
+    fn enabled_router_config(models: Vec<ClaudeRouterModel>) -> ClaudeRouterConfig {
+        ClaudeRouterConfig {
+            enabled: true,
+            models,
+        }
+    }
+
+    fn router_model(alias: &str, upstream: &str, display: &str) -> ClaudeRouterModel {
+        ClaudeRouterModel {
+            alias: alias.to_string(),
+            upstream_model: upstream.to_string(),
+            display_name: display.to_string(),
+        }
+    }
+
+    /// 启动一个捕获 authorization / x-api-key / model 的 Anthropic 风格 mock 上游
+    async fn spawn_mock_anthropic_upstream(
+        captured: Arc<Mutex<Vec<CapturedClaudeRequest>>>,
+    ) -> (std::net::SocketAddr, JoinHandle<()>) {
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post({
+                let captured = captured.clone();
+                move |request: axum::extract::Request| {
+                    let captured = captured.clone();
+                    async move {
+                        let (parts, body) = request.into_parts();
+                        let body = axum::body::to_bytes(body, 1024 * 1024)
+                            .await
+                            .expect("read mock request body");
+                        let body: Value =
+                            serde_json::from_slice(&body).expect("parse mock request body");
+                        captured.lock().await.push(CapturedClaudeRequest {
+                            authorization: parts
+                                .headers
+                                .get(header::AUTHORIZATION)
+                                .and_then(|value| value.to_str().ok())
+                                .map(ToString::to_string),
+                            x_api_key: parts
+                                .headers
+                                .get("x-api-key")
+                                .and_then(|value| value.to_str().ok())
+                                .map(ToString::to_string),
+                            model: body
+                                .get("model")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string),
+                        });
+                        // The production exact-header path registers its response parser
+                        // immediately after writing the request. A zero-latency in-process
+                        // response can beat that registration and exercise its legacy
+                        // fallback instead of the router contract under test.
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        axum::Json(json!({
+                            "id": "msg_mock",
+                            "type": "message",
+                            "role": "assistant",
+                            "model": body.get("model").cloned().unwrap_or(Value::Null),
+                            "content": [{"type": "text", "text": "ok"}],
+                            "stop_reason": "end_turn",
+                            "usage": {"input_tokens": 1, "output_tokens": 1}
+                        }))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let addr = listener.local_addr().expect("mock upstream address");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+        (addr, handle)
+    }
+
+    /// 启动一个返回有序 Anthropic SSE 事件流的 mock 上游
+    async fn spawn_mock_anthropic_sse_upstream() -> (std::net::SocketAddr, JoinHandle<()>) {
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post(|| async {
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    CLAUDE_ROUTER_SSE_BODY,
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock sse upstream");
+        let addr = listener.local_addr().expect("mock sse upstream address");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, mock_app)
+                .await
+                .expect("serve mock sse upstream");
+        });
+        (addr, handle)
+    }
+
+    fn test_proxy(db: Arc<Database>) -> ProxyServer {
+        // In production Tauri installs Ring during app setup (`lib.rs`).
+        // These in-process tests bypass that setup, so initialize the same
+        // process-wide provider before reqwest creates concurrent connectors.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        )
+    }
+    struct ClaudeCurrentProviderGuard {
+        _home: tempfile::TempDir,
+        previous_test_home: Option<std::ffi::OsString>,
+        previous_settings: crate::settings::AppSettings,
+    }
+
+    impl ClaudeCurrentProviderGuard {
+        fn new(provider_id: &str) -> Self {
+            let previous_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            let previous_settings = crate::settings::get_settings();
+            let home = tempfile::tempdir().expect("create isolated settings home");
+            std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset settings in isolated home");
+            crate::settings::set_current_provider(&AppType::Claude, Some(provider_id))
+                .expect("set isolated current Claude provider");
+            Self {
+                _home: home,
+                previous_test_home,
+                previous_settings,
+            }
+        }
+    }
+
+    impl Drop for ClaudeCurrentProviderGuard {
+        fn drop(&mut self) {
+            let _ = crate::settings::update_settings(self.previous_settings.clone());
+            match &self.previous_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn routed_messages_url(port: u16) -> String {
+        format!("http://127.0.0.1:{port}/claude-router/v1/messages")
+    }
+
+    fn routed_request_body(model: &str, stream: bool) -> Value {
+        json!({
+            "model": model,
+            "max_tokens": 16,
+            "stream": stream,
+            "messages": [{"role": "user", "content": "hi"}]
+        })
+    }
+
+    #[tokio::test]
+    async fn claude_router_models_catalog_exposes_only_enabled_routes() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider_a = claude_router_provider(
+            "router-prov-a",
+            "Router A",
+            "https://upstream-a.example.com",
+            "router-token-a",
+            Some(1),
+            Some(enabled_router_config(vec![
+                router_model("fast", "upstream-fast-a", "Fast A"),
+                router_model("pro", "upstream-pro-a", "Pro A"),
+            ])),
+        );
+        let provider_b = claude_router_provider(
+            "router-prov-b",
+            "Router B",
+            "https://upstream-b.example.com",
+            "router-token-b",
+            Some(0),
+            Some(enabled_router_config(vec![router_model(
+                "mini",
+                "upstream-mini-b",
+                "Mini B",
+            )])),
+        );
+        let provider_c = claude_router_provider(
+            "router-prov-c",
+            "Router C",
+            "https://upstream-c.example.com",
+            "router-token-c",
+            Some(2),
+            Some(ClaudeRouterConfig {
+                enabled: false,
+                models: vec![router_model("off", "upstream-off-c", "Off C")],
+            }),
+        );
+        // 有意乱序保存，验证目录仍按 sort_index 输出
+        db.save_provider("claude", &provider_a).expect("save a");
+        db.save_provider("claude", &provider_c).expect("save c");
+        db.save_provider("claude", &provider_b).expect("save b");
+
+        let proxy = test_proxy(db);
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+
+        let response = client
+            .get(format!(
+                "http://127.0.0.1:{}/claude-router/v1/models",
+                proxy_info.port
+            ))
+            .send()
+            .await
+            .expect("send models request");
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = response.text().await.expect("read catalog body");
+        let catalog: Value = serde_json::from_str(&text).expect("parse catalog");
+        let entries = catalog["data"].as_array().expect("data array");
+        let ids: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry["id"].as_str().expect("entry id"))
+            .collect();
+
+        // 启用的 A/B 按 sort_index（B=0 在 A=1 前）再按模型配置顺序输出；禁用的 C 不出现
+        assert_eq!(
+            ids,
+            vec![
+                public_model_id("router-prov-b", "mini"),
+                public_model_id("router-prov-a", "fast"),
+                public_model_id("router-prov-a", "pro"),
+            ]
+        );
+        assert!(
+            ids.iter().all(|id| id.starts_with("ccswitch/claude/")),
+            "公开 ID 必须带固定前缀（通过 Claude Code 的 claude|anthropic 过滤）"
+        );
+        assert_eq!(entries[0]["object"], json!("model"));
+        assert_eq!(entries[0]["display_name"], json!("Router B / Mini B"));
+        assert_eq!(entries[2]["display_name"], json!("Router A / Pro A"));
+
+        // 目录不得泄露任何凭证 / 端点
+        for sentinel in [
+            "router-token-a",
+            "router-token-b",
+            "router-token-c",
+            "upstream-a.example.com",
+            "upstream-b.example.com",
+            "upstream-c.example.com",
+            "ANTHROPIC_AUTH_TOKEN",
+        ] {
+            assert!(
+                !text.contains(sentinel),
+                "catalog must not contain '{sentinel}': {text}"
+            );
+        }
+
+        proxy.stop().await.expect("stop test proxy");
+    }
+
+    #[tokio::test]
+    async fn claude_router_messages_reject_invalid_ids_with_anthropic_400() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedClaudeRequest>::new()));
+        let (mock_addr, mock_handle) = spawn_mock_anthropic_upstream(captured.clone()).await;
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let disabled = claude_router_provider(
+            "router-disabled",
+            "Disabled",
+            &format!("http://{mock_addr}"),
+            "disabled-token",
+            None,
+            Some(ClaudeRouterConfig {
+                enabled: false,
+                models: vec![router_model("fast", "upstream-off", "Off")],
+            }),
+        );
+        let enabled = claude_router_provider(
+            "router-enabled",
+            "Enabled",
+            &format!("http://{mock_addr}"),
+            "enabled-token",
+            None,
+            Some(enabled_router_config(vec![router_model(
+                "fast",
+                "upstream-fast-e",
+                "Fast E",
+            )])),
+        );
+        db.save_provider("claude", &disabled)
+            .expect("save disabled");
+        db.save_provider("claude", &enabled).expect("save enabled");
+
+        let proxy = test_proxy(db);
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let url = routed_messages_url(proxy_info.port);
+
+        let cases = [
+            // 缺少 ccswitch/claude/ 前缀
+            "claude-3-5-sonnet".to_string(),
+            // 非法 base64url 段
+            "ccswitch/claude/!!!/QQ".to_string(),
+            // 段数错误
+            "ccswitch/claude/b25seQ".to_string(),
+            // 未知供应商
+            public_model_id("ghost-provider", "fast"),
+            // 路由禁用
+            public_model_id("router-disabled", "fast"),
+            // 未知别名
+            public_model_id("router-enabled", "slow"),
+        ];
+        for model in &cases {
+            let response = client
+                .post(&url)
+                .json(&routed_request_body(model, false))
+                .send()
+                .await
+                .expect("send invalid routed request");
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "model '{model}' 应返回 400"
+            );
+            let body: Value = response.json().await.expect("parse error body");
+            assert_eq!(body["type"], json!("error"), "model '{model}'");
+            assert_eq!(
+                body["error"]["type"],
+                json!("invalid_request_error"),
+                "model '{model}'"
+            );
+            assert!(
+                body["error"]["message"]
+                    .as_str()
+                    .map(|message| !message.is_empty())
+                    .unwrap_or(false),
+                "model '{model}' 应带非空 message"
+            );
+        }
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+        assert!(captured.lock().await.is_empty(), "非法路由绝不能触达上游");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_router_concurrent_requests_keep_routes_and_current_provider() {
+        let captured_a = Arc::new(Mutex::new(Vec::<CapturedClaudeRequest>::new()));
+        let captured_b = Arc::new(Mutex::new(Vec::<CapturedClaudeRequest>::new()));
+        let (addr_a, handle_a) = spawn_mock_anthropic_upstream(captured_a.clone()).await;
+        let (addr_b, handle_b) = spawn_mock_anthropic_upstream(captured_b.clone()).await;
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider_a = claude_router_provider(
+            "router-prov-a",
+            "Router A",
+            &format!("http://{addr_a}"),
+            "router-token-a",
+            Some(0),
+            Some(enabled_router_config(vec![router_model(
+                "fast",
+                "upstream-model-a",
+                "Fast A",
+            )])),
+        );
+        let provider_b = claude_router_provider(
+            "router-prov-b",
+            "Router B",
+            &format!("http://{addr_b}"),
+            "router-token-b",
+            Some(1),
+            Some(enabled_router_config(vec![router_model(
+                "pro",
+                "upstream-model-b",
+                "Pro B",
+            )])),
+        );
+        // 哨兵：传统"当前供应商"，路由请求全程不得改变它
+        let sentinel = claude_router_provider(
+            "router-sentinel",
+            "Sentinel C",
+            "https://sentinel.example.com",
+            "router-token-c",
+            Some(2),
+            None,
+        );
+        db.save_provider("claude", &provider_a).expect("save a");
+        db.save_provider("claude", &provider_b).expect("save b");
+        db.save_provider("claude", &sentinel)
+            .expect("save sentinel");
+        db.set_current_provider("claude", &sentinel.id)
+            .expect("set sentinel current");
+        let _current_guard = ClaudeCurrentProviderGuard::new(&sentinel.id);
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+            Some("router-sentinel")
+        );
+
+        let proxy = test_proxy(db.clone());
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let url = routed_messages_url(proxy_info.port);
+        let id_a = public_model_id("router-prov-a", "fast");
+        let id_b = public_model_id("router-prov-b", "pro");
+
+        // 100 个并发混合请求：交替 A/B 各 50
+        let tasks: Vec<_> = (0..100)
+            .map(|index| {
+                let client = client.clone();
+                let url = url.clone();
+                let model = if index % 2 == 0 { &id_a } else { &id_b };
+                let body = routed_request_body(model, false);
+                async move { client.post(url).json(&body).send().await }
+            })
+            .collect();
+        let responses = futures::future::join_all(tasks).await;
+        for (index, response) in responses.iter().enumerate() {
+            let response = response
+                .as_ref()
+                .unwrap_or_else(|_| panic!("request {index} failed to send"));
+            assert_eq!(response.status(), StatusCode::OK, "request {index}");
+        }
+
+        proxy.stop().await.expect("stop test proxy");
+        handle_a.abort();
+        handle_b.abort();
+
+        // 每个上游恰好收到自己的 50 个请求，只见自己的凭证与上游模型名
+        let captured_a = captured_a.lock().await;
+        let captured_b = captured_b.lock().await;
+        let captured_total = captured_a.len() + captured_b.len();
+        assert_eq!(captured_total, 100, "每个客户端请求必须且只能触达一个上游");
+        assert_eq!(captured_a.len(), 50, "provider A 应收到 50 个请求");
+        assert_eq!(captured_b.len(), 50, "provider B 应收到 50 个请求");
+        for request in captured_a.iter() {
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer router-token-a")
+            );
+            assert_eq!(request.x_api_key, None);
+            assert_eq!(request.model.as_deref(), Some("upstream-model-a"));
+        }
+        for request in captured_b.iter() {
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer router-token-b")
+            );
+            assert_eq!(request.x_api_key, None);
+            assert_eq!(request.model.as_deref(), Some("upstream-model-b"));
+        }
+
+        // 数据库与本地 settings 的当前供应商均保持哨兵不变
+        assert_eq!(
+            db.get_current_provider("claude")
+                .expect("db current provider")
+                .as_deref(),
+            Some("router-sentinel")
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+            Some("router-sentinel"),
+            "路由请求不得改写本地 settings 的当前供应商"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_router_routes_ignore_legacy_active_provider_changes() {
+        let captured_a = Arc::new(Mutex::new(Vec::<CapturedClaudeRequest>::new()));
+        let captured_b = Arc::new(Mutex::new(Vec::<CapturedClaudeRequest>::new()));
+        let (addr_a, handle_a) = spawn_mock_anthropic_upstream(captured_a.clone()).await;
+        let (addr_b, handle_b) = spawn_mock_anthropic_upstream(captured_b.clone()).await;
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider_a = claude_router_provider(
+            "router-prov-a",
+            "Router A",
+            &format!("http://{addr_a}"),
+            "router-token-a",
+            Some(0),
+            Some(enabled_router_config(vec![router_model(
+                "fast",
+                "upstream-model-a",
+                "Fast A",
+            )])),
+        );
+        let provider_b = claude_router_provider(
+            "router-prov-b",
+            "Router B",
+            &format!("http://{addr_b}"),
+            "router-token-b",
+            Some(1),
+            Some(enabled_router_config(vec![router_model(
+                "pro",
+                "upstream-model-b",
+                "Pro B",
+            )])),
+        );
+        db.save_provider("claude", &provider_a).expect("save a");
+        db.save_provider("claude", &provider_b).expect("save b");
+        db.set_current_provider("claude", &provider_a.id)
+            .expect("set initial current");
+        let _current_guard = ClaudeCurrentProviderGuard::new(&provider_a.id);
+
+        let proxy = test_proxy(db.clone());
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let url = routed_messages_url(proxy_info.port);
+        let id_a = public_model_id("router-prov-a", "fast");
+        let id_b = public_model_id("router-prov-b", "pro");
+
+        let send_mixed_batch = |count: usize| {
+            let client = client.clone();
+            let url = url.clone();
+            let id_a = id_a.clone();
+            let id_b = id_b.clone();
+            async move {
+                let tasks: Vec<_> = (0..count)
+                    .map(|index| {
+                        let client = client.clone();
+                        let url = url.clone();
+                        let model = if index % 2 == 0 { &id_a } else { &id_b };
+                        let body = routed_request_body(model, false);
+                        async move { client.post(url).json(&body).send().await }
+                    })
+                    .collect();
+                let responses = futures::future::join_all(tasks).await;
+                for response in responses {
+                    assert_eq!(
+                        response.expect("send routed request").status(),
+                        StatusCode::OK
+                    );
+                }
+            }
+        };
+
+        // 批次 1：当前供应商为 A
+        send_mixed_batch(20).await;
+        // 模拟传统 Switch：把"当前供应商"切到 B
+        db.set_current_provider("claude", &provider_b.id)
+            .expect("legacy switch to b");
+        crate::settings::set_current_provider(&AppType::Claude, Some(&provider_b.id))
+            .expect("legacy local switch to b");
+        // 批次 2：路由目的地不应随之改变
+        send_mixed_batch(20).await;
+
+        proxy.stop().await.expect("stop test proxy");
+        handle_a.abort();
+        handle_b.abort();
+
+        let captured_a = captured_a.lock().await;
+        let captured_b = captured_b.lock().await;
+        assert_eq!(captured_a.len(), 20, "A 路由与传统当前供应商解耦");
+        assert_eq!(captured_b.len(), 20, "B 路由与传统当前供应商解耦");
+        assert!(
+            captured_a.iter().all(
+                |request| request.model.as_deref() == Some("upstream-model-a")
+                    && request.authorization.as_deref() == Some("Bearer router-token-a")
+            ),
+            "A 的请求必须始终携带 A 的凭证与上游模型"
+        );
+        assert!(
+            captured_b.iter().all(
+                |request| request.model.as_deref() == Some("upstream-model-b")
+                    && request.authorization.as_deref() == Some("Bearer router-token-b")
+            ),
+            "B 的请求必须始终携带 B 的凭证与上游模型"
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+            Some("router-prov-b"),
+            "传统当前供应商应已切换，但不影响确定性路由"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_router_streaming_passthrough_preserves_sse() {
+        let (addr, mock_handle) = spawn_mock_anthropic_sse_upstream().await;
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = claude_router_provider(
+            "router-prov-a",
+            "Router A",
+            &format!("http://{addr}"),
+            "router-token-a",
+            None,
+            Some(enabled_router_config(vec![router_model(
+                "fast",
+                "upstream-model-a",
+                "Fast A",
+            )])),
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+
+        let proxy = test_proxy(db);
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+
+        let response = client
+            .post(routed_messages_url(proxy_info.port))
+            .json(&routed_request_body(
+                &public_model_id("router-prov-a", "fast"),
+                true,
+            ))
+            .send()
+            .await
+            .expect("send streaming routed request");
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            content_type.starts_with("text/event-stream"),
+            "流式响应必须保留 SSE Content-Type，实际: {content_type}"
+        );
+        let body = response.text().await.expect("read sse body");
+
+        assert_eq!(
+            body, CLAUDE_ROUTER_SSE_BODY,
+            "Anthropic SSE 事件字节必须按原顺序原样透传"
+        );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
     }
 }

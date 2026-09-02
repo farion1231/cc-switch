@@ -74,6 +74,11 @@ pub enum ProxyError {
     #[error("认证失败: {0}")]
     AuthError(String),
 
+    /// Claude 模型路由解析失败（公开模型 ID 畸形/未知/禁用）。
+    /// 响应为 Anthropic 错误信封（HTTP 400），仅用于 /claude-router 路由。
+    #[error("无效的 Claude 路由模型: {0}")]
+    InvalidRouterModel(String),
+
     #[allow(dead_code)]
     #[error("内部错误: {0}")]
     Internal(String),
@@ -82,6 +87,18 @@ pub enum ProxyError {
 impl IntoResponse for ProxyError {
     fn into_response(self) -> Response {
         let (status, body) = match &self {
+            // Claude 模型路由解析失败：Anthropic 官方错误信封，HTTP 400。
+            // 仅 /claude-router 路由使用；存量错误映射保持不变。
+            ProxyError::InvalidRouterModel(message) => (
+                StatusCode::BAD_REQUEST,
+                json!({
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": message,
+                    }
+                }),
+            ),
             ProxyError::UpstreamError {
                 status: upstream_status,
                 body: upstream_body,
@@ -162,7 +179,10 @@ impl IntoResponse for ProxyError {
                     ProxyError::ResponseBodyTooLarge(_) => {
                         (StatusCode::BAD_GATEWAY, self.to_string())
                     }
-                    ProxyError::UpstreamError { .. } => unreachable!(),
+                    // 两个外层已专属处理的分支
+                    ProxyError::UpstreamError { .. } | ProxyError::InvalidRouterModel(_) => {
+                        unreachable!()
+                    }
                 };
 
                 let error_body = json!({
