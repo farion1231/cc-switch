@@ -393,9 +393,20 @@ fn restore_codex_official_history_inner(
     collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
     let mut restored_jsonl_files = 0;
     for file_path in files {
-        if rewrite_codex_session_file_lines(&file_path, codex_dir, restore_backup_root, |line| {
-            rewrite_codex_session_meta_line_for_restore(line, &official_session_ids)
-        })? {
+        let mut restore_current_segment = false;
+        if rewrite_codex_session_file_lines(
+            &file_path,
+            codex_dir,
+            restore_backup_root,
+            |_| true,
+            |line| {
+                rewrite_codex_session_provider_line_for_ledger_restore(
+                    line,
+                    &official_session_ids,
+                    &mut restore_current_segment,
+                )
+            },
+        )? {
             restored_jsonl_files += 1;
         }
     }
@@ -564,30 +575,38 @@ fn collect_files_with_extension(
     }
 }
 
-fn rewrite_codex_session_meta_line_for_restore(
+fn rewrite_codex_session_provider_line_for_ledger_restore(
     line: &str,
     official_session_ids: &HashSet<String>,
+    restore_current_segment: &mut bool,
 ) -> Option<String> {
-    if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
+    if line.contains("\"session_meta\"") {
+        // A rollout may contain copied/replayed segments for multiple sessions.
+        // Reset before parsing so a malformed boundary cannot inherit the
+        // previous segment's restoration scope.
+        *restore_current_segment = false;
+        let value = serde_json::from_str::<Value>(line).ok()?;
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            *restore_current_segment = value
+                .get("payload")
+                .and_then(|payload| payload.get("id"))
+                .and_then(Value::as_str)
+                .is_some_and(|session_id| official_session_ids.contains(session_id));
+        }
+    }
+
+    if !*restore_current_segment {
         return None;
     }
-    let mut value: Value = serde_json::from_str(line).ok()?;
-    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
-        return None;
-    }
-    let payload = value.get_mut("payload")?.as_object_mut()?;
-    if payload.get("model_provider")?.as_str()? != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
-        return None;
-    }
-    let session_id = payload.get("id")?.as_str()?;
-    if !official_session_ids.contains(session_id) {
-        return None;
-    }
-    payload.insert(
-        "model_provider".to_string(),
-        Value::String(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()),
-    );
-    serde_json::to_string(&value).ok()
+    rewrite_codex_session_provider_line_for_restore(line)
+}
+
+fn rewrite_codex_session_provider_line_for_restore(line: &str) -> Option<String> {
+    rewrite_codex_session_provider_line_if(
+        line,
+        |provider_id| provider_id == CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
+    )
 }
 
 fn restore_codex_state_db_official_threads(
@@ -963,6 +982,20 @@ fn migrate_codex_jsonl_files(
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
+    migrate_codex_jsonl_files_to_provider(
+        codex_dir,
+        source_provider_ids,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        backup_root,
+    )
+}
+
+fn migrate_codex_jsonl_files_to_provider(
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    target_provider_id: &str,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
     let mut files = Vec::new();
     collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
     collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
@@ -974,6 +1007,7 @@ fn migrate_codex_jsonl_files(
             &file_path,
             codex_dir,
             &source_provider_ids,
+            target_provider_id,
             backup_root,
         )? {
             migrated += 1;
@@ -1012,23 +1046,32 @@ fn rewrite_codex_session_file_for_provider_bucket(
     path: &Path,
     codex_dir: &Path,
     source_provider_ids: &HashSet<String>,
+    target_provider_id: &str,
     backup_root: &Path,
 ) -> Result<bool, AppError> {
-    rewrite_codex_session_file_lines(path, codex_dir, backup_root, |line| {
-        rewrite_codex_session_meta_line(line, source_provider_ids)
-    })
+    rewrite_codex_session_file_lines(
+        path,
+        codex_dir,
+        backup_root,
+        |_| true,
+        |line| rewrite_codex_session_provider_line(line, source_provider_ids, target_provider_id),
+    )
 }
 
 fn rewrite_codex_session_file_lines(
     path: &Path,
     codex_dir: &Path,
     backup_root: &Path,
-    rewrite_line: impl Fn(&str) -> Option<String>,
+    should_rewrite_file: impl FnOnce(&str) -> bool,
+    mut rewrite_line: impl FnMut(&str) -> Option<String>,
 ) -> Result<bool, AppError> {
     let metadata_before = fs::metadata(path).map_err(|e| AppError::io(path, e))?;
     let modified_before = metadata_before.modified().ok();
     let len_before = metadata_before.len();
     let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    if !should_rewrite_file(&content) {
+        return Ok(false);
+    }
 
     let mut rewritten = String::with_capacity(content.len());
     let mut changed = false;
@@ -1054,6 +1097,13 @@ fn rewrite_codex_session_file_lines(
     backup_codex_jsonl_file(path, codex_dir, backup_root)?;
     ensure_codex_session_file_unchanged(path, modified_before, len_before)?;
     atomic_write(path, rewritten.as_bytes())?;
+    if let Some(modified_before) = modified_before {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_modified(modified_before))
+            .map_err(|e| AppError::io(path, e))?;
+    }
     Ok(true)
 }
 
@@ -1072,29 +1122,53 @@ fn ensure_codex_session_file_unchanged(
     Ok(())
 }
 
-fn rewrite_codex_session_meta_line(
+fn rewrite_codex_session_provider_line(
     line: &str,
     source_provider_ids: &HashSet<String>,
+    target_provider_id: &str,
 ) -> Option<String> {
-    if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
+    rewrite_codex_session_provider_line_if(
+        line,
+        |provider_id| source_provider_ids.contains(provider_id),
+        target_provider_id,
+    )
+}
+
+fn rewrite_codex_session_provider_line_if(
+    line: &str,
+    is_source_provider: impl FnOnce(&str) -> bool,
+    target_provider_id: &str,
+) -> Option<String> {
+    if !line.contains("\"model_provider") {
         return None;
     }
 
     let mut value: Value = serde_json::from_str(line).ok()?;
-    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
-        return None;
-    }
+    let is_session_meta = value.get("type").and_then(Value::as_str) == Some("session_meta");
+    let is_thread_settings_applied = value.get("type").and_then(Value::as_str) == Some("event_msg")
+        && value
+            .get("payload")
+            .and_then(|payload| payload.get("type"))
+            .and_then(Value::as_str)
+            == Some("thread_settings_applied");
 
     let payload = value.get_mut("payload")?.as_object_mut()?;
-    let current_provider = payload.get("model_provider")?.as_str()?;
-    if !source_provider_ids.contains(current_provider) {
+    let provider = if is_session_meta {
+        payload.get_mut("model_provider")?
+    } else if is_thread_settings_applied {
+        payload
+            .get_mut("thread_settings")?
+            .as_object_mut()?
+            .get_mut("model_provider_id")?
+    } else {
+        return None;
+    };
+    let current_provider = provider.as_str()?;
+    if !is_source_provider(current_provider) {
         return None;
     }
 
-    payload.insert(
-        "model_provider".to_string(),
-        Value::String(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
-    );
+    *provider = Value::String(target_provider_id.to_string());
     serde_json::to_string(&value).ok()
 }
 
@@ -1104,22 +1178,56 @@ fn migrate_codex_state_dbs(
     backup_root: &Path,
 ) -> Result<usize, AppError> {
     let config_text = read_codex_config_text().unwrap_or_default();
+    migrate_codex_state_dbs_to_provider(
+        codex_dir,
+        &config_text,
+        source_provider_ids,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        backup_root,
+    )
+}
+
+fn migrate_codex_state_dbs_to_provider(
+    codex_dir: &Path,
+    config_text: &str,
+    source_provider_ids: &BTreeSet<String>,
+    target_provider_id: &str,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
     let mut migrated = 0;
-    for db_path in codex_state_db_paths(codex_dir, &config_text) {
-        migrated += migrate_codex_state_db_provider_bucket(
+    for db_path in codex_state_db_paths(codex_dir, config_text) {
+        migrated += migrate_codex_state_db_provider_bucket_to_provider(
             &db_path,
             codex_dir,
             source_provider_ids,
+            target_provider_id,
             backup_root,
         )?;
     }
     Ok(migrated)
 }
 
+#[cfg(test)]
 fn migrate_codex_state_db_provider_bucket(
     db_path: &Path,
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
+    migrate_codex_state_db_provider_bucket_to_provider(
+        db_path,
+        codex_dir,
+        source_provider_ids,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        backup_root,
+    )
+}
+
+fn migrate_codex_state_db_provider_bucket_to_provider(
+    db_path: &Path,
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    target_provider_id: &str,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
     if !db_path.exists() || source_provider_ids.is_empty() {
@@ -1156,7 +1264,7 @@ fn migrate_codex_state_db_provider_bucket(
     let update_sql =
         format!("UPDATE threads SET model_provider = ? WHERE model_provider IN ({placeholders})");
     let mut values = Vec::with_capacity(source_provider_ids.len() + 1);
-    values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+    values.push(target_provider_id.to_string());
     values.extend(source_provider_ids.iter().cloned());
     let tx = conn
         .transaction()
@@ -1739,7 +1847,10 @@ base_url = "https://proxy.example/v1"
         let official_path = session_dir.join("official.jsonl");
         fs::write(
             &official_path,
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model_provider_id\":\"custom\"}}}\n",
+            ),
         )
         .expect("write official session");
         let on_period_dir = codex_dir.join("sessions/2026/06/12");
@@ -1749,6 +1860,7 @@ base_url = "https://proxy.example/v1"
             &on_period_path,
             concat!(
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model_provider_id\":\"custom\"}}}\n",
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s3\",\"model_provider\":\"my-private-relay\"}}\n",
             ),
         )
@@ -1789,8 +1901,10 @@ base_url = "https://proxy.example/v1"
 
         let official_text = fs::read_to_string(&official_path).expect("read official");
         assert!(official_text.contains("\"model_provider\":\"openai\""));
+        assert!(official_text.contains("\"model_provider_id\":\"openai\""));
         let on_period_text = fs::read_to_string(&on_period_path).expect("read on-period");
         assert!(on_period_text.contains("\"id\":\"s2\",\"model_provider\":\"custom\""));
+        assert!(on_period_text.contains("\"model_provider_id\":\"custom\""));
         assert!(on_period_text.contains("\"model_provider\":\"my-private-relay\""));
 
         let conn = Connection::open(&state_db_path).expect("reopen state db");
@@ -1827,6 +1941,71 @@ base_url = "https://proxy.example/v1"
         assert_eq!(rerun.restored_jsonl_files, 0);
         assert_eq!(rerun.restored_state_rows, 0);
         assert_eq!(rerun.skipped_reason.as_deref(), Some("nothing_to_restore"));
+    }
+
+    #[test]
+    fn restore_scopes_mixed_rollout_segments_to_ledger_session() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let ledger_parent = dir.path().join("ledger");
+        let restore_backup_root = dir.path().join("restore-backup");
+
+        let generation = ledger_parent.join("20260612_010101");
+        let backup_session_dir = generation.join("jsonl/sessions/2026/06/01");
+        fs::create_dir_all(&backup_session_dir).expect("create backup session dir");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            backup_session_dir.join("official.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"openai\"}}\n",
+        )
+        .expect("write backup session");
+        fs::write(
+            generation.join("meta.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "codexConfigDir": canonical_dir_string(&codex_dir)
+            }))
+            .expect("serialize meta"),
+        )
+        .expect("write meta");
+
+        let session_dir = codex_dir.join("sessions/2026/06/12");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let mixed_path = session_dir.join("mixed.jsonl");
+        fs::write(
+            &mixed_path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"segment\":\"s1\",\"thread_settings\":{\"model_provider_id\":\"custom\"}}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"segment\":\"s2\",\"thread_settings\":{\"model_provider_id\":\"custom\"}}}\n",
+            ),
+        )
+        .expect("write mixed session");
+
+        let outcome = restore_codex_official_history_inner(
+            &codex_dir,
+            &ledger_parent,
+            &restore_backup_root,
+            "",
+        )
+        .expect("restore");
+        assert_eq!(outcome.restored_jsonl_files, 1);
+
+        let lines = fs::read_to_string(&mixed_path)
+            .expect("read mixed session")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("valid jsonl"))
+            .collect::<Vec<_>>();
+        assert_eq!(lines[0]["payload"]["model_provider"], "openai");
+        assert_eq!(
+            lines[1]["payload"]["thread_settings"]["model_provider_id"],
+            "openai"
+        );
+        assert_eq!(lines[2]["payload"]["model_provider"], "custom");
+        assert_eq!(
+            lines[3]["payload"]["thread_settings"]["model_provider_id"], "custom",
+            "an unrelated session segment in the same file must remain untouched"
+        );
     }
 
     #[test]
@@ -1946,7 +2125,7 @@ base_url = "https://proxy.example/v1"
     }
 
     #[test]
-    fn rewrites_only_codex_session_meta_provider_ids() {
+    fn rewrites_codex_session_provider_ids_and_creates_backup() {
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         let backup_root = dir.path().join("backup");
@@ -1966,6 +2145,7 @@ base_url = "https://proxy.example/v1"
             &path,
             &codex_dir,
             &HashSet::from(["rightcode".to_string()]),
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
             &backup_root,
         )
         .expect("rewrite");
@@ -1976,6 +2156,44 @@ base_url = "https://proxy.example/v1"
         assert!(backup_root
             .join("jsonl/sessions/2026/05/20/rollout-test.jsonl")
             .exists());
+    }
+
+    #[test]
+    fn migrates_persisted_runtime_provider_with_session_bucket() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let backup_root = dir.path().join("backup");
+        let session_dir = codex_dir.join("sessions/2026/08/19");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let path = session_dir.join("rollout-runtime-provider.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"openai\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model\":\"gpt-5.4\",\"model_provider_id\":\"openai\"}}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi\"}}\n"
+            ),
+        )
+        .expect("write session");
+
+        let migrated =
+            migrate_codex_jsonl_files(&codex_dir, &source_ids(&["openai"]), &backup_root)
+                .expect("migrate jsonl");
+
+        assert_eq!(migrated, 1);
+        let lines: Vec<Value> = fs::read_to_string(&path)
+            .expect("read rewritten session")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("parse rollout line"))
+            .collect();
+        assert_eq!(
+            lines[0]["payload"]["model_provider"].as_str(),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
+        assert_eq!(
+            lines[1]["payload"]["thread_settings"]["model_provider_id"].as_str(),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
     }
 
     #[test]

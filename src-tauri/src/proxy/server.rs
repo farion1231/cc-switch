@@ -59,6 +59,13 @@ pub struct ProxyServer {
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
+async fn responses_websocket_fallback() -> axum::http::StatusCode {
+    // Codex's built-in OpenAI provider prefers a WebSocket handshake even
+    // when its base URL points at CC Switch. A 426 response is Codex's signal
+    // to skip WebSocket retries and immediately use the HTTP streaming route.
+    axum::http::StatusCode::UPGRADE_REQUIRED
+}
+
 impl ProxyServer {
     pub fn new(
         config: ProxyConfig,
@@ -323,10 +330,22 @@ impl ProxyServer {
             .route("/models", get(handlers::handle_models))
             .route("/v1/models", get(handlers::handle_models))
             // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
-            .route("/responses", post(handlers::handle_responses))
-            .route("/v1/responses", post(handlers::handle_responses))
-            .route("/v1/v1/responses", post(handlers::handle_responses))
-            .route("/codex/v1/responses", post(handlers::handle_responses))
+            .route(
+                "/responses",
+                get(responses_websocket_fallback).post(handlers::handle_responses),
+            )
+            .route(
+                "/v1/responses",
+                get(responses_websocket_fallback).post(handlers::handle_responses),
+            )
+            .route(
+                "/v1/v1/responses",
+                get(responses_websocket_fallback).post(handlers::handle_responses),
+            )
+            .route(
+                "/codex/v1/responses",
+                get(responses_websocket_fallback).post(handlers::handle_responses),
+            )
             // Grok Build uses the Responses protocol but has an independent
             // provider namespace and failover queue.
             .route(
@@ -426,6 +445,48 @@ mod tests {
         path_and_query: String,
         authorization: Option<String>,
         body: Value,
+    }
+
+    #[tokio::test]
+    async fn responses_websocket_handshakes_request_http_fallback() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let aliases = [
+            "/responses",
+            "/v1/responses",
+            "/v1/v1/responses",
+            "/codex/v1/responses",
+        ];
+
+        for path in aliases {
+            let response = client
+                .get(format!("http://127.0.0.1:{}{}", proxy_info.port, path))
+                .header(header::CONNECTION, "Upgrade")
+                .header(header::UPGRADE, "websocket")
+                .header("sec-websocket-version", "13")
+                .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+                .send()
+                .await
+                .expect("send websocket handshake");
+
+            assert_eq!(
+                response.status(),
+                StatusCode::UPGRADE_REQUIRED,
+                "alias {path} must tell Codex to fall back to HTTP streaming"
+            );
+        }
+
+        proxy.stop().await.expect("stop test proxy");
     }
 
     #[tokio::test]
