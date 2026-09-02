@@ -74,7 +74,9 @@ export function CommonConfigEditor({
       const config = JSON.parse(localValue);
       return {
         hideAttribution:
-          config?.attribution?.commit === "" && config?.attribution?.pr === "",
+          config?.attribution?.commit === "" &&
+          config?.attribution?.pr === "" &&
+          config?.attribution?.sessionUrl === false,
         teammates:
           config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === "1" ||
           config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1,
@@ -105,7 +107,7 @@ export function CommonConfigEditor({
         switch (toggleKey) {
           case "hideAttribution":
             if (checked) {
-              config.attribution = { commit: "", pr: "" };
+              config.attribution = { commit: "", pr: "", sessionUrl: false };
             } else {
               delete config.attribution;
             }
