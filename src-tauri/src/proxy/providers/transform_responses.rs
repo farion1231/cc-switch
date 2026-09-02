@@ -1904,34 +1904,27 @@ pub fn anthropic_to_responses(
     }
 
     if let Some(max_uses) = hosted_web_search_max_uses {
-        if is_codex_oauth {
-            if forced_hosted_web_search_name.is_none() {
-                // The ChatGPT Codex contract rejects max_tool_calls. Without a
-                // forced, isolated hosted tool, the proxy cannot safely bound
-                // which built-in calls consume Anthropic's per-tool budget.
-                return Err(ProxyError::InvalidRequest(
-                    "Anthropic WebSearch max_uses on the Codex OAuth backend requires forcing that hosted tool"
-                        .to_string(),
-                ));
-            }
-            let existing = result
-                .get("instructions")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let cap_instruction = format!(
-                "You must perform no more than {max_uses} web search calls in this response."
-            );
-            result["instructions"] = json!(if existing.is_empty() {
-                cap_instruction
-            } else {
-                format!("{existing}\n\n{cap_instruction}")
-            });
-        } else {
-            // Responses exposes one aggregate cap for built-in tool calls.
-            // Hosted WebSearch is the only built-in tool produced by this
-            // transform, so this exactly enforces Anthropic's request limit.
-            result["max_tool_calls"] = json!(max_uses);
+        if is_codex_oauth && forced_hosted_web_search_name.is_none() {
+            // The ChatGPT Codex contract rejects max_tool_calls. Without a
+            // forced, isolated hosted tool, the proxy cannot safely bound
+            // which built-in calls consume Anthropic's per-tool budget.
+            return Err(ProxyError::InvalidRequest(
+                "Anthropic WebSearch max_uses on the Codex OAuth backend requires forcing that hosted tool"
+                    .to_string(),
+            ));
         }
+        let existing = result
+            .get("instructions")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let cap_instruction = format!(
+            "You must perform no more than {max_uses} web search calls in this response."
+        );
+        result["instructions"] = json!(if existing.is_empty() {
+            cap_instruction
+        } else {
+            format!("{existing}\n\n{cap_instruction}")
+        });
     }
 
     if let Some(v) = body.get("tool_choice") {
@@ -3381,7 +3374,7 @@ mod tests {
     }
 
     #[test]
-    fn test_api_key_hosted_web_search_maps_max_uses_to_max_tool_calls() {
+    fn test_api_key_hosted_web_search_maps_max_uses_to_instructions() {
         let input = json!({
             "model": "gpt-5",
             "messages": [{"role": "user", "content": "Search"}],
@@ -3393,7 +3386,11 @@ mod tests {
         });
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
-        assert_eq!(result["max_tool_calls"], 3);
+        assert!(result.get("max_tool_calls").is_none());
+        assert!(result["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("no more than 3 web search calls"));
     }
 
     #[test]
