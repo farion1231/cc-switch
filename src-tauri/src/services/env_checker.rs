@@ -28,6 +28,10 @@ pub fn check_env_conflicts(app: &str) -> Result<Vec<EnvConflict>, String> {
     #[cfg(not(target_os = "windows"))]
     conflicts.extend(check_shell_configs(&keywords)?);
 
+    if app.eq_ignore_ascii_case("claude") {
+        conflicts.extend(check_claude_settings_local(&keywords)?);
+    }
+
     Ok(conflicts)
 }
 
@@ -172,6 +176,40 @@ fn check_shell_configs(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, Stri
     Ok(conflicts)
 }
 
+/// Claude Code overlays `settings.local.json` env on top of `settings.json`.
+fn check_claude_settings_local(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String> {
+    let path = crate::config::get_claude_settings_local_path();
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let value: serde_json::Value = match crate::config::read_json_file(&path) {
+        Ok(value) => value,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let Some(env) = value.get("env").and_then(|value| value.as_object()) else {
+        return Ok(Vec::new());
+    };
+
+    let mut conflicts = Vec::new();
+    for (name, value) in env {
+        if !matches_env_keyword(name, keywords) {
+            continue;
+        }
+        let var_value = match value {
+            serde_json::Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        conflicts.push(EnvConflict {
+            var_name: name.clone(),
+            var_value,
+            source_type: "file".to_string(),
+            source_path: path.to_string_lossy().to_string(),
+        });
+    }
+    Ok(conflicts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +269,46 @@ mod tests {
         assert!(matches_env_keyword("anthropic_base_url", &keywords));
         assert!(!matches_env_keyword("MY_ANTHROPIC_API_KEY", &keywords));
         assert!(!matches_env_keyword("NOT_ANTHROPIC", &keywords));
+    }
+
+    #[test]
+    #[serial_test::serial(cc_switch_test_home)]
+    fn claude_settings_local_env_is_reported_as_file_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+        let claude_dir = dir.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            claude_dir.join("settings.local.json"),
+            r#"{
+              "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:3800",
+                "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let result = std::panic::catch_unwind(|| {
+            let conflicts = check_env_conflicts("claude").expect("check claude conflicts");
+            assert!(
+                conflicts.iter().any(|conflict| {
+                    conflict.var_name == "ANTHROPIC_BASE_URL"
+                        && conflict.source_type == "file"
+                        && conflict.var_value == "http://127.0.0.1:3800"
+                }),
+                "expected settings.local.json ANTHROPIC_BASE_URL conflict, got {conflicts:?}"
+            );
+            assert!(!conflicts
+                .iter()
+                .any(|conflict| conflict.var_name == "NODE_TLS_REJECT_UNAUTHORIZED"));
+        });
+
+        match original {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        result.unwrap();
     }
 }

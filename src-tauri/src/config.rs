@@ -199,6 +199,77 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
+/// Claude Code project-local settings that overlay `settings.json`.
+///
+/// Launching Claude from the home directory treats `~/.claude` as the project
+/// config dir, so this file and user `settings.json` are the same folder.
+pub fn get_claude_settings_local_path() -> PathBuf {
+    get_claude_config_dir().join("settings.local.json")
+}
+
+fn is_claude_provider_env_key(name: &str) -> bool {
+    name.to_ascii_uppercase().starts_with("ANTHROPIC")
+}
+
+/// Remove `ANTHROPIC_*` keys from `settings.local.json`.
+///
+/// Claude Code merges local env over `settings.json`. A leftover local proxy
+/// (for example `ANTHROPIC_BASE_URL=http://127.0.0.1:3800`) makes CC Switch
+/// provider switches look successful while Claude still talks to the dead
+/// endpoint. Other local fields such as `permissions` are kept.
+pub fn scrub_claude_settings_local_provider_env() -> Result<bool, AppError> {
+    let path = get_claude_settings_local_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let mut value: Value = read_json_file(&path)?;
+    let Some(root) = value.as_object_mut() else {
+        return Ok(false);
+    };
+    let Some(env_value) = root.get_mut("env") else {
+        return Ok(false);
+    };
+    let Some(env) = env_value.as_object_mut() else {
+        return Ok(false);
+    };
+
+    let keys: Vec<String> = env
+        .keys()
+        .filter(|key| is_claude_provider_env_key(key))
+        .cloned()
+        .collect();
+    if keys.is_empty() {
+        return Ok(false);
+    }
+
+    for key in &keys {
+        env.remove(key);
+    }
+    if env.is_empty() {
+        root.remove("env");
+    }
+
+    write_json_file(&path, &value)?;
+    log::info!(
+        "Cleared shadowed Claude provider env from {}: {}",
+        path.display(),
+        keys.join(", ")
+    );
+    Ok(true)
+}
+
+/// Write Claude live `settings.json` and drop local env that would shadow it.
+pub fn write_claude_settings_file<T: Serialize>(data: &T) -> Result<(), AppError> {
+    write_json_file(&get_claude_settings_path(), data)?;
+    if let Err(err) = scrub_claude_settings_local_provider_env() {
+        log::warn!(
+            "Wrote Claude settings.json but could not clear settings.local.json ANTHROPIC_* overrides: {err}"
+        );
+    }
+    Ok(())
+}
+
 /// 获取应用配置目录路径 (~/.cc-switch)
 pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
@@ -750,6 +821,122 @@ mod tests {
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
         );
+    }
+
+    fn with_test_home<T>(f: impl FnOnce(&Path) -> T) -> T {
+        let dir = tempfile::tempdir().unwrap();
+        let original = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(dir.path())));
+        match original {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        result.unwrap()
+    }
+
+    #[test]
+    #[serial_test::serial(cc_switch_test_home)]
+    fn scrub_settings_local_removes_anthropic_env_and_keeps_permissions() {
+        with_test_home(|home| {
+            let claude_dir = home.join(".claude");
+            std::fs::create_dir_all(&claude_dir).unwrap();
+            let local = claude_dir.join("settings.local.json");
+            write_json_file(
+                &local,
+                &serde_json::json!({
+                    "permissions": { "allow": ["Bash"] },
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "http://127.0.0.1:3800",
+                        "ANTHROPIC_AUTH_TOKEN": "tasklet-local",
+                        "ANTHROPIC_API_KEY": "tasklet-local",
+                        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+                    }
+                }),
+            )
+            .unwrap();
+
+            assert!(scrub_claude_settings_local_provider_env().unwrap());
+            let after: Value = read_json_file(&local).unwrap();
+            assert_eq!(
+                after
+                    .pointer("/permissions/allow/0")
+                    .and_then(Value::as_str),
+                Some("Bash")
+            );
+            assert_eq!(
+                after
+                    .pointer("/env/NODE_TLS_REJECT_UNAUTHORIZED")
+                    .and_then(Value::as_str),
+                Some("0")
+            );
+            assert!(after.pointer("/env/ANTHROPIC_BASE_URL").is_none());
+            assert!(after.pointer("/env/ANTHROPIC_API_KEY").is_none());
+            assert!(after.pointer("/env/ANTHROPIC_AUTH_TOKEN").is_none());
+        });
+    }
+
+    #[test]
+    #[serial_test::serial(cc_switch_test_home)]
+    fn scrub_settings_local_drops_empty_env_object() {
+        with_test_home(|home| {
+            let claude_dir = home.join(".claude");
+            std::fs::create_dir_all(&claude_dir).unwrap();
+            let local = claude_dir.join("settings.local.json");
+            write_json_file(
+                &local,
+                &serde_json::json!({
+                    "permissions": { "allow": ["Read"] },
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "http://127.0.0.1:3800"
+                    }
+                }),
+            )
+            .unwrap();
+
+            assert!(scrub_claude_settings_local_provider_env().unwrap());
+            let after: Value = read_json_file(&local).unwrap();
+            assert!(after.get("env").is_none());
+            assert_eq!(
+                after
+                    .pointer("/permissions/allow/0")
+                    .and_then(Value::as_str),
+                Some("Read")
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial(cc_switch_test_home)]
+    fn write_claude_settings_file_scrubs_local_overrides() {
+        with_test_home(|home| {
+            let claude_dir = home.join(".claude");
+            std::fs::create_dir_all(&claude_dir).unwrap();
+            write_json_file(
+                &claude_dir.join("settings.local.json"),
+                &serde_json::json!({
+                    "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:3800" }
+                }),
+            )
+            .unwrap();
+
+            write_claude_settings_file(&serde_json::json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-live",
+                    "ANTHROPIC_BASE_URL": "https://api.example.test"
+                }
+            }))
+            .unwrap();
+
+            let live: Value = read_json_file(&get_claude_settings_path()).unwrap();
+            assert_eq!(
+                live.pointer("/env/ANTHROPIC_BASE_URL")
+                    .and_then(Value::as_str),
+                Some("https://api.example.test")
+            );
+            let local: Value = read_json_file(&get_claude_settings_local_path()).unwrap();
+            assert!(local.get("env").is_none());
+        });
     }
 }
 

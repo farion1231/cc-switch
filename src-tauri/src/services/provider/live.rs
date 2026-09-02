@@ -10,7 +10,10 @@ use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
-use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{
+    delete_file, get_claude_settings_path, read_json_file, write_claude_settings_file,
+    write_json_file,
+};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -1224,7 +1227,7 @@ impl LiveSnapshot {
             LiveSnapshot::Claude { settings } => {
                 let path = get_claude_settings_path();
                 if let Some(value) = settings {
-                    write_json_file(&path, value)?;
+                    write_claude_settings_file(value)?;
                 } else if path.exists() {
                     delete_file(&path)?;
                 }
@@ -1277,9 +1280,8 @@ impl LiveSnapshot {
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
-            let path = get_claude_settings_path();
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file(&path, &settings)?;
+            write_claude_settings_file(&settings)?;
         }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(
