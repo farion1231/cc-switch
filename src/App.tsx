@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -29,9 +29,14 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, Settings as AppSettings, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
-import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import {
+  proxyKeys,
+  useProvidersQuery,
+  useSaveSettingsMutation,
+  useSettingsQuery,
+} from "@/lib/query";
 import {
   piApi,
   providersApi,
@@ -202,6 +207,7 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  const saveSettingsMutation = useSaveSettingsMutation();
   const useAppWindowControls =
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
@@ -223,6 +229,36 @@ function App() {
       setActiveApp(getFirstVisibleApp());
     }
   }, [visibleApps, activeApp]);
+
+  // tab 上的 × / 末尾「+」：与设置页「主页面显示」同一开关，就地增删可见应用。
+  // 保存是全量替换，连续快速操作时渲染闭包里的 settingsData 还是旧快照，
+  // 直接发会互相覆盖 —— 每次先读缓存最新值、乐观写回再保存，下一次操作立刻
+  // 看到累积状态；失败时 invalidate 拉回服务端真值。
+  // 发送与 DEFAULT_VISIBLE_APPS 合并后的完整对象（后端 visible_apps 是整体替换）；
+  // settings 还没加载时不动 —— 那次保存会把其余字段全部清成默认值。
+  // 不弹 toast：tab 消失/出现即反馈，顶部横幅反而会挡住连续操作。
+  const setAppVisibleFromMainPage = useCallback(
+    (app: AppId, visible: boolean) => {
+      const current =
+        queryClient.getQueryData<AppSettings>(["settings"]) ?? settingsData;
+      if (!current) return;
+      const next: AppSettings = {
+        ...current,
+        visibleApps: {
+          ...DEFAULT_VISIBLE_APPS,
+          ...current.visibleApps,
+          [app]: visible,
+        },
+      };
+      queryClient.setQueryData(["settings"], next);
+      saveSettingsMutation.mutate(next, {
+        onError: () => {
+          queryClient.invalidateQueries({ queryKey: ["settings"] });
+        },
+      });
+    },
+    [queryClient, saveSettingsMutation, settingsData],
+  );
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
@@ -1406,6 +1442,8 @@ function App() {
                   activeApp={activeApp}
                   onSwitch={setActiveApp}
                   visibleApps={visibleApps}
+                  onHideApp={(app) => setAppVisibleFromMainPage(app, false)}
+                  onShowApp={(app) => setAppVisibleFromMainPage(app, true)}
                 />
               )}
             </div>
