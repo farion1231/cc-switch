@@ -187,12 +187,12 @@ pub fn maybe_migrate_codex_provider_template_bucket(
     Ok(outcome)
 }
 
-/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶）迁入共享 "custom" 桶。
+/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶）迁入配置的统一桶。
 ///
 /// 仅当用户在开启弹窗里勾选了"迁入既有官方会话"（`unify_codex_migrate_existing`）
 /// 且本轮未完成时执行；开关关闭时标记与勾选意愿都会被清除（见 `save_settings`），
 /// 重新开启并再次勾选即可补迁关闭期间产生的官方会话。
-/// custom 桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
+/// 统一桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
 /// 用户可在关闭开关时选择按备份账本精确还原（见 `restore_codex_official_history_from_backups`）。
 /// 迁移前 jsonl / state DB 均备份到 `~/.cc-switch/backups/codex-official-history-unify-v1/`。
 pub fn maybe_migrate_codex_official_history_to_unified_bucket(
@@ -220,13 +220,13 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
             ..Default::default()
         });
     }
-    // live 必须已实际路由到共享 custom 桶才允许迁移：官方配置的注入可能被拒
+    // live 必须已实际路由到配置的统一桶才允许迁移：官方配置的注入可能被拒
     // （已有显式 model_provider / 形态冲突的 custom 表，见
     // `inject_codex_unified_session_bucket`），代理接管期间的 live 也不带统一
     // 路由（注入只进备份）。这些状态下新会话仍落 "openai" 桶，迁移只会把
     // 历史搬进当前 live 看不见的桶里。开关与迁移意愿保持不动，待 live 真正
     // 统一后（下次切换 / 接管释放后的启动重试）再迁。
-    if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
+    if !codex_config_text_routes_unified_bucket(&read_codex_config_text().unwrap_or_default()) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("live_not_unified".to_string()),
             ..Default::default()
@@ -235,13 +235,22 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
 
     let source_provider_ids: BTreeSet<String> =
         std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
+    let unified_provider_id = crate::settings::codex_official_unified_provider_id();
     let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
-    let migrated_jsonl_files =
-        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
-    let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
+    let migrated_jsonl_files = migrate_codex_jsonl_files_to(
+        &codex_dir,
+        &source_provider_ids,
+        &backup_root,
+        &unified_provider_id,
+    )?;
+    let migrated_state_rows = migrate_codex_state_dbs_to(
+        &codex_dir,
+        &source_provider_ids,
+        &backup_root,
+        &unified_provider_id,
+    )?;
     // 备份代际记录来源目录，restore 据此只取当前目录的账本。
-    write_backup_generation_meta(&backup_root, &codex_dir_key)?;
+    write_backup_generation_meta(&backup_root, &codex_dir_key, &unified_provider_id)?;
 
     let outcome = CodexHistoryProviderBucketMigrationOutcome {
         source_provider_ids: source_provider_ids.into_iter().collect(),
@@ -256,7 +265,7 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     let marker_written = crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
         CodexOfficialHistoryUnifyMigration {
             completed_at: Utc::now().to_rfc3339(),
-            target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
+            target_provider_id: unified_provider_id,
             migrated_jsonl_files,
             migrated_state_rows,
             codex_config_dir: Some(codex_dir_key),
@@ -272,8 +281,22 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     Ok(outcome)
 }
 
-/// live config.toml 是否路由到共享 custom 桶（会话分桶只看这个实态：
+/// live config.toml 是否路由到配置的统一桶（会话分桶只看这个实态：
 /// base_url / 接管与否都不影响 session_meta 记录的 model_provider）。
+fn codex_config_text_routes_unified_bucket(config_text: &str) -> bool {
+    let target_provider_id = crate::settings::codex_official_unified_provider_id();
+    config_text
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| {
+            doc.get("model_provider")
+                .and_then(|item| item.as_str())
+                .map(|id| id.trim() == target_provider_id)
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
 fn codex_config_text_routes_custom(config_text: &str) -> bool {
     config_text
         .parse::<DocumentMut>()
@@ -281,9 +304,10 @@ fn codex_config_text_routes_custom(config_text: &str) -> bool {
         .and_then(|doc| {
             doc.get("model_provider")
                 .and_then(|item| item.as_str())
-                .map(|id| id.trim() == CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+                .map(str::trim)
+                .map(str::to_string)
         })
-        .unwrap_or(false)
+        .is_some_and(|id| id == CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
 }
 
 /// 目录的规范化字符串形式，用作 marker / 备份代际的目录身份。
@@ -297,11 +321,18 @@ fn canonical_dir_string(dir: &Path) -> String {
 
 /// 在备份代际根目录写入 meta.json，记录这批备份来自哪个 Codex 目录。
 /// 代际目录不存在（本轮没有任何文件被迁移）时跳过。
-fn write_backup_generation_meta(backup_root: &Path, codex_dir_key: &str) -> Result<(), AppError> {
+fn write_backup_generation_meta(
+    backup_root: &Path,
+    codex_dir_key: &str,
+    target_provider_id: &str,
+) -> Result<(), AppError> {
     if !backup_root.exists() {
         return Ok(());
     }
-    let payload = serde_json::json!({ "codexConfigDir": codex_dir_key });
+    let payload = serde_json::json!({
+        "codexConfigDir": codex_dir_key,
+        "targetProviderId": target_provider_id,
+    });
     let bytes =
         serde_json::to_vec_pretty(&payload).map_err(|e| AppError::JsonSerialize { source: e })?;
     atomic_write(&backup_root.join("meta.json"), &bytes)
@@ -342,7 +373,7 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
     })
 }
 
-/// 关闭统一会话开关时的可选还原：按迁移备份账本，把当时迁入共享 custom 桶的
+/// 关闭统一会话开关时的可选还原：按迁移备份账本，把当时迁入统一桶的
 /// 官方会话精确翻回 "openai" 桶。
 ///
 /// 备份是唯一可信的归属证据：备份里 model_provider=="openai" 的会话必定源自
@@ -350,7 +381,7 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
 /// 第三方，方向无法判定（产品决策：宁可留在第三方历史）。
 /// 扫描全部备份代际取并集，多次开关循环后仍能还原早期迁入的会话；
 /// 还原前改动目标先备份到独立的 restore 目录（保持迁移账本目录纯净），
-/// 且只改写当前仍为 custom 的目标，重复执行无害。
+/// 且只改写当前仍为已记录统一 ID 的目标，重复执行无害。
 pub fn restore_codex_official_history_from_backups(
 ) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
     let _op_guard = lock_codex_official_history_op();
@@ -379,9 +410,8 @@ fn restore_codex_official_history_inner(
     config_text: &str,
 ) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
     let codex_dir_key = canonical_dir_string(codex_dir);
-    let (official_session_ids, official_thread_ids) =
-        collect_official_ledger(ledger_parent, &codex_dir_key)?;
-    if official_session_ids.is_empty() && official_thread_ids.is_empty() {
+    let ledger = collect_official_ledger(ledger_parent, &codex_dir_key)?;
+    if ledger.official_session_ids.is_empty() && ledger.official_thread_ids.is_empty() {
         return Ok(CodexOfficialHistoryRestoreOutcome {
             skipped_reason: Some("no_backup_ledger".to_string()),
             ..Default::default()
@@ -394,7 +424,11 @@ fn restore_codex_official_history_inner(
     let mut restored_jsonl_files = 0;
     for file_path in files {
         if rewrite_codex_session_file_lines(&file_path, codex_dir, restore_backup_root, |line| {
-            rewrite_codex_session_meta_line_for_restore(line, &official_session_ids)
+            rewrite_codex_session_meta_line_for_restore(
+                line,
+                &ledger.official_session_ids,
+                &ledger.target_provider_ids,
+            )
         })? {
             restored_jsonl_files += 1;
         }
@@ -405,7 +439,8 @@ fn restore_codex_official_history_inner(
         restored_state_rows += restore_codex_state_db_official_threads(
             &db_path,
             codex_dir,
-            &official_thread_ids,
+            &ledger.official_thread_ids,
+            &ledger.target_provider_ids,
             restore_backup_root,
         )?;
     }
@@ -431,16 +466,22 @@ fn restore_codex_official_history_inner(
 /// 只采纳 meta.json 目录与当前 Codex 目录一致的代际，避免切换
 /// codex_config_dir 后拿旧目录的账本作用到新目录。
 /// 还原操作自身的备份（restore 目录）天然不会混入：那些副本里的 id 都是
-/// custom，解析后贡献为空。
+/// 目标统一 ID，解析后贡献为空。
+#[derive(Default)]
+struct CodexOfficialHistoryLedger {
+    official_session_ids: HashSet<String>,
+    official_thread_ids: BTreeSet<String>,
+    target_provider_ids: BTreeSet<String>,
+}
+
 fn collect_official_ledger(
     ledger_parent: &Path,
     codex_dir_key: &str,
-) -> Result<(HashSet<String>, BTreeSet<String>), AppError> {
-    let mut session_ids = HashSet::new();
-    let mut thread_ids = BTreeSet::new();
+) -> Result<CodexOfficialHistoryLedger, AppError> {
+    let mut ledger = CodexOfficialHistoryLedger::default();
     let entries = match fs::read_dir(ledger_parent) {
         Ok(entries) => entries,
-        Err(_) => return Ok((session_ids, thread_ids)),
+        Err(_) => return Ok(ledger),
     };
     for entry in entries.flatten() {
         let generation = entry.path();
@@ -450,18 +491,33 @@ fn collect_official_ledger(
         if !backup_generation_matches_dir(&generation, codex_dir_key) {
             continue;
         }
+        let target_provider_id = serde_json::from_str::<Value>(
+            &fs::read_to_string(generation.join("meta.json")).unwrap_or_default(),
+        )
+        .ok()
+        .and_then(|value| {
+            value
+                .get("targetProviderId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        ledger.target_provider_ids.insert(target_provider_id);
         let mut backup_files = Vec::new();
         collect_jsonl_files(&generation.join("jsonl"), &mut backup_files, 0, 10);
         for backup_file in backup_files {
-            collect_official_session_ids_from_backup(&backup_file, &mut session_ids);
+            collect_official_session_ids_from_backup(
+                &backup_file,
+                &mut ledger.official_session_ids,
+            );
         }
         let mut backup_dbs = Vec::new();
         collect_files_with_extension(&generation.join("state"), "sqlite", &mut backup_dbs, 0, 4);
         for backup_db in backup_dbs {
-            collect_official_thread_ids_from_backup(&backup_db, &mut thread_ids);
+            collect_official_thread_ids_from_backup(&backup_db, &mut ledger.official_thread_ids);
         }
     }
-    Ok((session_ids, thread_ids))
+    Ok(ledger)
 }
 
 /// 备份代际是否属于指定 Codex 目录。无 meta.json 或解析失败时宽容接受：
@@ -567,6 +623,7 @@ fn collect_files_with_extension(
 fn rewrite_codex_session_meta_line_for_restore(
     line: &str,
     official_session_ids: &HashSet<String>,
+    target_provider_ids: &BTreeSet<String>,
 ) -> Option<String> {
     if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
         return None;
@@ -576,7 +633,7 @@ fn rewrite_codex_session_meta_line_for_restore(
         return None;
     }
     let payload = value.get_mut("payload")?.as_object_mut()?;
-    if payload.get("model_provider")?.as_str()? != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
+    if !target_provider_ids.contains(payload.get("model_provider")?.as_str()?) {
         return None;
     }
     let session_id = payload.get("id")?.as_str()?;
@@ -594,9 +651,10 @@ fn restore_codex_state_db_official_threads(
     db_path: &Path,
     codex_dir: &Path,
     official_thread_ids: &BTreeSet<String>,
+    target_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
-    if !db_path.exists() || official_thread_ids.is_empty() {
+    if !db_path.exists() || official_thread_ids.is_empty() || target_provider_ids.is_empty() {
         return Ok(0);
     }
 
@@ -614,12 +672,13 @@ fn restore_codex_state_db_official_threads(
     let ids: Vec<&String> = official_thread_ids.iter().collect();
     let mut matching_rows: i64 = 0;
     for chunk in ids.chunks(STATE_DB_ID_CHUNK) {
-        let placeholders = placeholders(chunk.len());
+        let id_placeholders = placeholders(chunk.len());
+        let provider_placeholders = placeholders(target_provider_ids.len());
         let count_sql = format!(
-            "SELECT COUNT(*) FROM threads WHERE model_provider = ? AND id IN ({placeholders})"
+            "SELECT COUNT(*) FROM threads WHERE model_provider IN ({provider_placeholders}) AND id IN ({id_placeholders})"
         );
-        let mut values = Vec::with_capacity(chunk.len() + 1);
-        values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        let mut values = Vec::with_capacity(chunk.len() + target_provider_ids.len());
+        values.extend(target_provider_ids.iter().cloned());
         values.extend(chunk.iter().map(|id| (*id).clone()));
         let count: i64 = conn
             .query_row(&count_sql, params_from_iter(values.iter()), |row| {
@@ -639,13 +698,14 @@ fn restore_codex_state_db_official_threads(
         .map_err(|e| AppError::Database(format!("开启 Codex state DB 还原事务失败: {e}")))?;
     let mut changed = 0;
     for chunk in ids.chunks(STATE_DB_ID_CHUNK) {
-        let placeholders = placeholders(chunk.len());
+        let id_placeholders = placeholders(chunk.len());
+        let provider_placeholders = placeholders(target_provider_ids.len());
         let update_sql = format!(
-            "UPDATE threads SET model_provider = ? WHERE model_provider = ? AND id IN ({placeholders})"
+            "UPDATE threads SET model_provider = ? WHERE model_provider IN ({provider_placeholders}) AND id IN ({id_placeholders})"
         );
-        let mut values = Vec::with_capacity(chunk.len() + 2);
+        let mut values = Vec::with_capacity(chunk.len() + target_provider_ids.len() + 1);
         values.push(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string());
-        values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        values.extend(target_provider_ids.iter().cloned());
         values.extend(chunk.iter().map(|id| (*id).clone()));
         changed += tx
             .execute(&update_sql, params_from_iter(values.iter()))
@@ -963,6 +1023,20 @@ fn migrate_codex_jsonl_files(
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
+    migrate_codex_jsonl_files_to(
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )
+}
+
+fn migrate_codex_jsonl_files_to(
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    backup_root: &Path,
+    target_provider_id: &str,
+) -> Result<usize, AppError> {
     let mut files = Vec::new();
     collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
     collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
@@ -970,11 +1044,12 @@ fn migrate_codex_jsonl_files(
     let source_provider_ids: HashSet<String> = source_provider_ids.iter().cloned().collect();
     let mut migrated = 0;
     for file_path in files {
-        if rewrite_codex_session_file_for_provider_bucket(
+        if rewrite_codex_session_file_for_provider_bucket_to(
             &file_path,
             codex_dir,
             &source_provider_ids,
             backup_root,
+            target_provider_id,
         )? {
             migrated += 1;
         }
@@ -1008,14 +1083,31 @@ fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>, depth: u8, max_dept
     }
 }
 
+#[cfg(test)]
 fn rewrite_codex_session_file_for_provider_bucket(
     path: &Path,
     codex_dir: &Path,
     source_provider_ids: &HashSet<String>,
     backup_root: &Path,
 ) -> Result<bool, AppError> {
+    rewrite_codex_session_file_for_provider_bucket_to(
+        path,
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )
+}
+
+fn rewrite_codex_session_file_for_provider_bucket_to(
+    path: &Path,
+    codex_dir: &Path,
+    source_provider_ids: &HashSet<String>,
+    backup_root: &Path,
+    target_provider_id: &str,
+) -> Result<bool, AppError> {
     rewrite_codex_session_file_lines(path, codex_dir, backup_root, |line| {
-        rewrite_codex_session_meta_line(line, source_provider_ids)
+        rewrite_codex_session_meta_line(line, source_provider_ids, target_provider_id)
     })
 }
 
@@ -1075,6 +1167,7 @@ fn ensure_codex_session_file_unchanged(
 fn rewrite_codex_session_meta_line(
     line: &str,
     source_provider_ids: &HashSet<String>,
+    target_provider_id: &str,
 ) -> Option<String> {
     if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
         return None;
@@ -1093,7 +1186,7 @@ fn rewrite_codex_session_meta_line(
 
     payload.insert(
         "model_provider".to_string(),
-        Value::String(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+        Value::String(target_provider_id.to_string()),
     );
     serde_json::to_string(&value).ok()
 }
@@ -1103,24 +1196,56 @@ fn migrate_codex_state_dbs(
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
+    migrate_codex_state_dbs_to(
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )
+}
+
+fn migrate_codex_state_dbs_to(
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    backup_root: &Path,
+    target_provider_id: &str,
+) -> Result<usize, AppError> {
     let config_text = read_codex_config_text().unwrap_or_default();
     let mut migrated = 0;
     for db_path in codex_state_db_paths(codex_dir, &config_text) {
-        migrated += migrate_codex_state_db_provider_bucket(
+        migrated += migrate_codex_state_db_provider_bucket_to(
             &db_path,
             codex_dir,
             source_provider_ids,
             backup_root,
+            target_provider_id,
         )?;
     }
     Ok(migrated)
 }
 
+#[cfg(test)]
 fn migrate_codex_state_db_provider_bucket(
     db_path: &Path,
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
+) -> Result<usize, AppError> {
+    migrate_codex_state_db_provider_bucket_to(
+        db_path,
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )
+}
+
+fn migrate_codex_state_db_provider_bucket_to(
+    db_path: &Path,
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    backup_root: &Path,
+    target_provider_id: &str,
 ) -> Result<usize, AppError> {
     if !db_path.exists() || source_provider_ids.is_empty() {
         return Ok(0);
@@ -1156,7 +1281,7 @@ fn migrate_codex_state_db_provider_bucket(
     let update_sql =
         format!("UPDATE threads SET model_provider = ? WHERE model_provider IN ({placeholders})");
     let mut values = Vec::with_capacity(source_provider_ids.len() + 1);
-    values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+    values.push(target_provider_id.to_string());
     values.extend(source_provider_ids.iter().cloned());
     let tx = conn
         .transaction()
@@ -1976,6 +2101,27 @@ base_url = "https://proxy.example/v1"
         assert!(backup_root
             .join("jsonl/sessions/2026/05/20/rollout-test.jsonl")
             .exists());
+    }
+
+    #[test]
+    fn restores_only_sessions_from_the_recorded_target_provider_bucket() {
+        let official_session_ids = HashSet::from(["official-session".to_string()]);
+        let target_provider_ids = BTreeSet::from(["shared-relay".to_string()]);
+
+        let restored = rewrite_codex_session_meta_line_for_restore(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"official-session\",\"model_provider\":\"shared-relay\"}}",
+            &official_session_ids,
+            &target_provider_ids,
+        )
+        .expect("restore recorded target bucket");
+        assert!(restored.contains("\"model_provider\":\"openai\""));
+
+        assert!(rewrite_codex_session_meta_line_for_restore(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"official-session\",\"model_provider\":\"custom\"}}",
+            &official_session_ids,
+            &target_provider_ids,
+        )
+        .is_none());
     }
 
     #[test]

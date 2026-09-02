@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { History, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { settingsApi } from "@/lib/api";
 
 interface CodexAuthSettingsProps {
@@ -23,6 +25,32 @@ export function CodexAuthSettings({
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
+  const [unifiedProviderId, setUnifiedProviderId] = useState(
+    settings.codexOfficialUnifiedProviderId ?? "",
+  );
+  const [takeoverProviderId, setTakeoverProviderId] = useState(
+    settings.codexOfficialTakeoverProviderId ?? "",
+  );
+
+  useEffect(() => {
+    setUnifiedProviderId(settings.codexOfficialUnifiedProviderId ?? "");
+    setTakeoverProviderId(settings.codexOfficialTakeoverProviderId ?? "");
+  }, [
+    settings.codexOfficialUnifiedProviderId,
+    settings.codexOfficialTakeoverProviderId,
+  ]);
+
+  const saveProviderId = async (
+    key: "codexOfficialUnifiedProviderId" | "codexOfficialTakeoverProviderId",
+    value: string,
+    reset: (value: string) => void,
+    fallback: string,
+  ) => {
+    const saved = await onChange({ [key]: value });
+    if (saved === false) {
+      reset(settings[key] ?? fallback);
+    }
+  };
 
   const handleUnifyHistoryChange = (checked: boolean) => {
     if (checked) {
@@ -112,6 +140,61 @@ export function CodexAuthSettings({
         checked={settings.unifyCodexSessionHistory ?? false}
         onCheckedChange={handleUnifyHistoryChange}
       />
+
+      <div className="space-y-3 rounded-md border border-border/50 bg-muted/20 p-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="codex-official-unified-provider-id">
+              {t("settings.codexOfficialUnifiedProviderId")}
+            </Label>
+            <Input
+              id="codex-official-unified-provider-id"
+              value={unifiedProviderId}
+              onChange={(event) => setUnifiedProviderId(event.target.value)}
+              onBlur={() =>
+                void saveProviderId(
+                  "codexOfficialUnifiedProviderId",
+                  unifiedProviderId,
+                  setUnifiedProviderId,
+                  "custom",
+                )
+              }
+              placeholder="custom"
+              className="font-mono text-sm"
+              maxLength={64}
+              spellCheck={false}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.codexOfficialUnifiedProviderIdDescription")}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="codex-official-takeover-provider-id">
+              {t("settings.codexOfficialTakeoverProviderId")}
+            </Label>
+            <Input
+              id="codex-official-takeover-provider-id"
+              value={takeoverProviderId}
+              onChange={(event) => setTakeoverProviderId(event.target.value)}
+              onBlur={() =>
+                void saveProviderId(
+                  "codexOfficialTakeoverProviderId",
+                  takeoverProviderId,
+                  setTakeoverProviderId,
+                  "cc-switch-official",
+                )
+              }
+              placeholder="cc-switch-official"
+              className="font-mono text-sm"
+              maxLength={64}
+              spellCheck={false}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.codexOfficialTakeoverProviderIdDescription")}
+            </p>
+          </div>
+        </div>
+      </div>
 
       <ConfirmDialog
         isOpen={showEnableConfirm}

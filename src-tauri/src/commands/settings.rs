@@ -67,19 +67,24 @@ pub async fn save_settings(
     let merged = merge_settings_for_save(settings, &existing);
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
+    let unified_provider_id_changed =
+        merged.codex_official_unified_provider_id != existing.codex_official_unified_provider_id;
     let unify_codex_enabled = merged.unify_codex_session_history;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
-    if unify_codex_changed {
+    if unify_codex_changed || unified_provider_id_changed {
         // live 重写失败时回滚设置并把保存整体报失败：若设置保持已切换状态，
         // live 仍跑旧桶，后续的历史迁移/还原会让会话再次分裂（开启=历史
-        // 迁走而新会话仍写 openai 桶；关闭=会话还原而 live 仍写 custom）。
+        // 迁走而新会话仍写 openai 桶；关闭=会话还原而 live 仍写统一桶）。
         // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
         // （本开关的保存只携带开关相关字段）。
         if let Err(err) =
-            crate::services::provider::reapply_current_codex_official_live(state.inner())
+            crate::services::provider::reapply_current_codex_official_live_with_previous_unified_id(
+                state.inner(),
+                Some(&existing.codex_official_unified_provider_id),
+            )
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
             if let Err(rollback_err) = crate::settings::update_settings(existing) {
@@ -90,8 +95,8 @@ pub async fn save_settings(
             ));
         }
 
-        if unify_codex_enabled {
-            // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
+        if unify_codex_changed && unify_codex_enabled {
+            // 后台执行存量迁移（openai 桶 → 配置的统一桶；仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
             // 失败时不写完成标记，下次启动自动重试。
             tauri::async_runtime::spawn_blocking(|| {
@@ -112,7 +117,7 @@ pub async fn save_settings(
                     }
                 }
             });
-        } else {
+        } else if unify_codex_changed {
             // 清除标记与迁移意愿，让重新开启并再次勾选时能补迁
             // 关闭期间落入 openai 桶的官方会话。
             if let Err(err) = crate::settings::clear_codex_official_history_unify_migration() {

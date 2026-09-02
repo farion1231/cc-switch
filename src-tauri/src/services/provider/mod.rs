@@ -63,6 +63,13 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
 /// 第三方 live 配置不受开关影响。
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
+    reapply_current_codex_official_live_with_previous_unified_id(state, None)
+}
+
+pub fn reapply_current_codex_official_live_with_previous_unified_id(
+    state: &AppState,
+    previous_unified_provider_id: Option<&str>,
+) -> Result<bool, AppError> {
     let current_id = ProviderService::current(state, AppType::Codex)?;
     if current_id.is_empty() {
         return Ok(false);
@@ -80,8 +87,28 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
     // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
     // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
+    let mut provider = provider.clone();
+    if let Some(previous_id) = previous_unified_provider_id {
+        if previous_id != crate::settings::codex_official_unified_provider_id() {
+            if let Some(config_text) = provider
+                .settings_config
+                .get("config")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+            {
+                let config =
+                    crate::codex_config::strip_codex_unified_session_bucket_with_provider_id(
+                        &config_text,
+                        previous_id,
+                    )?;
+                if let Some(settings) = provider.settings_config.as_object_mut() {
+                    settings.insert("config".to_string(), serde_json::Value::String(config));
+                }
+            }
+        }
+    }
     let outcome =
-        live::sync_live_for_provider_respecting_takeover(state, &AppType::Codex, provider)?;
+        live::sync_live_for_provider_respecting_takeover(state, &AppType::Codex, &provider)?;
     if outcome == LiveSyncOutcome::BackupOnly {
         return Ok(true);
     }
@@ -2009,6 +2036,12 @@ requires_openai_auth = true
 
         let db = Arc::new(Database::memory().expect("init db"));
         let state = AppState::new(db.clone());
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("use an ephemeral proxy port");
 
         let mut original = Provider::with_id(
             "p1".into(),
@@ -2062,6 +2095,12 @@ requires_openai_auth = true
             .start()
             .await
             .expect("start proxy service");
+        let proxy_port = state
+            .proxy_service
+            .get_status()
+            .await
+            .expect("get proxy status")
+            .port;
 
         let mut updated = Provider::with_id(
             "p1".into(),
@@ -2105,7 +2144,7 @@ requires_openai_auth = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!("http://127.0.0.1:{proxy_port}/claude-desktop")),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));

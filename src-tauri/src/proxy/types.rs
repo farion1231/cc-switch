@@ -142,6 +142,17 @@ pub struct LiveBackup {
     pub backed_up_at: String,
 }
 
+/// CC Switch-owned metadata for the official Codex takeover projection.
+/// This is deliberately kept outside Codex's config.toml so a user-chosen
+/// provider id cannot be mistaken for ownership during cleanup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexTakeoverProjection {
+    pub provider_id: String,
+    pub proxy_base_url: String,
+    pub config_fingerprint: String,
+    pub marked_at: String,
+}
+
 /// 全局代理配置（统一字段，三行镜像）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
