@@ -90,6 +90,38 @@ pub async fn remove_from_classifier_queue(
         .map_err(|e| e.to_string())
 }
 
+/// 按拖拽结果重排分类器队列
+///
+/// 与故障转移队列刻意不同：那条队列的顺序来自首页的 `sort_index`，
+/// 分类器队列有自己的排序列，所以在这里独立落库，不牵动首页与托盘。
+#[tauri::command]
+pub async fn reorder_classifier_queue(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    provider_ids: Vec<String>,
+) -> Result<(), String> {
+    require_classifier_app(&app_type)?;
+    state
+        .db
+        .reorder_classifier_queue(&app_type, &provider_ids)
+        .map_err(|e| e.to_string())
+}
+
+/// 设置某个队列条目的出站模型名覆写（None / 空白 = 透传客户端模型）
+#[tauri::command]
+pub async fn set_classifier_model(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    provider_id: String,
+    model: Option<String>,
+) -> Result<(), String> {
+    require_classifier_app(&app_type)?;
+    state
+        .db
+        .set_classifier_model(&app_type, &provider_id, model.as_deref())
+        .map_err(|e| e.to_string())
+}
+
 /// 读取分类器队列的两个开关
 #[tauri::command]
 pub async fn get_classifier_config(

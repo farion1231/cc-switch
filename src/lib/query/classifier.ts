@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { classifierApi } from "@/lib/api/classifier";
-import type { ClassifierConfig } from "@/types/proxy";
+import type { ClassifierConfig, ClassifierQueueItem } from "@/types/proxy";
 
 const DEFAULT_CONFIG: ClassifierConfig = {
   enabled: false,
@@ -130,6 +130,84 @@ export function useRemoveFromClassifierQueue() {
       });
       queryClient.invalidateQueries({
         queryKey: ["availableProvidersForClassifier", variables.appType],
+      });
+    },
+  });
+}
+
+/**
+ * 按拖拽结果重排分类器队列（乐观更新 + 失败回滚）
+ *
+ * 只碰 classifierQueue 这一个 key：分类器队列有自己的排序列，
+ * 与首页 / 托盘 / 故障转移队列的顺序完全无关。
+ */
+export function useReorderClassifierQueue() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerIds,
+    }: {
+      appType: string;
+      providerIds: string[];
+    }) => classifierApi.reorderClassifierQueue(appType, providerIds),
+    onMutate: async ({ appType, providerIds }) => {
+      const key = ["classifierQueue", appType];
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<ClassifierQueueItem[]>(key);
+
+      if (previous) {
+        const byId = new Map(previous.map((item) => [item.providerId, item]));
+        // 只重排认识的 id，并把 providerIds 里没提到的成员留在末尾，
+        // 与后端 reorder 的宽容语义保持一致
+        const reordered = providerIds
+          .map((id) => byId.get(id))
+          .filter((item): item is ClassifierQueueItem => item !== undefined);
+        const named = new Set(providerIds);
+        queryClient.setQueryData(key, [
+          ...reordered,
+          ...previous.filter((item) => !named.has(item.providerId)),
+        ]);
+      }
+
+      return { previous };
+    },
+    onError: (_error, variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(
+          ["classifierQueue", variables.appType],
+          context.previous,
+        );
+      }
+    },
+    onSettled: (_data, _error, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["classifierQueue", variables.appType],
+      });
+    },
+  });
+}
+
+/**
+ * 设置队列条目的出站模型名覆写
+ */
+export function useSetClassifierModel() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerId,
+      model,
+    }: {
+      appType: string;
+      providerId: string;
+      model: string | null;
+    }) => classifierApi.setClassifierModel(appType, providerId, model),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["classifierQueue", variables.appType],
       });
     },
   });

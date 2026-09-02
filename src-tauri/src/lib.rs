@@ -1592,6 +1592,8 @@ pub fn run() {
             commands::get_available_providers_for_classifier,
             commands::add_to_classifier_queue,
             commands::remove_from_classifier_queue,
+            commands::reorder_classifier_queue,
+            commands::set_classifier_model,
             commands::get_classifier_config,
             commands::set_classifier_config,
             // Usage statistics

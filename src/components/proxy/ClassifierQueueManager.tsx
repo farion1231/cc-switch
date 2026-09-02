@@ -6,14 +6,39 @@
  * 并可选在发送前强制关闭思考。
  *
  * - 添加/移除供应商
- * - 队列顺序基于首页供应商列表的 sort_index（与故障转移队列同源）
+ * - 队列顺序在本面板内独立拖拽（与首页 / 故障转移队列的顺序无关）
+ * - 每个条目可指定发往该供应商时使用的模型名
  */
 
-import { useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Plus, Trash2, Loader2, Info, AlertTriangle } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Loader2,
+  Info,
+  AlertTriangle,
+  GripVertical,
+} from "lucide-react";
+import { DndContext, closestCenter } from "@dnd-kit/core";
+import {
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -31,6 +56,8 @@ import {
   useAvailableProvidersForClassifier,
   useAddToClassifierQueue,
   useRemoveFromClassifierQueue,
+  useReorderClassifierQueue,
+  useSetClassifierModel,
   useClassifierConfig,
   useSetClassifierConfig,
 } from "@/lib/query/classifier";
@@ -62,6 +89,15 @@ export function ClassifierQueueManager({
 
   const addToQueue = useAddToClassifierQueue();
   const removeFromQueue = useRemoveFromClassifierQueue();
+  const reorderQueue = useReorderClassifierQueue();
+  const setClassifierModel = useSetClassifierModel();
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
 
   const handleToggleEnabled = async (enabled: boolean) => {
     try {
@@ -127,6 +163,46 @@ export function ClassifierQueueManager({
     } catch (error) {
       toast.error(
         t("proxy.classifierQueue.removeFailed", "移除失败") +
+          ": " +
+          String(error),
+      );
+    }
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !queue) return;
+
+    const oldIndex = queue.findIndex((item) => item.providerId === active.id);
+    const newIndex = queue.findIndex((item) => item.providerId === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const providerIds = arrayMove(queue, oldIndex, newIndex).map(
+      (item) => item.providerId,
+    );
+
+    try {
+      await reorderQueue.mutateAsync({ appType, providerIds });
+    } catch (error) {
+      toast.error(
+        t("proxy.classifierQueue.reorderFailed", "排序更新失败") +
+          ": " +
+          String(error),
+      );
+    }
+  };
+
+  const handleModelChange = async (providerId: string, model: string) => {
+    try {
+      await setClassifierModel.mutateAsync({
+        appType,
+        providerId,
+        // 空输入即清除覆写，回到透传客户端模型
+        model: model.trim() ? model.trim() : null,
+      });
+    } catch (error) {
+      toast.error(
+        t("proxy.classifierQueue.modelSaveFailed", "模型保存失败") +
           ": " +
           String(error),
       );
@@ -282,18 +358,30 @@ export function ClassifierQueueManager({
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {queue.map((item, index) => (
-            <QueueItem
-              key={item.providerId}
-              item={item}
-              index={index}
-              disabled={disabled}
-              onRemove={handleRemoveProvider}
-              isRemoving={removeFromQueue.isPending}
-            />
-          ))}
-        </div>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={queue.map((item) => item.providerId)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div className="space-y-2">
+              {queue.map((item, index) => (
+                <QueueItem
+                  key={item.providerId}
+                  item={item}
+                  index={index}
+                  disabled={disabled}
+                  onRemove={handleRemoveProvider}
+                  isRemoving={removeFromQueue.isPending}
+                  onModelChange={handleModelChange}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
 
       {/* 队列说明 */}
@@ -302,13 +390,13 @@ export function ClassifierQueueManager({
           <p className="text-xs text-muted-foreground">
             {t(
               "proxy.classifierQueue.orderHint",
-              "队列顺序与首页供应商列表顺序一致，可在首页拖拽调整顺序。",
+              "拖动左侧手柄可调整尝试顺序；该顺序只作用于分类器队列，与首页列表和故障转移队列无关。",
             )}
           </p>
           <p className="text-xs text-muted-foreground">
             {t(
               "proxy.classifierQueue.modelHint",
-              "请确保队列中的供应商支持客户端请求的模型；分类器请求为非流式且携带完整会话上下文（数万 token 起步），上下文窗口过小的模型会失败并顺延到下一家。",
+              "留空则透传客户端请求的模型；填写后分类器请求发往该供应商时改用此模型名。分类器请求为非流式且携带完整会话上下文（数万 token 起步），上下文窗口过小的模型会失败并顺延到下一家。",
             )}
           </p>
         </div>
@@ -323,6 +411,7 @@ interface QueueItemProps {
   disabled: boolean;
   onRemove: (providerId: string) => void;
   isRemoving: boolean;
+  onModelChange: (providerId: string, model: string) => void;
 }
 
 function QueueItem({
@@ -331,47 +420,126 @@ function QueueItem({
   disabled,
   onRemove,
   isRemoving,
+  onModelChange,
 }: QueueItemProps) {
   const { t } = useTranslation();
+  const {
+    setNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.providerId, disabled });
+
+  // 输入框自持草稿，只在 blur / Enter 时落库 —— 逐字保存会把每个键击
+  // 变成一次 invoke，且 invalidate 回来的服务端值会打断正在输入的光标。
+  const [draft, setDraft] = useState(item.model ?? "");
+
+  // 服务端值变化（保存成功、别处改动）时同步草稿；正在拖拽时不动，
+  // 避免拖拽引发的重渲染吞掉用户没提交的输入
+  useEffect(() => {
+    setDraft(item.model ?? "");
+  }, [item.model]);
+
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const commit = () => {
+    const next = draft.trim();
+    if (next === (item.model ?? "")) return;
+    onModelChange(item.providerId, next);
+  };
 
   return (
     <div
+      ref={setNodeRef}
+      style={style}
       className={cn(
-        "flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors",
+        "rounded-lg border bg-card p-3 transition-colors",
+        isDragging && "z-10 shadow-lg",
       )}
     >
-      {/* 序号 */}
-      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium">
-        {index + 1}
-      </div>
-
-      {/* 供应商名称 */}
-      <div className="flex-1 min-w-0">
-        <span className="text-sm font-medium truncate block">
-          {item.providerName}
-          {item.providerNotes && (
-            <span className="ml-1 text-xs text-muted-foreground">
-              ({item.providerNotes})
-            </span>
+      <div className="flex items-center gap-3">
+        {/* 拖拽手柄 */}
+        <button
+          type="button"
+          className={cn(
+            "flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground",
+            disabled
+              ? "cursor-not-allowed opacity-40"
+              : "cursor-grab hover:bg-muted",
           )}
-        </span>
+          aria-label={t("proxy.classifierQueue.dragHandle", "拖动排序")}
+          disabled={disabled}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+
+        {/* 序号 */}
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
+          {index + 1}
+        </div>
+
+        {/* 供应商名称 */}
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium truncate block">
+            {item.providerName}
+            {item.providerNotes && (
+              <span className="ml-1 text-xs text-muted-foreground">
+                ({item.providerNotes})
+              </span>
+            )}
+          </span>
+        </div>
+
+        {/* 删除按钮 */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+          onClick={() => onRemove(item.providerId)}
+          disabled={disabled || isRemoving}
+          aria-label={t("common.delete", "删除")}
+        >
+          {isRemoving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
+        </Button>
       </div>
 
-      {/* 删除按钮 */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-        onClick={() => onRemove(item.providerId)}
-        disabled={disabled || isRemoving}
-        aria-label={t("common.delete", "删除")}
-      >
-        {isRemoving ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Trash2 className="h-4 w-4" />
-        )}
-      </Button>
+      {/* 模型覆写 */}
+      <div className="mt-2 flex items-center gap-2 pl-9">
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {t("proxy.classifierQueue.modelLabel", "模型")}
+        </span>
+        <Input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              setDraft(item.model ?? "");
+            }
+          }}
+          disabled={disabled}
+          placeholder={t(
+            "proxy.classifierQueue.modelPlaceholder",
+            "留空则透传客户端模型",
+          )}
+          aria-label={t("proxy.classifierQueue.modelLabel", "模型")}
+          className="h-8 text-xs"
+        />
+      </div>
     </div>
   );
 }

@@ -197,12 +197,14 @@ pub struct RequestForwarder {
 /// 独立成结构体而不是继续追加位置参数：`RequestForwarder::new` 已经有 16 个
 /// 位置参数，再加裸 bool 与相邻的 `session_client_provided: bool` 极易串位。
 /// 下一个 per-request 开关的成本从此是一个字段，而不是一个参数。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ForwardPolicy {
     /// 发送前强制关闭 thinking，并禁用 budget 反向整流
     pub classifier_thinking_off: bool,
     /// 本次由分类器队列供给 provider —— 成功后**不得**改写「当前供应商」
     pub classifier_routed: bool,
+    /// provider_id -> 出站模型名覆写；仅在 `classifier_routed` 时非空
+    pub classifier_models: std::sync::Arc<std::collections::HashMap<String, String>>,
 }
 
 impl RequestForwarder {
@@ -561,6 +563,21 @@ impl RequestForwarder {
                     "[{app_type_str}] [CLS-004] 分类器请求已强制关闭 thinking (provider={})",
                     provider.id
                 );
+            }
+
+            // 分类器队列条目的模型覆写。与 thinking-off 同一个落点，理由相同：
+            // 这是唯一一份「即将发给上游」的可变副本，且故障转移到下一家时，
+            // 下一轮会用**那一家**自己的覆写重新改写，不会串味。
+            //
+            // 客户端选的模型未必存在于队列里这些便宜的供应商上，覆写在此写死后，
+            // 下游的映射 / 转换层与 usage 归因都会自然跟着走。
+            if let Some(model) = self.policy.classifier_models.get(&provider.id) {
+                if super::classifier::override_model(&mut provider_body, model) {
+                    log::info!(
+                        "[{app_type_str}] [CLS-005] 分类器请求模型覆写为 {model} (provider={})",
+                        provider.id
+                    );
+                }
             }
 
             attempted_providers += 1;

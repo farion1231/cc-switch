@@ -378,6 +378,8 @@ export const handlers = [
     success([]),
   ),
   http.post(`${TAURI_ENDPOINT}/add_to_classifier_queue`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/reorder_classifier_queue`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/set_classifier_model`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/remove_from_classifier_queue`, () =>
     success(true),
   ),

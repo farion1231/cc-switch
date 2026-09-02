@@ -2939,12 +2939,17 @@
       "selectProvider": "Select a provider to add to the queue",
       "noAvailableProviders": "No providers available to add",
       "empty": "Classifier queue is empty. Classifier requests use the normal routing chain until you add one.",
-      "orderHint": "Queue order matches the provider list on the home page; drag there to reorder.",
-      "modelHint": "Make sure queued providers serve the model the client requests. The classifier request is non-streaming and carries the full conversation transcript (tens of thousands of tokens), so a model with a small context window will fail and fall through to the next provider.",
+      "orderHint": "Drag the handle to change the order providers are tried. This order applies to the classifier queue only — the provider list and the failover queue are unaffected.",
+      "modelHint": "Leave empty to pass through the model the client asked for. When set, classifier requests sent to this provider use that model name instead. Classifier requests are non-streaming and carry the full conversation context (tens of thousands of tokens), so a model with a small context window will fail and fall through to the next provider.",
       "addSuccess": "Added to classifier queue",
       "addFailed": "Failed to add",
       "removeSuccess": "Removed from classifier queue",
-      "removeFailed": "Failed to remove"
+      "removeFailed": "Failed to remove",
+      "dragHandle": "Drag to reorder",
+      "reorderFailed": "Failed to update order",
+      "modelLabel": "Model",
+      "modelPlaceholder": "Empty = pass through the client model",
+      "modelSaveFailed": "Failed to save model"
     },
     "autoFailover": {
       "info": "When the failover queue has multiple providers, the system will try them in priority order when requests fail. When a provider reaches the consecutive failure threshold, the circuit breaker will open and skip it temporarily.",

@@ -12,6 +12,8 @@ use crate::proxy::{
     ProxyError,
 };
 use axum::http::HeaderMap;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// 流式超时配置
@@ -75,12 +77,17 @@ pub struct RequestContext {
 }
 
 /// 本次请求的分类器判定结果
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ClassifierPlan {
     /// 实际由分类器队列供给 provider 链（false = 未命中，或已回落到常规路由链）
     pub routed: bool,
     /// 发送前强制关闭 thinking
     pub thinking_off: bool,
+    /// provider_id -> 出站模型名覆写（只含队列里真正配了覆写的成员）
+    ///
+    /// 用 `Arc` 是因为这张表会随 `ForwardPolicy` 一起被克隆到转发器，
+    /// 而它在一次请求内是只读的。
+    pub models: Arc<HashMap<String, String>>,
 }
 
 impl RequestContext {
@@ -163,14 +170,19 @@ impl RequestContext {
                     // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
                     // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
                     // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
-                    Ok(Some(list)) if !list.is_empty() => {
+                    Ok(Some(selection)) if !selection.providers.is_empty() => {
                         log::info!(
                             "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
-                            list.len(),
-                            list.first().map(|p| p.name.as_str()).unwrap_or("-")
+                            selection.providers.len(),
+                            selection
+                                .providers
+                                .first()
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("-")
                         );
                         classifier.routed = true;
-                        classifier_providers = Some(list);
+                        classifier.models = Arc::new(selection.models);
+                        classifier_providers = Some(selection.providers);
                     }
                     Ok(_) => {
                         log::info!("[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链");
@@ -331,6 +343,7 @@ impl RequestContext {
             ForwardPolicy {
                 classifier_thinking_off: self.classifier.thinking_off,
                 classifier_routed: self.classifier.routed,
+                classifier_models: self.classifier.models.clone(),
             },
         )
     }

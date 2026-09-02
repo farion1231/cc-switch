@@ -13,9 +13,15 @@ vi.mock("sonner", () => ({
 const setConfigMock = vi.fn().mockResolvedValue(undefined);
 const addMock = vi.fn().mockResolvedValue(undefined);
 const removeMock = vi.fn().mockResolvedValue(undefined);
+const reorderMock = vi.fn().mockResolvedValue(undefined);
+const setModelMock = vi.fn().mockResolvedValue(undefined);
 
 let classifierConfig = { enabled: false, forceThinkingOff: true };
-let classifierQueue: Array<{ providerId: string; providerName: string }> = [];
+let classifierQueue: Array<{
+  providerId: string;
+  providerName: string;
+  model?: string;
+}> = [];
 
 vi.mock("@/lib/query/classifier", () => ({
   useClassifierConfig: () => ({ data: classifierConfig }),
@@ -37,6 +43,14 @@ vi.mock("@/lib/query/classifier", () => ({
     mutateAsync: removeMock,
     isPending: false,
   }),
+  useReorderClassifierQueue: () => ({
+    mutateAsync: reorderMock,
+    isPending: false,
+  }),
+  useSetClassifierModel: () => ({
+    mutateAsync: setModelMock,
+    isPending: false,
+  }),
 }));
 
 describe("ClassifierQueueManager", () => {
@@ -44,6 +58,8 @@ describe("ClassifierQueueManager", () => {
     setConfigMock.mockClear();
     addMock.mockClear();
     removeMock.mockClear();
+    reorderMock.mockClear();
+    setModelMock.mockClear();
     classifierConfig = { enabled: false, forceThinkingOff: true };
     classifierQueue = [];
   });
@@ -110,5 +126,86 @@ describe("ClassifierQueueManager", () => {
         providerId: "fast",
       }),
     );
+  });
+
+  it("offers a drag handle per queued provider", () => {
+    classifierQueue = [
+      { providerId: "fast", providerName: "Fast Provider" },
+      { providerId: "backup", providerName: "Backup Provider" },
+    ];
+    render(<ClassifierQueueManager appType="claude" />);
+
+    expect(
+      screen.getAllByRole("button", {
+        name: "proxy.classifierQueue.dragHandle",
+      }),
+    ).toHaveLength(2);
+  });
+
+  it("shows the stored model override in the input", () => {
+    classifierQueue = [
+      { providerId: "fast", providerName: "Fast Provider", model: "glm-4-flash" },
+    ];
+    render(<ClassifierQueueManager appType="claude" />);
+
+    expect(
+      screen.getByRole("textbox", { name: "proxy.classifierQueue.modelLabel" }),
+    ).toHaveValue("glm-4-flash");
+  });
+
+  it("saves the model override on blur", async () => {
+    classifierQueue = [{ providerId: "fast", providerName: "Fast Provider" }];
+    render(<ClassifierQueueManager appType="claude" />);
+
+    const input = screen.getByRole("textbox", {
+      name: "proxy.classifierQueue.modelLabel",
+    });
+    fireEvent.change(input, { target: { value: "  glm-4-flash  " } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(setModelMock).toHaveBeenCalledWith({
+        appType: "claude",
+        providerId: "fast",
+        model: "glm-4-flash",
+      }),
+    );
+  });
+
+  it("clears the override when the input is emptied", async () => {
+    classifierQueue = [
+      { providerId: "fast", providerName: "Fast Provider", model: "glm-4-flash" },
+    ];
+    render(<ClassifierQueueManager appType="claude" />);
+
+    const input = screen.getByRole("textbox", {
+      name: "proxy.classifierQueue.modelLabel",
+    });
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(setModelMock).toHaveBeenCalledWith({
+        appType: "claude",
+        providerId: "fast",
+        model: null,
+      }),
+    );
+  });
+
+  it("does not write when the model is unchanged", () => {
+    classifierQueue = [
+      { providerId: "fast", providerName: "Fast Provider", model: "glm-4-flash" },
+    ];
+    render(<ClassifierQueueManager appType="claude" />);
+
+    // 单纯聚焦再离开不该产生一次写入
+    fireEvent.blur(
+      screen.getByRole("textbox", {
+        name: "proxy.classifierQueue.modelLabel",
+      }),
+    );
+
+    expect(setModelMock).not.toHaveBeenCalled();
   });
 });

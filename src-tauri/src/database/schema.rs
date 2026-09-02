@@ -40,6 +40,8 @@ impl Database {
                 is_current BOOLEAN NOT NULL DEFAULT 0,
                 in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
                 in_classifier_queue BOOLEAN NOT NULL DEFAULT 0,
+                classifier_sort_index INTEGER,
+                classifier_model TEXT,
                 PRIMARY KEY (id, app_type)
             )",
             [],
@@ -433,18 +435,23 @@ impl Database {
             [],
         );
 
-        // 确保 in_classifier_queue 列存在（对于已存在的旧数据库）
+        // 确保分类器队列的三列存在（对于已存在的旧数据库）
         Self::add_column_if_missing(
             conn,
             "providers",
             "in_classifier_queue",
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
+        Self::add_column_if_missing(conn, "providers", "classifier_sort_index", "INTEGER")?;
+        Self::add_column_if_missing(conn, "providers", "classifier_model", "TEXT")?;
 
-        // 为分类器队列创建索引（基于 providers 表）
+        // 分类器队列有自己的拖拽顺序，索引也必须落在 classifier_sort_index 上。
+        // 换新名字而不是原地重建同名索引：`CREATE INDEX IF NOT EXISTS` 对已存在的
+        // 同名旧索引是空操作，沿用旧名会让升级库永远停在按 sort_index 的旧定义上。
+        let _ = conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", []);
         let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_providers_classifier
-             ON providers(app_type, in_classifier_queue, sort_index)",
+            "CREATE INDEX IF NOT EXISTS idx_providers_classifier_order
+             ON providers(app_type, in_classifier_queue, classifier_sort_index)",
             [],
         );
 
@@ -571,6 +578,11 @@ impl Database {
                         log::info!("迁移数据库从 v18 到 v19（添加分类器队列）");
                         Self::migrate_v18_to_v19(conn)?;
                         Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（分类器队列独立排序与模型覆写）");
+                        Self::migrate_v19_to_v20(conn)?;
+                        Self::set_user_version(conn, 20)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1664,6 +1676,41 @@ impl Database {
                 "INTEGER NOT NULL DEFAULT 1",
             )?;
         }
+
+        Ok(())
+    }
+
+    /// v19 -> v20: 分类器队列的独立排序列与每条目的模型覆写列
+    ///
+    /// v19 让分类器队列复用首页的 `sort_index`，队列顺序被首页拖拽绑架；
+    /// 这里给它一个自己的 `classifier_sort_index`。存量行保持 NULL，
+    /// 读取时 `COALESCE` 回落到 `sort_index`，所以升级当下顺序**不变**，
+    /// 直到用户第一次在分类器面板里拖动为止。
+    ///
+    /// `classifier_model` 是每个队列条目的出站模型名覆写（NULL / 空 = 透传
+    /// 客户端请求的模型）。分类器请求带着完整会话上下文，队列里那些便宜的
+    /// 供应商未必认得客户端选的模型名，只能逐条指定。
+    ///
+    /// 与 v18->v19 同样用 `table_exists` 兜底：迁移可能跑在很旧的库上。
+    fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "providers")? {
+            return Ok(());
+        }
+
+        Self::add_column_if_missing(conn, "providers", "classifier_sort_index", "INTEGER")?;
+        Self::add_column_if_missing(conn, "providers", "classifier_model", "TEXT")?;
+
+        // 旧索引按 sort_index 排序，对新的队列顺序无用。换名重建而不是原地
+        // `CREATE INDEX IF NOT EXISTS`：后者对已存在的同名索引是空操作。
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", [])
+            .map_err(|error| AppError::Database(format!("删除旧分类器队列索引失败: {error}")))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_providers_classifier_order
+             ON providers(app_type, in_classifier_queue, classifier_sort_index)",
+            [],
+        )
+        .map_err(|error| AppError::Database(format!("创建分类器队列排序索引失败: {error}")))?;
 
         Ok(())
     }
@@ -3558,7 +3605,12 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
         // 回退到 v18 形态，模拟升级前的库
-        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", [])?;
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier_order", [])?;
+        conn.execute(
+            "ALTER TABLE providers DROP COLUMN classifier_sort_index",
+            [],
+        )?;
+        conn.execute("ALTER TABLE providers DROP COLUMN classifier_model", [])?;
         conn.execute("ALTER TABLE providers DROP COLUMN in_classifier_queue", [])?;
         conn.execute(
             "ALTER TABLE proxy_config DROP COLUMN classifier_queue_enabled",
@@ -3591,7 +3643,7 @@ mod tests {
 
         let index_exists: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'index' AND name = 'idx_providers_classifier'",
+             WHERE type = 'index' AND name = 'idx_providers_classifier_order'",
             [],
             |row| row.get(0),
         )?;
@@ -3615,7 +3667,12 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
         // SQLite 拒绝删除被索引引用的列，必须先删索引
-        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", [])?;
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier_order", [])?;
+        conn.execute(
+            "ALTER TABLE providers DROP COLUMN classifier_sort_index",
+            [],
+        )?;
+        conn.execute("ALTER TABLE providers DROP COLUMN classifier_model", [])?;
         conn.execute("ALTER TABLE providers DROP COLUMN in_classifier_queue", [])?;
         conn.execute(
             "INSERT INTO providers (id, app_type, name, settings_config, in_failover_queue)
@@ -3633,6 +3690,90 @@ mod tests {
         )?;
         assert!(in_failover);
         assert!(!in_classifier);
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_adds_order_and_model_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        // 回退到 v19 形态：没有独立排序列 / 模型列，索引还挂在 sort_index 上
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier_order", [])?;
+        conn.execute(
+            "ALTER TABLE providers DROP COLUMN classifier_sort_index",
+            [],
+        )?;
+        conn.execute("ALTER TABLE providers DROP COLUMN classifier_model", [])?;
+        conn.execute(
+            "CREATE INDEX idx_providers_classifier
+             ON providers(app_type, in_classifier_queue, sort_index)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "providers",
+            "classifier_sort_index"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "providers",
+            "classifier_model"
+        )?);
+
+        // 旧索引必须被换掉，否则升级库永远按 sort_index 排序
+        let old_index: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_providers_classifier'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(old_index, 0, "按 sort_index 的旧索引必须被删除");
+
+        let new_index: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_providers_classifier_order'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(new_index, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_leaves_existing_queue_order_untouched() -> Result<(), AppError> {
+        // 升级当下顺序不能变：存量行的 classifier_sort_index 是 NULL，
+        // 读取时由 COALESCE 回落到首页的 sort_index。
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier_order", [])?;
+        conn.execute(
+            "ALTER TABLE providers DROP COLUMN classifier_sort_index",
+            [],
+        )?;
+        conn.execute("ALTER TABLE providers DROP COLUMN classifier_model", [])?;
+        conn.execute(
+            "INSERT INTO providers
+             (id, app_type, name, settings_config, sort_index, in_classifier_queue)
+             VALUES ('a', 'claude', 'A', '{}', 2, 1), ('b', 'claude', 'B', '{}', 1, 1)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let order: Option<i64> = conn.query_row(
+            "SELECT classifier_sort_index FROM providers WHERE id = 'a'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(order, None, "存量行不应被回填排序值");
 
         Ok(())
     }

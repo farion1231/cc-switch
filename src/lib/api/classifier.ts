@@ -31,6 +31,23 @@ export const classifierApi = {
     return invoke("remove_from_classifier_queue", { appType, providerId });
   },
 
+  // 按拖拽结果重排分类器队列
+  async reorderClassifierQueue(
+    appType: string,
+    providerIds: string[],
+  ): Promise<void> {
+    return invoke("reorder_classifier_queue", { appType, providerIds });
+  },
+
+  // 设置队列条目的出站模型名覆写（null / 空 = 透传客户端模型）
+  async setClassifierModel(
+    appType: string,
+    providerId: string,
+    model: string | null,
+  ): Promise<void> {
+    return invoke("set_classifier_model", { appType, providerId, model });
+  },
+
   // 读取分类器队列的两个开关
   async getClassifierConfig(appType: string): Promise<ClassifierConfig> {
     return invoke("get_classifier_config", { appType });

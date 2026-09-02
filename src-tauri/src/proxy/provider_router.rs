@@ -20,6 +20,19 @@ pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) ->
         || !crate::proxy::providers::is_codex_official_provider(provider)
 }
 
+/// 分类器队列的一次选路结果
+///
+/// 模型覆写单独成表而不是挂在 `Provider` 上：`Provider` 是全局领域对象，
+/// 给它加一个只在分类器侧信道有意义的字段，会让每一处读写 provider 的代码
+/// 都要面对一个与自己无关的概念。
+#[derive(Debug, Clone, Default)]
+pub struct ClassifierSelection {
+    /// 按队列顺序排列的可用供应商
+    pub providers: Vec<Provider>,
+    /// provider_id -> 出站模型名覆写（只含真正配了覆写的成员）
+    pub models: HashMap<String, String>,
+}
+
 /// 供应商路由器
 pub struct ProviderRouter {
     /// 数据库连接
@@ -139,24 +152,23 @@ impl ProviderRouter {
     ///
     /// 熔断器与常规链路**共用** `"{app_type}:{provider_id}"` key：供应商真死了对
     /// 两条链路都死，不该在全局最紧的延迟预算上重敲一个已知故障的端点。
+    ///
+    /// 返回值里的 `models` 只收录**真正配了覆写**的成员，所以「没配」和
+    /// 「配了空串」在下游是同一件事：透传客户端的模型名。
     pub async fn select_classifier_providers(
         &self,
         app_type: &str,
-    ) -> Result<Option<Vec<Provider>>, AppError> {
+    ) -> Result<Option<ClassifierSelection>, AppError> {
         let all_providers = self.db.get_all_providers(app_type)?;
-        let ordered_ids: Vec<String> = self
-            .db
-            .get_classifier_queue(app_type)?
-            .into_iter()
-            .map(|item| item.provider_id)
-            .collect();
+        let queue = self.db.get_classifier_queue(app_type)?;
 
-        let mut result = Vec::new();
+        let mut providers = Vec::new();
+        let mut models: HashMap<String, String> = HashMap::new();
         let mut total = 0usize;
         let mut circuit_open = 0usize;
 
-        for provider_id in ordered_ids {
-            let Some(provider) = all_providers.get(&provider_id).cloned() else {
+        for item in queue {
+            let Some(provider) = all_providers.get(&item.provider_id).cloned() else {
                 continue;
             };
             // 与故障转移同源的账号边界约束（Codex Official 账号卡不可复用）。
@@ -170,20 +182,28 @@ impl ProviderRouter {
             let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
             if breaker.is_available().await {
-                result.push(provider);
+                if let Some(model) = item
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                {
+                    models.insert(provider.id.clone(), model.to_string());
+                }
+                providers.push(provider);
             } else {
                 circuit_open += 1;
             }
         }
 
-        if result.is_empty() {
+        if providers.is_empty() {
             if total > 0 && circuit_open == total {
                 log::warn!("[{app_type}] [CLS-003] 分类器队列内供应商已全部熔断");
             }
             return Ok(None);
         }
 
-        Ok(Some(result))
+        Ok(Some(ClassifierSelection { providers, models }))
     }
 
     /// 请求执行前获取熔断器“放行许可”
@@ -719,23 +739,62 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn classifier_queue_orders_by_sort_index() {
+    async fn classifier_queue_follows_its_own_order_not_the_homepage() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
+        // 首页顺序是 b 在前，但队列自己的顺序是 a 在前 —— 后者说了算
         seed_provider(&db, "a", 2);
         seed_provider(&db, "b", 1);
         db.add_to_classifier_queue("claude", "a").unwrap();
         db.add_to_classifier_queue("claude", "b").unwrap();
 
+        let router = ProviderRouter::new(db.clone());
+        let selection = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("queue should be active");
+        let ids: Vec<&str> = selection.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b"]);
+
+        db.reorder_classifier_queue("claude", &["b".to_string(), "a".to_string()])
+            .unwrap();
+        let selection = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("queue should be active");
+        let ids: Vec<&str> = selection.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["b", "a"], "拖拽后的顺序必须生效");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_selection_carries_only_configured_model_overrides() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_provider(&db, "a", 1);
+        seed_provider(&db, "b", 2);
+        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_classifier_queue("claude", "b").unwrap();
+        db.set_classifier_model("claude", "a", Some("glm-4-flash"))
+            .unwrap();
+
         let router = ProviderRouter::new(db);
-        let providers = router
+        let selection = router
             .select_classifier_providers("claude")
             .await
             .unwrap()
             .expect("queue should be active");
 
-        let ids: Vec<&str> = providers.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, vec!["b", "a"]);
+        assert_eq!(
+            selection.models.get("a").map(String::as_str),
+            Some("glm-4-flash")
+        );
+        assert!(
+            !selection.models.contains_key("b"),
+            "没配覆写的成员不该出现在表里，否则下游无法区分「透传」与「覆写成空」"
+        );
     }
 
     #[tokio::test]
@@ -753,14 +812,14 @@ mod tests {
         assert!(!config.auto_failover_enabled);
 
         let router = ProviderRouter::new(db);
-        let providers = router
+        let selection = router
             .select_classifier_providers("claude")
             .await
             .unwrap()
             .expect("queue should be active");
 
-        assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].id, "b");
+        assert_eq!(selection.providers.len(), 1);
+        assert_eq!(selection.providers[0].id, "b");
     }
 
     #[tokio::test]
@@ -788,14 +847,14 @@ mod tests {
             .await
             .unwrap();
 
-        let providers = router
+        let selection = router
             .select_classifier_providers("claude")
             .await
             .unwrap()
             .expect("b should still be available");
 
-        assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].id, "b");
+        assert_eq!(selection.providers.len(), 1);
+        assert_eq!(selection.providers[0].id, "b");
     }
 
     #[tokio::test]

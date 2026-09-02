@@ -122,6 +122,10 @@ export interface ClassifierQueueItem {
   providerName: string;
   providerNotes?: string;
   sortIndex?: number;
+  // 队列内的独立拖拽顺序（null = 尚未拖拽过，后端回落到 sortIndex）
+  classifierSortIndex?: number | null;
+  // 该条目的出站模型名覆写（缺省 = 透传客户端请求的模型）
+  model?: string;
 }
 
 // 分类器队列的两个开关（成对读写）

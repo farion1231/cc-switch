@@ -174,6 +174,25 @@ pub fn disable_thinking(body: &mut Value) -> bool {
     changed
 }
 
+/// 把分类器请求的出站模型名改写为队列条目指定的值，返回是否真的改动了请求体
+///
+/// 只写 `model` 字段，不碰任何别的东西：这里的目的仅仅是「这家供应商认得的模型名」，
+/// 上下文窗口、思考开关等都由各自的机制负责。
+pub fn override_model(body: &mut Value, model: &str) -> bool {
+    let model = model.trim();
+    if model.is_empty() {
+        return false;
+    }
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    if obj.get("model").and_then(Value::as_str) == Some(model) {
+        return false;
+    }
+    obj.insert("model".to_string(), Value::String(model.to_string()));
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,5 +446,52 @@ mod tests {
 
         disable_thinking(&mut body);
         assert_eq!(resolve_reasoning_effort(&body), None);
+    }
+
+    // ---- 模型覆写 ----
+
+    #[test]
+    fn override_model_rewrites_and_reports_change() {
+        let mut body = json!({ "model": "claude-sonnet-5", "messages": [] });
+        assert!(override_model(&mut body, "glm-4-flash"));
+        assert_eq!(body["model"], json!("glm-4-flash"));
+    }
+
+    #[test]
+    fn override_model_trims_and_ignores_blank() {
+        let mut body = json!({ "model": "claude-sonnet-5" });
+        assert!(override_model(&mut body, "  glm-4-flash "));
+        assert_eq!(body["model"], json!("glm-4-flash"));
+
+        // 空白覆写等于没配，绝不能把 model 抹成空串发给上游
+        let mut body = json!({ "model": "claude-sonnet-5" });
+        assert!(!override_model(&mut body, "   "));
+        assert_eq!(body["model"], json!("claude-sonnet-5"));
+    }
+
+    #[test]
+    fn override_model_is_a_noop_when_already_equal() {
+        let mut body = json!({ "model": "glm-4-flash" });
+        assert!(!override_model(&mut body, "glm-4-flash"));
+    }
+
+    #[test]
+    fn override_model_adds_the_field_when_absent() {
+        let mut body = json!({ "messages": [] });
+        assert!(override_model(&mut body, "glm-4-flash"));
+        assert_eq!(body["model"], json!("glm-4-flash"));
+    }
+
+    #[test]
+    fn override_model_leaves_the_rest_of_the_body_alone() {
+        // 覆写只负责模型名；thinking / stop_sequences 由各自的机制处理
+        let mut body = json!({
+            "model": "claude-sonnet-5",
+            "stop_sequences": ["</severity>"],
+            "thinking": { "type": "enabled", "budget_tokens": 32000 },
+        });
+        override_model(&mut body, "glm-4-flash");
+        assert_eq!(body["stop_sequences"], json!(["</severity>"]));
+        assert_eq!(body["thinking"]["type"], json!("enabled"));
     }
 }
