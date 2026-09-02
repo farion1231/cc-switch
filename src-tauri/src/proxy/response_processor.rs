@@ -173,6 +173,8 @@ pub async fn handle_streaming(
 
     let mut response_headers = response.headers().clone();
     strip_hop_by_hop_response_headers(&mut response_headers);
+    // capture needs a response headers clone (passed to stream end for saving)
+    let capture_response_headers = response_headers.clone();
 
     let mut builder = axum::response::Response::builder().status(status);
 
@@ -184,8 +186,18 @@ pub async fn handle_streaming(
     // 创建字节流
     let stream = response.bytes_stream();
 
+    // Streaming capture request_id channel (shared with usage collector for ID retrieval on save)
+    let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
+    let request_body = ctx.request_body.clone();
+
     // 创建使用量收集器；关闭 usage logging 时不要在流式热路径上解析每个 SSE event。
-    let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
+    let usage_collector = create_usage_collector(
+        ctx,
+        state,
+        status.as_u16(),
+        parser_config,
+        request_id_for_detail.clone(),
+    );
 
     // 获取流式超时配置
     let timeout_config = ctx.streaming_timeout_config();
@@ -197,6 +209,10 @@ pub async fn handle_streaming(
         usage_collector,
         timeout_config,
         connection_guard,
+        state.clone(),
+        request_body,
+        capture_response_headers,
+        request_id_for_detail,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -236,6 +252,9 @@ pub async fn handle_non_streaming(
     );
 
     // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
+    // Also used for capture_details: get request_id from usage to correlate detail records.
+    let mut request_id_for_detail: Option<String> = None;
+
     if usage_logging_enabled(state) {
         if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
             // 解析使用量
@@ -256,6 +275,10 @@ pub async fn handle_non_streaming(
                     .or_else(|| ctx.outbound_model.clone())
                     .unwrap_or_else(|| ctx.request_model.clone());
 
+                let dedup_scope =
+                    super::usage::parser::dedup_scope_for_app(ctx.app_type_str, &ctx.provider.id);
+                request_id_for_detail = Some(usage.dedup_request_id(dedup_scope));
+
                 spawn_log_usage(
                     state,
                     ctx,
@@ -264,6 +287,7 @@ pub async fn handle_non_streaming(
                     &ctx.request_model,
                     status.as_u16(),
                     false,
+                    request_id_for_detail.clone(),
                 );
             } else {
                 let model = json_value
@@ -281,6 +305,7 @@ pub async fn handle_non_streaming(
                     &ctx.request_model,
                     status.as_u16(),
                     false,
+                    None,
                 );
                 log::debug!(
                     "[{}] 未能解析 usage 信息，跳过记录",
@@ -301,10 +326,37 @@ pub async fn handle_non_streaming(
                 &ctx.request_model,
                 status.as_u16(),
                 false,
+                None,
             );
         }
     } else {
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
+    }
+
+    // Record request/response detail (only when capture_details is enabled)
+    let capture_details = state
+        .db
+        .get_log_config()
+        .map(|c| c.capture_details)
+        .unwrap_or(false);
+    if capture_details {
+        let request_id = request_id_for_detail
+            .take()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        use super::usage::logger::UsageLogger;
+        let logger = UsageLogger::new(&state.db);
+        let response_body_str = String::from_utf8_lossy(&body_bytes);
+        let response_headers_json =
+            serde_json::to_string(&header_map_to_json(&response_headers)).unwrap_or_default();
+        if let Err(e) = logger.save_detail_capture(
+            &request_id,
+            None,
+            Some(&ctx.request_body),
+            Some(&response_headers_json),
+            Some(&response_body_str),
+        ) {
+            log::warn!("Failed to save non-streaming response detail: {e}");
+        }
     }
 
     // 构建响应
@@ -466,6 +518,7 @@ pub(crate) fn create_usage_collector(
     state: &ProxyState,
     status_code: u16,
     parser_config: &UsageParserConfig,
+    request_id_for_detail: Arc<std::sync::Mutex<Option<String>>>,
 ) -> Option<SseUsageCollector> {
     let logging_enabled = state
         .config
@@ -503,11 +556,20 @@ pub(crate) fn create_usage_collector(
                 let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
 
+                // Extract request_id synchronously for streaming capture
+                let dedup_scope =
+                    super::usage::parser::dedup_scope_for_app(app_type_str, provider_id.as_str());
+                let rid = usage.dedup_request_id(dedup_scope);
+                if let Ok(mut guard) = request_id_for_detail.lock() {
+                    *guard = Some(rid.clone());
+                }
+
                 let state = state.clone();
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let rid_for_log = rid.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -523,6 +585,7 @@ pub(crate) fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
+                        Some(rid_for_log),
                     )
                     .await;
                 });
@@ -549,6 +612,7 @@ pub(crate) fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
+                        None, // streaming request_id resolved inside dedup_request_id
                     )
                     .await;
                 });
@@ -559,6 +623,7 @@ pub(crate) fn create_usage_collector(
 }
 
 /// 异步记录使用量
+#[allow(clippy::too_many_arguments)]
 fn spawn_log_usage(
     state: &ProxyState,
     ctx: &RequestContext,
@@ -567,6 +632,7 @@ fn spawn_log_usage(
     request_model: &str,
     status_code: u16,
     is_streaming: bool,
+    request_id: Option<String>,
 ) {
     // Check enable_logging before spawning the log task
     if let Ok(config) = state.config.try_read() {
@@ -602,6 +668,7 @@ fn spawn_log_usage(
             is_streaming,
             status_code,
             Some(session_id),
+            request_id,
         )
         .await;
     });
@@ -635,6 +702,7 @@ async fn log_usage_internal(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    request_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -648,7 +716,7 @@ async fn log_usage_internal(
     };
 
     let dedup_scope = super::usage::parser::dedup_scope_for_app(app_type, provider_id);
-    let request_id = usage.dedup_request_id(dedup_scope);
+    let request_id = request_id.unwrap_or_else(|| usage.dedup_request_id(dedup_scope));
 
     log::debug!(
         "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
@@ -680,12 +748,17 @@ async fn log_usage_internal(
 }
 
 /// 创建带日志记录和超时控制的透传流
+#[allow(clippy::too_many_arguments)]
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    state: ProxyState,
+    request_body: String,
+    response_headers: axum::http::HeaderMap,
+    request_id_sink: Arc<std::sync::Mutex<Option<String>>>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
@@ -693,11 +766,21 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
+        // Whether to save detail records: determines if SSE data should be parsed into JSON event arrays
+        let capture_details = state
+            .db
+            .get_log_config()
+            .map(|c| c.capture_details)
+            .unwrap_or(false);
         let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+            collector.is_some() || capture_details || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
 
-        // 超时配置
+        // Raw SSE text fallback; when capture is enabled, prefer parsed JSON event arrays
+        let mut raw_response = String::new();
+        let mut sse_events: Vec<Value> = Vec::new();
+
+        // Timeout configuration
         let first_byte_timeout = if timeout_config.first_byte_timeout > 0 {
             Some(Duration::from_secs(timeout_config.first_byte_timeout))
         } else {
@@ -745,25 +828,35 @@ pub fn create_logged_passthrough_stream(
                         );
                     }
                     is_first_chunk = false;
+
+                    // Fallback: save raw SSE text even when JSON parsing fails
+                    if capture_details {
+                        if let Ok(chunk_text) = std::str::from_utf8(&bytes) {
+                            raw_response.push_str(chunk_text);
+                        }
+                    }
+
                     if inspect_sse_events {
                         crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
-                        // 尝试解析并记录完整的 SSE 事件
+                        // Parse complete SSE events: shared between usage collection and detail JSON rebuild
                         while let Some(event_text) = take_sse_block(&mut buffer) {
                             if !event_text.trim().is_empty() {
-                                // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
                                         if data.trim() != "[DONE]" {
-                                            let collected = match &collector {
-                                                Some(c) if c.should_collect(data) => {
-                                                    match serde_json::from_str::<Value>(data) {
-                                                        Ok(json_value) => {
-                                                            c.push(json_value).await;
-                                                            true
-                                                        }
-                                                        Err(_) => false,
-                                                    }
+                                            let parsed = serde_json::from_str::<Value>(data).ok();
+                                            if let Some(ref json_value) = parsed {
+                                                if capture_details {
+                                                    sse_events.push(json_value.clone());
+                                                }
+                                            }
+                                            let collected = match (&collector, &parsed) {
+                                                (Some(c), Some(json_value))
+                                                    if c.should_collect(data) =>
+                                                {
+                                                    c.push(json_value.clone()).await;
+                                                    true
                                                 }
                                                 _ => false,
                                             };
@@ -800,7 +893,48 @@ pub fn create_logged_passthrough_stream(
         if let Some(guard) = &mut finish_guard {
             guard.disarm();
         }
+
+        // Streaming capture: prefer SSE data events rebuilt as JSON array, fall back to raw SSE on parse failure
+        if capture_details {
+            let request_id = request_id_sink
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            use super::usage::logger::UsageLogger;
+            let logger = UsageLogger::new(&state.db);
+            let response_headers_json =
+                serde_json::to_string(&header_map_to_json(&response_headers))
+                    .unwrap_or_default();
+            let response_body_for_store = if sse_events.is_empty() {
+                raw_response
+            } else {
+                let events_json = Value::Array(sse_events);
+                serde_json::to_string_pretty(&events_json)
+                    .or_else(|_| serde_json::to_string(&events_json))
+                    .unwrap_or(raw_response)
+            };
+            if let Err(e) = logger.save_detail_capture(
+                &request_id,
+                None,
+                Some(&request_body),
+                Some(&response_headers_json),
+                Some(&response_body_for_store),
+            ) {
+                log::warn!("Failed to save streaming response detail: {e}");
+            }
+        }
     }
+}
+
+/// Convert HeaderMap to JSON Value (for storing request/response headers)
+pub fn header_map_to_json(headers: &HeaderMap) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (key, value) in headers.iter() {
+        let value_str = value.to_str().unwrap_or("<non-utf8>").to_string();
+        map.insert(key.to_string(), serde_json::Value::String(value_str));
+    }
+    serde_json::Value::Object(map)
 }
 
 fn is_safe_diagnostic_header(name: &str) -> bool {
@@ -1107,6 +1241,7 @@ mod tests {
             false,
             200,
             None,
+            None,
         )
         .await;
 
@@ -1176,6 +1311,7 @@ mod tests {
             None,
             false,
             200,
+            None,
             None,
         )
         .await;
@@ -1256,6 +1392,7 @@ mod tests {
             None,
             false,
             200,
+            None,
             None,
         )
         .await;

@@ -332,6 +332,66 @@ impl<'a> UsageLogger<'a> {
         self.log_request(&log)
     }
 
+    /// Save request/response detail payload (raw body).
+    ///
+    /// Only called when `LogConfig.capture_details = true`.
+    /// Writes to the full proxy_request_log_details schema columns
+    /// (request_body_full / request_headers_json etc.), compatible with my-ccs-dev history tables.
+    /// Also cleans up detail records older than 30 days.
+    pub fn save_detail_capture(
+        &self,
+        request_id: &str,
+        request_headers: Option<&str>,
+        request_body: Option<&str>,
+        response_headers: Option<&str>,
+        response_body: Option<&str>,
+    ) -> Result<(), AppError> {
+        let conn = crate::database::lock_conn!(self.db.conn);
+        let created_at = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT OR REPLACE INTO proxy_request_log_details (
+                request_id, log_level, route_trace_json, mapping_json,
+                request_headers_json, request_body_preview, request_body_full,
+                response_headers_json, response_body_preview, response_body_full,
+                upstream_error_json, created_at
+             ) VALUES (?1, 'full', NULL, NULL, ?2, NULL, ?3, ?4, NULL, ?5, NULL, ?6)",
+            rusqlite::params![
+                request_id,
+                request_headers,
+                request_body,
+                response_headers,
+                response_body,
+                created_at,
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("Failed to save request detail: {e}")))?;
+
+        // Prefer cleanup by detail table's own created_at column;
+        // fall back to joining proxy_request_logs for old simplified tables without the column
+        let deleted = conn
+            .execute(
+                "DELETE FROM proxy_request_log_details
+                 WHERE created_at IS NOT NULL
+                   AND created_at < unixepoch('now') - 2592000",
+                [],
+            )
+            .or_else(|_| {
+                conn.execute(
+                    "DELETE FROM proxy_request_log_details WHERE request_id IN (
+                        SELECT request_id FROM proxy_request_logs
+                        WHERE created_at < unixepoch('now') - 2592000
+                    )",
+                    [],
+                )
+            })
+            .unwrap_or(0);
+        if deleted > 0 {
+            log::debug!("Cleaned up {deleted} expired request detail records");
+        }
+
+        Ok(())
+    }
+
     /// 获取模型定价
     pub fn get_model_pricing(&self, model_id: &str) -> Result<Option<ModelPricing>, AppError> {
         let conn = crate::database::lock_conn!(self.db.conn);

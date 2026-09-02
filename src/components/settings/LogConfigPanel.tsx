@@ -19,6 +19,7 @@ export function LogConfigPanel() {
   const [config, setConfig] = useState<LogConfig>({
     enabled: true,
     level: "info",
+    captureDetails: false,
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -84,6 +85,23 @@ export function LogConfigPanel() {
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      {/* 请求/响应体捕获开关 */}
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <Label>{t("settings.advanced.logConfig.captureDetails")}</Label>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.advanced.logConfig.captureDetailsDescription")}
+          </p>
+        </div>
+        <Switch
+          checked={config.captureDetails}
+          disabled={!config.enabled}
+          onCheckedChange={(checked) =>
+            handleChange({ captureDetails: checked })
+          }
+        />
       </div>
 
       {/* 日志级别说明 */}

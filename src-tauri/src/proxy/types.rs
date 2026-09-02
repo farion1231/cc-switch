@@ -340,6 +340,9 @@ pub struct LogConfig {
     /// 日志级别: error, warn, info, debug, trace
     #[serde(default = "default_log_level")]
     pub level: String,
+    /// 是否记录完整请求/响应体（默认关闭，仅建议调试时开启）
+    #[serde(default)]
+    pub capture_details: bool,
 }
 
 impl Default for LogConfig {
@@ -347,6 +350,7 @@ impl Default for LogConfig {
         Self {
             enabled: true,
             level: "info".to_string(),
+            capture_details: false,
         }
     }
 }
@@ -505,6 +509,7 @@ mod tests {
         let config = LogConfig {
             enabled: false,
             level: "debug".to_string(),
+            capture_details: false,
         };
         assert_eq!(config.to_level_filter(), log::LevelFilter::Off);
     }
@@ -514,10 +519,12 @@ mod tests {
         let config = LogConfig {
             enabled: true,
             level: "debug".to_string(),
+            capture_details: true,
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: LogConfig = serde_json::from_str(&json).unwrap();
         assert!(parsed.enabled);
         assert_eq!(parsed.level, "debug");
+        assert!(parsed.capture_details);
     }
 }

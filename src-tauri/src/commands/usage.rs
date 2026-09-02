@@ -116,7 +116,28 @@ pub fn get_request_detail(
     state: State<'_, AppState>,
     request_id: String,
 ) -> Result<Option<RequestLogDetail>, AppError> {
-    state.db.get_request_detail(&request_id)
+    let result = state.db.get_request_detail(&request_id)?;
+
+    if result.is_none() {
+        // Diagnostic logging: help debug why a list entry has no matching detail record
+        let conn = state
+            .db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(format!("Mutex lock failed: {e}")))?;
+        let sample_id: Result<String, _> = conn.query_row(
+            "SELECT request_id FROM proxy_request_logs LIMIT 1",
+            [],
+            |row| row.get(0),
+        );
+        log::warn!(
+            "[DETAIL-NOTFOUND] request_id='{request_id}' (len={}), sample_row_id='{:?}'",
+            request_id.len(),
+            sample_id,
+        );
+    }
+
+    Ok(result)
 }
 
 /// 获取模型定价列表

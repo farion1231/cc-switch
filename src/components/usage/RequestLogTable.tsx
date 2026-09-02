@@ -24,7 +24,8 @@ import {
   type LogFilters,
   type UsageRangeSelection,
 } from "@/types/usage";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { RequestDetailPanel } from "./RequestDetailPanel";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
   fmtInt,
@@ -59,6 +60,9 @@ export function RequestLogTable({
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
   const [page, setPage] = useState(0);
   const [pageInput, setPageInput] = useState("");
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(
+    null,
+  );
   const pageSize = 20;
 
   const effectiveFilters: LogFilters = {
@@ -71,7 +75,12 @@ export function RequestLogTable({
     statusCode,
   };
 
-  const { data: result, isLoading } = useRequestLogs({
+  const {
+    data: result,
+    isLoading,
+    refetch,
+    isRefetching,
+  } = useRequestLogs({
     filters: effectiveFilters,
     range,
     page,
@@ -197,7 +206,11 @@ export function RequestLogTable({
                   logs.map((log) => {
                     const unpriced = isUnpricedUsage(log);
                     return (
-                      <TableRow key={log.requestId}>
+                      <TableRow
+                        key={log.requestId}
+                        className="cursor-pointer"
+                        onClick={() => setSelectedRequestId(log.requestId)}
+                      >
                         <TableCell className="text-center whitespace-nowrap text-xs px-1.5">
                           {new Date(log.createdAt * 1000).toLocaleString(
                             locale,
@@ -321,7 +334,20 @@ export function RequestLogTable({
           </div>
 
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>{t("usage.totalRecords", { total })}</span>
+            <div className="flex items-center gap-2">
+              <span>{t("usage.totalRecords", { total })}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0"
+                onClick={() => refetch()}
+                disabled={isRefetching}
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${isRefetching ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </div>
             <div className="flex items-center gap-1">
               <Button
                 size="sm"
@@ -398,6 +424,13 @@ export function RequestLogTable({
             </div>
           </div>
         </>
+      )}
+
+      {selectedRequestId && (
+        <RequestDetailPanel
+          requestId={selectedRequestId}
+          onClose={() => setSelectedRequestId(null)}
+        />
       )}
     </div>
   );
