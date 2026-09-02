@@ -2201,6 +2201,7 @@
     }
   },
   "profiles": {
+    "switcherAriaLabel": "專案：{{name}}",
     "switcherTooltip": {
       "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案",
       "claude-desktop": "專案：一鍵切換 Claude Desktop 的供應商",
@@ -2884,6 +2885,7 @@
     },
     "switchFailed": "切換失敗：{{error}}",
     "takeover": {
+      "ariaLabel": "{{appLabel}} 本地路由",
       "hint": "選擇要路由的應用程式，啟用後該應用程式的請求將透過本地路由轉發",
       "enabled": "{{app}} 路由已啟用",
       "disabled": "{{app}} 路由已關閉",
