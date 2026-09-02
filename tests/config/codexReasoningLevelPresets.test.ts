@@ -49,11 +49,39 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 混元官方枚举 low/high；hy3 开源 chat template 对其他值直接 raise
     ["Tencent Hunyuan", "hy3", ["low", "high"]],
     ["Tencent Hunyuan", "hy3-preview", ["low", "high"]],
+    // 腾讯 Token Plan（订阅线 /plan 端点）档位全部真 Key 实测（2026-08-31）：
+    // glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 直接 400，
+    // 错误信息即枚举来源）；kimi-k2.7-code(-highspeed) 仅接受
+    // thinking:enabled；minimax-m2.5/m2.7 与国内 auto 关思考被静默忽略
+    //（选 none 是假关）→ 只列 high；其余模型 thinking 开关真实生效 → 两态
+    ["Tencent Token Plan", "tc-code-latest", ["none", "high"]],
+    ["Tencent Token Plan", "hy3", ["none", "high"]],
+    ["Tencent Token Plan", "minimax-m2.7", ["high"]],
+    [
+      "Tencent Token Plan Enterprise Pro",
+      "glm-5.3",
+      ["low", "high", "max"],
+      "high",
+    ],
+    ["Tencent Token Plan Enterprise Pro", "kimi-k2.7-code", ["high"]],
+    ["Tencent Token Plan Enterprise Pro", "auto", ["high"]],
+    ["Tencent Token Plan Enterprise Pro", "glm-5.2", ["none", "high"]],
+    // 国际站 auto 尊重关思考（与国内 auto 忽略关思考行为不同）
+    ["Tencent Token Plan (Intl)", "auto", ["none", "high"]],
+    ["Tencent Token Plan Enterprise Pro (Intl)", "auto", ["none", "high"]],
+    [
+      "Tencent Token Plan Enterprise Pro (Intl)",
+      "glm-5.3",
+      ["low", "high", "max"],
+      "high",
+    ],
+    ["Tencent Token Plan Enterprise Lite", "auto", ["high"]],
+    ["Tencent Token Plan Enterprise Lite (Intl)", "auto", ["none", "high"]],
     // LongCat 无档位可调：全站唯一 effort 证据=官方示例的 high
     ["Longcat", "LongCat-2.0", ["high"]],
     // xAI Reasoning guide 模型级枚举；grok-4.5 不可关思考故无 none
-    ["xAI (Grok)", "grok-4.5", ["low", "medium", "high"]],
-    ["xAI (Grok) OAuth", "grok-4.5", ["low", "medium", "high"]],
+    ["xAI (Grok)", "grok-4.5", ["low", "medium", "high", "xhigh"]],
+    ["xAI (Grok) OAuth", "grok-4.5", ["low", "medium", "high", "xhigh"]],
     // DeepSeek 直连照抄官方 catalog 镜像（Jason 2026-08-15 拍板：表单可见性
     // 优先，接受快照过时风险——官方目录变更时须同步）
     ["DeepSeek", "deepseek-v4-flash", ["low", "high", "max"]],

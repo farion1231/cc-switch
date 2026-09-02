@@ -423,6 +423,33 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "apikeyfun",
   },
   {
+    name: "9527CODE",
+    providerKey: "cc-switch-9527-code",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    settingsConfig: {
+      name: "9527CODE",
+      baseUrl: "https://9527.codes",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5", {
+          id: "claude-opus-5",
+        }),
+        piModel("anthropic/claude-sonnet-5", {
+          id: "claude-sonnet-5",
+        }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    icon: "9527code",
+  },
+  {
     name: "Code0",
     providerKey: "cc-switch-code0",
     websiteUrl: "https://code0.ai",
@@ -446,12 +473,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TeamoRouter",
     providerKey: "cc-switch-teamo-router",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "TeamoRouter",
-      baseUrl: "https://api.teamorouter.com/v1",
+      baseUrl: "https://api.teamorouter.cn/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -944,6 +971,70 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "bailian",
     iconColor: "#624AFF",
   },
+  // ===== QwenCloud（DashScope 国际站）=====
+  // 按量付费走 OpenAI 兼容层，Coding / Token Plan 走官方 Anthropic 地址
+  // （与 Pi 其余 anthropic-messages 预设一致，地址不带 /v1）。
+  {
+    name: "QwenCloud",
+    providerKey: "cc-switch-qwencloud",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      name: "QwenCloud",
+      baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+        piModel("qwen/qwen3.7-plus", { id: "qwen3.7-plus" }),
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+  },
+  {
+    name: "QwenCloud For Coding",
+    providerKey: "cc-switch-qwencloud-coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      name: "QwenCloud For Coding",
+      baseUrl: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("qwen/qwen3.7-plus", { id: "qwen3.7-plus" }),
+        piModel("qwen/qwen3-coder-plus", {
+          id: "qwen3-coder-plus",
+          contextWindow: 131_072,
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+  },
+  {
+    name: "QwenCloud Token Plan",
+    providerKey: "cc-switch-qwencloud-token-plan",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      name: "QwenCloud Token Plan",
+      baseUrl:
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+        piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+  },
   {
     name: "StepFun",
     providerKey: "cc-switch-step-fun",
@@ -1408,6 +1499,27 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     },
     category: "aggregator",
     icon: "pipellm",
+  },
+  {
+    name: "AICodeWith",
+    providerKey: "cc-switch-aicode-with",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    settingsConfig: {
+      name: "AICodeWith",
+      baseUrl: "https://api.aicodewith.ai/chatgpt/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.6-sol", {
+          id: "gpt-5.6-sol",
+          name: "gpt-5.6-sol",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
   },
   {
     name: "E-FlowCode",

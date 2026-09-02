@@ -207,32 +207,130 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
 }
 
 /// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
-/// tool declarations flattened before forwarding.
+/// tool declarations flattened before forwarding, plus xAI schema sanitization.
 ///
 /// Codex 0.142+ emits ChatGPT-backend-private `{"type":"namespace",…}` tool
 /// shapes that strict third-party Responses gateways reject with
-/// `422 unknown variant "namespace"`. Only providers whose upstream is such a
-/// strict native gateway need the flatten+restore pass; the Chat/Anthropic
-/// transform paths already unwrap namespaces on their own. Currently that is the
-/// managed xAI (Grok) OAuth provider — the first strict gateway cc-switch hit.
+/// `422 unknown variant "namespace"`. xAI also rejects root `oneOf`/`anyOf`
+/// function schemas (notably `mcp__codex_app__automation_update`). The
+/// Chat/Anthropic transform paths already unwrap namespaces, so this only
+/// fires on native Responses passthrough.
+///
+/// Covers managed xAI OAuth *and* API-key providers whose live upstream is
+/// `api.x.ai` with `wire_api = "responses"`. See farion1231/cc-switch#6815.
 pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
-    provider.is_xai_oauth()
+    provider.is_xai_oauth() || provider_is_xai_native_responses(provider)
 }
 
-/// A native-login or managed-account Codex Official card receives
-/// authentication from the calling Codex client (`requires_openai_auth =
-/// true`). Legacy unbound Official rows keep their previous stored-key behavior.
-pub fn is_codex_official_provider(provider: &Provider) -> bool {
-    if provider.category.as_deref() != Some("official") {
+/// True when this Codex provider talks native Responses to first-party xAI
+/// (`api.x.ai`), including API-key Grok cards that are not `xai_oauth`.
+fn provider_is_xai_native_responses(provider: &Provider) -> bool {
+    let config_text = provider
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let Some(wire_api) = extract_codex_wire_api_from_toml(config_text) else {
+        return false;
+    };
+    if !wire_api.eq_ignore_ascii_case("responses") {
         return false;
     }
 
-    provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
-        || provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
-            .is_some_and(|account_id| !account_id.trim().is_empty())
+    extract_codex_base_url_from_toml(config_text)
+        .map(|url| url.to_ascii_lowercase())
+        .is_some_and(|url| url.contains("api.x.ai"))
+}
+
+fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
+    let non_empty_setting = |key: &str| {
+        provider
+            .settings_config
+            .get(key)
+            .and_then(JsonValue::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    let config = provider
+        .settings_config
+        .get("config")
+        .and_then(JsonValue::as_str)
+        .map(|text| {
+            crate::codex_config::strip_codex_unified_session_bucket(text)
+                .unwrap_or_else(|_| text.to_string())
+        });
+    let config = config.as_deref();
+
+    ["baseUrl", "baseURL", "base_url"]
+        .into_iter()
+        .any(non_empty_setting)
+        || config
+            .and_then(crate::codex_config::extract_codex_experimental_bearer_token)
+            .is_some()
+        || config
+            .and_then(crate::codex_config::extract_codex_base_url)
+            .is_some()
+        || config
+            .and_then(|text| text.parse::<TomlValue>().ok())
+            .and_then(|doc| {
+                doc.get("model_provider")
+                    .and_then(TomlValue::as_str)
+                    .map(str::trim)
+                    .filter(|provider_id| !provider_id.is_empty())
+                    .map(str::to_string)
+            })
+            // Exact match, mirroring upstream: the built-in lookup is
+            // case-sensitive, so `OpenAI` routes to a custom table — a
+            // third-party upstream, not the official provider.
+            .is_some_and(|provider_id| provider_id != "openai")
+}
+
+/// Codex Official ChatGPT cards receive authentication from the calling Codex
+/// client (`requires_openai_auth = true`). Unbound cards with a stored API key
+/// stay on the direct OpenAI API path instead of being sent to the ChatGPT
+/// backend. The fixed legacy card keeps its existing behavior.
+pub fn is_codex_official_provider(provider: &Provider) -> bool {
+    let is_fixed_official_id = provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+    if is_fixed_official_id && provider.category.as_deref() == Some("official") {
+        return true;
+    }
+
+    let has_auth_object = provider
+        .settings_config
+        .get("auth")
+        .is_some_and(JsonValue::is_object);
+    let has_valid_config_shape = provider
+        .settings_config
+        .get("config")
+        .is_none_or(|config| config.is_null() || config.is_string());
+    if !has_auth_object || !has_valid_config_shape {
+        return false;
+    }
+
+    if has_explicit_codex_third_party_upstream(provider) {
+        return false;
+    }
+
+    let has_managed_account = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .is_some_and(|account_id| !account_id.trim().is_empty());
+    if has_managed_account {
+        return true;
+    }
+
+    let has_stored_api_key = provider
+        .settings_config
+        .get("auth")
+        .and_then(|auth| auth.get("OPENAI_API_KEY"))
+        .and_then(JsonValue::as_str)
+        .is_some_and(|key| !key.trim().is_empty());
+    if has_stored_api_key {
+        return false;
+    }
+
+    is_fixed_official_id || provider.category.as_deref() == Some("official")
 }
 
 /// Resolve the model-catalog tool profile for a Codex provider using the SAME
@@ -977,17 +1075,26 @@ context_window = 500000
     }
 
     #[test]
-    fn official_account_card_uses_fixed_chatgpt_backend_without_stored_key() {
-        let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
-        provider.id = "managed-official-account".to_string();
+    fn explicit_codex_official_cards_use_chatgpt_backend() {
+        let mut provider = create_provider(json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": { "refresh_token": "legacy-live-only-token" }
+            },
+            "config": ""
+        }));
+        provider.id = "unbound-official-account".to_string();
         provider.category = Some("official".to_string());
-        assert!(!is_codex_official_provider(&provider));
+        assert!(is_codex_official_provider(&provider));
 
         let mut native = provider.clone();
         native.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
         assert!(is_codex_official_provider(&native));
 
+        provider.id = "managed-official-account".to_string();
         provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
             auth_binding: Some(crate::provider::AuthBinding {
                 source: crate::provider::AuthBindingSource::ManagedAccount,
                 auth_provider: Some("codex_oauth".to_string()),
@@ -1012,6 +1119,69 @@ context_window = 500000
             ),
             "https://chatgpt.com/backend-api/codex/responses/compact"
         );
+
+        let mut official_api_key = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "sk-official" },
+            "config": ""
+        }));
+        official_api_key.category = Some("official".to_string());
+        assert!(!is_codex_official_provider(&official_api_key));
+
+        let mut stored_bearer = create_provider(json!({
+            "auth": {},
+            "config": "experimental_bearer_token = \"sk-legacy\""
+        }));
+        stored_bearer.category = Some("official".to_string());
+        assert!(!is_codex_official_provider(&stored_bearer));
+
+        let mut unmarked_custom = create_provider(json!({
+            "auth": {},
+            "config": "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://example.com/v1\""
+        }));
+        unmarked_custom.category = Some("official".to_string());
+        assert!(!is_codex_official_provider(&unmarked_custom));
+
+        let mut category_less_fixed_custom = unmarked_custom.clone();
+        category_less_fixed_custom.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        category_less_fixed_custom.category = None;
+        assert!(!is_codex_official_provider(&category_less_fixed_custom));
+
+        let mut category_less_fixed_api_key = official_api_key.clone();
+        category_less_fixed_api_key.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        category_less_fixed_api_key.category = None;
+        assert!(!is_codex_official_provider(&category_less_fixed_api_key));
+
+        let mut explicit_openai = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "sk-official" },
+            "config": "model_provider = \"openai\""
+        }));
+        explicit_openai.category = Some("official".to_string());
+        assert!(!is_codex_official_provider(&explicit_openai));
+
+        let mut managed_with_null_config = provider.clone();
+        managed_with_null_config.category = None;
+        managed_with_null_config.settings_config["config"] = JsonValue::Null;
+        assert!(is_codex_official_provider(&managed_with_null_config));
+
+        let mut unified_session = create_provider(json!({
+            "auth": {},
+            "config": crate::codex_config::inject_codex_unified_session_bucket("")
+                .expect("inject unified session route")
+        }));
+        unified_session.category = Some("official".to_string());
+        assert!(is_codex_official_provider(&unified_session));
+
+        let mut implicit_custom = create_provider(json!({
+            "auth": {},
+            "config": "model_provider = \"ollama\""
+        }));
+        implicit_custom.category = Some("official".to_string());
+        assert!(!is_codex_official_provider(&implicit_custom));
+
+        let mut grok_official = create_provider(json!({ "config": "" }));
+        grok_official.id = crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID.to_string();
+        grok_official.category = Some("official".to_string());
+        assert!(!is_codex_official_provider(&grok_official));
     }
 
     #[test]
@@ -1910,8 +2080,7 @@ wire_api = "responses"
     }
 
     #[test]
-    fn namespace_flatten_gate_only_fires_for_xai_oauth() {
-        // xAI OAuth: strict native gateway → needs namespace flattening.
+    fn namespace_flatten_gate_fires_for_xai_oauth_and_api_xai_responses() {
         let mut xai = create_provider(json!({ "auth": {}, "config": "" }));
         xai.meta = Some(crate::provider::ProviderMeta {
             provider_type: Some("xai_oauth".to_string()),
@@ -1919,11 +2088,30 @@ wire_api = "responses"
         });
         assert!(provider_needs_responses_namespace_flatten(&xai));
 
-        // A plain third-party API-key Codex provider must not be flattened.
-        let plain = create_provider(json!({
+        // API-key Grok cards (no xai_oauth meta) still talk to api.x.ai Responses.
+        let grok_key = create_provider(json!({
             "auth": { "OPENAI_API_KEY": "sk-x" },
-            "config": "base_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\""
+            "config": r#"
+model_provider = "custom"
+model = "grok-4.6"
+
+[model_providers.custom]
+name = "xai"
+base_url = "https://api.x.ai/v1"
+wire_api = "responses"
+"#
         }));
-        assert!(!provider_needs_responses_namespace_flatten(&plain));
+        assert!(provider_needs_responses_namespace_flatten(&grok_key));
+
+        // A non-xAI Responses provider must not be flattened.
+        let other = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "sk-x" },
+            "config": r#"
+[model_providers.custom]
+base_url = "https://api.deepseek.com"
+wire_api = "responses"
+"#
+        }));
+        assert!(!provider_needs_responses_namespace_flatten(&other));
     }
 }

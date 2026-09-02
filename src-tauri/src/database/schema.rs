@@ -300,12 +300,20 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 18. Session Log Sync 表 (会话日志同步状态)
+        //
+        // last_byte_offset：Claude 路径的字节游标（seek 增量读）；NULL 表示
+        // 尚无字节游标（旧行号游标或非 Claude 路径行），此时回退全量读。
+        // last_tail_fingerprint：游标边界前尾部字节的指纹，用于识别文件被
+        // 外部重写（同尺寸/更大的替换无法靠 size 检测）；NULL 表示无指纹
+        // 可校验，按纯追加处理。
         conn.execute(
             "CREATE TABLE IF NOT EXISTS session_log_sync (
                 file_path TEXT PRIMARY KEY,
                 last_modified INTEGER NOT NULL,
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
-                last_synced_at INTEGER NOT NULL
+                last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER,
+                last_tail_fingerprint INTEGER
             )",
             [],
         )
@@ -555,9 +563,14 @@ impl Database {
                         Self::set_user_version(conn, 17)?;
                     }
                     17 => {
-                        log::info!("迁移数据库从 v17 到 v18（添加分类器队列）");
+                        log::info!("迁移数据库从 v17 到 v18（会话日志字节游标列）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（添加分类器队列）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1584,16 +1597,37 @@ impl Database {
              CREATE INDEX IF NOT EXISTS idx_session_usage_dedup_semantic
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
-        .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))
+    }
+
+    /// v17 -> v18: Claude 会话日志的字节游标列与尾部指纹列。
+    ///
+    /// 独立成版而非搭 v17 车：v17 已在开发库上执行过（迁移不会重跑，
+    /// `CREATE TABLE IF NOT EXISTS` 也不补列），追加进 v17 会让这些库
+    /// 永远缺列。存量行保持 NULL，首轮扫描按旧行号游标转换为字节位置
+    /// 后继续增量；之后写入字节偏移走 seek 增量，并记录游标边界前的
+    /// 尾部指纹用于识别外部重写（截断由 size 检测，同尺寸/更大的替换
+    /// 只有指纹能发现）。
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        // 缺表的库（异常/测试夹具）跳过：create_tables 会以含列的新 DDL 建表。
+        if Self::table_exists(conn, "session_log_sync")? {
+            Self::add_column_if_missing(conn, "session_log_sync", "last_byte_offset", "INTEGER")?;
+            Self::add_column_if_missing(
+                conn,
+                "session_log_sync",
+                "last_tail_fingerprint",
+                "INTEGER",
+            )?;
+        }
         Ok(())
     }
 
-    /// v17 -> v18: 分类器队列（Auto Mode 安全分类器请求的侧信道路由）
+    /// v18 -> v19: 分类器队列（Auto Mode 安全分类器请求的侧信道路由）
     ///
     /// 每一步都用 `table_exists` / `has_column` 兜底：迁移可能跑在很旧的库上
     /// （`add_column_if_missing` 遇到缺表会直接报错），且索引依赖的 `sort_index`
     /// 在 v4 那种老结构里还不存在。
-    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
         if Self::table_exists(conn, "providers")? {
             Self::add_column_if_missing(
                 conn,
@@ -1991,6 +2025,20 @@ impl Database {
             ("gpt-4.1", "GPT-4.1", "2", "8", "0.50", "0"),
             ("gpt-4.1-mini", "GPT-4.1 Mini", "0.40", "1.60", "0.10", "0"),
             ("gpt-4.1-nano", "GPT-4.1 Nano", "0.10", "0.40", "0.025", "0"),
+            // Gemini 3.7 系列
+            // 录的是介绍价（官方公告 + ai.google.dev 价表 + models.dev 三源一致）。
+            // ⚠️ 介绍价 2026-12-31 到期，2027-01-01 起恢复 1.50/7.50/0.15（= 3.6 Flash 现价）。
+            // 到期后需走 seed + repair 双写改回；届时 models.dev 会先更新，
+            // /jason-update-model 审计的 A 段会自动报出这一行作为提醒——
+            // 因此这一行刻意不进 audit-ignore.json，勿加豁免（会屏蔽掉该提醒）。
+            (
+                "gemini-3.7-flash",
+                "Gemini 3.7 Flash",
+                "0.75",
+                "3.75",
+                "0.075",
+                "0",
+            ),
             // Gemini 3.6 系列
             (
                 "gemini-3.6-flash",
@@ -2206,30 +2254,40 @@ impl Database {
                 "0",
             ),
             ("deepseek-v3", "DeepSeek V3", "0.28", "1.11", "0.028", "0"),
+            // ── DeepSeek V4 系列：2026-08-16 16:00 UTC 起改为峰谷双档计价 ──
+            // 官方价页（api-docs.deepseek.com/quick_start/pricing，中英一致）直接挂 USD，
+            // 不再需要 CNY 折算。高峰时段 = 北京时间 9:00-12:00 与 14:00-18:00
+            // （= UTC 01:00-04:00、06:00-10:00），共 7h/天；其余 17h 为空闲档。
+            //
+            // 🔴 本表每模型仅一行、无时段维度，**统一录高峰档**（Jason 2026-08-18 拍板）：
+            //   ① 官方措辞是「空闲价为高峰价的一半」，高峰档才是基准挂牌价；
+            //   ② 高峰时段正是中文用户的工作时间，是 AI 编程主力时段。
+            //   代价=夜间/凌晨用量高估一倍。勿按「阶梯取低档」惯例改成空闲档。
+            //
+            // input=缓存未命中价，cache_read=缓存命中价；DeepSeek 不单收 cache write → 0。
             // deepseek-chat / deepseek-reasoner 自 2026-07 起为 V4 Flash 的 legacy 别名（同价）
             (
                 "deepseek-chat",
                 "DeepSeek Chat",
-                "0.14",
-                "0.28",
-                "0.0028",
+                "0.44",
+                "1.32",
+                "0.014",
                 "0",
             ),
             (
                 "deepseek-reasoner",
                 "DeepSeek Reasoner",
-                "0.14",
-                "0.28",
-                "0.0028",
+                "0.44",
+                "1.32",
+                "0.014",
                 "0",
             ),
-            // DeepSeek V4 系列（官方 CNY 按 1 USD ≈ 7.14 折算）
             (
                 "deepseek-v4-flash",
                 "DeepSeek V4 Flash",
-                "0.14",
-                "0.28",
-                "0.0028",
+                "0.44",
+                "1.32",
+                "0.014",
                 "0",
             ),
             // 部分上游（如阿里百炼）回传 4 位 MMDD 日期变体。查价的
@@ -2238,17 +2296,17 @@ impl Database {
             (
                 "deepseek-v4-flash-0731",
                 "DeepSeek V4 Flash",
-                "0.14",
-                "0.28",
-                "0.0028",
+                "0.44",
+                "1.32",
+                "0.014",
                 "0",
             ),
             (
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",
-                "0.435",
-                "0.87",
-                "0.003625",
+                "1.32",
+                "3.96",
+                "0.044",
                 "0",
             ),
             // Kimi (月之暗面)
@@ -3002,6 +3060,74 @@ impl Database {
                 "0.02",
                 "0",
             ),
+            // 2026-08-16 16:00 UTC DeepSeek V4 全系改峰谷双档计价（本表统一录高峰档，
+            // 理由见 seed_model_pricing 里 DeepSeek V4 段的注释）。涨幅很大：
+            // flash 0.14/0.28/0.0028 → 0.44/1.32/0.014；pro 0.435/0.87/0.003625 → 1.32/3.96/0.044。
+            //
+            // 🔴 这五条必须留在数组末尾：上面 2026-07-31 的 chat/reasoner 条目与
+            // 2026-07 的 v4-flash(cache_read 0.028→0.0028) / v4-pro(1.68/3.36→0.435/0.87)
+            // 条目会先把各种历史形态收敛到同一个旧值，这里才能单守卫命中。
+            // 若把本组挪到它们之前，老库会停在中间价位不再前进。
+            (
+                "deepseek-chat",
+                "DeepSeek Chat",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+            ),
+            (
+                "deepseek-reasoner",
+                "DeepSeek Reasoner",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+            ),
+            (
+                "deepseek-v4-flash",
+                "DeepSeek V4 Flash",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+            ),
+            (
+                "deepseek-v4-flash-0731",
+                "DeepSeek V4 Flash",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+            ),
+            (
+                "deepseek-v4-pro",
+                "DeepSeek V4 Pro",
+                "1.32",
+                "3.96",
+                "0.044",
+                "0",
+                "0.435",
+                "0.87",
+                "0.003625",
+                "0",
+            ),
         ];
 
         for (
@@ -3388,10 +3514,50 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v17_to_v18_adds_classifier_columns_and_index() -> Result<(), AppError> {
+    fn migrate_v17_to_v18_adds_byte_cursor_to_existing_sync_table() -> Result<(), AppError> {
+        // 真实升级路径：v17 库带旧 DDL 的 session_log_sync（无字节游标列，
+        // 字节游标曾短暂搭 v17 车、已执行过 v17 的开发库正是这个形状）
+        // 与存量游标行，迁移后列补上、存量行保持 NULL（首轮按行号转换）
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL
+             );
+             INSERT INTO session_log_sync VALUES ('/tmp/a.jsonl', 5, 3, 1);",
+        )?;
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert!(Database::has_column(
+            &conn,
+            "session_log_sync",
+            "last_byte_offset"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "session_log_sync",
+            "last_tail_fingerprint"
+        )?);
+        let (byte_offset, fingerprint): (Option<i64>, Option<i64>) = conn.query_row(
+            "SELECT last_byte_offset, last_tail_fingerprint
+             FROM session_log_sync WHERE file_path = '/tmp/a.jsonl'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
+        assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_adds_classifier_columns_and_index() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
-        // 回退到 v17 形态，模拟升级前的库
+        // 回退到 v18 形态，模拟升级前的库
         conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", [])?;
         conn.execute("ALTER TABLE providers DROP COLUMN in_classifier_queue", [])?;
         conn.execute(
@@ -3402,7 +3568,7 @@ mod tests {
             "ALTER TABLE proxy_config DROP COLUMN classifier_force_thinking_off",
             [],
         )?;
-        Database::set_user_version(&conn, 17)?;
+        Database::set_user_version(&conn, 18)?;
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
@@ -3445,7 +3611,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v17_to_v18_preserves_existing_failover_flags() -> Result<(), AppError> {
+    fn migrate_v18_to_v19_preserves_existing_failover_flags() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
         // SQLite 拒绝删除被索引引用的列，必须先删索引
@@ -3456,7 +3622,7 @@ mod tests {
              VALUES ('p1', 'claude', 'P1', '{}', 1)",
             [],
         )?;
-        Database::set_user_version(&conn, 17)?;
+        Database::set_user_version(&conn, 18)?;
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 

@@ -8,7 +8,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -130,7 +130,15 @@ export function BasicFormFields({
             <FormItem>
               <FormLabel>{t("provider.name")}</FormLabel>
               <FormControl>
-                <Input {...field} placeholder={t("provider.namePlaceholder")} />
+                <ImeSafeInput
+                  ref={field.ref}
+                  name={field.name}
+                  value={field.value ?? ""}
+                  onValueChange={field.onChange}
+                  onBlur={field.onBlur}
+                  disabled={field.disabled}
+                  placeholder={t("provider.namePlaceholder")}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -144,8 +152,13 @@ export function BasicFormFields({
             <FormItem>
               <FormLabel>{t("provider.notes")}</FormLabel>
               <FormControl>
-                <Input
-                  {...field}
+                <ImeSafeInput
+                  ref={field.ref}
+                  name={field.name}
+                  value={field.value ?? ""}
+                  onValueChange={field.onChange}
+                  onBlur={field.onBlur}
+                  disabled={field.disabled}
                   placeholder={t("provider.notesPlaceholder")}
                 />
               </FormControl>
@@ -162,8 +175,13 @@ export function BasicFormFields({
           <FormItem>
             <FormLabel>{t("provider.websiteUrl")}</FormLabel>
             <FormControl>
-              <Input
-                {...field}
+              <ImeSafeInput
+                ref={field.ref}
+                name={field.name}
+                value={field.value ?? ""}
+                onValueChange={field.onChange}
+                onBlur={field.onBlur}
+                disabled={field.disabled}
                 placeholder={t("providerForm.websiteUrlPlaceholder")}
               />
             </FormControl>

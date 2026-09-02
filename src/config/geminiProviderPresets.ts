@@ -238,6 +238,30 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "apikeyfun",
   },
   {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://9527.codes",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://9527.codes",
+    model: "gemini-3.6-flash",
+    description: "9527CODE",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    endpointCandidates: [
+      "https://9527.codes",
+      "https://api.9527.codes",
+      "https://cdn.9527.codes",
+    ],
+    icon: "9527code",
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
@@ -487,6 +511,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
+  },
+  {
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.aicodewith.ai/gemini_cli",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.aicodewith.ai/gemini_cli",
+    model: "gemini-3.1-pro-preview",
+    description: "AICodeWith",
+    category: "aggregator",
+    endpointCandidates: ["https://api.aicodewith.ai/gemini_cli"],
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
   },
   {
     name: "自定义",

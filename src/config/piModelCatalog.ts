@@ -432,6 +432,25 @@ export const piModelCatalog = {
       maxTokens: 131_072,
     },
   },
+  "qwen/qwen3.7-plus": {
+    capabilities: {
+      name: "Qwen3.7 Plus",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_000_000,
+      maxTokens: 65_536,
+    },
+  },
+  "qwen/qwen3.8-max": {
+    capabilities: {
+      name: "Qwen3.8 Max",
+      reasoning: true,
+      input: ["text", "image"],
+      // 983_616 而非 1M：QwenCloud 官方 Codex catalog 与 OpenClaw 配置同值
+      contextWindow: 983_616,
+      maxTokens: 131_072,
+    },
+  },
   "qwen/qwen3.8-max-preview": {
     capabilities: {
       name: "Qwen3.8 Max Preview",
