@@ -1423,6 +1423,7 @@
     "reauthLogin": "重新登入",
     "reauthSelectHint": "該帳號需重新登入以啟用託管綁定。",
     "reauthNow": "立即重新登入",
+    "duplicateAccount": "該 ChatGPT 帳號已新增，請直接使用現有帳號。",
     "loggedInAccounts": "已登入帳號",
     "defaultAccount": "預設",
     "selected": "已選取",

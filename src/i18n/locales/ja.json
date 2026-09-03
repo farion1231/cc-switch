@@ -1422,6 +1422,7 @@
     "reauthLogin": "再ログイン",
     "reauthSelectHint": "このアカウントは管理バインドを有効にするため再ログインが必要です。",
     "reauthNow": "今すぐ再ログイン",
+    "duplicateAccount": "この ChatGPT アカウントは追加済みです。既存のアカウントを使用してください。",
     "loggedInAccounts": "ログイン済みアカウント",
     "defaultAccount": "デフォルト",
     "selected": "選択中",

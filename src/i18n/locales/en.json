@@ -1422,6 +1422,7 @@
     "reauthLogin": "Re-login",
     "reauthSelectHint": "This account needs to sign in again to enable managed binding.",
     "reauthNow": "Re-login now",
+    "duplicateAccount": "This ChatGPT account has already been added. Use the existing account.",
     "loggedInAccounts": "Logged in accounts",
     "defaultAccount": "Default",
     "selected": "Selected",

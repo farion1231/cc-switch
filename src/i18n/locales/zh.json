@@ -1422,6 +1422,7 @@
     "reauthLogin": "重新登录",
     "reauthSelectHint": "该账号需重新登录以启用托管绑定。",
     "reauthNow": "立即重新登录",
+    "duplicateAccount": "该 ChatGPT 账号已添加，请直接使用现有账号。",
     "loggedInAccounts": "已登录账号",
     "defaultAccount": "默认",
     "selected": "已选中",

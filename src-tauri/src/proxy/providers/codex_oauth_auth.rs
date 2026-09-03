@@ -81,6 +81,9 @@ pub enum CodexOAuthError {
     #[error("OAuth Token 获取失败: {0}")]
     TokenFetchFailed(String),
 
+    #[error("codex_oauth_duplicate_account")]
+    DuplicateAccount,
+
     #[error("Refresh Token 失效或已过期")]
     RefreshTokenInvalid,
 
@@ -1619,8 +1622,15 @@ impl CodexOAuthManager {
             .map(str::to_string);
         let replacing_existing = target_account_id.is_some();
         let account_id = target_account_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        let refresh_lock = self.get_refresh_lock(&account_id).await;
-        let _refresh_guard = refresh_lock.lock().await;
+        let refresh_lock = if replacing_existing {
+            Some(self.get_refresh_lock(&account_id).await)
+        } else {
+            None
+        };
+        let _refresh_guard = match refresh_lock.as_ref() {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
+        };
         let now = chrono::Utc::now().timestamp();
         let now_ms = chrono::Utc::now().timestamp_millis();
 
@@ -1730,6 +1740,34 @@ impl CodexOAuthManager {
         // and its access-token cache untouched.
         let _persist = self.storage_lock.lock().await;
         let mut persisted_accounts = self.accounts.read().await.clone();
+        let new_identity = data
+            .id_token
+            .as_deref()
+            .and_then(crate::codex_config::extract_codex_id_token_user_identity);
+        let duplicate_exists = new_identity.as_deref().is_some_and(|new_identity| {
+            persisted_accounts
+                .iter()
+                .filter(|(existing_id, _)| existing_id.as_str() != account_id.as_str())
+                .any(|(_, existing)| {
+                    existing
+                        .chatgpt_account_id
+                        .as_deref()
+                        .unwrap_or(existing.account_id.as_str())
+                        == data
+                            .chatgpt_account_id
+                            .as_deref()
+                            .unwrap_or(data.account_id.as_str())
+                        && existing
+                            .id_token
+                            .as_deref()
+                            .and_then(crate::codex_config::extract_codex_id_token_user_identity)
+                            .as_deref()
+                            == Some(new_identity)
+                })
+        });
+        if duplicate_exists {
+            return Err(CodexOAuthError::DuplicateAccount);
+        }
         persisted_accounts.insert(account_id.clone(), data.clone());
         let persisted_default = self
             .resolve_default_account_id()
@@ -2167,7 +2205,7 @@ mod tests {
                 "shared-workspace".to_string(),
                 "rt-first".to_string(),
                 Some("first@example.com".to_string()),
-                None,
+                Some(crate::codex_config::test_codex_id_token("user-a")),
                 None,
                 AccountLoginContext::default(),
             )
@@ -2178,7 +2216,7 @@ mod tests {
                 "shared-workspace".to_string(),
                 "rt-second".to_string(),
                 Some("second@example.com".to_string()),
-                None,
+                Some(crate::codex_config::test_codex_id_token("user-b")),
                 None,
                 AccountLoginContext::default(),
             )
@@ -2213,6 +2251,149 @@ mod tests {
         let accounts = manager.accounts.read().await;
         assert_eq!(accounts.get(&first.id).unwrap().refresh_token, "rt-first");
         assert_eq!(accounts.get(&second.id).unwrap().refresh_token, "rt-second");
+    }
+
+    #[tokio::test]
+    async fn concurrent_duplicate_workspace_and_user_identity_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().to_path_buf();
+        let manager = CodexOAuthManager::new(path.clone());
+        let first_token = crate::codex_config::test_codex_id_token("same-user");
+        let second_token = first_token.clone();
+
+        let first = manager.add_account_internal(
+            "shared-workspace".to_string(),
+            "rt-first".to_string(),
+            Some("first@example.com".to_string()),
+            Some(first_token),
+            None,
+            AccountLoginContext::default(),
+        );
+        let second = manager.add_account_internal(
+            "shared-workspace".to_string(),
+            "rt-second".to_string(),
+            Some("second@example.com".to_string()),
+            Some(second_token),
+            None,
+            AccountLoginContext::default(),
+        );
+        let (first_result, second_result) = tokio::join!(first, second);
+
+        assert_eq!(
+            [first_result.is_ok(), second_result.is_ok()]
+                .into_iter()
+                .filter(|success| *success)
+                .count(),
+            1
+        );
+        assert!(
+            matches!(first_result, Err(CodexOAuthError::DuplicateAccount))
+                || matches!(second_result, Err(CodexOAuthError::DuplicateAccount))
+        );
+        assert_eq!(manager.list_accounts().await.len(), 1);
+        assert!(manager.refresh_locks.read().await.is_empty());
+        drop(manager);
+
+        let reloaded = CodexOAuthManager::new(path);
+        assert_eq!(reloaded.list_accounts().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn duplicate_legacy_workspace_and_user_identity_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().to_path_buf();
+        let manager = CodexOAuthManager::new(path.clone());
+        let id_token = crate::codex_config::test_codex_id_token("same-user");
+        let legacy = serde_json::json!({
+            "version": 1,
+            "accounts": {
+                "shared-workspace": {
+                    "account_id": "shared-workspace",
+                    "email": "legacy@example.com",
+                    "refresh_token": "rt-legacy",
+                    "id_token": id_token,
+                    "authenticated_at": 1
+                }
+            },
+            "default_account_id": "shared-workspace"
+        });
+        manager
+            .write_store_atomic(&serde_json::to_string(&legacy).unwrap())
+            .unwrap();
+        drop(manager);
+
+        let manager = CodexOAuthManager::new(path);
+        assert!(matches!(
+            manager
+                .add_account_internal(
+                    "shared-workspace".to_string(),
+                    "rt-duplicate".to_string(),
+                    Some("current@example.com".to_string()),
+                    Some(crate::codex_config::test_codex_id_token("same-user")),
+                    None,
+                    AccountLoginContext::default(),
+                )
+                .await,
+            Err(CodexOAuthError::DuplicateAccount)
+        ));
+        assert_eq!(manager.list_accounts().await.len(), 1);
+        assert!(manager.refresh_locks.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn targeted_reauth_rechecks_duplicates_outside_the_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        let target = manager
+            .add_account_internal(
+                "shared-workspace".to_string(),
+                "rt-legacy".to_string(),
+                Some("legacy@example.com".to_string()),
+                None,
+                None,
+                AccountLoginContext::default(),
+            )
+            .await
+            .unwrap();
+        let id_token = crate::codex_config::test_codex_id_token("same-user");
+        manager
+            .add_account_internal(
+                "shared-workspace".to_string(),
+                "rt-current".to_string(),
+                Some("current@example.com".to_string()),
+                Some(id_token.clone()),
+                None,
+                AccountLoginContext::default(),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            manager
+                .add_account_internal(
+                    "shared-workspace".to_string(),
+                    "rt-targeted".to_string(),
+                    Some("legacy@example.com".to_string()),
+                    Some(id_token),
+                    None,
+                    AccountLoginContext {
+                        target_account_id: Some(&target.id),
+                        ..Default::default()
+                    },
+                )
+                .await,
+            Err(CodexOAuthError::DuplicateAccount)
+        ));
+        assert_eq!(
+            manager
+                .accounts
+                .read()
+                .await
+                .get(&target.id)
+                .expect("target account remains")
+                .refresh_token,
+            "rt-legacy"
+        );
     }
 
     #[tokio::test]
