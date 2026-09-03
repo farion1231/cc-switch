@@ -8,10 +8,14 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+concurrency:
+  group: build-windows-msi
+  cancel-in-progress: true
+
 jobs:
   build-msi:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       - name: 拉取源码
         uses: actions/checkout@v4
@@ -29,6 +33,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+
+      - name: 缓存 Rust 编译产物
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: 安装前端与后端依赖
         run: pnpm install --no-frozen-lockfile
