@@ -252,12 +252,10 @@ fn sync_single_file(
         };
 
         // 同 messageId 多条（防御流式多块）：保留 totalTokens 最大者
-        let should_replace = messages
-            .get(&parsed.message_id)
-            .is_none_or(|existing| {
-                parsed.input_tokens + parsed.output_tokens
-                    > existing.input_tokens + existing.output_tokens
-            });
+        let should_replace = messages.get(&parsed.message_id).is_none_or(|existing| {
+            parsed.input_tokens + parsed.output_tokens
+                > existing.input_tokens + existing.output_tokens
+        });
         if should_replace {
             messages.insert(parsed.message_id.clone(), parsed);
         }
@@ -362,7 +360,6 @@ fn parse_usage_line(value: &serde_json::Value) -> Option<ParsedCodeBuddyUsage> {
     })
 }
 
-
 /// 写入 CodeBuddy 路径的字节游标。
 fn update_codebuddy_sync_state_on_conn(
     conn: &rusqlite::Connection,
@@ -381,7 +378,12 @@ fn update_codebuddy_sync_state_on_conn(
          VALUES (?1, ?2, 0, ?3, ?4)",
     )
     .and_then(|mut stmt| {
-        stmt.execute(rusqlite::params![file_path, last_modified, now, byte_offset])
+        stmt.execute(rusqlite::params![
+            file_path,
+            last_modified,
+            now,
+            byte_offset
+        ])
     })
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())
@@ -530,10 +532,18 @@ mod tests {
 
     #[test]
     fn test_parse_skips_lines_without_usage() {
-        for t in ["message", "reasoning", "function_call", "file-history-snapshot"] {
+        for t in [
+            "message",
+            "reasoning",
+            "function_call",
+            "file-history-snapshot",
+        ] {
             let line = no_usage_line(t);
             let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            assert!(parse_usage_line(&value).is_none(), "无 usage 的 {t} 行应跳过");
+            assert!(
+                parse_usage_line(&value).is_none(),
+                "无 usage 的 {t} 行应跳过"
+            );
         }
     }
 
@@ -646,7 +656,11 @@ mod tests {
 
         fs::write(
             &file,
-            format!("{}\n{}\n", usage_line("msg_a", 100, 10, 0), usage_line("msg_b", 200, 20, 0)),
+            format!(
+                "{}\n{}\n",
+                usage_line("msg_a", 100, 10, 0),
+                usage_line("msg_b", 200, 20, 0)
+            ),
         )
         .unwrap();
         assert_eq!(sync_single_file(&db, &file, None)?.imported, 2);
@@ -655,7 +669,11 @@ mod tests {
         fs::write(&file, format!("{}\n", usage_line("msg_a", 100, 10, 0))).unwrap();
         bump_mtime(&file);
         let rescan = sync_with_cursor(&db, &file);
-        assert_eq!((rescan.imported, rescan.skipped), (0, 0), "截断后不重放旧区间");
+        assert_eq!(
+            (rescan.imported, rescan.skipped),
+            (0, 0),
+            "截断后不重放旧区间"
+        );
 
         let size = fs::metadata(&file).unwrap().len() as i64;
         let cursors = load_sync_cursors(&db)?;
