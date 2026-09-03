@@ -459,6 +459,48 @@ pub fn resolve_codex_chat_reasoning_config(
     Some(config)
 }
 
+/// Sanitize Codex Responses request input items where synthetic function_call_output
+/// (such as Codex thread heartbeat automation updates) are injected without a `call_id`.
+/// Strict third-party Responses/Chat/Anthropic parsers reject missing `call_id` with HTTP 400.
+/// Converts synthetic outputs without a valid `call_id` into standard user message input items.
+pub fn sanitize_codex_responses_input_call_ids(body: &mut JsonValue) -> bool {
+    let Some(input) = body.get_mut("input").and_then(JsonValue::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for item in input.iter_mut() {
+        let is_output_type = matches!(
+            item.get("type").and_then(JsonValue::as_str),
+            Some("function_call_output" | "custom_tool_call_output" | "tool_search_output")
+        );
+        if is_output_type {
+            let has_valid_call_id = item
+                .get("call_id")
+                .and_then(JsonValue::as_str)
+                .is_some_and(|s| !s.trim().is_empty());
+            if !has_valid_call_id {
+                let output_text = match item.get("output") {
+                    Some(JsonValue::String(s)) => s.clone(),
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                };
+                *item = serde_json::json!({
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": output_text
+                        }
+                    ]
+                });
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// 按请求模型从供应商 modelCatalog 查 Zen 合法 effort 档位（逐模型数据镜像
 /// models.dev 的 reasoning_options effort values）。仅做档位查表，不参与平台
 /// 判定——平台身份仍只由 name/base_url 决定（见 infer_aggregator_platform_config）。
@@ -2114,4 +2156,52 @@ wire_api = "responses"
         }));
         assert!(!provider_needs_responses_namespace_flatten(&other));
     }
+
+    #[test]
+    fn test_sanitize_codex_responses_input_call_ids_converts_missing_call_id() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "hello" }]
+                },
+                {
+                    "type": "function_call_output",
+                    "id": "fco_01a052f8",
+                    "name": "automation_update",
+                    "namespace": "codex_app",
+                    "output": "<heartbeat>\n  <automation_id>daily-sync</automation_id>\n</heartbeat>"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_123",
+                    "output": "{\"status\":\"ok\"}"
+                }
+            ]
+        });
+
+        assert!(sanitize_codex_responses_input_call_ids(&mut body));
+
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3);
+
+        // 1. Regular user message remains untouched
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[0]["role"], "user");
+
+        // 2. Synthetic heartbeat without call_id converted to user message
+        assert_eq!(input[1]["type"], "message");
+        assert_eq!(input[1]["role"], "user");
+        assert_eq!(
+            input[1]["content"][0]["text"],
+            "<heartbeat>\n  <automation_id>daily-sync</automation_id>\n</heartbeat>"
+        );
+
+        // 3. Legitimate tool call with call_id remains function_call_output
+        assert_eq!(input[2]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "call_123");
+    }
 }
+

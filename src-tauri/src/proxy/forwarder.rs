@@ -1646,6 +1646,17 @@ impl RequestForwarder {
             );
         }
 
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::sanitize_codex_responses_input_call_ids(&mut request_body)
+        {
+            log::debug!(
+                "[Codex] Sanitized missing call_id tool outputs into message items (provider={})",
+                provider.id
+            );
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }
