@@ -3236,6 +3236,48 @@
     "suggestedDefaults": "推奨デフォルト設定を適用",
     "suggestedDefaultsHint": "このプリセットの推奨デフォルトモデル設定を使用します"
   },
+  "claudeRouter": {
+    "launchIsolated": "Claude を起動（分離）",
+    "providerBadge": "ルーター有効 · {{count}} モデル",
+    "form": {
+      "enabled": "ルーターで有効化",
+      "description": "現在のプロバイダーを変更せず、選択したモデルを Claude Code ゲートウェイで公開します。",
+      "officialUnsupported": "公式プロバイダーはルーターで有効化できません。",
+      "models": "ゲートウェイモデル",
+      "modelsHint": "エイリアスは安定した公開モデル ID になります。上流モデル名は自由に編集できます。",
+      "addModel": "モデルを追加",
+      "empty": "ゲートウェイモデルは設定されていません。",
+      "alias": "エイリアス {{position}}",
+      "displayName": "表示名 {{position}}",
+      "upstreamModel": "上流モデル {{position}}",
+      "moveUp": "モデル {{position}} を上へ",
+      "moveDown": "モデル {{position}} を下へ",
+      "remove": "モデル {{position}} を削除"
+    },
+    "validation": {
+      "modelsRequired": "ルーターを有効にする前にモデルを 1 つ以上追加してください。",
+      "fieldsRequired": "各ルーターモデルにはエイリアス、表示名、上流モデルが必要です。",
+      "duplicateAlias": "ルーターモデルのエイリアスは一意である必要があります。"
+    },
+    "panel": {
+      "title": "Claude Code ゲートウェイ",
+      "status": "{{status}} · {{count}} 個のルーターモデルを公開",
+      "setup": "設定"
+    },
+    "setup": {
+      "title": "Claude Code ゲートウェイの設定",
+      "description": "現在のプロバイダーを変更せず、ルーター有効化済みプロバイダーを Claude Code のモデル選択に公開します。",
+      "baseUrl": "ゲートウェイ Base URL",
+      "exposedModels": "公開モデル",
+      "modelCount": "{{count}} 個のモデルを公開",
+      "settingsTitle": "VS Code settings.json マージ用スニペット",
+      "mergeWarning": "claudeCode.environmentVariables が既にある場合は、配列全体を置き換えず、既存の配列へこれらの項目をマージしてください。",
+      "reloadHint": "新しい Claude セッションを開始してください。モデルがキャッシュされたままの場合のみ Developer: Reload Window を実行します。",
+      "copy": "設定をコピー",
+      "copySuccess": "Claude Code の設定をコピーしました。",
+      "copyFailed": "Claude Code の設定をコピーできませんでした。"
+    }
+  },
   "subscription": {
     "title": "サブスクリプションクォータ",
     "fiveHour": "5時間",

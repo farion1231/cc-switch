@@ -3236,6 +3236,48 @@
     "suggestedDefaults": "应用建议默认配置",
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
   },
+  "claudeRouter": {
+    "launchIsolated": "启动 Claude（隔离）",
+    "providerBadge": "路由已启用 · {{count}} 个模型",
+    "form": {
+      "enabled": "启用于路由",
+      "description": "通过 Claude Code 网关公开所选模型，不改变当前供应商。",
+      "officialUnsupported": "官方供应商不能启用于路由。",
+      "models": "网关模型",
+      "modelsHint": "别名会生成稳定的公开模型 ID；上游模型名称仍可自由编辑。",
+      "addModel": "添加模型",
+      "empty": "尚未配置网关模型。",
+      "alias": "别名 {{position}}",
+      "displayName": "显示名称 {{position}}",
+      "upstreamModel": "上游模型 {{position}}",
+      "moveUp": "上移模型 {{position}}",
+      "moveDown": "下移模型 {{position}}",
+      "remove": "移除模型 {{position}}"
+    },
+    "validation": {
+      "modelsRequired": "启用路由前至少添加一个模型。",
+      "fieldsRequired": "每个路由模型都必须填写别名、显示名称和上游模型。",
+      "duplicateAlias": "路由模型别名不能重复。"
+    },
+    "panel": {
+      "title": "Claude Code 网关",
+      "status": "{{status}} · 已公开 {{count}} 个路由模型",
+      "setup": "设置"
+    },
+    "setup": {
+      "title": "设置 Claude Code 网关",
+      "description": "在 Claude Code 模型选择器中公开已启用路由的供应商，不改变当前供应商。",
+      "baseUrl": "网关基础 URL",
+      "exposedModels": "公开模型",
+      "modelCount": "已公开 {{count}} 个模型",
+      "settingsTitle": "VS Code settings.json 合并片段",
+      "mergeWarning": "如果 claudeCode.environmentVariables 已存在，请将这些条目合并到现有数组中，不要替换整个数组。",
+      "reloadHint": "新建一个 Claude 会话；如果模型仍被缓存，再运行 Developer: Reload Window。",
+      "copy": "复制设置",
+      "copySuccess": "已复制 Claude Code 设置。",
+      "copyFailed": "复制 Claude Code 设置失败。"
+    }
+  },
   "subscription": {
     "title": "订阅额度",
     "fiveHour": "5小时",

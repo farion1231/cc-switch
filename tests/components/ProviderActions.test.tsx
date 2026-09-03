@@ -148,3 +148,31 @@ describe("ProviderActions Pi provider switching", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ProviderActions Claude isolated launch", () => {
+  it("keeps Switch state separate from the isolated Claude launcher", async () => {
+    const user = userEvent.setup();
+    const onOpenTerminal = vi.fn();
+    const onSwitch = vi.fn();
+    render(
+      <ProviderActions
+        appId="claude"
+        isCurrent
+        onSwitch={onSwitch}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onOpenTerminal={onOpenTerminal}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "provider.inUse" }),
+    ).toBeDisabled();
+    const launchButton = screen.getByTitle("Launch Claude (Isolated)");
+    expect(launchButton).toBeEnabled();
+    await user.click(launchButton);
+
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+    expect(onSwitch).not.toHaveBeenCalled();
+  });
+});
