@@ -54,7 +54,7 @@ const LEGACY_SCHEMA_SQL: &str = r#"
 
 // v3.8.x（schema v1）的真实表结构快照：用于验证从 v3.8.* 升级到当前版本的迁移链路
 // 参考：tag v3.8.3 的 src-tauri/src/database/schema.rs
-const V3_8_SCHEMA_V1_SQL: &str = r#"
+pub(super) const V3_8_SCHEMA_V1_SQL: &str = r#"
     CREATE TABLE providers (
         id TEXT NOT NULL,
         app_type TEXT NOT NULL,
@@ -871,13 +871,14 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("query DeepSeek price");
+    // 从远古价 1.68/3.36/0.14 出发要连跳两级才能到位：
+    //   1.68/3.36/0.14 →(2026-07 条目)→ 0.435/0.87/0.003625
+    //                  →(2026-08-16 峰谷调价条目)→ 1.32/3.96/0.044
+    // 这同时锁住了 repair 条目的顺序：新条目必须排在旧条目之后，
+    // 否则老库会停在中间价位，本断言即会失败。
     assert_eq!(
         deepseek,
-        (
-            "0.435".to_string(),
-            "0.87".to_string(),
-            "0.003625".to_string()
-        )
+        ("1.32".to_string(), "3.96".to_string(), "0.044".to_string())
     );
 
     let glm: (String, String, String) = conn
@@ -889,6 +890,135 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
         )
         .expect("query GLM price");
     assert_eq!(glm, ("9".to_string(), "9".to_string(), "9".to_string()));
+}
+
+#[test]
+fn model_pricing_seed_includes_claude_5_1_and_standard_sonnet_5_prices() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    for model_id in ["claude-fable-5-1", "claude-mythos-5-1"] {
+        let price: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query Fable 5.1 family price");
+        // 缓存读 0.025x = $0.25，不是 Fable 5 的 $1
+        assert_eq!(
+            price,
+            (
+                "10".to_string(),
+                "50".to_string(),
+                "0.25".to_string(),
+                "12.50".to_string(),
+            ),
+            "{model_id}"
+        );
+    }
+
+    let sonnet: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Sonnet 5 price");
+    // $2/$10 介绍价已转为正式价（原定 2026-09-01 涨至 $3/$15 取消）
+    assert_eq!(
+        sonnet,
+        (
+            "2".to_string(),
+            "10".to_string(),
+            "0.20".to_string(),
+            "2.50".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_repairs_sonnet_5_list_price_but_keeps_custom_price() {
+    let db = Database::memory().expect("create memory db");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        // 旧 seed 按 list 价录入的行 → 应被修正
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '3',
+                 output_cost_per_million = '15',
+                 cache_read_cost_per_million = '0.30',
+                 cache_creation_cost_per_million = '3.75'
+             WHERE model_id = 'claude-sonnet-5'",
+            [],
+        )
+        .expect("restore old Sonnet 5 list price");
+    }
+
+    db.ensure_model_pricing_seeded()
+        .expect("ensure pricing seeded");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        let sonnet: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query repaired Sonnet 5 price");
+        assert_eq!(
+            sonnet,
+            (
+                "2".to_string(),
+                "10".to_string(),
+                "0.20".to_string(),
+                "2.50".to_string(),
+            )
+        );
+
+        // 用户手改过的价（不匹配旧 seed 值）不动
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '9',
+                 output_cost_per_million = '9',
+                 cache_read_cost_per_million = '9',
+                 cache_creation_cost_per_million = '9'
+             WHERE model_id = 'claude-sonnet-5'",
+            [],
+        )
+        .expect("set custom Sonnet 5 price");
+    }
+
+    db.ensure_model_pricing_seeded()
+        .expect("ensure pricing seeded again");
+
+    let conn = db.conn.lock().expect("lock conn");
+    let custom: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query custom Sonnet 5 price");
+    assert_eq!(
+        custom,
+        (
+            "9".to_string(),
+            "9".to_string(),
+            "9".to_string(),
+            "9".to_string(),
+        )
+    );
 }
 
 #[test]

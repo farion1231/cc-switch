@@ -114,7 +114,8 @@ pub struct DeepLinkImportRequest {
     pub config_url: Option<String>,
 
     // ============ Usage script fields (v3.9+) ============
-    /// Whether to enable usage query (default: true if usage_script is provided)
+    /// Whether to enable usage query. Defaults to **disabled** — carrying a script
+    /// is not itself a decision to run it; the link must say `usageEnabled=true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_enabled: Option<bool>,
     /// Base64 encoded usage query script code

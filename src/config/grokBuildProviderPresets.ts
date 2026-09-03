@@ -10,8 +10,10 @@
  *   独立的 "Grok Official" 条目（对应 providers_seed.rs 的 seed，
  *   空 config = 不写自定义模型表）。
  * - 不含国产模型官方直连（cn_official）与纯开源模型托管站
- *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud / OpenCode Go）：
+ *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud）：
  *   这些上游没有 Grok 模型，无法在 Grok CLI 中使用。
+ * - OpenCode Go 上游自 2026-08 起已提供 grok-4.5，但暂仍不收录：
+ *   订阅制网关是否纳入 Grok 预设属产品决策，收录前需单独评估。
  * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.5；
  *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.5"。
  *
@@ -80,13 +82,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     auth: grokAuth(),
-    config: grokPresetConfig("PackyCode", "https://www.packyapi.com/v1"),
+    config: grokPresetConfig("PackyCode", "https://www.packyapi.ai/v1"),
     endpointCandidates: [
+      "https://www.packyapi.ai/v1",
+      "https://cf.api.fan/v1",
+      "https://slb-v1.api.fan/v1",
       "https://www.packyapi.com/v1",
-      "https://api-slb.packyapi.com/v1",
     ],
     category: "third_party",
     isPartner: true,
@@ -107,11 +111,11 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     auth: grokAuth(),
-    config: grokPresetConfig("APINebula", "https://apinebula.com/v1"),
-    endpointCandidates: ["https://apinebula.com/v1"],
+    config: grokPresetConfig("APINebula", "https://apinebula.ai/v1"),
+    endpointCandidates: ["https://apinebula.ai/v1"],
     apiFormat: "openai_responses",
     category: "third_party",
     isPartner: true,
@@ -120,16 +124,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     auth: grokAuth(),
     config: grokPresetConfig(
       "AICodeMirror",
-      "https://api.aicodemirror.com/api/codex/backend-api/codex",
+      "https://api.aicodemirror.ai/api/codex/backend-api/codex",
     ),
     endpointCandidates: [
-      "https://api.aicodemirror.com/api/codex/backend-api/codex",
-      "https://api.claudecode.net.cn/api/codex/backend-api/codex",
+      "https://api.aicodemirror.ai/api/codex/backend-api/codex",
     ],
     isPartner: true,
     partnerPromotionKey: "aicodemirror",
@@ -163,26 +166,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     auth: grokAuth(),
-    config: grokPresetConfig("RunAPI", "https://runapi.co/v1"),
+    config: grokPresetConfig("RunAPI", "https://runapi.host/v1"),
+    endpointCandidates: ["https://runapi.host/v1", "https://runapi.co/v1"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "runapi",
     icon: "runapi",
-  },
-  {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    auth: grokAuth(),
-    config: grokPresetConfig("Unity2.ai", "https://api.unity2.ai"),
-    endpointCandidates: ["https://api.unity2.ai"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
   },
   {
     name: "Shengsuanyun",
@@ -202,16 +194,35 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.app",
+    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
     auth: grokAuth(),
-    config: grokPresetConfig("AIGoCode", "https://api.aigocode.com"),
-    endpointCandidates: ["https://api.aigocode.com"],
+    config: grokPresetConfig("AIGoCode", "https://api.aigocode.app"),
+    endpointCandidates: ["https://api.aigocode.app"],
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "aigocode",
     icon: "aigocode",
     iconColor: "#5B7FFF",
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    auth: grokAuth(),
+    config: grokPresetConfig(
+      "Qiniu",
+      "https://api.qnaigc.com/bypass/openai/v1",
+    ),
+    endpointCandidates: [
+      "https://api.qnaigc.com/bypass/openai/v1",
+      "https://api.modelink.ai/bypass/openai/v1",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
   },
   {
     name: "SubRouter",
@@ -242,6 +253,22 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "apikeyfun",
   },
   {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    auth: grokAuth(),
+    config: grokPresetConfig("9527CODE", "https://9527.codes/v1"),
+    endpointCandidates: [
+      "https://9527.codes/v1",
+      "https://api.9527.codes/v1",
+      "https://cdn.9527.codes/v1",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    icon: "9527code",
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
@@ -255,12 +282,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     auth: grokAuth(),
-    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.com/v1"),
-    endpointCandidates: ["https://api.teamorouter.com/v1"],
+    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.cn/v1"),
+    endpointCandidates: [
+      "https://api.teamorouter.cn/v1",
+      "https://api.teamorouter.com/v1",
+    ],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
@@ -278,16 +308,16 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "claudecn",
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    name: "A6API",
+    websiteUrl: "https://www.a6api.com",
+    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
     auth: grokAuth(),
-    config: grokPresetConfig("NekoCode", "https://nekocode.ai/v1"),
-    endpointCandidates: ["https://nekocode.ai/v1"],
+    config: grokPresetConfig("A6API", "https://api.a6api.com/v1"),
+    endpointCandidates: ["https://api.a6api.com/v1"],
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
+    partnerPromotionKey: "a6api",
+    icon: "a6api",
   },
   {
     name: "Compshare",
@@ -369,10 +399,10 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     auth: grokAuth(),
-    config: grokPresetConfig("RightCode", "https://right.codes/codex/v1"),
+    config: grokPresetConfig("RightCode", "https://www.rightapi.ai/codex/v1"),
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "rightcode",
@@ -433,29 +463,10 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     partnerPromotionKey: "dmxapi",
   },
   {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    auth: grokAuth(),
-    config: grokPresetConfig(
-      "Qiniu",
-      "https://api.qnaigc.com/bypass/openai/v1",
-    ),
-    endpointCandidates: [
-      "https://api.qnaigc.com/bypass/openai/v1",
-      "https://api.modelink.ai/bypass/openai/v1",
-    ],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    icon: "qiniu",
-  },
-  {
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     auth: grokAuth(),
     config: grokPresetConfig("SudoCode.chat", "https://api.sudocode.chat/v1"),
     endpointCandidates: ["https://api.sudocode.chat/v1"],

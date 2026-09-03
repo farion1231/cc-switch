@@ -118,15 +118,6 @@ pub struct ProxyTakeoverStatus {
     pub openclaw: bool,
 }
 
-/// API 格式类型（预留，当前不需要格式转换）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ApiFormat {
-    Claude,
-    OpenAI,
-    Gemini,
-}
-
 /// Provider健康状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderHealth {

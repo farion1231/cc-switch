@@ -22,17 +22,10 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/hooks/useProxyStatus", () => ({
   useProxyStatus: () => ({
-    status: null,
-    isLoading: false,
     isRunning: false,
-    isTakeoverActive: false,
-    startWithTakeover: vi.fn(),
+    takeoverStatus: null,
+    startProxyServer: vi.fn(),
     stopWithRestore: vi.fn(),
-    switchProxyProvider: vi.fn(),
-    checkRunning: vi.fn(),
-    checkTakeoverActive: vi.fn(),
-    isStarting: false,
-    isStopping: false,
     isPending: false,
   }),
 }));

@@ -25,9 +25,11 @@
 <details open>
 <summary>Zum Einklappen klicken</summary>
 
-[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?aff=cc-switch)
+[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)
 
-Kimi K3 ist das bislang leistungsstärkste Modell von Moonshot AI und das weltweit erste offene Modell der 3T-Klasse. Mit 2,8 Billionen Parametern, nativen visuellen Fähigkeiten und einem Kontextfenster von 1 Million Token liefert K3 Spitzenleistung bei langfristigen Programmieraufgaben, Wissensarbeit und Reasoning. Mit CC Switch lässt sich Kimi in den verschiedensten Agenten-Tools bequem konfigurieren und umschalten. **[Hier klicken, um Kimi zu nutzen](https://platform.kimi.ai?aff=cc-switch)**
+Kimi K3 ist das bislang leistungsstärkste Modell von Moonshot AI und das weltweit erste offene Modell der 3T-Klasse. Mit 2,8 Billionen Parametern, nativen visuellen Fähigkeiten und einem Kontextfenster von 1 Million Token liefert K3 Spitzenleistung bei langfristigen Programmieraufgaben, Wissensarbeit und Reasoning. Mit CC Switch lässt sich Kimi in den verschiedensten Agenten-Tools bequem konfigurieren und umschalten. **[Hier klicken, um Kimi zu nutzen](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)**
+
+**Bonus für die erste Aufladung neuer Nutzer**: Registrieren Sie sich über [diesen Link](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch) und schließen Sie Ihre erste Aufladung ab, um 10 % des Betrags als Bonus-API-Guthaben zu erhalten – bis zu CNY ¥1.000.
 
 Hauptsächlich mit Programmierung beschäftigt? Probieren Sie das **[Kimi-Code-Abo](https://www.kimi.com/code/?aff=cc-switch)** aus!
 
@@ -35,8 +37,8 @@ Hauptsächlich mit Programmierung beschäftigt? Probieren Sie das **[Kimi-Code-A
 
 <table>
 <tr>
-<td width="180"><a href="https://www.packyapi.com/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
-<td>Danke an PackyCode für die Unterstützung dieses Projekts! PackyCode ist ein zuverlässiger und effizienter API-Relay-Anbieter, der Relay-Dienste für Claude Code, Codex, Gemini und mehr bereitstellt. PackyCode bietet Sonderrabatte für Nutzer unserer Software: Registrieren Sie sich über <a href="https://www.packyapi.com/register?aff=cc-switch">diesen Link</a> und geben Sie beim ersten Aufladen den Gutscheincode „cc-switch" ein, um 10 % Rabatt zu erhalten.</td>
+<td width="180"><a href="https://www.packyapi.ai/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
+<td>Danke an PackyCode für die Unterstützung dieses Projekts! PackyCode ist ein zuverlässiger und effizienter API-Relay-Anbieter, der Relay-Dienste für Claude Code, Codex, Gemini und mehr bereitstellt. PackyCode bietet Sonderrabatte für Nutzer unserer Software: Registrieren Sie sich über <a href="https://www.packyapi.ai/register?aff=cc-switch">diesen Link</a> und geben Sie beim ersten Aufladen den Gutscheincode „cc-switch" ein, um 10 % Rabatt zu erhalten.</td>
 </tr>
 
 <tr>
@@ -45,14 +47,14 @@ Hauptsächlich mit Programmierung beschäftigt? Probieren Sie das **[Kimi-Code-A
 </tr>
 
 <tr>
-<td width="180"><a href="https://apinebula.com/VjM74M"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
-<td>Danke an APINEBULA für die Unterstützung dieses Projekts! APINEBULA ist eine Enterprise-KI-Aggregationsplattform unter Galaxy Video Bureau und nutzt umfangreiche Plattformressourcen, um Entwicklern, Teams und Unternehmen stabilen und kosteneffizienten Zugang zu APIs großer Sprachmodelle zu bieten. Die Plattform bündelt führende vollwertige Modelle wie Claude, GPT und Gemini. Über eine einzige API erhalten Sie Zugriff auf weltweit führende KI-Modelle, mit Preisen ab 10 % des Originalpreises. APINEBULA ist für KI-Programmierung, Agent-Entwicklung und Integration in Geschäftssysteme ausgelegt und unterstützt enterprise-grade hohe Parallelität, formale Verträge, Firmenüberweisungen und Rechnungsstellung. APINEBULA bietet Nutzern dieser Software besondere Rabatte: Registrieren Sie sich über <a href="https://apinebula.com/VjM74M">diesen Link</a> und geben Sie beim ersten Aufladen den Aktionscode <strong>"ccswitch"</strong> ein, um <strong>10 % Rabatt</strong> zu erhalten.</td>
+<td width="180"><a href="https://apinebula.ai/VjM74M"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
+<td>Danke an APINEBULA für die Unterstützung dieses Projekts! APINEBULA ist eine Enterprise-KI-Aggregationsplattform unter Galaxy Video Bureau und nutzt umfangreiche Plattformressourcen, um Entwicklern, Teams und Unternehmen stabilen und kosteneffizienten Zugang zu APIs großer Sprachmodelle zu bieten. Die Plattform bündelt führende vollwertige Modelle wie Claude, GPT und Gemini. Über eine einzige API erhalten Sie Zugriff auf weltweit führende KI-Modelle, mit Preisen ab 10 % des Originalpreises. APINEBULA ist für KI-Programmierung, Agent-Entwicklung und Integration in Geschäftssysteme ausgelegt und unterstützt enterprise-grade hohe Parallelität, formale Verträge, Firmenüberweisungen und Rechnungsstellung. APINEBULA bietet Nutzern dieser Software besondere Rabatte: Registrieren Sie sich über <a href="https://apinebula.ai/VjM74M">diesen Link</a> und geben Sie beim ersten Aufladen den Aktionscode <strong>"ccswitch"</strong> ein, um <strong>10 % Rabatt</strong> zu erhalten.</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.aicodemirror.com/register?invitecode=9915W3"><img src="assets/partners/logos/aicodemirror.jpg" alt="AICodeMirror" width="150"></a></td>
+<td width="180"><a href="https://www.aicodemirror.ai/register?invitecode=9915W3"><img src="assets/partners/logos/aicodemirror.jpg" alt="AICodeMirror" width="150"></a></td>
 <td>Danke an AICodeMirror für die Unterstützung dieses Projekts! AICodeMirror stellt offizielle, hochstabile Relay-Dienste für Claude Code / Codex / Gemini CLI bereit, mit unternehmensgerechter Nebenläufigkeit, schneller Rechnungsstellung und rund um die Uhr verfügbarem dediziertem technischem Support.
-Offizielle Kanäle von Claude Code / Codex / Gemini zu 38 % / 2 % / 9 % des Originalpreises, mit zusätzlichen Rabatten beim Aufladen! AICodeMirror bietet besondere Vorteile für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.aicodemirror.com/register?invitecode=9915W3">diesen Link</a> und erhalten Sie 20 % Rabatt auf Ihre erste Aufladung; Unternehmenskunden erhalten bis zu 25 % Rabatt!</td>
+Offizielle Kanäle von Claude Code / Codex / Gemini zu 38 % / 2 % / 9 % des Originalpreises, mit zusätzlichen Rabatten beim Aufladen! AICodeMirror bietet besondere Vorteile für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.aicodemirror.ai/register?invitecode=9915W3">diesen Link</a> und erhalten Sie 20 % Rabatt auf Ihre erste Aufladung; Unternehmenskunden erhalten bis zu 25 % Rabatt!</td>
 </tr>
 
 <tr>
@@ -64,17 +66,12 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 
 <tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
-<td>Danke an Fenno.ai für die Unterstützung dieses Projekts! Fenno.ai ist ein stabiler und effizienter API-Relay-Dienstleister, der sich derzeit hauptsächlich auf Codex-Relay konzentriert. Er ist mit den OpenAI- und Anthropic-Protokollen kompatibel und lässt sich flexibel mit Codex, Claude Code, OpenCode und anderen gängigen Coding-Tools nutzen. Er unterstützt zuverlässig Workloads auf Unternehmensniveau von Hunderten Milliarden Tokens pro Tag und bietet B2B-Abrechnung sowie Rechnungsstellung für Unternehmen im In- und Ausland. Fenno.ai bietet einen exklusiven Vorteil für CC-Switch-Nutzer: Abonnieren Sie über <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">diesen Link</a> den unschlagbaren ¥9,9-Coding-Plan im Wert von $150 Guthaben und erhalten Sie bis zu 20% Empfehlungsprämien — je mehr Einladungen, desto mehr Belohnung!</td>
+<td>Danke an Fenno.ai für die Unterstützung dieses Projekts! Fenno.ai ist ein stabiler und effizienter API-Relay-Dienstleister, der sich derzeit hauptsächlich auf Codex-Relay konzentriert. Er ist mit den OpenAI- und Anthropic-Protokollen kompatibel und lässt sich flexibel mit Codex, Claude Code, OpenCode und anderen gängigen Coding-Tools nutzen. Er unterstützt zuverlässig Workloads auf Unternehmensniveau von Hunderten Milliarden Tokens pro Tag und bietet B2B-Abrechnung sowie Rechnungsstellung für Unternehmen im In- und Ausland. Fenno.ai bietet einen exklusiven Vorteil für CC-Switch-Nutzer: Abonnieren Sie über <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">diesen Link</a> den $1,99-Trial-Plan im Wert von $50 Guthaben (7 Tage gültig) und erhalten Sie bis zu 20% Empfehlungsprämien — je mehr Einladungen, desto mehr Belohnung!</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://runapi.co/register?aff=iOKB"><img src="assets/partners/logos/runapi.jpg" alt="RunAPI" width="150"></a></td>
-<td>Danke an RunAPI für die Unterstützung dieses Projekts! RunAPI ist ein leistungsstarkes und zuverlässiges KI-Modell-API-Gateway — ein API-Schlüssel gibt Ihnen Zugriff auf mehr als 150 gängige Modelle, darunter OpenAI, Claude, Gemini, DeepSeek und Grok, zu Preisen ab 10 % des offiziellen Tarifs und mit ausgezeichneter Stabilität. Es arbeitet nahtlos mit Claude Code, OpenClaw und weiteren Werkzeugen zusammen. Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://runapi.co/register?aff=iOKB">diesen Link</a> und erhalten Sie 10 % Rabatt auf Ihre erste Aufladung!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
-<td>Danke an Unity2.ai für die Unterstützung dieses Projekts! Unity2.ai ist eine leistungsstarke AI-Modell-API-Relay-Plattform für Einzelentwickler, Teams und Unternehmen. Sie wird seit Langem von führenden Unternehmen in China genutzt, verarbeitet täglich über 30 Milliarden Tokens und unterstützt hohe Parallelität auf 5.000-RPM-Niveau. Geboten werden Guthaben-Abrechnung, Ersteinzahlungsbonus, Kombi-Abonnements, Firmenrechnungen und persönliche Betreuung. Registrieren Sie sich über <a href="https://unity2.ai/register?source=ccs">diesen Link</a> und erhalten Sie $2 Guthaben, plus weitere $10 für den Beitritt zur offiziellen Gruppe — bis zu $12 Gratis-Guthaben!</td>
+<td width="180"><a href="https://runapi.host/register?aff=iOKB"><img src="assets/partners/logos/runapi.jpg" alt="RunAPI" width="150"></a></td>
+<td>Danke an RunAPI für die Unterstützung dieses Projekts! RunAPI ist ein leistungsstarkes und zuverlässiges KI-Modell-API-Gateway — ein API-Schlüssel gibt Ihnen Zugriff auf mehr als 150 gängige Modelle, darunter OpenAI, Claude, Gemini, DeepSeek und Grok, zu Preisen ab 10 % des offiziellen Tarifs und mit ausgezeichneter Stabilität. Es arbeitet nahtlos mit Claude Code, OpenClaw und weiteren Werkzeugen zusammen. Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://runapi.host/register?aff=iOKB">diesen Link</a> und erhalten Sie 10 % Rabatt auf Ihre erste Aufladung!</td>
 </tr>
 
 <tr>
@@ -83,8 +80,13 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.com/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.com/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
+<td width="180"><a href="https://aigocode.app/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.app/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://aicoding.inc/i/CCSWITCH"><img src="assets/partners/logos/aicoding.jpg" alt="AICoding" width="150"></a></td>
+<td>Danke an AICoding für die Unterstützung dieses Projekts! AICoding — globaler AI-Modell-API-Relay-Dienst zu unschlagbaren Preisen! Claude Code für 19 % des Originalpreises, GPT für nur 1 %! Hunderte Unternehmen vertrauen auf diese kostengünstigen KI-Dienste. Unterstützt Claude Code, GPT, Gemini und führende chinesische Modelle — mit hoher Parallelität auf Unternehmensniveau, schneller Rechnungsstellung und persönlichem technischem Support rund um die Uhr. CC-Switch-Nutzer, die sich über <a href="https://aicoding.inc/i/CCSWITCH">diesen Link</a> registrieren, erhalten 10 % Rabatt auf ihre erste Aufladung!</td>
 </tr>
 
 <tr>
@@ -98,8 +100,13 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://console.claudeapi.com/register?aff=pCLD"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
-<td>Dieses Projekt wird von <a href="https://console.claudeapi.com/register?aff=pCLD">Claude API</a> gesponsert. Direkter Claude-API-Zugriff — verbinden Sie Claude Code und Agent-Apps in 3 Minuten. Neukunden können ein kostenloses Testguthaben einlösen. Betrieben mit offiziellen Anthropic-API-Schlüsseln + offiziellen AWS-Bedrock-Kanälen. Kein Reverse Engineering, keine Modellverschlechterung. Volle Unterstützung der Modellreihe Opus / Sonnet / Haiku, mit erhaltenen offiziellen Fähigkeiten einschließlich Tool Use, 1M-Kontextfenster und mehr. Entwickelt für Claude-Code-Power-User, Agent-Ingenieure und technische Unternehmensteams. Rechnungsstellung und dedizierter Team-Support verfügbar. Klicken Sie <a href="https://console.claudeapi.com/register?aff=pCLD">hier</a>, um sich zu registrieren!</td>
+<td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
+<td>Danke an 9527CODE für die Unterstützung dieses Projekts! 9527 CODE ist eine KI-Relay-Plattform auf Enterprise-Niveau mit vollem Funktionsumfang, die auf Stabilität und Servicequalität ausgerichtet ist und für Claude Code, Codex und andere gängige KI-Modelle schnelle, stabile und hochwertige Relay-Dienste bereitstellt. Besonderer Wert liegt auf langfristiger Stabilität, Leitungsqualität und dauerhafter Verfügbarkeit, um Unternehmen und intensiven KI-Nutzern eine stabile, effiziente All-in-one-Lösung für den Modellzugriff zu bieten. Seit einem Jahr im Dauerbetrieb, mit 99,9 % Servicestabilität und technischem Support rund um die Uhr (7×24) durch echte Mitarbeiter. Wer sich über den <a href="https://9527.codes/register?aff=e5zI">exklusiven Link</a> dieses Projekts registriert, erhält als Neukunde nach Kontaktaufnahme mit dem Kundenservice ein Testguthaben; die Empfehlungsprämie ist unbegrenzt!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
+<td>Dieses Projekt wird von <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">Claude API</a> gesponsert. Direkter Claude-API-Zugriff — verbinden Sie Claude Code und Agent-Apps in 3 Minuten. Neukunden können ein kostenloses Testguthaben einlösen. Betrieben mit offiziellen Anthropic-API-Schlüsseln + offiziellen AWS-Bedrock-Kanälen. Kein Reverse Engineering, keine Modellverschlechterung. Volle Unterstützung der Modellreihe Opus / Sonnet / Haiku, mit erhaltenen offiziellen Fähigkeiten einschließlich Tool Use, 1M-Kontextfenster und mehr. Entwickelt für Claude-Code-Power-User, Agent-Ingenieure und technische Unternehmensteams. Rechnungsstellung und dedizierter Team-Support verfügbar. Klicken Sie <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">hier</a>, um sich zu registrieren!</td>
 </tr>
 
 <tr>
@@ -108,10 +115,15 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
+<td width="180"><a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
 <td>Danke an TeamoRouter für die Unterstützung dieses Projekts! TeamoRouter ist ein Agentic-LLM-Gateway in Enterprise-Qualität, das für Entwickler, KI-Teams und Unternehmen entwickelt wurde. Ganz ohne Abonnement können Sie über eine einzige einheitliche API auf Claude Code, Codex, Gemini CLI, OpenAI Codex und weitere beliebte KI-Agenten zugreifen — bei API-Preisen mit Rabatten von bis zu 90 %.
 Anders als typische API-Relay-Dienste bündelt TeamoRouter Hunderte offizieller Modellanbieter und vertrauenswürdiger Infrastrukturpartner, darunter OpenAI, Anthropic, Vertex, Azure und AWS Bedrock. Jeder Anbieter wird auf 100%ige Kompatibilität mit dem Agent-Protokoll, Cache-Performance und Nachverfolgbarkeit von Anfragen geprüft und liefert so stabile Qualität statt reverse-engineerter oder verwässerter Endpunkte. Die Plattform bietet nahezu offizielle TTFT, 99,6 % SLA, Durchsatz in Unternehmensgröße von bis zu 5.000 QPM und branchenführende Cache-Trefferquoten, die die Token-Kosten für langlaufende Agent-Workflows drastisch senken.
-TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team-Verwaltung, BYOK, intelligentes Routing, Nutzungsanalysen, dynamische Anbieter-Optimierung und dedizierten Support. Für ein noch einfacheres Erlebnis können Sie mit Teamo Desktop Claude Code, Codex, Gemini CLI und weitere beliebte KI-Agenten per Ein-Klick-Einrichtung nutzen — ohne Verwaltung von API-Schlüsseln oder manuelle Gateway-Konfiguration. Registrieren Sie sich als neuer Nutzer über <a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">diesen Link</a> und erhalten Sie 10 % Rabatt auf Ihre erste Aufladung.</td>
+TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team-Verwaltung, BYOK, intelligentes Routing, Nutzungsanalysen, dynamische Anbieter-Optimierung und dedizierten Support. Für ein noch einfacheres Erlebnis können Sie mit Teamo Desktop Claude Code, Codex, Gemini CLI und weitere beliebte KI-Agenten per Ein-Klick-Einrichtung nutzen — ohne Verwaltung von API-Schlüsseln oder manuelle Gateway-Konfiguration. Registrieren Sie sich als neuer Nutzer über <a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">diesen Link</a> und erhalten Sie 10 % Rabatt auf Ihre erste Aufladung.</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://ppio.com/activity/ccswitch"><img src="assets/partners/logos/ppio-banner.png" alt="PPIO" width="150"></a></td>
+<td>Danke an PPIO für die Unterstützung dieses Projekts! PPIO ist ein führender unabhängiger Agentic-Cloud-Anbieter in China, 2018 gegründet von PPTV-Gründer Yao Xin und dem früheren PPTV-Chefarchitekten Wang Wenyu. Mit einem einzigen API-Schlüssel erhalten Sie Zugriff auf sämtliche führenden Open-Source-Modelle, darunter DeepSeek-V4-Flash, Kimi-K3, GLM-5.2 und MiniMax-M3; der Token Plan für Unternehmen ist mit bis zu 40 % Rabatt und bis zu 200 Sitzplätzen verfügbar, und das Fusion-Modell erreicht das Niveau von Fable5 zu einem Zehntel des Preises. Registrieren Sie sich über <a href="https://ppio.com/activity/ccswitch">diesen Link</a> und schließen Sie die Identitätsprüfung ab, um einen Gutschein über ¥10 zu erhalten. Wer Freunde einlädt, erhält bis zu 15 % Cashback auf deren Aufladungen.</td>
 </tr>
 
 <tr>
@@ -135,8 +147,8 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
-<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
-<td>Vielen Dank an <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> für die Unterstützung dieses Projekts! NekoCode bietet Entwicklern einen stabilen, effizienten und zuverlässigen API-Relay-Dienst für Claude, Codex und weitere KI-Modelle. Mit transparenter Preisgestaltung und flexibler nutzungsbasierter Abrechnung bietet es einen einfachen und kostengünstigen Zugang zu KI-Modellen. CC-Switch-Nutzer erhalten einen exklusiven Rabatt von 10 %: Registrieren Sie sich über <a href="https://nekocode.ai?aff=CCSWITCH">diesen Link</a> und geben Sie beim Aufladen den Gutscheincode <code>cc-switch</code> ein, um 10 % Rabatt auf Ihre Aufladung zu erhalten!</td>
+<td width="180"><a href="https://a6api.com/register?aff=AqNr"><img src="assets/partners/logos/a6-banner-en.jpg" alt="A6API" width="150"></a></td>
+<td>Vielen Dank an <a href="https://a6api.com/register?aff=AqNr">A6API</a> für die Unterstützung dieses Projekts! A6API ist eine All-in-one-Aggregationsplattform für KI-Modell-APIs und deckt Claude, GPT, Gemini, Codex und weitere gängige Modelle ab. Mehrere Anbieter können ihr Angebot einstellen, sodass dasselbe Modell von verschiedenen Upstream-Anbietern im Preiswettbewerb bereitgestellt wird. Intelligentes Routing wählt automatisch die stabilere und günstigere verfügbare Route und schaltet bei Fehlern automatisch um – das reduziert fehlgeschlagene Anfragen, senkt die Kosten und erhöht die Stabilität. Ob einzelne Entwickler, KI-Produktteams oder Studios: Die Anbindung erfolgt schnell über eine einheitliche Schnittstelle, kompatibel mit allen Formaten und mit geringem Migrationsaufwand. Neue Nutzer erhalten bei der Registrierung über <a href="https://a6api.com/register?aff=AqNr">diesen Link</a> kostenloses Testguthaben – erst testen, dann günstig loslegen.</td>
 </tr>
 
 <tr>
@@ -165,8 +177,8 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.right.codes/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
-<td>Danke an Right Code für die Unterstützung dieses Projekts! Right Code stellt zuverlässig Routing-Dienste für Modelle wie Claude Code, Codex und Gemini bereit, wahlweise mit nutzungsbasierter Abrechnung oder monatlichem Abonnement. Rechnungen sind beim Aufladen verfügbar, und Unternehmens- sowie Teamkunden erhalten dedizierten Einzelsupport. Right Code bietet außerdem einen exklusiven Rabatt für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.right.codes/register?aff=CCSWITCH">diesen Link</a> und erhalten Sie bei jeder Aufladung nutzungsbasiertes Guthaben in Höhe von 5 % des gezahlten Betrags.</td>
+<td width="180"><a href="https://www.rightapi.ai/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
+<td>Danke an Right Code für die Unterstützung dieses Projekts! Right Code stellt zuverlässig Routing-Dienste für Modelle wie Claude Code, Codex und Gemini bereit, wahlweise mit nutzungsbasierter Abrechnung oder monatlichem Abonnement. Rechnungen sind beim Aufladen verfügbar, und Unternehmens- sowie Teamkunden erhalten dedizierten Einzelsupport. Right Code bietet außerdem einen exklusiven Rabatt für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.rightapi.ai/register?aff=CCSWITCH">diesen Link</a> und erhalten Sie bei jeder Aufladung nutzungsbasiertes Guthaben in Höhe von 5 % des gezahlten Betrags.</td>
 </tr>
 
 <tr>

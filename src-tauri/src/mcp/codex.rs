@@ -348,6 +348,74 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
 
 /// 将单个 MCP 服务器同步到 Codex live 配置
 /// 始终使用 Codex 官方格式 [mcp_servers]，并清理可能存在的错误格式 [mcp.servers]
+/// 把单个 MCP server 表写入 `[mcp_servers]`，并保证该键是「表」。
+///
+/// `~/.codex/config.toml` 是用户可手改的：若 `mcp_servers` 存在但不是表
+/// （如 `mcp_servers = "x"` / `[]`），仅判 `contains_key` 会跳过重建，随后的
+/// `doc["mcp_servers"][id] = …` 会触发 toml_edit 的 `IndexMut` panic
+/// （panic 发生在 Tauri command 内、跨 FFI 展开）。这里统一归一化后再插入。
+fn upsert_mcp_server_table(
+    doc: &mut toml_edit::DocumentMut,
+    id: &str,
+    table: toml_edit::Table,
+) -> Result<(), AppError> {
+    if doc
+        .get_mut("mcp_servers")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .is_none()
+    {
+        // 键存在但不是表时，归一化会丢掉用户手写的那个值——必须留痕，
+        // 否则用户只会看到自己的改动凭空消失。
+        if doc.get("mcp_servers").is_some_and(|item| !item.is_none()) {
+            log::warn!("config.toml 的 mcp_servers 不是表，已重置为空表");
+        }
+        doc["mcp_servers"] = toml_edit::table();
+    }
+    let servers = doc
+        .get_mut("mcp_servers")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .ok_or_else(|| AppError::McpValidation("config.toml 的 mcp_servers 不是表".to_string()))?;
+    servers.insert(id, toml_edit::Item::Table(table));
+    Ok(())
+}
+
+/// 从 `[mcp_servers]`（以及历史错误格式 `[mcp.servers]`）中删除单个 MCP server。
+///
+/// 与 `upsert_mcp_server_table` 对称地使用 `as_table_like_mut`：用户若把配置写成
+/// inline table（`mcp_servers = { foo = {...} }`，TOML 合法），`as_table_mut` 会返回
+/// None 导致删除**静默失效**——界面提示已移除，条目却还在文件里，Codex 下次启动照样
+/// 加载。这比 panic 更隐蔽，因为用户往往正是发现某个 MCP 有问题才来关它的。
+///
+/// 与写入分离成纯 doc 级函数，使守卫可脱离真实 `~/.codex/config.toml` 单测。
+fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
+    if let Some(item) = doc.get_mut("mcp_servers") {
+        // `Item::None` 是 toml_edit 的占位形态，不是用户写下的值——对它告警是噪音。
+        // 必须在取可变借用之前算出来。
+        let user_authored = !item.is_none();
+        match item.as_table_like_mut() {
+            Some(mcp_servers) => {
+                mcp_servers.remove(id);
+            }
+            None if user_authored => {
+                log::warn!("config.toml 的 mcp_servers 不是表，无法删除服务器 '{id}'");
+            }
+            None => {}
+        }
+    }
+
+    // 同时清理可能存在于错误位置的数据：[mcp.servers]（如果存在）
+    if let Some(mcp_table) = doc.get_mut("mcp").and_then(|t| t.as_table_like_mut()) {
+        if let Some(servers) = mcp_table
+            .get_mut("servers")
+            .and_then(|s| s.as_table_like_mut())
+        {
+            if servers.remove(id).is_some() {
+                log::warn!("从错误的 MCP 格式 [mcp.servers] 中清理了服务器 '{id}'");
+            }
+        }
+    }
+}
+
 pub fn sync_single_server_to_codex(
     _config: &MultiAppConfig,
     id: &str,
@@ -356,7 +424,6 @@ pub fn sync_single_server_to_codex(
     if !should_sync_codex_mcp() {
         return Ok(());
     }
-    use toml_edit::Item;
 
     // 读取现有的 config.toml
     let config_path = crate::codex_config::get_codex_config_path();
@@ -383,16 +450,9 @@ pub fn sync_single_server_to_codex(
         }
     }
 
-    // 确保 [mcp_servers] 表存在
-    if !doc.contains_key("mcp_servers") {
-        doc["mcp_servers"] = toml_edit::table();
-    }
-
     // 将 JSON 服务器规范转换为 TOML 表
     let toml_table = json_server_to_toml_table(server_spec)?;
-
-    // 使用唯一正确的格式：[mcp_servers]
-    doc["mcp_servers"][id] = Item::Table(toml_table);
+    upsert_mcp_server_table(&mut doc, id, toml_table)?;
 
     // 写回文件
     let new_text = doc.to_string();
@@ -425,19 +485,7 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
         }
     };
 
-    // 从正确的位置删除：[mcp_servers]
-    if let Some(mcp_servers) = doc.get_mut("mcp_servers").and_then(|s| s.as_table_mut()) {
-        mcp_servers.remove(id);
-    }
-
-    // 同时清理可能存在于错误位置的数据：[mcp.servers]（如果存在）
-    if let Some(mcp_table) = doc.get_mut("mcp").and_then(|t| t.as_table_mut()) {
-        if let Some(servers) = mcp_table.get_mut("servers").and_then(|s| s.as_table_mut()) {
-            if servers.remove(id).is_some() {
-                log::warn!("从错误的 MCP 格式 [mcp.servers] 中清理了服务器 '{id}'");
-            }
-        }
-    }
+    remove_mcp_server_from_doc(&mut doc, id);
 
     // 写回文件
     let new_text = doc.to_string();
@@ -682,6 +730,89 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upsert_normalizes_non_table_mcp_servers_without_panicking() {
+        // 用户手改过的 config.toml：mcp_servers 是字符串而不是表。
+        // 修复前 `doc["mcp_servers"][id] = …` 会 panic。
+        for malformed in [
+            "mcp_servers = \"x\"\n",
+            "mcp_servers = []\n",
+            "mcp_servers = 42\n",
+        ] {
+            let mut doc = malformed
+                .parse::<toml_edit::DocumentMut>()
+                .expect("fixture parses");
+            let table = json_server_to_toml_table(&json!({
+                "type": "stdio",
+                "command": "npx"
+            }))
+            .expect("server table");
+
+            upsert_mcp_server_table(&mut doc, "echo", table)
+                .unwrap_or_else(|e| panic!("upsert must not fail for {malformed:?}: {e}"));
+
+            let servers = doc
+                .get("mcp_servers")
+                .and_then(|item| item.as_table_like())
+                .unwrap_or_else(|| panic!("mcp_servers must be normalized to a table"));
+            assert!(servers.contains_key("echo"));
+        }
+    }
+
+    #[test]
+    fn upsert_preserves_existing_servers_in_a_valid_table() {
+        let mut doc = "[mcp_servers.keep]\ncommand = \"keep\"\n"
+            .parse::<toml_edit::DocumentMut>()
+            .expect("fixture parses");
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "command": "npx"
+        }))
+        .expect("server table");
+
+        upsert_mcp_server_table(&mut doc, "added", table).expect("upsert");
+
+        let servers = doc
+            .get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .expect("table");
+        assert!(servers.contains_key("keep"), "existing server must survive");
+        assert!(servers.contains_key("added"));
+    }
+
+    #[test]
+    fn remove_deletes_from_inline_table_form_too() {
+        // inline table 是合法 TOML，但 as_table_mut() 对它返回 None——用它做守卫
+        // 会让删除静默失效：界面说移除成功，条目却还在，Codex 下次启动照样加载。
+        let mut doc = "mcp_servers = { drop = { command = \"x\" }, keep = { command = \"y\" } }\n"
+            .parse::<toml_edit::DocumentMut>()
+            .expect("fixture parses");
+
+        remove_mcp_server_from_doc(&mut doc, "drop");
+
+        let servers = doc
+            .get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .expect("mcp_servers must still be table-like");
+        assert!(
+            !servers.contains_key("drop"),
+            "removal must work on the inline-table form"
+        );
+        assert!(servers.contains_key("keep"), "siblings must survive");
+    }
+
+    #[test]
+    fn remove_is_a_noop_on_non_table_mcp_servers() {
+        // 既不能 panic，也不能把用户手写的值悄悄抹掉
+        let mut doc = "mcp_servers = 42\n"
+            .parse::<toml_edit::DocumentMut>()
+            .expect("fixture parses");
+
+        remove_mcp_server_from_doc(&mut doc, "whatever");
+
+        assert_eq!(doc.to_string(), "mcp_servers = 42\n");
+    }
 
     #[test]
     fn http_headers_are_only_written_to_codex_http_headers() {

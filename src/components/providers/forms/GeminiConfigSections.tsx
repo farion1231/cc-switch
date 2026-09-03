@@ -97,9 +97,9 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
         onChange={handleChange}
         placeholder={`GOOGLE_GEMINI_BASE_URL=https://your-api-endpoint.com/
 GEMINI_API_KEY=sk-your-api-key-here
-GEMINI_MODEL=gemini-3.5-flash`}
+GEMINI_MODEL=gemini-3.6-flash`}
         darkMode={isDarkMode}
-        rows={6}
+        rows={3}
         showValidation={false}
         language="javascript"
       />
@@ -170,7 +170,7 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
   "maxRetries": 3
 }`}
         darkMode={isDarkMode}
-        rows={8}
+        rows={3}
         showValidation={true}
         language="json"
       />

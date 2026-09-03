@@ -44,14 +44,14 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
     model: "claude-sonnet-5",
     haikuModel: "claude-haiku-4-5-20251001",
     sonnetModel: "claude-sonnet-5",
-    opusModel: "claude-opus-4-8",
+    opusModel: "claude-opus-5",
   },
   codex: {
-    model: "gpt-5.5",
+    model: "gpt-5.6-sol",
     reasoningEffort: "high",
   },
   gemini: {
-    model: "gemini-3.5-flash",
+    model: "gemini-3.6-flash",
   },
 };
 

@@ -106,6 +106,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
   },
@@ -135,18 +136,20 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://www.packyapi.com",
+        ANTHROPIC_BASE_URL: "https://www.packyapi.ai",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     // 请求地址候选（用于地址管理/测速）
     endpointCandidates: [
+      "https://www.packyapi.ai",
+      "https://cf.api.fan",
+      "https://slb-v1.api.fan",
       "https://www.packyapi.com",
-      "https://api-slb.packyapi.com",
     ],
     category: "third_party",
     isPartner: true, // 合作伙伴
@@ -170,16 +173,16 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://apinebula.com",
+        ANTHROPIC_BASE_URL: "https://apinebula.ai",
         ANTHROPIC_AUTH_TOKEN: "",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       },
     },
-    endpointCandidates: ["https://apinebula.com"],
+    endpointCandidates: ["https://apinebula.ai"],
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "apinebula",
@@ -187,18 +190,15 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aicodemirror.com/api/claudecode",
+        ANTHROPIC_BASE_URL: "https://api.aicodemirror.ai/api/claudecode",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    endpointCandidates: [
-      "https://api.aicodemirror.com/api/claudecode",
-      "https://api.claudecode.net.cn/api/claudecode",
-    ],
+    endpointCandidates: ["https://api.aicodemirror.ai/api/claudecode"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aicodemirror", // 促销信息 i18n key
@@ -239,33 +239,19 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://runapi.co",
+        ANTHROPIC_BASE_URL: "https://runapi.host",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
+    endpointCandidates: ["https://runapi.host", "https://runapi.co"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "runapi",
     icon: "runapi",
-  },
-  {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.unity2.ai",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
   },
   {
     name: "Shengsuanyun",
@@ -279,7 +265,7 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_MODEL: "anthropic/claude-sonnet-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.8",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-5",
       },
     },
     category: "aggregator",
@@ -289,21 +275,55 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.app",
+    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aigocode.com",
+        ANTHROPIC_BASE_URL: "https://api.aigocode.app",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     // 请求地址候选（用于地址管理/测速）
-    endpointCandidates: ["https://api.aigocode.com"],
+    endpointCandidates: ["https://api.aigocode.app"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aigocode", // 促销信息 i18n key
     icon: "aigocode",
     iconColor: "#5B7FFF",
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.qnaigc.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api.qnaigc.com", "https://api.modelink.ai"],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
+  },
+  {
+    name: "AICoding",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aicoding.inc",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api.aicoding.inc"],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "aicoding", // 促销信息 i18n key
+    icon: "aicoding",
+    iconColor: "#000000",
   },
   {
     name: "SubRouter",
@@ -338,12 +358,32 @@ export const providerPresets: ProviderPreset[] = [
     icon: "apikeyfun",
   },
   {
-    name: "ClaudeAPI",
-    websiteUrl: "https://claudeapi.com",
-    apiKeyUrl: "https://console.claudeapi.com/register?aff=pCLD",
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://gw.claudeapi.com",
+        ANTHROPIC_BASE_URL: "https://9527.codes",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://9527.codes",
+      "https://api.9527.codes",
+      "https://cdn.9527.codes",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    icon: "9527code",
+  },
+  {
+    name: "ClaudeAPI",
+    websiteUrl: "https://www.apito.ai",
+    apiKeyUrl: "https://console.apito.ai/agent/register/pQBql2buaqiX3dDS",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://gw.apito.ai",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
@@ -369,19 +409,44 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.teamorouter.com",
+        ANTHROPIC_BASE_URL: "https://api.teamorouter.cn",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
+    endpointCandidates: [
+      "https://api.teamorouter.cn",
+      "https://api.teamorouter.com",
+    ],
     icon: "teamorouter",
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.ppio.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek/deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4-flash-0731",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    endpointCandidates: ["https://api.ppio.com/anthropic"],
+    icon: "ppio",
+    iconColor: "#2874FF",
   },
   {
     name: "ClaudeCN",
@@ -399,7 +464,29 @@ export const providerPresets: ProviderPreset[] = [
     icon: "claudecn",
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/plan",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "ark-code-latest",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ark-code-latest",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "ark-code-latest",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "ark-code-latest",
+      },
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+  },
+  {
+    name: "火山 Coding Plan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -416,7 +503,7 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "cn_official",
     isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
+    partnerPromotionKey: "volcengine_codingplan",
     icon: "huoshan",
     iconColor: "#3370FF",
   },
@@ -474,10 +561,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.siliconflow.cn",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "Pro/MiniMaxAI/MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Pro/MiniMaxAI/MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "Pro/MiniMaxAI/MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "Pro/MiniMaxAI/MiniMax-M2.7",
+        ANTHROPIC_MODEL: "Pro/MiniMaxAI/MiniMax-M2.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Pro/MiniMaxAI/MiniMax-M2.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Pro/MiniMaxAI/MiniMax-M2.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Pro/MiniMaxAI/MiniMax-M2.5",
       },
     },
     category: "aggregator",
@@ -494,10 +581,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.siliconflow.com",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "MiniMaxAI/MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMaxAI/MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMaxAI/MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMaxAI/MiniMax-M2.7",
+        ANTHROPIC_MODEL: "MiniMaxAI/MiniMax-M3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMaxAI/MiniMax-M3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMaxAI/MiniMax-M3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMaxAI/MiniMax-M3",
       },
     },
     category: "aggregator",
@@ -507,19 +594,19 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    name: "A6API",
+    websiteUrl: "https://www.a6api.com",
+    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://nekocode.ai",
+        ANTHROPIC_BASE_URL: "https://api.a6api.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
+    partnerPromotionKey: "a6api",
+    icon: "a6api",
   },
   {
     name: "AtlasCloud",
@@ -635,11 +722,11 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://www.right.codes/claude",
+        ANTHROPIC_BASE_URL: "https://www.rightapi.ai/claude",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
@@ -721,27 +808,10 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "dmxapi", // 促销信息 i18n key
   },
   {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.qnaigc.com",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    endpointCandidates: ["https://api.qnaigc.com", "https://api.modelink.ai"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    icon: "qiniu",
-  },
-  {
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.sudocode.chat",
@@ -771,6 +841,24 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     icon: "sudocode-us",
   },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    // 说明：该供应商使用 ANTHROPIC_API_KEY（而非 ANTHROPIC_AUTH_TOKEN）
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://apicdn.xycai.us",
+        ANTHROPIC_API_KEY: "",
+      },
+    },
+    endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Amux",
@@ -794,10 +882,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://generativelanguage.googleapis.com",
         ANTHROPIC_API_KEY: "",
-        ANTHROPIC_MODEL: "gemini-3.5-flash",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-3.5-flash",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "gemini-3.5-flash",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "gemini-3.5-flash",
+        ANTHROPIC_MODEL: "gemini-3.6-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-3.6-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gemini-3.6-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gemini-3.6-flash",
       },
     },
     category: "third_party",
@@ -830,10 +918,15 @@ export const providerPresets: ProviderPreset[] = [
     websiteUrl: "https://opencode.ai/go",
     apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
     partnerPromotionKey: "opencode_go",
+    // Go 网关 /v1/messages 只认 x-api-key（Bearer 被静默忽略），
+    // 必须用 ANTHROPIC_API_KEY，不能换回 ANTHROPIC_AUTH_TOKEN。
+    // 直连 Anthropic 端点可用除 grok-4.5 外的全部 Go 模型；
+    // Chat 组模型（DeepSeek/GLM/Kimi 等）依赖网关服务端格式转换（未见文档承诺）。
+    apiKeyField: "ANTHROPIC_API_KEY",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
-        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_API_KEY: "",
         ANTHROPIC_MODEL: "deepseek-v4-flash",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash",
@@ -841,10 +934,175 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "third_party",
-    apiFormat: "openai_chat",
     endpointCandidates: ["https://opencode.ai/zen/go"],
     icon: "opencode",
     iconColor: "#211E1E",
+  },
+  {
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key；Auto 智能路由的调用 ID 是 tc-code-latest。
+    // 注意与 TokenHub 按量 API 市场（1823 线，如 Hunyuan 预设的 /v1 端点）
+    // 是两条产品线，订阅 Key 只能走 /plan 端点
+    name: "Tencent Token Plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://api.lkeap.cloud.tencent.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "tc-code-latest",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "tc-code-latest",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "tc-code-latest",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "tc-code-latest",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: ["https://api.lkeap.cloud.tencent.com/plan/anthropic"],
+    // /plan/v3/models 真 Key 实测可用（2026-08-31，返回套餐内 19 个模型含
+    // 别名）；企业/国际端点无 /models（404），故仅此预设覆写
+    modelsUrl: "https://api.lkeap.cloud.tencent.com/plan/v3/models",
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：
+    // Auto 的调用 ID 是 auto（与国内个人版 tc-code-latest 不同），模型阵容
+    // 也与国内不同（无 GLM-5/5.1/Hy3，多 GLM-5.2/MiniMax-M3）。端点用国际站
+    // 文档钦定的 tencentcloudmaas.com 域（DNS 实测解析新加坡节点）；国内站
+    // 文档对新加坡地域给的是 tokenhub-intl.tencentmaas.com，Key 按站独立、
+    // 不跨站通用，故互不作候选
+    name: "Tencent Token Plan (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+    ],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版）：广州地域端点
+    // 为国内站文档钦定的 tencentmaas.com；新加坡地域模型阵容不同且 Key 不
+    // 跨站，见 (Intl) 预设
+    name: "Tencent Token Plan Enterprise Pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenhub.tencentmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    // 广州地域为默认端点；国内站企业套餐另可选新加坡地域（1823/130659、
+    // 131173 双地域表：tokenhub-intl.tencentmaas.com，需开通新加坡地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/plan/anthropic",
+      "https://tokenhub-intl.tencentmaas.com/plan/anthropic",
+    ],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版）：新加坡地域，
+    // 模型阵容为广州地域的子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、
+    // MiniMax-M2.7）
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    // 新加坡地域为默认端点；国际站企业套餐另可选广州地域（1300/81489、
+    // 81490 双地域表：tokenhub.tencentcloudmaas.com，需开通广州地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+      "https://tokenhub.tencentcloudmaas.com/plan/anthropic",
+    ],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenhub.tencentmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    // 广州地域为默认端点；国内站企业套餐另可选新加坡地域（1823/130659、
+    // 131173 双地域表：tokenhub-intl.tencentmaas.com，需开通新加坡地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/plan/anthropic",
+      "https://tokenhub-intl.tencentmaas.com/plan/anthropic",
+    ],
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围为
+    // Global），仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "auto",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "auto",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "auto",
+      },
+    },
+    category: "cn_official",
+    // 新加坡地域为默认端点；国际站企业套餐另可选广州地域（1300/81489、
+    // 81490 双地域表：tokenhub.tencentcloudmaas.com，需开通广州地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+      "https://tokenhub.tencentcloudmaas.com/plan/anthropic",
+    ],
+    icon: "tencent",
+    iconColor: "#0052D9",
   },
   {
     name: "Zhipu GLM",
@@ -903,6 +1161,31 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#2932E1",
   },
   {
+    // Token Plan 个人版：2026-07-13 起替代 Coding Plan 发售（存量 Coding
+    // Plan 可用至到期，旧预设保留）。模型=官方 Claude Code 接入页
+    // （2026-07-30 版）全角色 deepseek-v4-pro；Key 是订阅页专属 Key
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://qianfan.baidubce.com/anthropic/tokenplan/personal",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: [
+      "https://qianfan.baidubce.com/anthropic/tokenplan/personal",
+    ],
+    icon: "baidu",
+    iconColor: "#2932E1",
+  },
+  {
     name: "Bailian",
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
@@ -928,6 +1211,69 @@ export const providerPresets: ProviderPreset[] = [
     category: "cn_official",
     icon: "bailian",
     iconColor: "#624AFF",
+  },
+  // ===== QwenCloud（DashScope 国际站）=====
+  // 与上面国内百炼是两套独立站点：域名、控制台、密钥互不通用。
+  // 三条线各有专属 base_url 与专属 API Key，官方文档明示密钥类型与
+  // base_url 不匹配会 401，因此拆成三个预设而非共用一条加候选地址。
+  {
+    name: "QwenCloud",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "qwen3.7-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.6-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-max",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.7-max",
+      },
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+  },
+  {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.7-plus",
+      },
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+  },
+  {
+    name: "QwenCloud Token Plan",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.6-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
+        // 官方 Claude Code 配置钉的窗口：qwen3.8 系 context_window = 983616
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
+      },
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
   },
   {
     name: "StepFun",
@@ -974,10 +1320,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api-inference.modelscope.cn",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "ZhipuAI/GLM-5.1",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ZhipuAI/GLM-5.1",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "ZhipuAI/GLM-5.1",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "ZhipuAI/GLM-5.1",
+        ANTHROPIC_MODEL: "ZhipuAI/GLM-5.2",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ZhipuAI/GLM-5.2",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "ZhipuAI/GLM-5.2",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "ZhipuAI/GLM-5.2",
       },
     },
     category: "aggregator",
@@ -1125,7 +1471,7 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_MODEL: "anthropic/claude-sonnet-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.8",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-5",
       },
     },
     category: "aggregator",
@@ -1178,7 +1524,7 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_MODEL: "anthropic/claude-sonnet-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.8",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-5",
       },
     },
     category: "aggregator",
@@ -1197,7 +1543,7 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_MODEL: "anthropic/claude-sonnet-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.8",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-5",
       },
     },
     category: "aggregator",
@@ -1249,12 +1595,12 @@ export const providerPresets: ProviderPreset[] = [
         // base_url 由代理后端强制重写为 chatgpt.com/backend-api/codex
         // 用户无需配置
         ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex",
-        ANTHROPIC_MODEL: "gpt-5.6",
+        ANTHROPIC_MODEL: "gpt-5.6-sol",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-5.6-luna",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-5.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.6",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-5.6-sol",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.6-sol",
         // Claude Code falls back to a 200K context window for unrecognized
-        // non-Claude model ids. The ChatGPT Codex backend catalogs gpt-5.6
+        // non-Claude model ids. The ChatGPT Codex backend catalogs gpt-5.6-sol
         // at a 372K window with a ~353K effective budget (openai/codex#31860),
         // not the 1.05M API window. Pin both knobs: the compact window equals
         // min(model window, value), so matching the window is behavior-neutral
@@ -1318,10 +1664,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://cc-api.pipellm.ai",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "claude-opus-4-8",
+        ANTHROPIC_MODEL: "claude-opus-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5-20251001",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-8",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
       },
       includeCoAuthoredBy: false,
     },
@@ -1374,11 +1720,11 @@ export const providerPresets: ProviderPreset[] = [
         AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}",
         AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}",
         AWS_REGION: "${AWS_REGION}",
-        ANTHROPIC_MODEL: "global.anthropic.claude-opus-4-8",
+        ANTHROPIC_MODEL: "global.anthropic.claude-opus-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL:
           "global.anthropic.claude-haiku-4-5-20251001-v1:0",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "global.anthropic.claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "global.anthropic.claude-opus-4-8",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "global.anthropic.claude-opus-5",
         CLAUDE_CODE_USE_BEDROCK: "1",
       },
     },
@@ -1412,11 +1758,11 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://bedrock-runtime.${AWS_REGION}.amazonaws.com",
         AWS_REGION: "${AWS_REGION}",
-        ANTHROPIC_MODEL: "global.anthropic.claude-opus-4-8",
+        ANTHROPIC_MODEL: "global.anthropic.claude-opus-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL:
           "global.anthropic.claude-haiku-4-5-20251001-v1:0",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "global.anthropic.claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "global.anthropic.claude-opus-4-8",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "global.anthropic.claude-opus-5",
         CLAUDE_CODE_USE_BEDROCK: "1",
       },
     },
@@ -1430,5 +1776,39 @@ export const providerPresets: ProviderPreset[] = [
     },
     icon: "aws",
     iconColor: "#FF9900",
+  },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.jiekou.ai/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-fable-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-fable-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-fable-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-fable-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.jiekou.ai/anthropic"],
+    icon: "jiekou",
+    iconColor: "#000000",
+  },
+  {
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aicodewith.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.aicodewith.ai"],
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
   },
 ];

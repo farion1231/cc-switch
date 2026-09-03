@@ -125,6 +125,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
     templateValues: {
@@ -151,7 +152,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     settingsConfig: {
-      baseUrl: "https://api.kimi.com/v1",
+      baseUrl: "https://api.kimi.com/coding/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -169,8 +170,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder: "https://api.kimi.com/v1",
-        defaultValue: "https://api.kimi.com/v1",
+        placeholder: "https://api.kimi.com/coding/v1",
+        defaultValue: "https://api.kimi.com/coding/v1",
         editorValue: "",
       },
       apiKey: {
@@ -187,16 +188,16 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
 
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     settingsConfig: {
-      baseUrl: "https://www.packyapi.com",
+      baseUrl: "https://www.packyapi.ai",
       apiKey: "",
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -221,11 +222,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "packycode/claude-opus-4-8",
+        primary: "packycode/claude-opus-5",
         fallbacks: ["packycode/claude-sonnet-5"],
       },
       modelCatalog: {
-        "packycode/claude-opus-4-8": { alias: "Opus" },
+        "packycode/claude-opus-5": { alias: "Opus" },
         "packycode/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -240,8 +241,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
           contextWindow: 400000,
         },
       ],
@@ -259,25 +260,25 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "zetaapi/gpt-5.5",
+        primary: "zetaapi/gpt-5.6-sol",
       },
       modelCatalog: {
-        "zetaapi/gpt-5.5": { alias: "GPT-5.5" },
+        "zetaapi/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     settingsConfig: {
-      baseUrl: "https://apinebula.com/v1",
+      baseUrl: "https://apinebula.ai/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
         },
       ],
     },
@@ -294,22 +295,22 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "apinebula/gpt-5.5",
+        primary: "apinebula/gpt-5.6-sol",
       },
     },
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     settingsConfig: {
-      baseUrl: "https://api.aicodemirror.com/api/claudecode",
+      baseUrl: "https://api.aicodemirror.ai/api/claudecode",
       apiKey: "",
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -335,11 +336,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "aicodemirror/claude-opus-4-8",
+        primary: "aicodemirror/claude-opus-5",
         fallbacks: ["aicodemirror/claude-sonnet-5"],
       },
       modelCatalog: {
-        "aicodemirror/claude-opus-4-8": { alias: "Opus" },
+        "aicodemirror/claude-opus-5": { alias: "Opus" },
         "aicodemirror/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -355,8 +356,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
           contextWindow: 400000,
         },
       ],
@@ -374,25 +375,25 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "fenno/gpt-5.5",
+        primary: "fenno/gpt-5.6-sol",
       },
       modelCatalog: {
-        "fenno/gpt-5.5": { alias: "GPT-5.5" },
+        "fenno/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     settingsConfig: {
-      baseUrl: "https://runapi.co",
+      baseUrl: "https://runapi.host",
       apiKey: "",
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
         },
         {
@@ -423,46 +424,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         primary: "runapi/claude-sonnet-5",
       },
       modelCatalog: {
-        "runapi/claude-opus-4-8": { alias: "Opus" },
+        "runapi/claude-opus-5": { alias: "Opus" },
         "runapi/claude-sonnet-5": { alias: "Sonnet" },
         "runapi/claude-haiku-4-5": { alias: "Haiku" },
-      },
-    },
-  },
-  {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    settingsConfig: {
-      baseUrl: "https://api.unity2.ai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
-          contextWindow: 400000,
-          cost: { input: 5, output: 15 },
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "unity2/gpt-5.5",
-      },
-      modelCatalog: {
-        "unity2/gpt-5.5": { alias: "GPT-5.5" },
       },
     },
   },
@@ -477,8 +441,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "anthropic/claude-opus-4.8",
-          name: "Claude Opus 4.8",
+          id: "anthropic/claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -503,27 +467,27 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "shengsuanyun/anthropic/claude-opus-4.8",
+        primary: "shengsuanyun/anthropic/claude-opus-5",
         fallbacks: ["shengsuanyun/anthropic/claude-sonnet-5"],
       },
       modelCatalog: {
-        "shengsuanyun/anthropic/claude-opus-4.8": { alias: "Opus" },
+        "shengsuanyun/anthropic/claude-opus-5": { alias: "Opus" },
         "shengsuanyun/anthropic/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.app",
+    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
     settingsConfig: {
-      baseUrl: "https://api.aigocode.com",
+      baseUrl: "https://api.aigocode.app",
       apiKey: "",
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -549,12 +513,95 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "aigocode/claude-opus-4-8",
+        primary: "aigocode/claude-opus-5",
         fallbacks: ["aigocode/claude-sonnet-5"],
       },
       modelCatalog: {
-        "aigocode/claude-opus-4-8": { alias: "Opus" },
+        "aigocode/claude-opus-5": { alias: "Opus" },
         "aigocode/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      baseUrl: "https://api.qnaigc.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "qiniu/gpt-5.6-sol",
+      },
+      modelCatalog: {
+        "qiniu/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+      },
+    },
+  },
+  {
+    name: "AICoding",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
+    settingsConfig: {
+      baseUrl: "https://api.aicoding.inc",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "aicoding/claude-opus-5",
+        fallbacks: ["aicoding/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "aicoding/claude-opus-5": { alias: "Opus" },
+        "aicoding/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
   },
@@ -568,8 +615,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
           contextWindow: 400000,
         },
       ],
@@ -587,10 +634,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "subrouter/gpt-5.5",
+        primary: "subrouter/gpt-5.6-sol",
       },
       modelCatalog: {
-        "subrouter/gpt-5.5": { alias: "GPT-5.5" },
+        "subrouter/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -604,8 +651,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
         },
         {
@@ -633,13 +680,62 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "apikeyfun/claude-opus-4-8",
+        primary: "apikeyfun/claude-opus-5",
         fallbacks: ["apikeyfun/claude-sonnet-5"],
       },
       modelCatalog: {
-        "apikeyfun/claude-opus-4-8": { alias: "Opus" },
+        "apikeyfun/claude-opus-5": { alias: "Opus" },
         "apikeyfun/claude-sonnet-5": { alias: "Sonnet" },
         "apikeyfun/claude-haiku-4-5": { alias: "Haiku" },
+      },
+    },
+  },
+  {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    settingsConfig: {
+      baseUrl: "https://9527.codes",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    icon: "9527code",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "9527code/claude-opus-5",
+        fallbacks: ["9527code/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "9527code/claude-opus-5": { alias: "Opus" },
+        "9527code/claude-sonnet-5": { alias: "Sonnet" },
+        "9527code/claude-haiku-4-5": { alias: "Haiku" },
       },
     },
   },
@@ -653,8 +749,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
           contextWindow: 400000,
         },
       ],
@@ -672,26 +768,26 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "code0/gpt-5.5",
+        primary: "code0/gpt-5.6-sol",
       },
       modelCatalog: {
-        "code0/gpt-5.5": { alias: "GPT-5.5" },
+        "code0/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
-      baseUrl: "https://api.teamorouter.com/v1",
+      baseUrl: "https://api.teamorouter.cn/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
           contextWindow: 400000,
         },
       ],
@@ -709,10 +805,51 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "teamorouter/gpt-5.5",
+        primary: "teamorouter/gpt-5.6-sol",
       },
       modelCatalog: {
-        "teamorouter/gpt-5.5": { alias: "GPT-5.5" },
+        "teamorouter/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+      },
+    },
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      baseUrl: "https://api.ppio.com/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek/deepseek-v4-flash-0731",
+          name: "Deepseek V4 Flash 0731",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 393216,
+          cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ppio/deepseek/deepseek-v4-flash-0731" },
+      modelCatalog: {
+        "ppio/deepseek/deepseek-v4-flash-0731": {
+          alias: "Deepseek V4 Flash 0731",
+        },
       },
     },
   },
@@ -726,8 +863,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
         },
         {
@@ -758,20 +895,20 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         primary: "claudecn/claude-sonnet-5",
       },
       modelCatalog: {
-        "claudecn/claude-opus-4-8": { alias: "Opus" },
+        "claudecn/claude-opus-5": { alias: "Opus" },
         "claudecn/claude-sonnet-5": { alias: "Sonnet" },
         "claudecn/claude-haiku-4-5": { alias: "Haiku" },
       },
     },
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
     websiteUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     settingsConfig: {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -798,6 +935,43 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       model: { primary: "ark_agentplan/ark-code-latest" },
       modelCatalog: {
         "ark_agentplan/ark-code-latest": { alias: "Ark Code" },
+      },
+    },
+  },
+  {
+    name: "火山 Coding Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_codingplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ark_codingplan/ark-code-latest" },
+      modelCatalog: {
+        "ark_codingplan/ark-code-latest": { alias: "Ark Code" },
       },
     },
   },
@@ -886,9 +1060,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "Pro/MiniMaxAI/MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          contextWindow: 200000,
+          id: "Pro/MiniMaxAI/MiniMax-M2.5",
+          name: "MiniMax M2.5",
+          contextWindow: 196608,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
         },
       ],
@@ -906,9 +1080,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5" },
       modelCatalog: {
-        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5": { alias: "MiniMax" },
       },
     },
   },
@@ -922,9 +1096,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMaxAI/MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          contextWindow: 200000,
+          id: "MiniMaxAI/MiniMax-M3",
+          name: "MiniMax M3",
+          contextWindow: 1048576,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
         },
       ],
@@ -942,32 +1116,32 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M3" },
       modelCatalog: {
-        "siliconflow-en/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow-en/MiniMaxAI/MiniMax-M3": { alias: "MiniMax" },
       },
     },
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    name: "A6API",
+    websiteUrl: "https://www.a6api.com",
+    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
     settingsConfig: {
-      baseUrl: "https://nekocode.ai/v1",
+      baseUrl: "https://api.a6api.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
           contextWindow: 400000,
         },
       ],
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
+    partnerPromotionKey: "a6api",
+    icon: "a6api",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -977,10 +1151,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "nekocode/gpt-5.5",
+        primary: "a6api/gpt-5.6-sol",
       },
       modelCatalog: {
-        "nekocode/gpt-5.5": { alias: "GPT-5.5" },
+        "a6api/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -1028,8 +1202,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1049,10 +1223,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "compshare/claude-opus-4-8",
+        primary: "compshare/claude-opus-5",
       },
       modelCatalog: {
-        "compshare/claude-opus-4-8": { alias: "Opus" },
+        "compshare/claude-opus-5": { alias: "Opus" },
       },
     },
   },
@@ -1068,8 +1242,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1089,10 +1263,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "compshare-coding/claude-opus-4-8",
+        primary: "compshare-coding/claude-opus-5",
       },
       modelCatalog: {
-        "compshare-coding/claude-opus-4-8": { alias: "Opus" },
+        "compshare-coding/claude-opus-5": { alias: "Opus" },
       },
     },
   },
@@ -1106,8 +1280,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
           contextWindow: 400000,
           cost: { input: 5, output: 15 },
         },
@@ -1126,10 +1300,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "ccsub/gpt-5.5",
+        primary: "ccsub/gpt-5.6-sol",
       },
       modelCatalog: {
-        "ccsub/gpt-5.5": { alias: "GPT-5.5" },
+        "ccsub/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -1143,8 +1317,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1170,11 +1344,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "sssaicode/claude-opus-4-8",
+        primary: "sssaicode/claude-opus-5",
         fallbacks: ["sssaicode/claude-sonnet-5"],
       },
       modelCatalog: {
-        "sssaicode/claude-opus-4-8": { alias: "Opus" },
+        "sssaicode/claude-opus-5": { alias: "Opus" },
         "sssaicode/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -1189,8 +1363,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1210,25 +1384,25 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "micu/claude-opus-4-8",
+        primary: "micu/claude-opus-5",
       },
       modelCatalog: {
-        "micu/claude-opus-4-8": { alias: "Opus" },
+        "micu/claude-opus-5": { alias: "Opus" },
       },
     },
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     settingsConfig: {
-      baseUrl: "https://www.right.codes/claude",
+      baseUrl: "https://www.rightapi.ai/claude",
       apiKey: "",
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1254,11 +1428,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "rightcode/claude-opus-4-8",
+        primary: "rightcode/claude-opus-5",
         fallbacks: ["rightcode/claude-sonnet-5"],
       },
       modelCatalog: {
-        "rightcode/claude-opus-4-8": { alias: "Opus" },
+        "rightcode/claude-opus-5": { alias: "Opus" },
         "rightcode/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -1273,8 +1447,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1294,10 +1468,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "etok/claude-opus-4-8",
+        primary: "etok/claude-opus-5",
       },
       modelCatalog: {
-        "etok/claude-opus-4-8": { alias: "Opus" },
+        "etok/claude-opus-5": { alias: "Opus" },
       },
     },
   },
@@ -1311,8 +1485,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1338,11 +1512,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "cubence/claude-opus-4-8",
+        primary: "cubence/claude-opus-5",
         fallbacks: ["cubence/claude-sonnet-5"],
       },
       modelCatalog: {
-        "cubence/claude-opus-4-8": { alias: "Opus" },
+        "cubence/claude-opus-5": { alias: "Opus" },
         "cubence/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -1357,8 +1531,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1384,11 +1558,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "crazyrouter/claude-opus-4-8",
+        primary: "crazyrouter/claude-opus-5",
         fallbacks: ["crazyrouter/claude-sonnet-5"],
       },
       modelCatalog: {
-        "crazyrouter/claude-opus-4-8": { alias: "Opus" },
+        "crazyrouter/claude-opus-5": { alias: "Opus" },
         "crazyrouter/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -1403,8 +1577,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -1428,49 +1602,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "dmxapi/claude-opus-4-8",
+        primary: "dmxapi/claude-opus-5",
         fallbacks: ["dmxapi/claude-sonnet-5"],
       },
       modelCatalog: {
-        "dmxapi/claude-opus-4-8": { alias: "Opus" },
+        "dmxapi/claude-opus-5": { alias: "Opus" },
         "dmxapi/claude-sonnet-5": { alias: "Sonnet" },
-      },
-    },
-  },
-  {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    settingsConfig: {
-      baseUrl: "https://api.qnaigc.com/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
-          contextWindow: 400000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    icon: "qiniu",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "qiniu/gpt-5.5",
-      },
-      modelCatalog: {
-        "qiniu/gpt-5.5": { alias: "GPT-5.5" },
       },
     },
   },
@@ -1478,7 +1615,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     settingsConfig: {
       baseUrl: "https://api.sudocode.chat/v1",
       apiKey: "",
@@ -1517,8 +1654,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-responses",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
         },
       ],
     },
@@ -1534,7 +1671,43 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "sudocode-us/gpt-5.5",
+        primary: "sudocode-us/gpt-5.6-sol",
+      },
+    },
+  },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      baseUrl: "https://apicdn.xycai.us/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "xycai/gpt-5.6-sol",
+      },
+      modelCatalog: {
+        "xycai/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -1549,8 +1722,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
           contextWindow: 400000,
         },
       ],
@@ -1566,10 +1739,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "amux/gpt-5.5",
+        primary: "amux/gpt-5.6-sol",
       },
       modelCatalog: {
-        "amux/gpt-5.5": { alias: "GPT-5.5" },
+        "amux/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -1694,6 +1867,738 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key；Auto 智能路由调用 ID 是 tc-code-latest。
+    // 模型条目照官方 OpenClaw 接入页（1823/130062，2026-08-27 版）原样：
+    // cost 全零、ctx/maxTokens 为官方 OpenClaw 口径（≠平台模型列表页，如
+    // deepseek 1000000≠1048576，勿按平台口径"修正"）。kimi-k2.5 官方
+    // 2026-08-31 下线不收（接入页仍列，随阵容口径弃用）。超出接入页的
+    // minimax-m2.7/glm-5.1/glm-5.2/hy3 按平台模型列表页（1300/78934）补
+    // maxTokens；hy3 reasoning:true 与 hy3-preview 一致（Preserved Thinking）
+    name: "Tencent Token Plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    settingsConfig: {
+      baseUrl: "https://api.lkeap.cloud.tencent.com/plan/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "tc-code-latest",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        {
+          id: "deepseek-v4-flash-202605",
+          name: "DeepSeek V4 Flash",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1000000,
+          maxTokens: 384000,
+        },
+        {
+          id: "deepseek-v4-pro-202606",
+          name: "DeepSeek V4 Pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1000000,
+          maxTokens: 384000,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）；reasoning 同族接入页口径
+        {
+          id: "minimax-m2.7",
+          name: "MiniMax M2.7",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        {
+          id: "minimax-m2.5",
+          name: "MiniMax M2.5",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        {
+          id: "glm-5",
+          name: "GLM-5",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 202752,
+          maxTokens: 16384,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）；reasoning 同族接入页口径
+        {
+          id: "glm-5.1",
+          name: "GLM-5.1",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k，与企业版接入页 131072 一致）
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        // 接入页未列：hy3 与 hy3-preview 同模型（preview 调用自动路由至
+        // hy3），reasoning/口径随接入页 hy3-preview；maxTokens 按平台列表
+        {
+          id: "hy3",
+          name: "Hy3",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 131072,
+        },
+        {
+          id: "hy3-preview",
+          name: "Hy3 Preview",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 131072,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        defaultValue: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "tencent-tokenplan/tc-code-latest" },
+      modelCatalog: {
+        "tencent-tokenplan/tc-code-latest": { alias: "Auto" },
+      },
+    },
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：Auto
+    // 调用 ID 是 auto（≠国内 tc-code-latest），阵容不同（无 GLM-5/5.1/
+    // Hy3）。端点用国际站文档钦定的 tencentcloudmaas.com 域；Key 按站独立。
+    // 个人版无国际站专属 OpenClaw 接入页：auto/glm-5.2/minimax-m3 取自
+    // 企业版接入页（1300/81503）口径、deepseek 取自国内个人版接入页
+    //（1823/130062）口径，cost 全零；kimi-k2.6 接入页未列，maxTokens 按
+    // 平台模型列表页（1300/78934，256k）
+    name: "Tencent Token Plan (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      baseUrl: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        // 接入页未列：maxTokens 按平台列表（256k）；reasoning 同族接入页口径
+        {
+          id: "kimi-k2.6",
+          name: "Kimi K2.6",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
+        {
+          id: "deepseek-v4-pro-202606",
+          name: "DeepSeek V4 Pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1000000,
+          maxTokens: 384000,
+        },
+        {
+          id: "deepseek-v4-flash-202605",
+          name: "DeepSeek V4 Flash",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1000000,
+          maxTokens: 384000,
+        },
+        {
+          id: "minimax-m3",
+          name: "MiniMax M3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 32768,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "tencent-tokenplan-intl/auto" },
+      modelCatalog: {
+        "tencent-tokenplan-intl/auto": { alias: "Auto" },
+      },
+    },
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版，广州地域）：
+    // 模型条目照官方企业版 OpenClaw 接入页（1300/81503，Pro 块）原样
+    //（cost 全零、ctx/maxTokens 为官方 OpenClaw 口径）；glm-5/minimax-m2.5/
+    // deepseek 带日期对取个人版接入页（1823/130062）口径；接入页未列的
+    // glm-5.3/glm-5.1/glm-5-turbo/kimi-k2.6/minimax-m2.7/deepseek-*-0731/
+    // -0813 按平台模型列表页（1300/78934）补 maxTokens、reasoning 随同族
+    // 接入页口径（全 false）。kimi-k2.5 官方 2026-08-31 下线不收；
+    // minimax-m2.5 文档已除名但接入页仍列且真 Key 实测可用，照实收录
+    name: "Tencent Token Plan Enterprise Pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      baseUrl: "https://tokenhub.tencentmaas.com/plan/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "glm-5",
+          name: "GLM-5",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 202752,
+          maxTokens: 16384,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "glm-5.1",
+          name: "GLM-5.1",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "glm-5-turbo",
+          name: "GLM-5 Turbo",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
+        {
+          id: "kimi-k2.7-code-highspeed",
+          name: "Kimi K2.7 Code HighSpeed",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
+        // 接入页未列：maxTokens 按平台列表（256k）
+        {
+          id: "kimi-k2.6",
+          name: "Kimi K2.6",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "minimax-m2.7",
+          name: "MiniMax M2.7",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 200000,
+          maxTokens: 131072,
+        },
+        {
+          id: "minimax-m3",
+          name: "MiniMax M3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 32768,
+        },
+        {
+          id: "minimax-m2.5",
+          name: "MiniMax M2.5",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        {
+          id: "deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        // 接入页未列：maxTokens 按平台列表（384k，与企业版接入页同口径）
+        {
+          id: "deepseek-v4-flash-0731",
+          name: "DeepSeek V4 Flash 0731 GA",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        // 接入页未列：maxTokens 按平台列表（384k，与企业版接入页同口径）
+        {
+          id: "deepseek-v4-pro-0813",
+          name: "DeepSeek V4 Pro 0813 GA",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v4-flash-202605",
+          name: "DeepSeek V4 Flash Official",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v4-pro-202606",
+          name: "DeepSeek V4 Pro Official",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/plan/v3",
+        defaultValue: "https://tokenhub.tencentmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "tencent-tokenplan-epro/auto" },
+      modelCatalog: {
+        "tencent-tokenplan-epro/auto": { alias: "Auto" },
+      },
+    },
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
+    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）。
+    // 模型条目照官方企业版 OpenClaw 接入页（1300/81503，Pro 块）原样
+    //（cost 全零）；接入页未列的 glm-5.3/deepseek-*-0731/-0813 按平台
+    // 模型列表页（1300/78934）补 maxTokens、reasoning 随同族口径
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      baseUrl: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+        // 接入页未列：maxTokens 按平台列表（128k）
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "minimax-m3",
+          name: "MiniMax M3",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 32768,
+        },
+        {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
+        {
+          id: "kimi-k2.7-code-highspeed",
+          name: "Kimi K2.7 Code HighSpeed",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
+        {
+          id: "deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        // 接入页未列：maxTokens 按平台列表（384k，与企业版接入页同口径）
+        {
+          id: "deepseek-v4-flash-0731",
+          name: "DeepSeek V4 Flash 0731 GA",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        // 接入页未列：maxTokens 按平台列表（384k，与企业版接入页同口径）
+        {
+          id: "deepseek-v4-pro-0813",
+          name: "DeepSeek V4 Pro 0813 GA",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v4-flash-202605",
+          name: "DeepSeek V4 Flash Official",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v4-pro-202606",
+          name: "DeepSeek V4 Pro Official",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "tencent-tokenplan-epro-intl/auto" },
+      modelCatalog: {
+        "tencent-tokenplan-epro-intl/auto": { alias: "Auto" },
+      },
+    },
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型。
+    // 条目照官方企业版 OpenClaw 接入页（1300/81503，Lite 块）原样
+    name: "Tencent Token Plan Enterprise Lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      baseUrl: "https://tokenhub.tencentmaas.com/plan/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/plan/v3",
+        defaultValue: "https://tokenhub.tencentmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "tencent-tokenplan-elite/auto" },
+      modelCatalog: {
+        "tencent-tokenplan-elite/auto": { alias: "Auto" },
+      },
+    },
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
+    // Global），仅 Auto 模型。条目照官方企业版 OpenClaw 接入页
+    //（1300/81503，Lite 块）原样
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      baseUrl: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "auto",
+          name: "Auto",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 196608,
+          maxTokens: 32768,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "tencent-tokenplan-elite-intl/auto" },
+      modelCatalog: {
+        "tencent-tokenplan-elite-intl/auto": { alias: "Auto" },
+      },
+    },
+  },
+  {
+    // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）。模型
+    // 条目照官方 OpenClaw 接入页（2026-07-22 版）原样：cost/窗口 98304/
+    // maxTokens 65536 均为官方钦定的 OpenClaw 口径（≠平台模型列表页 1M，
+    // 与智谱预设 128000≠平台 200K 同款惯例，勿按平台口径"修正"）
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    settingsConfig: {
+      baseUrl: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-v4-pro",
+          name: "deepseek-v4-pro",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0.0025, output: 0.01, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 98304,
+          maxTokens: 65536,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        defaultValue: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qianfan-tokenplan/deepseek-v4-pro" },
+      modelCatalog: {
+        "qianfan-tokenplan/deepseek-v4-pro": { alias: "DeepSeek" },
+      },
+    },
+  },
+  {
     name: "Qwen Coder",
     websiteUrl: "https://bailian.console.aliyun.com",
     apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
@@ -1729,6 +2634,212 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     suggestedDefaults: {
       model: { primary: "qwen/qwen3.5-plus" },
       modelCatalog: { "qwen/qwen3.5-plus": { alias: "Qwen" } },
+    },
+  },
+  // ===== QwenCloud（DashScope 国际站）=====
+  // 三条线都走 anthropic-messages，地址比 Claude Code 的多一段 /v1。
+  // modelCatalog 必须逐条覆盖 models：OpenClaw 把 agents.defaults.models
+  // 当白名单，漏写的模型会在客户端里被隐藏。
+  {
+    name: "QwenCloud",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      baseUrl: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "qwen3.7-max",
+          name: "Qwen3.7 Max",
+          input: ["text"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3.7-plus",
+          name: "Qwen3.7 Plus",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3.6-plus",
+          name: "Qwen3.6 Plus",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
+        defaultValue: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qwencloud/qwen3.7-max" },
+      modelCatalog: {
+        "qwencloud/qwen3.7-max": { alias: "Qwen3.7 Max" },
+        "qwencloud/qwen3.7-plus": { alias: "Qwen3.7 Plus" },
+        "qwencloud/qwen3.6-plus": { alias: "Qwen3.6 Plus" },
+      },
+    },
+  },
+  {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      baseUrl: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "qwen3.7-plus",
+          name: "Qwen3.7 Plus",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3.6-plus",
+          name: "Qwen3.6 Plus",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3-coder-plus",
+          name: "Qwen3 Coder Plus",
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 65536,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qwencloud-coding/qwen3.7-plus" },
+      modelCatalog: {
+        "qwencloud-coding/qwen3.7-plus": { alias: "Qwen3.7 Plus" },
+        "qwencloud-coding/qwen3.6-plus": { alias: "Qwen3.6 Plus" },
+        "qwencloud-coding/qwen3-coder-plus": { alias: "Qwen3 Coder Plus" },
+      },
+    },
+  },
+  {
+    name: "QwenCloud Token Plan",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      baseUrl:
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "qwen3.8-max",
+          name: "Qwen3.8 Max",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 983616,
+          maxTokens: 131072,
+        },
+        {
+          id: "qwen3.8-flash",
+          name: "Qwen3.8 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 983616,
+          maxTokens: 131072,
+        },
+        {
+          id: "qwen3.7-max",
+          name: "Qwen3.7 Max",
+          input: ["text"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3.7-plus",
+          name: "Qwen3.7 Plus",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3.6-plus",
+          name: "Qwen3.6 Plus",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3.6-flash",
+          name: "Qwen3.6 Flash",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 32768,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder:
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qwencloud-token-plan/qwen3.8-max" },
+      modelCatalog: {
+        "qwencloud-token-plan/qwen3.8-max": { alias: "Qwen3.8 Max" },
+        "qwencloud-token-plan/qwen3.8-flash": { alias: "Qwen3.8 Flash" },
+        "qwencloud-token-plan/qwen3.7-max": { alias: "Qwen3.7 Max" },
+        "qwencloud-token-plan/qwen3.7-plus": { alias: "Qwen3.7 Plus" },
+        "qwencloud-token-plan/qwen3.6-plus": { alias: "Qwen3.6 Plus" },
+        "qwencloud-token-plan/qwen3.6-flash": { alias: "Qwen3.6 Flash" },
+      },
     },
   },
   {
@@ -2107,8 +3218,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -2132,11 +3243,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "aihubmix/claude-opus-4-8",
+        primary: "aihubmix/claude-opus-5",
         fallbacks: ["aihubmix/claude-sonnet-5"],
       },
       modelCatalog: {
-        "aihubmix/claude-opus-4-8": { alias: "Opus" },
+        "aihubmix/claude-opus-5": { alias: "Opus" },
         "aihubmix/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -2151,8 +3262,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "anthropic/claude-opus-4.8",
-          name: "Claude Opus 4.8",
+          id: "anthropic/claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
         },
         {
@@ -2173,11 +3284,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "cherryin/anthropic/claude-opus-4.8",
+        primary: "cherryin/anthropic/claude-opus-5",
         fallbacks: ["cherryin/anthropic/claude-sonnet-5"],
       },
       modelCatalog: {
-        "cherryin/anthropic/claude-opus-4.8": { alias: "Opus" },
+        "cherryin/anthropic/claude-opus-5": { alias: "Opus" },
         "cherryin/anthropic/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -2192,8 +3303,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "anthropic/claude-opus-4.8",
-          name: "Claude Opus 4.8",
+          id: "anthropic/claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -2217,11 +3328,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "openrouter/anthropic/claude-opus-4.8",
+        primary: "openrouter/anthropic/claude-opus-5",
         fallbacks: ["openrouter/anthropic/claude-sonnet-5"],
       },
       modelCatalog: {
-        "openrouter/anthropic/claude-opus-4.8": { alias: "Opus" },
+        "openrouter/anthropic/claude-opus-5": { alias: "Opus" },
         "openrouter/anthropic/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
@@ -2254,8 +3365,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           cost: { input: 1.75, output: 14, cacheRead: 0.175 },
         },
         {
-          id: "google/gemini-3.5-flash",
-          name: "Gemini 3.5 Flash",
+          id: "google/gemini-3.6-flash",
+          name: "Gemini 3.6 Flash",
           contextWindow: 1000000,
           cost: { input: 1.5, output: 9, cacheRead: 0.15 },
         },
@@ -2280,13 +3391,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         primary: "therouter/anthropic/claude-sonnet-5",
         fallbacks: [
           "therouter/openai/gpt-5.2",
-          "therouter/google/gemini-3.5-flash",
+          "therouter/google/gemini-3.6-flash",
         ],
       },
       modelCatalog: {
         "therouter/anthropic/claude-sonnet-5": { alias: "Sonnet" },
         "therouter/openai/gpt-5.2": { alias: "GPT-5.2" },
-        "therouter/google/gemini-3.5-flash": { alias: "Gemini Flash" },
+        "therouter/google/gemini-3.6-flash": { alias: "Gemini Flash" },
         "therouter/openai/gpt-5.3-codex": { alias: "Codex" },
         "therouter/qwen/qwen3-coder-480b": { alias: "Qwen Coder" },
       },
@@ -2302,8 +3413,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "ZhipuAI/GLM-5.1",
-          name: "GLM-5.1",
+          id: "ZhipuAI/GLM-5.2",
+          name: "GLM-5.2",
           contextWindow: 128000,
           cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
         },
@@ -2326,8 +3437,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "modelscope/ZhipuAI/GLM-5.1" },
-      modelCatalog: { "modelscope/ZhipuAI/GLM-5.1": { alias: "GLM" } },
+      model: { primary: "modelscope/ZhipuAI/GLM-5.2" },
+      modelCatalog: { "modelscope/ZhipuAI/GLM-5.2": { alias: "GLM" } },
     },
   },
   {
@@ -2406,8 +3517,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "claude-opus-4-8",
+          id: "claude-opus-5",
+          name: "claude-opus-5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
@@ -2436,11 +3547,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "pipellm/claude-opus-4-8",
+        primary: "pipellm/claude-opus-5",
         fallbacks: ["pipellm/claude-sonnet-5"],
       },
       modelCatalog: {
-        "pipellm/claude-opus-4-8": { alias: "Opus" },
+        "pipellm/claude-opus-5": { alias: "Opus" },
         "pipellm/claude-sonnet-5": { alias: "Sonnet" },
         "pipellm/claude-haiku-4-5-20251001": { alias: "Haiku" },
       },
@@ -2472,8 +3583,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "gpt-5.3-codex",
         },
         {
-          id: "gpt-5.5",
-          name: "gpt-5.5",
+          id: "gpt-5.6-sol",
+          name: "gpt-5.6-sol",
         },
         {
           id: "gpt-5.2-codex",
@@ -2498,11 +3609,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     suggestedDefaults: {
       model: {
         primary: "eflowcode/gpt-5.3-codex",
-        fallbacks: ["eflowcode/gpt-5.5", "eflowcode/gpt-5.2-codex"],
+        fallbacks: ["eflowcode/gpt-5.6-sol", "eflowcode/gpt-5.2-codex"],
       },
       modelCatalog: {
         "eflowcode/gpt-5.3-codex": { alias: "gpt-5.3-codex" },
-        "eflowcode/gpt-5.5": { alias: "gpt-5.5" },
+        "eflowcode/gpt-5.6-sol": { alias: "gpt-5.6-sol" },
         "eflowcode/gpt-5.2-codex": { alias: "gpt-5.2-codex" },
         "eflowcode/gpt-5.2": { alias: "gpt-5.2" },
       },
@@ -2518,8 +3629,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "bedrock-converse-stream",
       models: [
         {
-          id: "anthropic.claude-opus-4-8",
-          name: "Claude Opus 4.8",
+          id: "anthropic.claude-opus-5",
+          name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
         },
@@ -2540,5 +3651,74 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     category: "cloud_provider",
     icon: "aws",
     iconColor: "#FF9900",
+  },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      baseUrl: "https://api.jiekou.ai/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 10, output: 50 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "jiekou/claude-fable-5" },
+      modelCatalog: {
+        "jiekou/claude-fable-5": { alias: "Claude Fable 5" },
+      },
+    },
+  },
+  {
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    settingsConfig: {
+      baseUrl: "https://api.aicodewith.ai/chatgpt/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "aicodewith/gpt-5.6-sol" },
+      modelCatalog: {
+        "aicodewith/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+      },
+    },
   },
 ];

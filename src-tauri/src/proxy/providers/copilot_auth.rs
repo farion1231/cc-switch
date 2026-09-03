@@ -340,6 +340,10 @@ pub struct GitHubAccount {
     /// GitHub 域名（github.com 或 GHES 域名）
     #[serde(default = "default_github_domain")]
     pub github_domain: String,
+    /// 托管账号是否需要重新登录以补全缺失的凭据。
+    /// Codex：缺少持久化 id_token 的旧账号为 true；Copilot 恒为 false。
+    #[serde(default)]
+    pub reauth_required: bool,
 }
 
 impl From<&GitHubAccountData> for GitHubAccount {
@@ -350,6 +354,7 @@ impl From<&GitHubAccountData> for GitHubAccount {
             avatar_url: data.user.avatar_url.clone(),
             authenticated_at: data.authenticated_at,
             github_domain: data.github_domain.clone(),
+            reauth_required: false,
         }
     }
 }
@@ -543,6 +548,7 @@ impl CopilotAuthManager {
             avatar_url: user.avatar_url.clone(),
             authenticated_at: now,
             github_domain,
+            reauth_required: false,
         };
 
         {
@@ -1546,6 +1552,7 @@ mod tests {
                 avatar_url: Some("https://example.com/avatar.png".to_string()),
                 authenticated_at: 1234567890,
                 github_domain: DEFAULT_GITHUB_DOMAIN.to_string(),
+                reauth_required: false,
             }],
             default_account_id: Some("12345".to_string()),
             migration_error: None,

@@ -110,6 +110,9 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
             type="button"
             role="combobox"
             aria-expanded={open}
+            aria-label={t("profiles.switcherAriaLabel", {
+              name: currentProfile?.name ?? t("profiles.none"),
+            })}
             title={t(`profiles.switcherTooltip.${scope}`)}
             className={cn(
               "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium transition-colors",
@@ -128,9 +131,10 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
           side="bottom"
           align="start"
           sideOffset={6}
+          aria-label={t(`profiles.switcherTooltip.${scope}`)}
           className="z-[100] w-64 p-0"
         >
-          <Command>
+          <Command label={t("profiles.searchPlaceholder")}>
             <CommandInput placeholder={t("profiles.searchPlaceholder")} />
             <CommandList>
               <CommandEmpty>{t("profiles.empty")}</CommandEmpty>

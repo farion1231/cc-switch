@@ -32,6 +32,7 @@ import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
 import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
+import { ModelsDevAutoSyncPanel } from "./ModelsDevAutoSyncPanel";
 
 const PRICING_APPS = ["claude", "codex", "gemini", "grokbuild"] as const;
 type PricingApp = (typeof PRICING_APPS)[number];
@@ -52,7 +53,7 @@ export function PricingConfigPanel() {
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-  // 三个应用的配置状态
+  // All applications with a first-class usage pipeline.
   const [appConfigs, setAppConfigs] = useState<AppConfigState>({
     claude: { multiplier: "1", source: "response" },
     codex: { multiplier: "1", source: "response" },
@@ -341,6 +342,8 @@ export function PricingConfigPanel() {
 
       {/* 模型定价配置 */}
       <div className="space-y-4">
+        <ModelsDevAutoSyncPanel />
+
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-medium text-muted-foreground">
             {t("usage.modelPricingDesc")} {t("usage.perMillion")}

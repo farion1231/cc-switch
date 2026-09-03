@@ -1,17 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { useDarkMode } from "@/hooks/useDarkMode";
 import type { Prompt, AppId } from "@/lib/api";
 
 interface PromptFormPanelProps {
   appId: AppId;
   editingId?: string;
   initialData?: Prompt;
-  onSave: (id: string, prompt: Prompt) => Promise<void>;
+  onSave: (id: string, prompt: Prompt) => Promise<void | boolean>;
   onClose: () => void;
 }
 
@@ -32,29 +33,16 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     grokbuild: "AGENTS.md",
     opencode: "AGENTS.md",
     openclaw: "AGENTS.md",
-    hermes: "AGENTS.md",
+    hermes: "SOUL.md",
+    pi: "AGENTS.md",
   };
   const filename = filenameMap[appId];
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
-
-  useEffect(() => {
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
+  const savingRef = useRef(false);
+  const isDarkMode = useDarkMode();
 
   useEffect(() => {
     if (initialData) {
@@ -65,10 +53,11 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   }, [initialData]);
 
   const handleSave = async () => {
-    if (!name.trim()) {
+    if (savingRef.current || !name.trim()) {
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
     try {
       const id = editingId || `prompt-${Date.now()}`;
@@ -77,18 +66,25 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
         id,
         name: name.trim(),
         description: description.trim() || undefined,
-        content: content.trim(),
+        content: appId === "pi" ? content : content.trim(),
         enabled: initialData?.enabled || false,
         createdAt: initialData?.createdAt || timestamp,
         updatedAt: timestamp,
       };
-      await onSave(id, prompt);
-      onClose();
+      const saved = await onSave(id, prompt);
+      if (saved !== false) {
+        onClose();
+      }
     } catch (error) {
       // Error handled by hook
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
+  };
+
+  const handleClose = () => {
+    if (!savingRef.current) onClose();
   };
 
   const title = editingId
@@ -99,7 +95,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     <FullScreenPanel
       isOpen={true}
       title={title}
-      onClose={onClose}
+      onClose={handleClose}
       footer={
         <Button
           type="button"
@@ -120,6 +116,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
             id="name"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            disabled={saving}
             placeholder={t("prompts.namePlaceholder")}
             className="mt-2"
           />
@@ -133,6 +130,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
             id="description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            disabled={saving}
             placeholder={t("prompts.descriptionPlaceholder")}
             className="mt-2"
           />
@@ -147,6 +145,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
             onChange={setContent}
             placeholder={t("prompts.contentPlaceholder", { filename })}
             darkMode={isDarkMode}
+            readOnly={saving}
             minHeight="167px"
           />
         </div>
