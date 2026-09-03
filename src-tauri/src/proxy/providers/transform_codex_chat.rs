@@ -288,6 +288,10 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
+    // Responses 的 detail=original 对 Chat Completions 非法（枚举仅 auto/low/high），
+    // 严格校验的上游会 400。在最终 messages 上统一归一化 original -> high，
+    // user 直传与 tool/history 迁移的图片都能覆盖；auto/low/high 不动。
+    normalize_chat_image_details(&mut result["messages"]);
 
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
     if let Some(max_tokens) = body.get("max_output_tokens") {
@@ -577,6 +581,45 @@ fn collapse_system_messages_to_head(messages: Vec<Value>) -> Vec<Value> {
     }
     out.extend(rest);
     out
+}
+
+/// Recursively rewrite `image_url.detail = "original"` (Responses-only value)
+/// to `"high"` in final Chat Completions messages. `auto`/`low`/`high` are
+/// untouched; `detail` is never removed. Returns the count of rewritten parts.
+fn normalize_chat_image_details(value: &mut Value) -> usize {
+    match value {
+        Value::Array(items) => items
+            .iter_mut()
+            .map(normalize_chat_image_details)
+            .sum(),
+
+        Value::Object(object) => {
+            let mut changed = 0;
+
+            if object.get("type").and_then(Value::as_str) == Some("image_url") {
+                if let Some(image_url) = object
+                    .get_mut("image_url")
+                    .and_then(Value::as_object_mut)
+                {
+                    if image_url.get("detail").and_then(Value::as_str) == Some("original") {
+                        image_url.insert(
+                            "detail".to_string(),
+                            Value::String("high".to_string()),
+                        );
+                        changed += 1;
+                    }
+                }
+            }
+
+            for nested in object.values_mut() {
+                changed += normalize_chat_image_details(nested);
+            }
+
+            changed
+        }
+
+        _ => 0,
+    }
 }
 
 fn instruction_text(value: &Value) -> String {
@@ -3718,6 +3761,82 @@ mod tests {
                 None => assert!(image["image_url"].get("detail").is_none()),
             }
         }
+    }
+
+    #[test]
+    fn responses_request_to_chat_normalizes_original_image_detail_to_high() {
+        // original -> high；auto/low/high 原样保留。同时覆盖 user 直传
+        // 与 tool/history 迁移的图片。
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": {
+                                "url": "https://example.com/original.png",
+                                "detail": "original"
+                            }
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": {
+                                "url": "https://example.com/auto.png",
+                                "detail": "auto"
+                            }
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": {
+                                "url": "https://example.com/low.png",
+                                "detail": "low"
+                            }
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": {
+                                "url": "https://example.com/high.png",
+                                "detail": "high"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_img",
+                    "name": "view_image",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_img",
+                    "output": {
+                        "type": "input_image",
+                        "image_url": "https://example.com/history.png",
+                        "detail": "original"
+                    }
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // user 消息直传的四张图：original 归一为 high，其余枚举不动。
+        let user_content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(user_content[0]["type"], "image_url");
+        assert_eq!(user_content[0]["image_url"]["detail"], "high");
+        assert_eq!(user_content[1]["image_url"]["detail"], "auto");
+        assert_eq!(user_content[2]["image_url"]["detail"], "low");
+        assert_eq!(user_content[3]["image_url"]["detail"], "high");
+
+        // tool output 迁移出的图片（tool_media 的 merge_top_level_detail
+        // 复制路径），最终合成 user 消息里同样被归一化。
+        let media_content = messages[3]["content"].as_array().unwrap();
+        assert_eq!(media_content[1]["type"], "image_url");
+        assert_eq!(media_content[1]["image_url"]["detail"], "high");
     }
 
     #[test]
