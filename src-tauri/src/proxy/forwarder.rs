@@ -172,6 +172,8 @@ pub struct RequestForwarder {
     session_id: String,
     /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
     session_client_provided: bool,
+    /// 请求模型已由确定性路由解析时，保留其显式 upstreamModel。
+    bypass_model_mapping: bool,
     /// 整流器配置
     rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -249,6 +251,7 @@ impl RequestForwarder {
         current_provider_id_at_start: String,
         session_id: String,
         session_client_provided: bool,
+        bypass_model_mapping: bool,
         streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
@@ -270,6 +273,7 @@ impl RequestForwarder {
             current_provider_id_at_start,
             session_id,
             session_client_provided,
+            bypass_model_mapping,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -1242,10 +1246,11 @@ impl RequestForwarder {
             )?;
         }
 
-        // 应用模型映射（独立于格式转换）
-        // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
-        // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
-        let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
+        // 应用模型映射（独立于格式转换）。确定性 Claude 路由已把公开 ID
+        // 解析成显式 upstreamModel；传统 provider 默认映射不能再次覆盖它。
+        let mapped_body = if self.bypass_model_mapping {
+            body.clone()
+        } else if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
         } else {
@@ -3774,6 +3779,7 @@ mod tests {
             current_provider_id_at_start: String::new(),
             session_id: String::new(),
             session_client_provided: false,
+            bypass_model_mapping: false,
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
             copilot_optimizer_config: CopilotOptimizerConfig::default(),

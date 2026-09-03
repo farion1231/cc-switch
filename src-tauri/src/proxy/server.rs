@@ -1042,6 +1042,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claude_router_bypasses_provider_default_model_mapping() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedClaudeRequest>::new()));
+        let (mock_addr, mock_handle) = spawn_mock_anthropic_upstream(captured.clone()).await;
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let mut provider = claude_router_provider(
+            "router-mapped",
+            "Mapped",
+            &format!("http://{mock_addr}"),
+            "router-token",
+            None,
+            Some(enabled_router_config(vec![router_model(
+                "fast",
+                "upstream-fast",
+                "Fast",
+            )])),
+        );
+        provider.settings_config["env"]["ANTHROPIC_MODEL"] =
+            Value::String("legacy-default".to_string());
+        db.save_provider("claude", &provider)
+            .expect("save mapped provider");
+
+        let proxy = test_proxy(db);
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let response = reqwest::Client::new()
+            .post(routed_messages_url(proxy_info.port))
+            .json(&routed_request_body(
+                &public_model_id("router-mapped", "fast"),
+                false,
+            ))
+            .send()
+            .await
+            .expect("send routed request");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+        let captured = captured.lock().await;
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].model.as_deref(), Some("upstream-fast"));
+    }
+
+    #[tokio::test]
     #[serial]
     async fn claude_router_concurrent_requests_keep_routes_and_current_provider() {
         let captured_a = Arc::new(Mutex::new(Vec::<CapturedClaudeRequest>::new()));

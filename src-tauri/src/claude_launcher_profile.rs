@@ -59,30 +59,70 @@ fn metadata_matches_dir(metadata: &ClaudeLauncherProfileMetadata, config_dir: &P
         && profile_dir(&metadata.provider_id) == config_dir
 }
 
+fn scrub_profile_secrets(config_dir: &Path) -> Result<(), AppError> {
+    let mut failures = Vec::new();
+    for secret_path in [
+        config_dir.join("settings.json"),
+        config_dir.join(".claude.json"),
+    ] {
+        match fs::remove_file(&secret_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => failures.push(format!("{}: {error}", secret_path.display())),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "Claude 托管配置凭证清理失败: {}",
+            failures.join("; ")
+        )))
+    }
+}
+
 pub(crate) fn sync_profile(state: &AppState, provider: &Provider) -> Result<PathBuf, AppError> {
     let config_dir = profile_dir(&provider.id);
     fs::create_dir_all(&config_dir).map_err(|source| AppError::io(&config_dir, source))?;
-
-    let effective =
-        build_effective_settings_with_common_config(state.db.as_ref(), &AppType::Claude, provider)?;
-    let settings = sanitize_claude_settings_for_live(&effective);
-    write_private_json(&config_dir.join("settings.json"), &settings)?;
-
-    let servers: HashMap<String, Value> = McpService::get_all_servers(state)?
-        .into_iter()
-        .filter(|(_, server)| server.apps.is_enabled_for(&AppType::Claude))
-        .map(|(id, server)| (id, server.server))
-        .collect();
-    let mcp_path = config_dir.join(".claude.json");
-    crate::claude_mcp::set_mcp_servers_map_at(&mcp_path, &servers)?;
-    crate::claude_mcp::set_has_completed_onboarding_at(&mcp_path)?;
-
-    let metadata = ClaudeLauncherProfileMetadata {
+    let marker = marker_path(&config_dir);
+    let mut metadata = ClaudeLauncherProfileMetadata {
         provider_id: provider.id.clone(),
         provider_name: provider.name.clone(),
-        retired: false,
+        retired: true,
     };
-    write_private_json(&marker_path(&config_dir), &metadata)?;
+
+    let result = (|| -> Result<(), AppError> {
+        // Retire before any database-backed preparation. A refresh failure must
+        // never leave an old active marker authorizing stale credentials.
+        write_private_json(&marker, &metadata)?;
+        let effective = build_effective_settings_with_common_config(
+            state.db.as_ref(),
+            &AppType::Claude,
+            provider,
+        )?;
+        let settings = sanitize_claude_settings_for_live(&effective);
+        let servers: HashMap<String, Value> = McpService::get_all_servers(state)?
+            .into_iter()
+            .filter(|(_, server)| server.apps.is_enabled_for(&AppType::Claude))
+            .map(|(id, server)| (id, server.server))
+            .collect();
+
+        write_private_json(&config_dir.join("settings.json"), &settings)?;
+        let mcp_path = config_dir.join(".claude.json");
+        crate::claude_mcp::set_mcp_servers_map_at(&mcp_path, &servers)?;
+        crate::claude_mcp::set_has_completed_onboarding_at(&mcp_path)?;
+        metadata.retired = false;
+        write_private_json(&marker, &metadata)
+    })();
+
+    if let Err(error) = result {
+        return match scrub_profile_secrets(&config_dir) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(AppError::Config(format!(
+                "Claude 托管配置创建失败: {error}; {cleanup_error}"
+            ))),
+        };
+    }
     Ok(config_dir)
 }
 
@@ -91,7 +131,18 @@ pub(crate) fn refresh_profile_if_present(
     provider_id: &str,
 ) -> Result<(), AppError> {
     let config_dir = profile_dir(provider_id);
-    if !marker_path(&config_dir).is_file() {
+    let marker = marker_path(&config_dir);
+    if !marker.is_file() {
+        return Ok(());
+    }
+    let metadata = read_metadata(&marker)?;
+    if metadata.provider_id != provider_id || !metadata_matches_dir(&metadata, &config_dir) {
+        return Err(AppError::Config(format!(
+            "Claude 托管配置标记与目录不匹配: {}",
+            marker.display()
+        )));
+    }
+    if metadata.retired {
         return Ok(());
     }
     let provider = state
@@ -155,6 +206,39 @@ pub(crate) fn list_profiles() -> Result<Vec<ClaudeLauncherProfile>, AppError> {
     Ok(profiles)
 }
 
+/// Reconcile managed launch profiles after a database image is replaced.
+///
+/// Active profiles remain derived from the restored provider table: existing
+/// providers are refreshed, while removed providers are retired and scrubbed.
+/// Retired profiles stay retired until an explicit Launch calls `sync_profile`.
+pub(crate) fn reconcile_profiles(state: &AppState) -> Result<(), AppError> {
+    let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+    let mut failures = Vec::new();
+
+    for profile in list_profiles()? {
+        if profile.metadata.retired {
+            continue;
+        }
+        let provider_id = &profile.metadata.provider_id;
+        let result = match providers.get(provider_id) {
+            Some(provider) => sync_profile(state, provider).map(|_| ()),
+            None => retire_profile(provider_id),
+        };
+        if let Err(error) = result {
+            failures.push(format!("{provider_id}: {error}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "Claude 托管配置同步失败: {}",
+            failures.join("; ")
+        )))
+    }
+}
+
 pub(crate) fn retire_profile(provider_id: &str) -> Result<(), AppError> {
     let config_dir = profile_dir(provider_id);
     let marker = marker_path(&config_dir);
@@ -172,17 +256,7 @@ pub(crate) fn retire_profile(provider_id: &str) -> Result<(), AppError> {
     metadata.retired = true;
     write_private_json(&marker, &metadata)?;
 
-    for secret_path in [
-        config_dir.join("settings.json"),
-        config_dir.join(".claude.json"),
-    ] {
-        match fs::remove_file(&secret_path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => return Err(AppError::io(&secret_path, source)),
-        }
-    }
-    Ok(())
+    scrub_profile_secrets(&config_dir)
 }
 
 #[cfg(test)]
@@ -353,6 +427,51 @@ mod tests {
 
     #[test]
     #[serial]
+    fn failed_profile_creation_scrubs_partially_written_secrets() {
+        let _home = TestHome::new();
+        let state = state_with_mcp();
+        let provider = provider("provider-a", "Provider A", "secret-a");
+        let dir = profile_dir(&provider.id);
+        fs::create_dir_all(dir.join(".claude.json"))
+            .expect("block MCP projection after settings are written");
+
+        assert!(sync_profile(&state, &provider).is_err());
+
+        assert!(!dir.join("settings.json").exists());
+        assert!(!dir.join(".claude.json").is_file());
+        assert_eq!(
+            read_json(&dir.join(PROFILE_MARKER_FILENAME))["retired"],
+            true
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn profile_preparation_failure_retires_and_scrubs_active_profile() {
+        let _home = TestHome::new();
+        let state = state_with_mcp();
+        let provider = provider("provider-a", "Provider A", "secret-a");
+        let dir = sync_profile(&state, &provider).expect("create active profile");
+
+        let db = state.db.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = db.conn.lock().expect("lock database before poisoning");
+            panic!("poison database mutex");
+        }));
+        assert!(state.db.conn.is_poisoned());
+
+        assert!(sync_profile(&state, &provider).is_err());
+
+        assert!(!dir.join("settings.json").exists());
+        assert!(!dir.join(".claude.json").exists());
+        assert_eq!(
+            read_json(&dir.join(PROFILE_MARKER_FILENAME))["retired"],
+            true
+        );
+    }
+
+    #[test]
+    #[serial]
     fn profiles_are_independent_and_refresh_is_scoped_to_one_provider() {
         let _home = TestHome::new();
         let state = state_with_mcp();
@@ -419,6 +538,33 @@ mod tests {
             .expect("save provider B");
         refresh_profile_if_present(&state, "provider-b").expect("skip missing B profile");
         assert!(!profile_dir("provider-b").exists());
+    }
+
+    #[test]
+    #[serial]
+    fn refresh_does_not_reactivate_a_retired_profile() {
+        let _home = TestHome::new();
+        let state = state_with_mcp();
+        let provider_a = provider("provider-a", "Provider A", "secret-a");
+        state
+            .db
+            .save_provider(AppType::Claude.as_str(), &provider_a)
+            .expect("save provider A");
+        let dir = sync_profile(&state, &provider_a).expect("create profile A");
+        retire_profile("provider-a").expect("retire profile A");
+
+        let mut updated_a = provider_a;
+        updated_a.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] =
+            Value::String("secret-a-updated".to_string());
+        state
+            .db
+            .save_provider(AppType::Claude.as_str(), &updated_a)
+            .expect("save updated provider A");
+        refresh_profile_if_present(&state, "provider-a").expect("skip retired profile");
+
+        assert!(!dir.join("settings.json").exists());
+        assert!(!dir.join(".claude.json").exists());
+        assert!(list_profiles().expect("list profiles")[0].metadata.retired);
     }
 
     #[test]

@@ -64,6 +64,8 @@ pub struct RequestContext {
     pub session_id: String,
     /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
     pub session_client_provided: bool,
+    /// 确定性路由已选定真实上游模型，不再应用供应商的传统默认模型映射。
+    bypass_model_mapping: bool,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -202,6 +204,7 @@ impl RequestContext {
             app_type,
             session_id: init.session_id,
             session_client_provided: init.session_client_provided,
+            bypass_model_mapping: false,
             rectifier_config: init.rectifier_config,
             optimizer_config: init.optimizer_config,
             copilot_optimizer_config: init.copilot_optimizer_config,
@@ -257,6 +260,7 @@ impl RequestContext {
             app_type,
             session_id: init.session_id,
             session_client_provided: init.session_client_provided,
+            bypass_model_mapping: true,
             rectifier_config: init.rectifier_config,
             optimizer_config: init.optimizer_config,
             copilot_optimizer_config: init.copilot_optimizer_config,
@@ -322,6 +326,7 @@ impl RequestContext {
             self.current_provider_id.clone(),
             self.session_id.clone(),
             self.session_client_provided,
+            self.bypass_model_mapping,
             first_byte_timeout,
             idle_timeout,
             self.rectifier_config.clone(),
