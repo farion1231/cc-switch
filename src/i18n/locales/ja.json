@@ -912,7 +912,9 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "codebuddy": "CodeBuddy",
+    "workbuddy": "WorkBuddy"
   },
   "pi": {
     "empty": {
