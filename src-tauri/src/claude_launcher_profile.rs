@@ -64,6 +64,7 @@ fn scrub_profile_secrets(config_dir: &Path) -> Result<(), AppError> {
     for secret_path in [
         config_dir.join("settings.json"),
         config_dir.join(".claude.json"),
+        config_dir.join(".credentials.json"),
     ] {
         match fs::remove_file(&secret_path) {
             Ok(()) => {}
@@ -154,6 +155,42 @@ pub(crate) fn refresh_profile_if_present(
             ))
         })?;
     sync_profile(state, &provider).map(|_| ())
+}
+
+/// Refresh every active managed Claude profile after shared Claude inputs change.
+///
+/// MCP edits do not pass through the Launch path, so profile projection must be
+/// refreshed here as well. Retired profiles stay retired and secret-free.
+pub(crate) fn refresh_active_profiles(state: &AppState) -> Result<(), AppError> {
+    let mut failures = Vec::new();
+
+    for profile in list_profiles()? {
+        if profile.metadata.retired {
+            continue;
+        }
+        let provider_id = profile.metadata.provider_id;
+        let result = state
+            .db
+            .get_provider_by_id(&provider_id, AppType::Claude.as_str())?
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "Claude 供应商不存在，无法刷新隔离配置: {provider_id}"
+                ))
+            })
+            .and_then(|provider| sync_profile(state, &provider).map(|_| ()));
+        if let Err(error) = result {
+            failures.push(format!("{provider_id}: {error}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "Claude 托管配置刷新失败: {}",
+            failures.join("; ")
+        )))
+    }
 }
 
 pub(crate) fn list_profiles() -> Result<Vec<ClaudeLauncherProfile>, AppError> {
@@ -569,6 +606,85 @@ mod tests {
 
     #[test]
     #[serial]
+    fn claude_mcp_mutations_refresh_active_profiles() {
+        let _home = TestHome::new();
+        let state = state_with_mcp();
+        let provider = provider("provider-a", "Provider A", "secret-a");
+        state
+            .db
+            .save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider A");
+        let dir = sync_profile(&state, &provider).expect("create profile A");
+
+        crate::services::McpService::upsert_server(
+            &state,
+            McpServer {
+                id: "late-mcp".to_string(),
+                name: "Late MCP".to_string(),
+                server: json!({"command": "late-mcp"}),
+                apps: McpApps {
+                    claude: true,
+                    ..McpApps::default()
+                },
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: Vec::new(),
+            },
+        )
+        .expect("add Claude MCP");
+        let mcp = read_json(&dir.join(".claude.json"));
+        assert_eq!(mcp["mcpServers"]["late-mcp"]["command"], "late-mcp");
+
+        crate::services::McpService::toggle_app(&state, "late-mcp", AppType::Claude, false)
+            .expect("disable Claude MCP");
+        let mcp = read_json(&dir.join(".claude.json"));
+        assert!(mcp["mcpServers"].get("late-mcp").is_none());
+
+        crate::services::McpService::delete_server(&state, "claude-mcp")
+            .expect("delete Claude MCP");
+        let mcp = read_json(&dir.join(".claude.json"));
+        assert!(mcp["mcpServers"].get("claude-mcp").is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn claude_mcp_mutation_does_not_reactivate_retired_profile() {
+        let _home = TestHome::new();
+        let state = state_with_mcp();
+        let provider = provider("provider-a", "Provider A", "secret-a");
+        state
+            .db
+            .save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider A");
+        let dir = sync_profile(&state, &provider).expect("create profile A");
+        retire_profile("provider-a").expect("retire profile A");
+
+        crate::services::McpService::upsert_server(
+            &state,
+            McpServer {
+                id: "late-mcp".to_string(),
+                name: "Late MCP".to_string(),
+                server: json!({"command": "late-mcp"}),
+                apps: McpApps {
+                    claude: true,
+                    ..McpApps::default()
+                },
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: Vec::new(),
+            },
+        )
+        .expect("add Claude MCP");
+
+        assert!(!dir.join("settings.json").exists());
+        assert!(!dir.join(".claude.json").exists());
+        assert!(list_profiles().expect("list profiles")[0].metadata.retired);
+    }
+
+    #[test]
+    #[serial]
     fn retire_profile_scrubs_secrets_and_preserves_projects_history() {
         let _home = TestHome::new();
 
@@ -578,11 +694,14 @@ mod tests {
         let history = dir.join("projects").join("repo").join("session.jsonl");
         fs::create_dir_all(history.parent().unwrap()).expect("create history dir");
         fs::write(&history, b"session-history").expect("write history");
+        fs::write(dir.join(".credentials.json"), b"{\"claudeAiOauth\":{}}")
+            .expect("write OAuth credentials");
 
         retire_profile("provider-a").expect("retire profile");
 
         assert!(!dir.join("settings.json").exists());
         assert!(!dir.join(".claude.json").exists());
+        assert!(!dir.join(".credentials.json").exists());
         assert_eq!(fs::read(history).unwrap(), b"session-history");
         let profiles = list_profiles().expect("list retired profiles");
         assert_eq!(profiles.len(), 1);

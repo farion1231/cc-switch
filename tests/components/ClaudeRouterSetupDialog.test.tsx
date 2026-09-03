@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildClaudeRouterBaseUrl,
   buildClaudeRouterVsCodeSettings,
   ClaudeRouterSetupDialog,
 } from "@/components/proxy/ClaudeRouterSetupDialog";
@@ -16,6 +17,7 @@ describe("ClaudeRouterSetupDialog", () => {
       <ClaudeRouterSetupDialog
         open
         onOpenChange={vi.fn()}
+        listenAddress="127.0.0.1"
         port={18888}
         exposedModelCount={3}
       />,
@@ -48,5 +50,16 @@ describe("ClaudeRouterSetupDialog", () => {
     expect(copied).toBe(buildClaudeRouterVsCodeSettings(18888));
     expect(copied).not.toContain("sk-provider-secret");
     expect(document.body.textContent).not.toContain("sk-provider-secret");
+  });
+  it.each([
+    ["127.0.0.1", "http://127.0.0.1:15721/claude-router"],
+    ["localhost", "http://127.0.0.1:15721/claude-router"],
+    ["0.0.0.0", "http://127.0.0.1:15721/claude-router"],
+    ["192.168.1.20", "http://192.168.1.20:15721/claude-router"],
+    ["::", "http://[::1]:15721/claude-router"],
+    ["::1", "http://[::1]:15721/claude-router"],
+    ["2001:db8::10", "http://[2001:db8::10]:15721/claude-router"],
+  ])("builds a reachable client URL for %s", (listenAddress, expected) => {
+    expect(buildClaudeRouterBaseUrl(listenAddress, 15721)).toBe(expected);
   });
 });

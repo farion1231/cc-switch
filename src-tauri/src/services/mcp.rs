@@ -24,6 +24,7 @@ impl McpService {
             .get(&server.id)
             .map(|s| s.apps.clone())
             .unwrap_or_default();
+        let affects_claude = prev_apps.claude || server.apps.claude;
 
         state.db.save_mcp_server(&server)?;
 
@@ -49,6 +50,9 @@ impl McpService {
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
+        if affects_claude {
+            crate::claude_launcher_profile::refresh_active_profiles(state)?;
+        }
 
         Ok(())
     }
@@ -62,6 +66,9 @@ impl McpService {
 
             // 从所有应用的 live 配置中移除
             Self::remove_server_from_all_apps(state, id, &server)?;
+            if server.apps.claude {
+                crate::claude_launcher_profile::refresh_active_profiles(state)?;
+            }
             Ok(true)
         } else {
             Ok(false)
@@ -84,6 +91,9 @@ impl McpService {
                 Self::sync_server_to_app(state, &server, &app)?;
             } else {
                 Self::remove_server_from_app(state, server_id, &app)?;
+            }
+            if app == AppType::Claude {
+                crate::claude_launcher_profile::refresh_active_profiles(state)?;
             }
         }
 

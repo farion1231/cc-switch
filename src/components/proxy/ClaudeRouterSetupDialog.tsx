@@ -11,8 +11,30 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export function buildClaudeRouterVsCodeSettings(port: number): string {
-  const baseUrl = `http://127.0.0.1:${port}/claude-router`;
+export function buildClaudeRouterBaseUrl(
+  listenAddress: string,
+  port: number,
+): string {
+  const trimmedAddress = listenAddress.trim();
+  const normalizedAddress =
+    trimmedAddress === "localhost" ? "127.0.0.1" : trimmedAddress;
+  const clientAddress =
+    normalizedAddress === "0.0.0.0"
+      ? "127.0.0.1"
+      : normalizedAddress === "::"
+        ? "::1"
+        : normalizedAddress;
+  const host = clientAddress.includes(":")
+    ? `[${clientAddress}]`
+    : clientAddress;
+  return `http://${host}:${port}/claude-router`;
+}
+
+export function buildClaudeRouterVsCodeSettings(
+  port: number,
+  listenAddress = "127.0.0.1",
+): string {
+  const baseUrl = buildClaudeRouterBaseUrl(listenAddress, port);
   return JSON.stringify(
     {
       "claudeCode.environmentVariables": [
@@ -33,6 +55,7 @@ export function buildClaudeRouterVsCodeSettings(port: number): string {
 interface ClaudeRouterSetupDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  listenAddress: string;
   port: number;
   exposedModelCount: number;
 }
@@ -40,12 +63,13 @@ interface ClaudeRouterSetupDialogProps {
 export function ClaudeRouterSetupDialog({
   open,
   onOpenChange,
+  listenAddress,
   port,
   exposedModelCount,
 }: ClaudeRouterSetupDialogProps) {
   const { t } = useTranslation();
-  const baseUrl = `http://127.0.0.1:${port}/claude-router`;
-  const settings = buildClaudeRouterVsCodeSettings(port);
+  const baseUrl = buildClaudeRouterBaseUrl(listenAddress, port);
+  const settings = buildClaudeRouterVsCodeSettings(port, listenAddress);
 
   const copySettings = async () => {
     try {

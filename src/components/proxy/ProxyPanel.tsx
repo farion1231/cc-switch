@@ -37,7 +37,10 @@ import {
   PROXY_APP_IDS,
   type ProxyAppId,
 } from "@/config/appConfig";
-import { ClaudeRouterSetupDialog } from "./ClaudeRouterSetupDialog";
+import {
+  buildClaudeRouterBaseUrl,
+  ClaudeRouterSetupDialog,
+} from "./ClaudeRouterSetupDialog";
 
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
@@ -77,7 +80,10 @@ export function ProxyPanel({
   const { data: globalConfig } = useGlobalProxyConfig();
   const updateGlobalConfig = useUpdateGlobalProxyConfig();
   const claudeRouterPort = globalConfig?.listenPort ?? status?.port ?? 15721;
-  const claudeRouterBaseUrl = `http://127.0.0.1:${claudeRouterPort}/claude-router`;
+  const claudeRouterBaseUrl = buildClaudeRouterBaseUrl(
+    globalConfig?.listenAddress ?? "127.0.0.1",
+    claudeRouterPort,
+  );
 
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
@@ -680,6 +686,7 @@ export function ProxyPanel({
         <ClaudeRouterSetupDialog
           open={isClaudeRouterSetupOpen}
           onOpenChange={setIsClaudeRouterSetupOpen}
+          listenAddress={globalConfig?.listenAddress ?? "127.0.0.1"}
           port={claudeRouterPort}
           exposedModelCount={exposedClaudeModelCount}
         />
