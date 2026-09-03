@@ -1721,7 +1721,8 @@
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi",
-      "codebuddy": "CodeBuddy"
+      "codebuddy": "CodeBuddy",
+      "workbuddy": "WorkBuddy"
     },
     "rawInputLabel": "原始",
     "sessionSync": {

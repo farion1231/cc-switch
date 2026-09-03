@@ -7,6 +7,7 @@ describe("getCacheWriteAvailability", () => {
     expect(getCacheWriteAvailability(["pi"])).toBe("partial");
     expect(getCacheWriteAvailability(["codex", "gemini"])).toBe("na");
     expect(getCacheWriteAvailability(["codebuddy"])).toBe("na");
+    expect(getCacheWriteAvailability(["workbuddy"])).toBe("na");
     expect(getCacheWriteAvailability(["claude", "codex"])).toBe("partial");
     expect(getCacheWriteAvailability([])).toBe("ok");
   });
