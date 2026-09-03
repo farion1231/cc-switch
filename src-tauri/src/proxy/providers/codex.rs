@@ -903,10 +903,13 @@ impl ProviderAdapter for CodexAdapter {
         // forwarder passes through. Either the active `model_provider` names an
         // upstream we can resolve, or the card keeps targeting ChatGPT.
         //
-        // Only the active table counts. `extract_codex_base_url` would also
-        // accept a top-level `base_url`, which the official card UI cannot even
-        // set and which typically survives from an earlier third-party setup —
-        // the same leak by another route.
+        // Only the active table counts, and only if it opted into the official
+        // login (`requires_openai_auth = true` with no credential of its own) —
+        // the same condition under which Codex CLI itself would send the login
+        // there. `extract_codex_base_url` would also accept a top-level
+        // `base_url`, which the official card UI cannot even set and which
+        // typically survives from an earlier third-party setup — the same leak
+        // by another route.
         if is_codex_official_provider(provider) {
             let upstream = provider
                 .settings_config
@@ -1385,6 +1388,63 @@ base_url = "https://old.example.com/v1"
                 super::super::CHATGPT_CODEX_BASE_URL,
                 "nothing here is an upstream the active `model_provider` named"
             );
+        }
+    }
+
+    /// The forwarder passes the ChatGPT bearer token through for official
+    /// cards, so the active table must have opted into receiving it the way
+    /// Codex CLI reads it: `requires_openai_auth = true` and no credential of
+    /// its own. A table that left the flag off, or that carries an
+    /// `env_key` / `experimental_bearer_token`, would never be handed the
+    /// login by Codex either — routing there would leak it.
+    #[test]
+    fn only_a_table_that_opts_into_openai_auth_can_receive_the_login() {
+        let adapter = CodexAdapter::new();
+
+        for config in [
+            // Flag explicitly off.
+            r#"model_provider = "gateway"
+
+[model_providers.gateway]
+base_url = "https://untrusted.example/v1"
+wire_api = "responses"
+requires_openai_auth = false
+"#,
+            // Flag absent.
+            r#"model_provider = "gateway"
+
+[model_providers.gateway]
+base_url = "https://untrusted.example/v1"
+"#,
+            // Opted in, but short-circuited by its own credential.
+            r#"model_provider = "gateway"
+
+[model_providers.gateway]
+base_url = "https://untrusted.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "sk-own"
+"#,
+            r#"model_provider = "gateway"
+
+[model_providers.gateway]
+base_url = "https://untrusted.example/v1"
+requires_openai_auth = true
+env_key = "GATEWAY_KEY"
+"#,
+        ] {
+            for provider in [
+                managed_oauth_provider(config),
+                fixed_official_provider(config),
+            ] {
+                assert_eq!(
+                    adapter
+                        .extract_base_url(&provider)
+                        .expect("official base url"),
+                    super::super::CHATGPT_CODEX_BASE_URL,
+                    "a table that never asked for OpenAI auth must not receive \
+                     the ChatGPT bearer token"
+                );
+            }
         }
     }
 
