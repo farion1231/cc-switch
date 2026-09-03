@@ -48,7 +48,7 @@ interface CodexOAuthSectionProps {
   onManageAccounts?: () => void;
   /** 账号选择字段标题；官方供应商可使用“登录方式” */
   selectionLabel?: string;
-  /** 空选择项文案；默认表示使用托管认证的默认账号 */
+  /** 空选择项文案；仅用于调用方明确支持的原生登录方式 */
   noneOptionLabel?: string;
   /** 空选择项的补充说明；仅由明确知道其含义的调用方提供 */
   noneOptionDescription?: string;
@@ -84,7 +84,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   selectionLabel,
   noneOptionLabel,
   noneOptionDescription,
-  allowUnboundSelection = true,
+  allowUnboundSelection = false,
   allowUnboundSelectionWithoutStatus = false,
   nativeLoginOnly = false,
   requireExplicitSelection = false,
@@ -96,7 +96,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
 
   const {
     accounts,
-    defaultAccountId,
     isStatusSuccess,
     isStatusError,
     hasAnyAccount,
@@ -106,12 +105,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     isPolling,
     isAddingAccount,
     isRemovingAccount,
-    isSettingDefaultAccount,
     addAccount,
-    reauthAccount,
     retryAuth,
     removeAccount,
-    setDefaultAccount,
     cancelAuth,
     logout,
     refetchStatus,
@@ -171,7 +167,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     }
   };
 
-  // 升级前登录的旧账号没有持久化 id_token，需重新登录补全
+  // 升级前登录的旧账号没有持久化 id_token，需移除后重新添加
   const hasReauthAccounts = accounts.some((account) => account.reauth_required);
   const selectedAccountNeedsReauth =
     !!selectedAccountId &&
@@ -181,10 +177,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   const selectedAccount = accounts.find(
     (account) => account.id === selectedAccountId,
   );
-  const accountChoicePlaceholder = t(
-    "codexOauth.officialAccountPlaceholder",
-    "请选择登录方式",
-  );
+  const accountChoicePlaceholder = requireExplicitSelection
+    ? t("codexOauth.officialAccountPlaceholder", "请选择登录方式")
+    : t("codexOauth.selectAccountPlaceholder", "选择一个 ChatGPT 账号");
   const accountSelectValue =
     requireExplicitSelection && !selectedAccountId
       ? "__official_account_required__"
@@ -203,7 +198,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             : t("codex.accountLoading", "正在加载账号…")
         : undefined) ||
       (allowUnboundSelection
-        ? (noneOptionLabel ?? t("codexOauth.useDefaultAccount", "使用默认账号"))
+        ? (noneOptionLabel ??
+          t("codexOauth.noneOptionLabel", "跟随 Codex 登录"))
         : t("codexOauth.selectAccountPlaceholder", "选择一个 ChatGPT 账号"));
 
   const accountSelect = (isStatusSuccess ||
@@ -272,7 +268,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                       {account.reauth_required && (
                         <span className="ml-1 inline-flex shrink-0 items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
                           <AlertTriangle className="h-3 w-3" />
-                          {t("codexOauth.reauthBadge", "需要重新登录")}
+                          {t("codexOauth.reauthBadge", "需要重新添加")}
                         </span>
                       )}
                     </div>
@@ -312,7 +308,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                   <span aria-hidden className="h-4 w-4 shrink-0" />
                   <span className="shrink-0 text-sm font-medium leading-5">
                     {noneOptionLabel ??
-                      t("codexOauth.useDefaultAccount", "使用默认账号")}
+                      t("codexOauth.noneOptionLabel", "跟随 Codex 登录")}
                   </span>
                   {noneOptionDescription && (
                     <span className="min-w-0 truncate text-sm leading-5 text-muted-foreground">
@@ -393,18 +389,18 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         </div>
       )}
 
-      {/* 旧账号需重新登录提示（缺少 id_token） */}
+      {/* 旧账号需重新添加提示（缺少 id_token） */}
       {mode === "manage" && hasReauthAccounts && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-300/70 bg-amber-50 p-3 text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-100">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
           <div className="space-y-1">
             <p className="text-sm font-medium">
-              {t("codexOauth.reauthTitle", "部分账号需要重新登录")}
+              {t("codexOauth.reauthTitle", "部分账号需要重新添加")}
             </p>
             <p className="text-xs leading-relaxed text-amber-800/90 dark:text-amber-200/80">
               {t(
                 "codexOauth.reauthDescription",
-                "为与浏览器登录行为保持一致，这些账号需要重新登录以补全所需的登录凭据（id_token）。重新登录后即可正常用于托管绑定。",
+                "这些账号缺少托管绑定所需的登录凭据（id_token）。请先移除账号，再重新添加。",
               )}
             </p>
           </div>
@@ -414,14 +410,14 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       {/* 账号选择器 */}
       {accountSelect}
 
-      {/* select 模式：所选账号需重新登录的内联提示 */}
+      {/* select 模式：所选账号需重新添加的内联提示 */}
       {mode === "select" && selectedAccountNeedsReauth && (
         <div className="flex items-start gap-2 rounded-md border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-100">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
           <div className="flex-1 leading-relaxed">
             {t(
               "codexOauth.reauthSelectHint",
-              "该账号需重新登录以启用托管绑定。",
+              "该账号无法用于托管绑定，请移除后重新添加。",
             )}
             {onManageAccounts && (
               <button
@@ -429,7 +425,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                 onClick={onManageAccounts}
                 className="ml-1 font-medium underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-100"
               >
-                {t("codexOauth.reauthNow", "立即重新登录")}
+                {t("codexOauth.manageAccounts", "管理账号")}
               </button>
             )}
           </div>
@@ -479,11 +475,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                     <span className="truncate text-sm font-medium">
                       {account.login}
                     </span>
-                    {defaultAccountId === account.id && (
-                      <Badge variant="secondary" className="shrink-0 text-xs">
-                        {t("codexOauth.defaultAccount", "默认")}
-                      </Badge>
-                    )}
                     {selectedAccountId === account.id && (
                       <Badge variant="outline" className="shrink-0 text-xs">
                         {t("codexOauth.selected", "已选中")}
@@ -495,38 +486,11 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                         className="shrink-0 gap-1 border-amber-400/70 text-xs text-amber-700 dark:border-amber-500/50 dark:text-amber-300"
                       >
                         <AlertTriangle className="h-3 w-3" />
-                        {t("codexOauth.reauthBadge", "需要重新登录")}
+                        {t("codexOauth.reauthBadge", "需要重新添加")}
                       </Badge>
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className={`h-7 gap-1 px-2 text-xs ${
-                        account.reauth_required
-                          ? "border-amber-400/70 text-amber-700 hover:bg-amber-100 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-900/40"
-                          : "text-muted-foreground"
-                      }`}
-                      onClick={() => reauthAccount(account.id)}
-                      disabled={isAddingAccount}
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      {t("codexOauth.reauthLogin", "重新登录")}
-                    </Button>
-                    {defaultAccountId !== account.id && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs text-muted-foreground"
-                        onClick={() => setDefaultAccount(account.id)}
-                        disabled={isSettingDefaultAccount}
-                      >
-                        {t("codexOauth.setAsDefault", "设为默认")}
-                      </Button>
-                    )}
                     <Button
                       type="button"
                       variant="ghost"

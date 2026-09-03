@@ -117,13 +117,24 @@ describe("CodexOAuthSection", () => {
     ).toEqual(["account-1", "account-2"]);
   });
 
-  it("reauthenticates the selected legacy account in place", async () => {
+  it("does not expose default-account controls", () => {
+    render(<CodexOAuthSection />);
+
+    expect(screen.queryByText("默认")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "设为默认" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("routes legacy account recovery through remove and add", async () => {
     const user = userEvent.setup();
     const authResult = mocks.useCodexOauth();
-    const reauthAccount = vi.fn();
+    const removeAccount = vi.fn();
+    const addAccount = vi.fn();
     mocks.useCodexOauth.mockReturnValue({
       ...authResult,
-      reauthAccount,
+      removeAccount,
+      addAccount,
       accounts: [
         {
           ...authResult.accounts[0],
@@ -133,26 +144,16 @@ describe("CodexOAuthSection", () => {
     });
 
     render(<CodexOAuthSection />);
-    await user.click(screen.getByRole("button", { name: "重新登录" }));
+    expect(
+      screen.queryByRole("button", { name: "重新登录" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("需要重新添加").length).toBeGreaterThan(0);
 
-    expect(reauthAccount).toHaveBeenCalledWith("account-1");
-    expect(authResult.addAccount).not.toHaveBeenCalled();
-  });
+    await user.click(screen.getByTitle("移除账号"));
+    expect(removeAccount).toHaveBeenCalledWith("account-1");
 
-  it("allows an existing account to reauthenticate in place", async () => {
-    const user = userEvent.setup();
-    const authResult = mocks.useCodexOauth();
-    const reauthAccount = vi.fn();
-    mocks.useCodexOauth.mockReturnValue({
-      ...authResult,
-      reauthAccount,
-      accounts: [authResult.accounts[0]],
-    });
-
-    render(<CodexOAuthSection />);
-    await user.click(screen.getByRole("button", { name: "重新登录" }));
-
-    expect(reauthAccount).toHaveBeenCalledWith("account-1");
+    await user.click(screen.getByRole("button", { name: "添加其他账号" }));
+    expect(addAccount).toHaveBeenCalledOnce();
   });
 
   it("selects a specific account when multiple accounts are managed", async () => {
@@ -195,6 +196,7 @@ describe("CodexOAuthSection", () => {
         onAccountSelect={vi.fn()}
         noneOptionLabel="Use Codex current login"
         nativeLoginOnly
+        allowUnboundSelection
       />,
     );
 
@@ -238,7 +240,7 @@ describe("CodexOAuthSection", () => {
       />,
     );
 
-    const accountPlaceholder = screen.getByText("请选择登录方式");
+    const accountPlaceholder = screen.getByText("选择一个 ChatGPT 账号");
     expect(accountPlaceholder.parentElement).toHaveClass(
       "text-sm",
       "font-normal",
@@ -448,7 +450,7 @@ describe("CodexOAuthSection", () => {
     );
   });
 
-  it("does not attach Codex CLI guidance to a generic unbound choice", async () => {
+  it("does not offer a default-account choice", async () => {
     const user = userEvent.setup();
     render(
       <CodexOAuthSection
@@ -459,10 +461,9 @@ describe("CodexOAuthSection", () => {
     );
 
     await user.click(screen.getByRole("combobox"));
-    const option = await screen.findByRole("option", {
-      name: "使用默认账号",
-    });
-    expect(option).not.toHaveTextContent("Codex CLI");
+    expect(
+      screen.queryByRole("option", { name: "使用默认账号" }),
+    ).not.toBeInTheDocument();
   });
 
   it("reports automatic invalidation separately from a user choice", async () => {

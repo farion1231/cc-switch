@@ -538,7 +538,7 @@ export function ProviderCard({
                     {managedCodexAccount.reauth_required && (
                       <span className="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300">
                         <AlertTriangle className="h-3.5 w-3.5" />
-                        {t("codexOauth.reauthBadge", "需要重新登录")}
+                        {t("codexOauth.reauthBadge", "需要重新添加")}
                       </span>
                     )}
                   </>

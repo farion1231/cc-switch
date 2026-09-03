@@ -433,7 +433,7 @@ describe("ClaudeDesktopProviderForm", () => {
     });
   });
 
-  it("不允许保存需要重新登录的 Codex OAuth 账号", async () => {
+  it("不允许保存需要重新添加的 Codex OAuth 账号", async () => {
     authState.codexReauthRequired = true;
     const onSubmit = vi.fn();
     renderForm(
@@ -461,18 +461,17 @@ describe("ClaudeDesktopProviderForm", () => {
 
     await waitFor(() =>
       expect(toastMocks.error).toHaveBeenCalledWith(
-        "已绑定账号不存在或需要重新登录，请重新选择账号",
+        "已绑定的 ChatGPT 账号不可用。请在认证中心移除仍存在的旧账号，然后重新添加。",
       ),
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("未选择账号时不允许保存需要重新登录的 Codex OAuth 默认账号", async () => {
-    authState.codexReauthRequired = true;
+  it("未选择账号时不允许保存 Codex OAuth 供应商", async () => {
     const onSubmit = vi.fn();
     renderForm(
       {
-        name: "Codex OAuth Default Account Provider",
+        name: "Codex OAuth Unbound Provider",
         category: "third_party",
         settingsConfig: { env: {} },
         meta: {
@@ -489,9 +488,7 @@ describe("ClaudeDesktopProviderForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() =>
-      expect(toastMocks.error).toHaveBeenCalledWith(
-        "已绑定账号不存在或需要重新登录，请重新选择账号",
-      ),
+      expect(toastMocks.error).toHaveBeenCalledWith("请选择一个 ChatGPT 账号"),
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });

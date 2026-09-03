@@ -26,7 +26,7 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
     onAccountSelect,
     onSelectionConfirmed,
     onSelectionInvalidated,
-    allowUnboundSelection = true,
+    allowUnboundSelection = false,
     allowUnboundSelectionWithoutStatus = false,
   }: {
     onAccountSelect?: (accountId: string | null) => void;
@@ -498,23 +498,23 @@ describe("ProviderForm Codex Official managed account", () => {
 
     await waitFor(() =>
       expect(toastMocks.error).toHaveBeenCalledWith(
-        "已绑定账号不存在或需要重新登录",
+        "已绑定的 ChatGPT 账号不可用。请在认证中心移除仍存在的旧账号，然后重新添加。",
       ),
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("blocks the reauth-required default account when no account is selected", async () => {
-    authState.codexReauthRequired = true;
+  it("requires an explicit ChatGPT account for a Claude Codex provider", async () => {
     const onSubmit = vi.fn();
     renderClaudeCodexForm(onSubmit);
 
+    expect(screen.getByTestId("allow-unbound-selection")).toHaveTextContent(
+      "false",
+    );
     fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
 
     await waitFor(() =>
-      expect(toastMocks.error).toHaveBeenCalledWith(
-        "已绑定账号不存在或需要重新登录",
-      ),
+      expect(toastMocks.error).toHaveBeenCalledWith("请选择一个 ChatGPT 账号"),
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
