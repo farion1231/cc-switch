@@ -556,12 +556,26 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  codebuddy: {
+    name: "codebuddy",
+    displayName: "CodeBuddy",
+    category: "app",
+    keywords: ["codebuddy", "tencent", "agent", "cli"],
+    defaultColor: "#6C4DFF",
+  },
   tencent: {
     name: "tencent",
     displayName: "Tencent",
     category: "ai-provider",
     keywords: ["hunyuan"],
     defaultColor: "#00A4FF",
+  },
+  workbuddy: {
+    name: "workbuddy",
+    displayName: "WorkBuddy",
+    category: "app",
+    keywords: ["workbuddy", "tencent", "agent", "desktop"],
+    defaultColor: "#01C886",
   },
   unity2: {
     name: "unity2",

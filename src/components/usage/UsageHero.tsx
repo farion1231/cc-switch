@@ -79,9 +79,9 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     iconBg: "bg-blue-500/10",
   },
   workbuddy: {
-    // 腾讯 WorkBuddy：腾讯蓝（与 CodeBuddy 同族）
-    accent: "text-blue-600 dark:text-blue-400",
-    iconBg: "bg-blue-500/10",
+    // 腾讯 WorkBuddy：品牌青绿
+    accent: "text-teal-600 dark:text-teal-400",
+    iconBg: "bg-teal-500/10",
   },
 };
 
