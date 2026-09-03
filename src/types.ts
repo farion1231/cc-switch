@@ -478,6 +478,8 @@ export interface SessionMeta {
   createdAt?: number;
   lastActiveAt?: number;
   sourcePath?: string;
+  profileName?: string;
+  profileConfigDir?: string;
   resumeCommand?: string;
 }
 

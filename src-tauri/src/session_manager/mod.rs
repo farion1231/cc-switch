@@ -24,6 +24,10 @@ pub struct SessionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_config_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
 }
 
@@ -198,11 +202,21 @@ fn delete_session_with_roots(
         source_path.display()
     ))
 }
-
 fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
     let roots = match provider_id {
         "codex" => codex::session_roots(),
-        "claude" => vec![crate::config::get_claude_config_dir().join("projects")],
+        "claude" => {
+            let mut roots = vec![crate::config::get_claude_config_dir().join("projects")];
+            roots.extend(
+                crate::claude_launcher_profile::list_profiles()
+                    .map_err(|error| {
+                        format!("Failed to list managed Claude session roots: {error}")
+                    })?
+                    .into_iter()
+                    .map(|profile| profile.config_dir.join("projects")),
+            );
+            roots
+        }
         "opencode" => vec![opencode::get_opencode_data_dir()],
         "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],
         "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
@@ -262,7 +276,46 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use crate::store::AppState;
+    use serial_test::serial;
+    use std::ffi::OsString;
+    use std::sync::Arc;
     use tempfile::tempdir;
+
+    struct TestHome {
+        _temp: tempfile::TempDir,
+        previous_home: Option<OsString>,
+        previous_settings: crate::settings::AppSettings,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            let previous_settings = crate::settings::get_settings();
+            let temp = tempfile::tempdir().expect("create test home");
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset settings");
+            Self {
+                _temp: temp,
+                previous_home,
+                previous_settings,
+            }
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            crate::settings::update_settings(self.previous_settings.clone())
+                .expect("restore settings");
+            match &self.previous_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     fn write_codex_session(path: &Path, session_id: &str) {
         std::fs::write(
@@ -295,6 +348,50 @@ mod tests {
 
         assert!(deleted);
         assert!(!source.exists());
+    }
+
+    #[test]
+    #[serial]
+    fn claude_provider_roots_include_retired_managed_profiles_for_contained_deletion() {
+        let _home = TestHome::new();
+        let state = AppState::new(Arc::new(Database::memory().expect("create database")));
+        let provider = Provider::with_id(
+            "provider-a".to_string(),
+            "Profile A".to_string(),
+            serde_json::json!({"env": {"ANTHROPIC_AUTH_TOKEN": "secret-a"}}),
+            None,
+        );
+        let profile_dir =
+            crate::claude_launcher_profile::sync_profile(&state, &provider).expect("sync profile");
+        let projects = profile_dir.join("projects");
+        std::fs::create_dir_all(&projects).expect("create projects");
+        let source = projects.join("session.jsonl");
+        std::fs::write(
+            &source,
+            concat!(
+                "{\"sessionId\":\"managed-session\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"timestamp\":\"2026-03-06T10:01:00Z\"}\n"
+            ),
+        )
+        .expect("write session");
+        crate::claude_launcher_profile::retire_profile("provider-a").expect("retire profile");
+
+        let roots = provider_roots("claude").expect("Claude roots");
+        assert!(roots.contains(&projects));
+        assert!(
+            delete_session_with_roots("claude", "managed-session", &source, &roots)
+                .expect("delete managed session")
+        );
+        assert!(!source.exists());
+
+        let outside = tempdir().expect("outside");
+        let outside_source = outside.path().join("outside.jsonl");
+        std::fs::write(&outside_source, "{}").expect("write outside file");
+        assert!(
+            delete_session_with_roots("claude", "outside", &outside_source, &roots)
+                .expect_err("outside path must be rejected")
+                .contains("outside provider roots")
+        );
     }
 
     #[test]

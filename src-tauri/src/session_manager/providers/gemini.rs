@@ -169,6 +169,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at: last_active_at.or(created_at),
         source_path: Some(source_path),
+        profile_name: None,
+        profile_config_dir: None,
         resume_command: Some(format!("gemini --resume {session_id}")),
     })
 }
