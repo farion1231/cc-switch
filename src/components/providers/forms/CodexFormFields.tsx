@@ -131,6 +131,8 @@ interface CodexFormFieldsProps {
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
   promptCacheRouting: PromptCacheRoutingMode;
   onPromptCacheRoutingChange: (value: PromptCacheRoutingMode) => void;
+  nativeModelFallback?: boolean;
+  onNativeModelFallbackChange?: (value: boolean) => void;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -415,6 +417,8 @@ export function CodexFormFields({
   onCodexChatReasoningChange,
   promptCacheRouting,
   onPromptCacheRoutingChange,
+  nativeModelFallback = true,
+  onNativeModelFallbackChange,
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
@@ -955,6 +959,33 @@ export function CodexFormFields({
                     })}
                   </p>
                 </div>
+
+                {appId === "codex" &&
+                  apiFormat === "openai_responses" &&
+                  onNativeModelFallbackChange && (
+                    <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+                      <div className="space-y-1">
+                        <FormLabel>
+                          {t("codexConfig.nativeModelFallbackLabel", {
+                            defaultValue: "切换后跟随默认模型",
+                          })}
+                        </FormLabel>
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {t("codexConfig.nativeModelFallbackHint", {
+                            defaultValue:
+                              "旧会话发送的模型不在当前映射中时，改用当前供应商默认模型。若需直接请求映射外模型，请关闭。",
+                          })}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={nativeModelFallback}
+                        onCheckedChange={onNativeModelFallbackChange}
+                        aria-label={t("codexConfig.nativeModelFallbackLabel", {
+                          defaultValue: "切换后跟随默认模型",
+                        })}
+                      />
+                    </div>
+                  )}
 
                 {isAnthropicFormat && (
                   <div className="space-y-1.5">
