@@ -73,6 +73,11 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     accent: "text-fuchsia-600 dark:text-fuchsia-400",
     iconBg: "bg-fuchsia-500/10",
   },
+  codebuddy: {
+    // 腾讯 CodeBuddy：腾讯蓝
+    accent: "text-blue-600 dark:text-blue-400",
+    iconBg: "bg-blue-500/10",
+  },
 };
 
 /**

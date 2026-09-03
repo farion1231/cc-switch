@@ -1719,7 +1719,8 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "codebuddy": "CodeBuddy"
     },
     "rawInputLabel": "原始",
     "sessionSync": {

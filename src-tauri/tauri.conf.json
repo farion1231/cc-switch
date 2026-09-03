@@ -36,7 +36,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -47,6 +47,10 @@
     "windows": {
       "wix": {
         "template": "wix/per-user-main.wxs"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
       }
     },
     "macOS": {
@@ -56,7 +60,9 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ccswitch"]
+        "schemes": [
+          "ccswitch"
+        ]
       }
     },
     "updater": {
