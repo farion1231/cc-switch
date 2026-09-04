@@ -125,10 +125,7 @@ pub async fn get_xai_oauth_models(
     let mut models: Vec<FetchedModel> = payload
         .data
         .into_iter()
-        .map(|model| FetchedModel {
-            id: model.id,
-            owned_by: model.owned_by,
-        })
+        .map(|model| FetchedModel::new(model.id, model.owned_by))
         .collect();
     models.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(models)

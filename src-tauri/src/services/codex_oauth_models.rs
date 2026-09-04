@@ -71,19 +71,13 @@ fn parse_models(value: Value) -> Vec<FetchedModel> {
 
 fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: Option<&str>) {
     if let Some(id) = entry.as_str().map(str::trim).filter(|id| !id.is_empty()) {
-        models.push(FetchedModel {
-            id: id.to_string(),
-            owned_by: Some("Codex".to_string()),
-        });
+        models.push(FetchedModel::new(id.to_string(), Some("Codex".to_string())));
         return;
     }
 
     let Some(obj) = entry.as_object() else {
         if let Some(id) = fallback_id.map(str::trim).filter(|id| !id.is_empty()) {
-            models.push(FetchedModel {
-                id: id.to_string(),
-                owned_by: Some("Codex".to_string()),
-            });
+            models.push(FetchedModel::new(id.to_string(), Some("Codex".to_string())));
         }
         return;
     };
@@ -104,7 +98,7 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
     )
     .or_else(|| Some("Codex".to_string()));
 
-    models.push(FetchedModel { id, owned_by });
+    models.push(FetchedModel::new(id, owned_by));
 }
 
 fn string_field(obj: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
