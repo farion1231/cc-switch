@@ -468,8 +468,10 @@ fn convert_message_to_openai(
 }
 
 /// 清理工具参数的 JSON schema，并为根 schema 补齐 OpenAI 要求的 object 类型。
-pub fn clean_schema(schema: Value) -> Value {
-    clean_schema_inner(schema, true)
+pub fn clean_schema(mut schema: Value) -> Value {
+    schema = clean_schema_inner(schema, true);
+    sanitize_json_schema_for_strict_providers(&mut schema);
+    schema
 }
 
 fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
@@ -499,6 +501,147 @@ fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
         }
     }
     schema
+}
+
+/// Sanitize and normalize JSON Schema for strict providers (such as Kimi/Moonshot,
+/// which enforces "Moonshot Flavored JSON Schema" via Walle).
+///
+/// In strict Draft-07 validators:
+/// 1. Sibling keywords on `$ref`:
+///    When an object contains `"$ref"`, keywords like `"type"` (and `"description"`,
+///    `"title"`, `"default"`) MUST NOT appear alongside `$ref`. Sibling `"type"`
+///    causes Kimi to reject requests with:
+///    `<when using $ref, type should be defined in the referenced schema instead of the parent schema>`.
+///    We propagate sibling keywords into the referenced schema definition if missing,
+///    and strip them from the `$ref` call site.
+/// 2. Prohibited or empty structures:
+///    - Empty `"required": []` arrays are stripped.
+///    - Empty `"enum": []` arrays are stripped.
+///    - `"format": "uri"` is stripped.
+///    - Property boolean `true` is normalized to `{"type": "object"}`.
+pub(crate) fn sanitize_json_schema_for_strict_providers(schema: &mut Value) {
+    if !schema.is_object() {
+        return;
+    }
+
+    struct SiblingInfo {
+        ref_path: String,
+        sibling_type: Option<Value>,
+        sibling_description: Option<Value>,
+        sibling_title: Option<Value>,
+        sibling_default: Option<Value>,
+    }
+
+    let mut siblings_to_propagate = Vec::new();
+
+    fn traverse_and_clean(val: &mut Value, siblings: &mut Vec<SiblingInfo>) {
+        match val {
+            Value::Object(map) => {
+                if let Some(ref_val) = map
+                    .get("$ref")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                {
+                    let sibling_type = map.remove("type");
+                    let sibling_description = map.remove("description");
+                    let sibling_title = map.remove("title");
+                    let sibling_default = map.remove("default");
+
+                    if sibling_type.is_some()
+                        || sibling_description.is_some()
+                        || sibling_title.is_some()
+                        || sibling_default.is_some()
+                    {
+                        siblings.push(SiblingInfo {
+                            ref_path: ref_val,
+                            sibling_type,
+                            sibling_description,
+                            sibling_title,
+                            sibling_default,
+                        });
+                    }
+                }
+
+                if map
+                    .get("required")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|a| a.is_empty())
+                {
+                    map.remove("required");
+                }
+                if map
+                    .get("enum")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|a| a.is_empty())
+                {
+                    map.remove("enum");
+                }
+                if map.get("format").and_then(|v| v.as_str()) == Some("uri") {
+                    map.remove("format");
+                }
+
+                if let Some(Value::Object(props)) = map.get_mut("properties") {
+                    for prop_val in props.values_mut() {
+                        if prop_val.is_boolean() && prop_val.as_bool() == Some(true) {
+                            *prop_val = json!({"type": "object"});
+                        }
+                    }
+                }
+
+                for child in map.values_mut() {
+                    traverse_and_clean(child, siblings);
+                }
+            }
+            Value::Array(list) => {
+                for item in list {
+                    traverse_and_clean(item, siblings);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    traverse_and_clean(schema, &mut siblings_to_propagate);
+
+    fn resolve_pointer_mut<'a>(root: &'a mut Value, pointer: &str) -> Option<&'a mut Value> {
+        if !pointer.starts_with("#/") {
+            return None;
+        }
+        let mut curr = root;
+        for raw_seg in pointer[2..].split('/') {
+            let seg = raw_seg.replace("~1", "/").replace("~0", "~");
+            match curr {
+                Value::Object(map) => {
+                    curr = map.get_mut(&seg)?;
+                }
+                Value::Array(arr) => {
+                    let idx: usize = seg.parse().ok()?;
+                    curr = arr.get_mut(idx)?;
+                }
+                _ => return None,
+            }
+        }
+        Some(curr)
+    }
+
+    for item in siblings_to_propagate {
+        if let Some(Value::Object(target_map)) = resolve_pointer_mut(schema, &item.ref_path) {
+            if !target_map.contains_key("$ref") {
+                if let Some(t) = item.sibling_type {
+                    target_map.entry("type".to_string()).or_insert(t);
+                }
+                if let Some(d) = item.sibling_description {
+                    target_map.entry("description".to_string()).or_insert(d);
+                }
+                if let Some(title) = item.sibling_title {
+                    target_map.entry("title".to_string()).or_insert(title);
+                }
+                if let Some(def) = item.sibling_default {
+                    target_map.entry("default".to_string()).or_insert(def);
+                }
+            }
+        }
+    }
 }
 
 /// OpenAI 响应 → Anthropic 响应
@@ -895,6 +1038,47 @@ mod tests {
             result["properties"]["list"],
             json!({"items": {"type": "string"}})
         );
+    }
+
+    #[test]
+    fn test_clean_schema_sanitizes_ref_and_empty_arrays() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "config": {
+                    "$ref": "#/$defs/Config",
+                    "type": "object",
+                    "description": "App configuration"
+                },
+                "flag": true
+            },
+            "$defs": {
+                "Config": {
+                    "properties": {
+                        "port": {"type": "integer"}
+                    }
+                }
+            },
+            "required": [],
+            "format": "uri"
+        });
+
+        let result = clean_schema(schema);
+        assert_eq!(result["type"], "object");
+        assert!(result.get("required").is_none());
+        assert!(result.get("format").is_none());
+        assert_eq!(result["properties"]["flag"], json!({"type": "object"}));
+
+        // $ref node has type and description stripped
+        let config = &result["properties"]["config"];
+        assert_eq!(config["$ref"], "#/$defs/Config");
+        assert!(config.get("type").is_none());
+        assert!(config.get("description").is_none());
+
+        // Target definition received type and description
+        let target = &result["$defs"]["Config"];
+        assert_eq!(target["type"], "object");
+        assert_eq!(target["description"], "App configuration");
     }
 
     #[test]
