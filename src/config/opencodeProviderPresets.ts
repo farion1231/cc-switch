@@ -237,6 +237,18 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       },
     },
     {
+      id: "claude-sonnet-5",
+      name: "Claude Sonnet 5",
+      contextLimit: 1000000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+      variants: {
+        low: { effort: "low" },
+        medium: { effort: "medium" },
+        high: { effort: "high" },
+      },
+    },
+    {
       id: "claude-haiku-4-5-20251001",
       name: "Claude Haiku 4.5",
       contextLimit: 200000,
