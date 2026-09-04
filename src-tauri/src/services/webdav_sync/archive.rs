@@ -15,7 +15,7 @@ use crate::services::sync_protocol::{
 };
 
 /// Maximum number of entries allowed in a zip archive.
-const MAX_EXTRACT_ENTRIES: usize = 10_000;
+const MAX_EXTRACT_ENTRIES: usize = 50_000;
 
 pub(crate) struct SkillsBackup {
     _tmp: TempDir,

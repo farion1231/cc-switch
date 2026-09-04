@@ -1644,6 +1644,7 @@ impl RequestForwarder {
                 super::providers::codex_provider_upstream_model(provider).as_deref(),
                 &provider.settings_config,
             );
+            super::providers::sanitize_codex_responses_tools_schema(&mut request_body);
         }
 
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {

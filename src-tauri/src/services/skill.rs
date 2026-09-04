@@ -310,8 +310,8 @@ const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
 ///
 /// 归档字节由第三方完全控制（仓库可经 deeplink 添加，且 branch 可把下载落点
 /// 改写到攻击者自传的 release asset），没有上限时一个几 MB 的压缩炸弹就能塞满磁盘。
-/// 取值对齐 `webdav_sync/archive.rs` 里同款保护的量级。
-const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+/// 提升至 50,000 以兼容大型社区技能仓库与 mono-repo（#7013）。
+const MAX_ARCHIVE_ENTRIES: usize = 50_000;
 const MAX_ARCHIVE_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 /// symlink 目标就是一条路径，几十字节就够；给到 4 KiB 是宽松上限。
 /// 必须有这个上限：zip 2.4.2 的 `make_reader` 不按声明的 uncompressed_size
