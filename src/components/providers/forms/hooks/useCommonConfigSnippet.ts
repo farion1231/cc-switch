@@ -345,9 +345,6 @@ export function useCommonConfigSnippet({
 
       // 更新片段状态
       setCommonConfigSnippetState(extracted);
-
-      // 保存到后端
-      await configApi.setCommonConfigSnippet("claude", extracted);
     } catch (error) {
       console.error("提取通用配置失败:", error);
       setCommonConfigError(

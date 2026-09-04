@@ -518,9 +518,6 @@ export function useCodexCommonConfig({
 
       // 更新片段状态
       setCommonConfigSnippetState(extracted);
-
-      // 保存到后端
-      await configApi.setCommonConfigSnippet("codex", extracted);
     } catch (error) {
       console.error("提取 Codex 通用配置失败:", error);
       setCommonConfigError(

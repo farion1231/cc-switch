@@ -576,9 +576,6 @@ export function useGeminiCommonConfig({
 
       // 更新片段状态
       setCommonConfigSnippetState(extracted);
-
-      // 保存到后端
-      await configApi.setCommonConfigSnippet("gemini", extracted);
     } catch (error) {
       console.error("提取 Gemini 通用配置失败:", error);
       setCommonConfigError(
