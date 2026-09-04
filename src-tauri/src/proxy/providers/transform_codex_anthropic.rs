@@ -450,8 +450,11 @@ fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
         .cloned()
         .filter(|value| value.as_object().is_some_and(|object| !object.is_empty()))
         .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
+    super::codex::sanitize_json_schema_refs(&mut input_schema);
     if let Some(schema) = input_schema.as_object_mut() {
-        if schema.get("type").and_then(Value::as_str) != Some("object") {
+        if !schema.contains_key("$ref")
+            && schema.get("type").and_then(Value::as_str) != Some("object")
+        {
             schema.insert("type".to_string(), json!("object"));
         }
     }
