@@ -1145,21 +1145,43 @@ requires_openai_auth = true`,
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     auth: generateThirdPartyAuth(""),
+    // 智谱三端点分立（docs.bigmodel.cn/cn/coding-plan/tool/others）：Anthropic
+    // /api/anthropic、OpenAI Chat /api/coding/paas/v4、OpenAI Responses /api/v1，
+    // 并明示「错误配置端点将导致无法使用 GLM Coding Plan 套餐额度」。Codex 直连
+    // 发的是 Responses wire，base_url 必须是 /api/v1；Chat 端点上的 /responses
+    // 是严格旧网关（拒 type=custom 工具 → #6944 的 400）
     config: generateThirdPartyConfig(
       "zhipu_glm",
-      "https://open.bigmodel.cn/api/coding/paas/v4",
-      "glm-5.2",
+      "https://open.bigmodel.cn/api/v1",
+      "glm-5.3",
     ),
-    // 智谱 GLM 编程套餐原生支持 Responses 协议（wire_api=responses 对自家 base_url），
-    // 且上游反序列化仅允许 function/web_search_preview/code_interpreter/mcp，
-    // 不支持 freeform custom 工具（如 apply_patch），因此使用 NativeResponses profile。
+    endpointCandidates: ["https://open.bigmodel.cn/api/v1"],
+    // 官方 Codex 接入页（docs.bigmodel.cn/cn/coding-plan/tool/codex，2026-09-04
+    // 核对）：wire_api=responses 对自家 /api/v1，与 MiMo/MiniMax 同为原生直连
+    // → NativeResponses profile（shell_command 编辑、不发 freeform apply_patch；
+    // 官方目录虽声明 freeform，无真机验证前按保守口径，不引入 400 风险）
     apiFormat: "openai_responses",
+    // 档位/上下文/模态照抄官方 models.json：glm-5.3 low/high/max 默认 max；
+    // glm-5-turbo 官方档位为空、默认 max——cc-switch 表达不了空档位（回落会得到
+    // 模板 none/high，none 在原生直连下没有转换层兜底、会原样发给严格网关），
+    // 按官方默认收成单档 max。两模型 input_modalities=["text"]、并行工具调用 true
     modelCatalog: modelCatalog([
       {
-        model: "glm-5.2",
-        displayName: "GLM-5.2",
-        contextWindow: 200000,
-        reasoningLevels: ["none", "high"],
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
+      },
+      {
+        model: "glm-5-turbo",
+        displayName: "GLM-5-Turbo",
+        contextWindow: 204800,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["max"],
       },
     ]),
     category: "cn_official",
@@ -1171,20 +1193,24 @@ requires_openai_auth = true`,
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     auth: generateThirdPartyAuth(""),
+    // 国际站同上（docs.z.ai/devpack/tool/others + devpack/tool/codex，2026-09-04
+    // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3
     config: generateThirdPartyConfig(
       "zhipu_glm_en",
-      "https://api.z.ai/api/coding/paas/v4",
-      "glm-5.2",
+      "https://api.z.ai/api/v1",
+      "glm-5.3",
     ),
-    endpointCandidates: ["https://api.z.ai/api/coding/paas/v4"],
-    // 智谱 GLM 国际站编程套餐同上，原生支持 Responses 协议
+    endpointCandidates: ["https://api.z.ai/api/v1"],
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
-        model: "glm-5.2",
-        displayName: "GLM-5.2",
-        contextWindow: 200000,
-        reasoningLevels: ["none", "high"],
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
       },
     ]),
     category: "cn_official",

@@ -68,8 +68,13 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
     "longcat.chat",   // Meituan LongCat (api.longcat.chat)
     "minimax.io",     // MiniMax global (api.minimax.io)
     "minimaxi.com",   // MiniMax CN (api.minimaxi.com)
-    "bigmodel.cn",    // Zhipu GLM CN (open.bigmodel.cn)
-    "z.ai",           // Zhipu GLM global (api.z.ai)
+    // Zhipu GLM CN / global (open.bigmodel.cn, api.z.ai): the native Responses
+    // gateway's tool-type enum is `function | web_search_preview |
+    // code_interpreter | mcp` (verbatim from the #6944 400 body) — Codex's
+    // `web_search` hosted tool is not in it. Matched on host labels (see
+    // `codex_url_host_matches_any`), so `xyz.ai` never collides with `z.ai`.
+    "bigmodel.cn",
+    "z.ai",
 ];
 
 /// Brand prefixes of models whose native gateways reject `web_search`, matched
@@ -78,6 +83,40 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
 /// so a supporting gateway is never wrongly matched.
 const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] =
     &["mimo", "longcat", "minimax", "qwen3-coder", "glm"];
+
+/// Host component of a base URL (or a bare host), lowercased, without scheme,
+/// userinfo, port, path or query. Tolerates the loose forms users paste into
+/// the provider form (`example.com`, `https://user@Example.com:8443/v1`).
+pub(crate) fn codex_url_host(url_or_host: &str) -> String {
+    let trimmed = url_or_host.trim();
+    let rest = trimmed
+        .split_once("://")
+        .map_or(trimmed, |(_scheme, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if let Some(ipv6) = host_port.strip_prefix('[') {
+        ipv6.split(']').next().unwrap_or(ipv6)
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Whether the URL's host IS one of `hosts` or a subdomain of it, matched on
+/// DNS label boundaries. Vendor host lists must go through this rather than a
+/// substring `contains`: a 4-char entry like `z.ai` would otherwise also match
+/// `api.xyz.ai` / `viz.ai` and silently push an unrelated provider onto a
+/// vendor-specific code path.
+pub(crate) fn codex_url_host_matches_any(url_or_host: &str, hosts: &[&str]) -> bool {
+    let host = codex_url_host(url_or_host);
+    if host.is_empty() {
+        return false;
+    }
+    hosts.iter().any(|candidate| {
+        let candidate = candidate.trim_start_matches('.').to_ascii_lowercase();
+        host == candidate || host.ends_with(&format!(".{candidate}"))
+    })
+}
 
 /// Top-level `model` id from a Codex `config.toml`.
 fn codex_top_level_model(config_text: &str) -> Option<String> {
@@ -94,11 +133,7 @@ fn codex_top_level_model(config_text: &str) -> Option<String> {
 /// the live `config.toml`, so it applies to existing providers without a re-save.
 fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     if let Some(base_url) = extract_codex_base_url(config_text) {
-        let base_url = base_url.to_ascii_lowercase();
-        if CODEX_WEB_SEARCH_REJECT_HOSTS
-            .iter()
-            .any(|host| base_url.contains(host))
-        {
+        if codex_url_host_matches_any(&base_url, CODEX_WEB_SEARCH_REJECT_HOSTS) {
             return true;
         }
     }
@@ -7143,6 +7178,8 @@ web_search = "disabled"
             ("LongCat-2.0", "https://api.longcat.chat/openai/v1"),
             ("MiniMax-M3", "https://api.minimax.io/v1"),
             ("MiniMax-M3", "https://api.minimaxi.com/v1"),
+            ("glm-5.3", "https://open.bigmodel.cn/api/v1"),
+            ("glm-5.3", "https://api.z.ai/api/v1"),
         ] {
             assert!(
                 codex_native_gateway_rejects_web_search(&cfg(model, host)),
@@ -7156,6 +7193,7 @@ web_search = "disabled"
             ("MiniMax-M3", "https://api.siliconflow.cn/v1"),
             ("MiniMaxAI/MiniMax-M3", "https://api.siliconflow.cn/v1"),
             ("mimo-v2.5-pro", "https://some-aggregator.example/v1"),
+            ("zai-org/glm-5.3", "https://some-aggregator.example/v1"),
             (
                 "qwen/qwen3-coder-plus",
                 "https://some-aggregator.example/v1",
@@ -7189,12 +7227,46 @@ web_search = "disabled"
                 "https://ark.cn-beijing.volces.com/api/v3",
             ),
             ("Pro/moonshotai/Kimi-K2.6", "https://api.siliconflow.cn/v1"),
+            // Host-label matching: `z.ai` / `bigmodel.cn` must not swallow
+            // unrelated domains that merely contain them as a substring.
+            ("gpt-5.5", "https://api.xyz.ai/v1"),
+            ("gpt-5.5", "https://viz.ai/v1"),
+            ("gpt-5.5", "https://notbigmodel.cn/v1"),
+            ("gpt-5.5", "https://z.ai.example.com/v1"),
         ] {
             assert!(
                 !codex_native_gateway_rejects_web_search(&cfg(model, host)),
                 "{model} @ {host} should NOT be blacklisted"
             );
         }
+    }
+
+    #[test]
+    fn url_host_matcher_uses_label_boundaries() {
+        let hosts = &["z.ai", "bigmodel.cn"];
+        for url in [
+            "https://api.z.ai/api/v1",
+            "https://open.bigmodel.cn/api/v1",
+            "https://Open.BigModel.cn/api/coding/paas/v4",
+            "https://user:pw@api.z.ai:8443/api/v1?x=1#f",
+            "z.ai",
+            "api.z.ai.",
+        ] {
+            assert!(codex_url_host_matches_any(url, hosts), "{url}");
+        }
+        for url in [
+            "https://api.xyz.ai/v1",
+            "https://viz.ai/v1",
+            "https://z.ai.example.com/v1",
+            "https://notbigmodel.cn/v1",
+            "https://example.com/z.ai/v1",
+            "https://example.com/?next=https://api.z.ai",
+            "",
+        ] {
+            assert!(!codex_url_host_matches_any(url, hosts), "{url}");
+        }
+        assert_eq!(codex_url_host("https://[::1]:8080/v1"), "::1");
+        assert_eq!(codex_url_host("HTTP://Example.COM:80"), "example.com");
     }
 
     #[test]
