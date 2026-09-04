@@ -34,6 +34,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod window_state_guard;
 
 mod tray;
 mod usage_events;
@@ -341,6 +342,10 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 在 Tauri Builder 构造(window-state 插件随后读取状态文件)之前,
+    // 先清理历史上可能被写坏的窗口尺寸(见 window_state_guard 模块文档)。
+    window_state_guard::startup_sanitize();
+
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
 
@@ -2250,6 +2255,10 @@ pub fn save_window_state_before_exit(app_handle: &tauri::AppHandle) {
     } else {
         log::info!("已在退出前保存窗口状态");
     }
+    // tao GTK 后端在混合缩放/登录竞态下 inner_size() 可能返回膨胀值
+    // (物理/逻辑像素混淆),落盘后按窗口所在显示器的 scale 归一化为逻辑像素,
+    // 防止坏值在每次开机恢复时把窗口越变越大(配合 reapply_saved_size)。
+    window_state_guard::normalize_saved_state_to_logical(app_handle);
 }
 
 /// 主动释放 single-instance 锁。
