@@ -98,6 +98,8 @@ let liveProviderIds: LiveProviderIdsByApp = {
 let settingsState: Settings = {
   showInTray: true,
   minimizeToTrayOnClose: true,
+  autoLightweightEnabled: false,
+  autoLightweightAfterMinutes: 1,
   enableClaudePluginIntegration: false,
   claudeConfigDir: "/default/claude",
   codexConfigDir: "/default/codex",

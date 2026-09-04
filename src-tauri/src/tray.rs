@@ -998,6 +998,7 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
 
     match event_id {
         "show_main" => {
+            crate::auto_lightweight::cancel_pending("tray-show-main");
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(target_os = "windows")]
                 {

@@ -1,6 +1,7 @@
 mod app_config;
 mod app_store;
 mod auto_launch;
+mod auto_lightweight;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
@@ -274,6 +275,7 @@ fn handle_deeplink_url(
             }
 
             if focus_main_window {
+                crate::auto_lightweight::cancel_pending("deeplink-focus");
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.unminimize();
                     let _ = window.show();
@@ -350,6 +352,7 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             log::info!("=== Single Instance Callback Triggered ===");
+            crate::auto_lightweight::cancel_pending("single-instance-open");
             log::debug!("Args count: {}", args.len());
             for (i, arg) in args.iter().enumerate() {
                 log::debug!("  arg[{i}]: {}", url_for_log(arg));
@@ -397,6 +400,7 @@ pub fn run() {
                 && !startup_page_handled.swap(true, Ordering::Relaxed)
                 && !crate::settings::get_settings().silent_startup
             {
+                crate::auto_lightweight::cancel_pending("startup-page-shown");
                 let _ = webview.window().show();
                 log::info!("主页面加载完成，主窗口已显示");
             }
@@ -407,8 +411,8 @@ pub fn run() {
         // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
                     .map(|p| p.kind.as_deref() == Some("db_version_too_new"))
@@ -423,20 +427,40 @@ pub fn run() {
 
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
-                    let _ = window.hide();
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(true);
-                    }
-                    #[cfg(target_os = "macos")]
-                    {
-                        tray::apply_tray_policy(window.app_handle(), false);
+                    let hidden = match window.hide() {
+                        Ok(()) => true,
+                        Err(error) => {
+                            log::warn!("关闭到托盘时隐藏窗口失败: {error}");
+                            false
+                        }
+                    };
+                    if hidden {
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = window.set_skip_taskbar(true);
+                        }
+                        #[cfg(target_os = "macos")]
+                        {
+                            tray::apply_tray_policy(window.app_handle(), false);
+                        }
+                        if window.label() == "main" {
+                            crate::auto_lightweight::schedule_after_hidden(
+                                window.app_handle(),
+                                "close-to-tray",
+                            );
+                        }
                     }
                 } else {
                     api.prevent_close();
                     window.app_handle().exit(0);
                 }
             }
+            tauri::WindowEvent::Focused(true) if window.label() == "main" => {
+                // 防御性兜底：即使未来新增显示主窗口的入口忘记显式取消，窗口
+                // 获得焦点后，旧计时任务也不能再销毁它。
+                crate::auto_lightweight::cancel_pending("main-window-focused");
+            }
+            _ => {}
         })
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1053,6 +1077,7 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 move |event| {
                     log::info!("=== Deep Link Event Received (on_open_url) ===");
+                    crate::auto_lightweight::cancel_pending("deeplink-open");
                     let urls = event.urls();
                     log::info!("Received {} URL(s)", urls.len());
 
@@ -1340,12 +1365,22 @@ pub fn run() {
                 let _ = window.set_decorations(!settings.use_app_window_controls);
                 if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
-                    let _ = window.hide();
-                    #[cfg(target_os = "windows")]
-                    let _ = window.set_skip_taskbar(true);
-                    #[cfg(target_os = "macos")]
-                    tray::apply_tray_policy(app.handle(), false);
-                    log::info!("静默启动模式：主窗口已隐藏");
+                    match window.hide() {
+                        Ok(()) => {
+                            #[cfg(target_os = "windows")]
+                            let _ = window.set_skip_taskbar(true);
+                            #[cfg(target_os = "macos")]
+                            tray::apply_tray_policy(app.handle(), false);
+                            crate::auto_lightweight::schedule_after_hidden(
+                                app.handle(),
+                                "silent-startup",
+                            );
+                            log::info!("静默启动模式：主窗口已隐藏");
+                        }
+                        Err(error) => {
+                            log::warn!("静默启动时隐藏主窗口失败: {error}");
+                        }
+                    }
                 } else {
                     // 正常启动模式：显示窗口
                     #[cfg(not(target_os = "windows"))]
@@ -1721,6 +1756,7 @@ pub fn run() {
     app.run(|app_handle, event| {
         // 处理退出请求（所有平台）
         if let RunEvent::ExitRequested { api, code, .. } = &event {
+            crate::auto_lightweight::cancel_pending("application-exit");
             match classify_exit_request(*code) {
                 // code 为 None 表示运行时自动触发（如隐藏窗口的 WebView 被回收导致无存活窗口），
                 // 此时应仅阻止退出、保持托盘后台运行。
@@ -1782,6 +1818,7 @@ pub fn run() {
             match event {
                 // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口
                 RunEvent::Reopen { .. } => {
+                    crate::auto_lightweight::cancel_pending("macos-reopen");
                     if let Some(window) = app_handle.get_webview_window("main") {
                         #[cfg(target_os = "windows")]
                         {
@@ -1807,6 +1844,7 @@ pub fn run() {
                         );
 
                         if url_str.starts_with("ccswitch://") {
+                            crate::auto_lightweight::cancel_pending("macos-deeplink-open");
                             if crate::lightweight::is_lightweight_mode() {
                                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
                                 {

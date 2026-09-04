@@ -5,8 +5,13 @@ import type { Settings } from "@/types";
 
 type Language = "zh" | "zh-TW" | "en" | "ja";
 
-export type SettingsFormState = Omit<Settings, "language"> & {
+export type SettingsFormState = Omit<
+  Settings,
+  "language" | "autoLightweightEnabled" | "autoLightweightAfterMinutes"
+> & {
   language: Language;
+  autoLightweightEnabled: boolean;
+  autoLightweightAfterMinutes: number;
 };
 
 const normalizeLanguage = (lang?: string | null): Language => {
@@ -111,6 +116,8 @@ export function useSettingsForm(): UseSettingsFormResult {
       ...data,
       showInTray: data.showInTray ?? true,
       minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
+      autoLightweightEnabled: data.autoLightweightEnabled ?? false,
+      autoLightweightAfterMinutes: data.autoLightweightAfterMinutes ?? 1,
       useAppWindowControls: data.useAppWindowControls ?? false,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
@@ -142,6 +149,8 @@ export function useSettingsForm(): UseSettingsFormResult {
           ({
             showInTray: true,
             minimizeToTrayOnClose: true,
+            autoLightweightEnabled: false,
+            autoLightweightAfterMinutes: 1,
             useAppWindowControls: false,
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
@@ -179,6 +188,9 @@ export function useSettingsForm(): UseSettingsFormResult {
         ...serverData,
         showInTray: serverData.showInTray ?? true,
         minimizeToTrayOnClose: serverData.minimizeToTrayOnClose ?? true,
+        autoLightweightEnabled: serverData.autoLightweightEnabled ?? false,
+        autoLightweightAfterMinutes:
+          serverData.autoLightweightAfterMinutes ?? 1,
         useAppWindowControls: serverData.useAppWindowControls ?? false,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
