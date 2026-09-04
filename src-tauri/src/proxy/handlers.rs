@@ -75,17 +75,40 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
     Ok(Json(status))
 }
 
-/// GET /v1/models — Codex model list (reachability check)
+/// GET /claude/v1/models — Claude model list (Anthropic format)
+pub async fn handle_claude_models(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, ProxyError> {
+    let providers = state
+        .provider_router
+        .select_providers("claude")
+        .await
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
+    let response = crate::claude_desktop_config::model_list_response(provider)
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    Ok(Json(response))
+}
+
+/// GET /v1/models — Model list (reachability check)
 ///
-/// Codex CLI probes this endpoint at startup and deserializes the response as a
-/// catalog with a top-level `models` field.  Return the cc-switch–managed model
-/// catalog file directly so the format always matches what the current version
-/// of Codex expects.
-///
-/// Only serves the catalog when the live config.toml still references the
-/// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
-/// Codex live-setting import.
-pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+/// If requested by an Anthropic/Claude client (e.g. Claude Code via ANTHROPIC_BASE_URL),
+/// returns the Anthropic-formatted model list (`{"data": [...]}`).
+/// Otherwise, serves the cc-switch–managed Codex model catalog (`{"models": [...]}`)
+/// for Codex CLI compatibility.
+pub async fn handle_models(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, ProxyError> {
+    let is_anthropic_client = headers.contains_key("anthropic-version")
+        || headers.contains_key("anthropic-beta")
+        || headers.contains_key("x-api-key");
+    if is_anthropic_client {
+        if let Ok(res) = handle_claude_models(State(state.clone())).await {
+            return Ok(res);
+        }
+    }
+
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
         Ok(config_text) => {
@@ -3575,4 +3598,15 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
     }
+
+    #[tokio::test]
+    async fn handle_models_detects_anthropic_headers() {
+        let headers = axum::http::HeaderMap::new();
+        assert!(!headers.contains_key("anthropic-version"));
+
+        let mut anthropic_headers = axum::http::HeaderMap::new();
+        anthropic_headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
+        assert!(anthropic_headers.contains_key("anthropic-version"));
+    }
 }
+
