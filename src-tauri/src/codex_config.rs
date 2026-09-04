@@ -1066,6 +1066,39 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
     !id.is_empty() && !CODEX_RESERVED_MODEL_PROVIDER_IDS.contains(&id)
 }
 
+/// Merge non-managed `[model_providers.*]` sections from existing live config into target config.
+pub fn merge_unmanaged_codex_model_providers(
+    target_config: &str,
+    existing_live_config: &str,
+) -> Result<String, AppError> {
+    let Ok(live_doc) = existing_live_config.parse::<DocumentMut>() else {
+        return Ok(target_config.to_string());
+    };
+    let Some(live_providers) = live_doc.get("model_providers").and_then(|item| item.as_table()) else {
+        return Ok(target_config.to_string());
+    };
+
+    let mut target_doc = target_config.parse::<DocumentMut>().map_err(|e| {
+        AppError::Message(format!("Failed to parse target Codex config: {e}"))
+    })?;
+
+    if target_doc.get("model_providers").is_none() {
+        let mut table = toml_edit::Table::new();
+        table.set_implicit(true);
+        target_doc["model_providers"] = toml_edit::Item::Table(table);
+    }
+
+    if let Some(target_providers) = target_doc["model_providers"].as_table_mut() {
+        for (key, item) in live_providers.iter() {
+            if !target_providers.contains_key(key) {
+                target_providers.insert(key, item.clone());
+            }
+        }
+    }
+
+    Ok(target_doc.to_string())
+}
+
 /// Write only Codex `config.toml` for provider switching.
 ///
 /// Codex login state lives in `auth.json`; provider routing, endpoint, model,
@@ -1074,7 +1107,13 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
 pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
     let config_path = get_codex_config_path();
     let cfg_text = match config_text_opt {
-        Some(config_text) => config_text.to_string(),
+        Some(config_text) => {
+            if let Ok(existing) = std::fs::read_to_string(&config_path) {
+                merge_unmanaged_codex_model_providers(config_text, &existing)?
+            } else {
+                config_text.to_string()
+            }
+        }
         None => String::new(),
     };
 
@@ -7798,4 +7837,35 @@ model_catalog_json = "cc-switch-model-catalog.json"
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
     }
+
+    #[test]
+    fn merge_unmanaged_codex_model_providers_preserves_custom_aliases() {
+        let existing = r#"model_provider = "proxy"
+
+[model_providers.proxy]
+name = "legacy alias"
+base_url = "http://127.0.0.1:15721/v1"
+
+[model_providers.kimi3]
+name = "kimi legacy"
+base_url = "https://api.moonshot.cn/v1"
+"#;
+
+        let target = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "new provider"
+base_url = "https://new.example.com/v1"
+"#;
+
+        let merged = merge_unmanaged_codex_model_providers(target, existing).expect("merge");
+
+        assert!(merged.contains(r#"[model_providers.custom]"#));
+        assert!(merged.contains(r#"[model_providers.proxy]"#));
+        assert!(merged.contains(r#"[model_providers.kimi3]"#));
+        assert!(merged.contains(r#"base_url = "http://127.0.0.1:15721/v1""#));
+        assert!(merged.contains(r#"base_url = "https://api.moonshot.cn/v1""#));
+        assert!(merged.contains(r#"base_url = "https://new.example.com/v1""#));
+    }
 }
+
