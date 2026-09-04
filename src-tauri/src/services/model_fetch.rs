@@ -45,6 +45,7 @@ const KNOWN_COMPAT_SUFFIXES: &[&str] = &[
     "/api/anthropic",
     "/apps/anthropic",
     "/api/coding",
+    "/api/v1",
     "/claudecode",
     "/anthropic",
     "/step_plan",
@@ -491,6 +492,19 @@ mod tests {
             c,
             vec![
                 "https://open.bigmodel.cn/api/anthropic/v1/models",
+                "https://open.bigmodel.cn/v1/models",
+                "https://open.bigmodel.cn/models",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_candidates_zhipu_strip_api_v1() {
+        let c = build_models_url_candidates("https://open.bigmodel.cn/api/v1", false, None).unwrap();
+        assert_eq!(
+            c,
+            vec![
+                "https://open.bigmodel.cn/api/v1/models",
                 "https://open.bigmodel.cn/v1/models",
                 "https://open.bigmodel.cn/models",
             ]
