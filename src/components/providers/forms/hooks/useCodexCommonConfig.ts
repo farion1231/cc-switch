@@ -4,6 +4,7 @@ import { parse as parseToml } from "smol-toml";
 import { hasTomlCommonConfigSnippet } from "@/utils/providerConfigUtils";
 import { configApi } from "@/lib/api";
 import { normalizeTomlText } from "@/utils/textNormalization";
+import { useCommonConfigSyncGuard } from "./useCommonConfigSyncGuard";
 
 /**
  * 合并/剥离通用配置片段（走后端 toml_edit，保注释、保键序）。
@@ -52,11 +53,6 @@ export function useCodexCommonConfig({
   selectedPresetId,
 }: UseCodexCommonConfigProps) {
   const { t } = useTranslation();
-  // 编辑态下 meta.commonConfigEnabled 是“是否应用通用配置”的权威来源：
-  // 后端保存时会从供应商快照中剥离通用配置片段（runtime overlay），
-  // 因此不能在编辑态用“当前 config.toml 里是否包含片段”来反推勾选状态。
-  const isEditMode = Boolean(initialData);
-  const hasExplicitInitialEnabled = initialEnabled !== undefined;
   const [useCommonConfig, setUseCommonConfig] = useState(false);
   const [commonConfigSnippet, setCommonConfigSnippetState] = useState<string>(
     DEFAULT_CODEX_COMMON_CONFIG_SNIPPET,
@@ -65,12 +61,15 @@ export function useCodexCommonConfig({
   const [isLoading, setIsLoading] = useState(true);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  // 用于跟踪是否正在通过通用配置更新
-  const isUpdatingFromCommonConfig = useRef(false);
+  // 程序性配置写入的回显保护（替代 setTimeout 重置标记）
+  const syncGuard = useCommonConfigSyncGuard();
   // 用于跟踪新建模式是否已初始化默认勾选
   const hasInitializedNewMode = useRef(false);
-  // 用于跟踪编辑模式是否已初始化显式开关/预览
-  const hasInitializedEditMode = useRef(false);
+  // 用于识别 initialData 被 live 配置替换后的“codexConfig 重置窗口”
+  const lastInitialDataRef = useRef<typeof initialData | undefined>(undefined);
+  const lastInitialEnabledRef = useRef<boolean | undefined>(undefined);
+  const preResetConfigRef = useRef<string | null>(null);
+  const pendingResetConfigRef = useRef<string | null>(null);
   // 后端 TOML 合并是异步的：连续操作（快速点开关、连点保存）可能乱序
   // 返回。每个写 config 的异步操作在发起时领取递增序号，结果落地前
   // 校验自己仍是最新一次；过期结果直接丢弃，保证最后一次操作胜出。
@@ -95,8 +94,9 @@ export function useCodexCommonConfig({
   // 当预设变化时，重置初始化标记，使新预设能够重新触发初始化逻辑
   useEffect(() => {
     hasInitializedNewMode.current = false;
-    hasInitializedEditMode.current = false;
-  }, [selectedPresetId, initialEnabled]);
+    lastInitialDataRef.current = undefined;
+    lastInitialEnabledRef.current = undefined;
+  }, [selectedPresetId]);
 
   const parseCommonConfigSnippet = useCallback((snippetString: string) => {
     const trimmed = snippetString.trim();
@@ -174,83 +174,41 @@ export function useCodexCommonConfig({
     };
   }, []);
 
-  // 初始化时检查通用配置片段（编辑模式）
+  // 编辑态初始化 / live 配置刷新：勾选状态以 meta.commonConfigEnabled 为准，
+  // 记录 codexConfig 即将重置到的快照值，由下面的同步 effect 等待重置落地后补回预览。
   useEffect(() => {
+    if (!initialData?.settingsConfig || isLoading) return;
     if (
-      !initialData?.settingsConfig ||
-      isLoading ||
-      hasInitializedEditMode.current
+      lastInitialDataRef.current === initialData &&
+      lastInitialEnabledRef.current === initialEnabled
     ) {
       return;
     }
 
-    hasInitializedEditMode.current = true;
+    lastInitialDataRef.current = initialData;
+    lastInitialEnabledRef.current = initialEnabled;
 
-    const parsedSnippet = parseCommonConfigSnippet(commonConfigSnippet);
-    if (parsedSnippet.error) {
-      if (commonConfigSnippet.trim()) {
-        setCommonConfigError(parsedSnippet.error);
-      }
-      setUseCommonConfig(false);
-      return;
-    }
-
-    const config =
+    const expectedConfig =
       typeof initialData.settingsConfig.config === "string"
         ? initialData.settingsConfig.config
         : "";
     const inferredHasCommon = hasTomlCommonConfigSnippet(
-      config,
+      expectedConfig,
       commonConfigSnippet,
     );
-
-    // 优先级：显式设置的 initialEnabled > 从配置推断的值
-    // 如果 initialEnabled 为 undefined，使用推断值
     const hasCommon =
       initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
 
-    // 勾选状态先落定，再异步合并片段用于编辑预览。meta.commonConfigEnabled
-    // 是权威来源：即使后端合并失败或被外部改动作废，也不能把勾选翻掉。
     setCommonConfigError("");
     setUseCommonConfig(hasCommon);
-
-    // 如果应该启用通用配置但配置中还没有，则自动添加
-    if (hasCommon && !inferredHasCommon && parsedSnippet.hasContent) {
-      let cancelled = false;
-      const seq = ++tomlOpSeqRef.current;
-      (async () => {
-        const { updatedConfig, error } = await applyTomlSnippet(
-          codexConfig,
-          commonConfigSnippet,
-          true,
-        );
-        if (cancelled || isTomlOpStale(seq, codexConfig)) {
-          return;
-        }
-        if (error) {
-          setCommonConfigError(error);
-          return;
-        }
-
-        isUpdatingFromCommonConfig.current = true;
-        onConfigChange(updatedConfig);
-        setTimeout(() => {
-          isUpdatingFromCommonConfig.current = false;
-        }, 0);
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }
+    preResetConfigRef.current = codexConfig;
+    pendingResetConfigRef.current = hasCommon ? expectedConfig : null;
   }, [
-    codexConfig,
-    commonConfigSnippet,
     initialData,
     initialEnabled,
+    commonConfigSnippet,
     isLoading,
-    isTomlOpStale,
-    onConfigChange,
-    parseCommonConfigSnippet,
+    codexConfig,
   ]);
 
   // 新建模式：如果通用配置片段存在且有效，默认启用
@@ -275,16 +233,20 @@ export function useCodexCommonConfig({
 
     let cancelled = false;
     const seq = ++tomlOpSeqRef.current;
+    const base = codexConfig;
+    syncGuard.begin(base);
     (async () => {
       const { updatedConfig, error } = await applyTomlSnippet(
-        codexConfig,
+        base,
         commonConfigSnippet,
         true,
       );
-      if (cancelled || isTomlOpStale(seq, codexConfig)) {
+      if (cancelled || isTomlOpStale(seq, base)) {
+        syncGuard.abort();
         return;
       }
       if (error) {
+        syncGuard.abort();
         setCommonConfigError(error);
         setUseCommonConfig(false);
         return;
@@ -292,14 +254,12 @@ export function useCodexCommonConfig({
 
       setCommonConfigError("");
       setUseCommonConfig(true);
-      isUpdatingFromCommonConfig.current = true;
+      syncGuard.schedule(base, updatedConfig);
       onConfigChange(updatedConfig);
-      setTimeout(() => {
-        isUpdatingFromCommonConfig.current = false;
-      }, 0);
     })();
     return () => {
       cancelled = true;
+      syncGuard.abort();
     };
   }, [
     initialData,
@@ -333,16 +293,20 @@ export function useCodexCommonConfig({
         return;
       }
 
+      const base = codexConfig;
+      syncGuard.begin(base);
       const { updatedConfig, error: snippetError } = await applyTomlSnippet(
-        codexConfig,
+        base,
         commonConfigSnippet,
         checked,
       );
-      if (isTomlOpStale(seq, codexConfig)) {
+      if (isTomlOpStale(seq, base)) {
+        syncGuard.abort();
         return;
       }
 
       if (snippetError) {
+        syncGuard.abort();
         setCommonConfigError(snippetError);
         setUseCommonConfig(false);
         return;
@@ -350,13 +314,8 @@ export function useCodexCommonConfig({
 
       setCommonConfigError("");
       setUseCommonConfig(checked);
-      // 标记正在通过通用配置更新
-      isUpdatingFromCommonConfig.current = true;
+      syncGuard.schedule(base, updatedConfig);
       onConfigChange(updatedConfig);
-      // 在下一个事件循环中重置标记
-      setTimeout(() => {
-        isUpdatingFromCommonConfig.current = false;
-      }, 0);
     },
     [
       codexConfig,
@@ -365,6 +324,7 @@ export function useCodexCommonConfig({
       onConfigChange,
       parseCommonConfigSnippet,
       t,
+      syncGuard,
     ],
   );
 
@@ -381,24 +341,29 @@ export function useCodexCommonConfig({
 
         if (useCommonConfig) {
           const previousParsed = parseCommonConfigSnippet(previousSnippet);
-          let updatedConfig = codexConfig;
+          const base = codexConfig;
+          let updatedConfig = base;
+          syncGuard.begin(base);
 
           if (!previousParsed.error && previousParsed.hasContent) {
             const removeResult = await applyTomlSnippet(
-              codexConfig,
+              base,
               previousSnippet,
               false,
             );
-            if (isTomlOpStale(seq, codexConfig)) {
+            if (isTomlOpStale(seq, base)) {
+              syncGuard.abort();
               return false;
             }
             if (removeResult.error) {
+              syncGuard.abort();
               setCommonConfigError(removeResult.error);
               return false;
             }
             updatedConfig = removeResult.updatedConfig;
           }
 
+          syncGuard.schedule(base, updatedConfig);
           onConfigChange(updatedConfig);
           setUseCommonConfig(false);
         }
@@ -423,19 +388,23 @@ export function useCodexCommonConfig({
 
       // 若当前启用通用配置，需要替换为最新片段
       if (useCommonConfig) {
-        let nextConfig = codexConfig;
+        const base = codexConfig;
+        let nextConfig = base;
         const previousParsed = parseCommonConfigSnippet(previousSnippet);
+        syncGuard.begin(base);
 
         if (!previousParsed.error && previousParsed.hasContent) {
           const removeResult = await applyTomlSnippet(
-            codexConfig,
+            base,
             previousSnippet,
             false,
           );
-          if (isTomlOpStale(seq, codexConfig)) {
+          if (isTomlOpStale(seq, base)) {
+            syncGuard.abort();
             return false;
           }
           if (removeResult.error) {
+            syncGuard.abort();
             setCommonConfigError(removeResult.error);
             return false;
           }
@@ -443,23 +412,20 @@ export function useCodexCommonConfig({
         }
 
         const addResult = await applyTomlSnippet(nextConfig, value, true);
-        // nextConfig 派生自发起时的 codexConfig，基线校验仍对 codexConfig 做
-        if (isTomlOpStale(seq, codexConfig)) {
+        // nextConfig 派生自发起时的 base，基线校验仍对 base 做
+        if (isTomlOpStale(seq, base)) {
+          syncGuard.abort();
           return false;
         }
 
         if (addResult.error) {
+          syncGuard.abort();
           setCommonConfigError(addResult.error);
           return false;
         }
 
-        // 标记正在通过通用配置更新，避免触发状态检查
-        isUpdatingFromCommonConfig.current = true;
+        syncGuard.schedule(base, addResult.updatedConfig);
         onConfigChange(addResult.updatedConfig);
-        // 在下一个事件循环中重置标记
-        setTimeout(() => {
-          isUpdatingFromCommonConfig.current = false;
-        }, 0);
       }
 
       setCommonConfigError("");
@@ -483,19 +449,77 @@ export function useCodexCommonConfig({
       parseCommonConfigSnippet,
       t,
       useCommonConfig,
+      syncGuard,
     ],
   );
 
-  // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）。
-  // 编辑态且 meta.commonConfigEnabled 有显式值时跳过内容推断，防止打开编辑界面时
-  // 被“快照中暂无片段”的中间态 / 异步初始化竞态覆盖成未勾选。
+  // 配置变化同步 effect：先处理程序性写入回显，再处理 codexConfig 重置窗口，
+  // 最后才进行用户编辑触发的内容推断（兼容没有 commonConfigEnabled 的旧供应商）。
   useEffect(() => {
-    if (isUpdatingFromCommonConfig.current || isLoading) {
-      return;
+    if (isLoading) return;
+    if (syncGuard.skip(codexConfig)) return;
+
+    // initialData 被 live 配置替换后，useCodexConfigState 会把 codexConfig 重置为
+    // DB/live 快照（快照按设计不含片段）。等到重置值落地后把片段补回编辑预览。
+    if (pendingResetConfigRef.current !== null) {
+      const expected = pendingResetConfigRef.current;
+      if (codexConfig === expected) {
+        pendingResetConfigRef.current = null;
+        preResetConfigRef.current = null;
+
+        const parsedSnippet = parseCommonConfigSnippet(commonConfigSnippet);
+        if (parsedSnippet.error) {
+          if (commonConfigSnippet.trim()) {
+            setCommonConfigError(parsedSnippet.error);
+          }
+          setUseCommonConfig(false);
+          return;
+        }
+        const hasCommon =
+          initialEnabled !== undefined
+            ? initialEnabled
+            : hasTomlCommonConfigSnippet(codexConfig, commonConfigSnippet);
+        if (
+          hasCommon &&
+          !hasTomlCommonConfigSnippet(codexConfig, commonConfigSnippet) &&
+          parsedSnippet.hasContent
+        ) {
+          const base = codexConfig;
+          const seq = ++tomlOpSeqRef.current;
+          syncGuard.begin(base);
+          (async () => {
+            const { updatedConfig, error } = await applyTomlSnippet(
+              base,
+              commonConfigSnippet,
+              true,
+            );
+            if (isTomlOpStale(seq, base)) {
+              syncGuard.abort();
+              return;
+            }
+            if (error) {
+              syncGuard.abort();
+              setCommonConfigError(error);
+              return;
+            }
+            syncGuard.schedule(base, updatedConfig);
+            onConfigChange(updatedConfig);
+          })();
+          return;
+        }
+        return;
+      }
+
+      if (codexConfig === preResetConfigRef.current) {
+        // 还没等到 codexConfig 重置
+        return;
+      }
+
+      // 重置没有如期发生（或用户先编辑了），清除窗口并按当前值继续处理
+      pendingResetConfigRef.current = null;
+      preResetConfigRef.current = null;
     }
-    if (isEditMode && hasExplicitInitialEnabled) {
-      return;
-    }
+
     const parsedSnippet = parseCommonConfigSnippet(commonConfigSnippet);
     if (parsedSnippet.error) {
       setUseCommonConfig(false);
@@ -511,8 +535,11 @@ export function useCodexCommonConfig({
     commonConfigSnippet,
     isLoading,
     parseCommonConfigSnippet,
-    isEditMode,
-    hasExplicitInitialEnabled,
+    initialData,
+    initialEnabled,
+    isTomlOpStale,
+    onConfigChange,
+    syncGuard,
   ]);
 
   // 从编辑器当前内容提取通用配置片段

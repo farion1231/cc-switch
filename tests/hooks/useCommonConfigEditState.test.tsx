@@ -20,7 +20,7 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-describe("编辑供应商时保留 meta.commonConfigEnabled 勾选状态", () => {
+describe("编辑供应商时保持勾选状态与配置预览一致", () => {
   beforeEach(() => {
     apiMocks.getCommonConfigSnippet.mockResolvedValue("");
     apiMocks.setCommonConfigSnippet.mockResolvedValue(undefined);
@@ -30,70 +30,155 @@ describe("编辑供应商时保留 meta.commonConfigEnabled 勾选状态", () =>
     );
   });
 
-  it("Claude：快照不含片段时仍保持勾选，后续外部刷新快照也不会取消勾选", async () => {
+  it("Claude：live 刷新重置为不含片段的快照后，仍保持勾选并把片段合并回预览", async () => {
     apiMocks.getCommonConfigSnippet.mockResolvedValue(
       JSON.stringify({ plugin: "shared" }),
     );
 
     const onConfigChange = vi.fn();
-    const initialData = { settingsConfig: { apiKey: "provider-key" } };
-    const storedConfig = JSON.stringify(initialData.settingsConfig, null, 2);
+    const storedData = { settingsConfig: { apiKey: "provider-key" } };
+    const storedConfig = JSON.stringify(storedData.settingsConfig, null, 2);
+    const liveData = { settingsConfig: { apiKey: "live-key" } };
+    const liveConfig = JSON.stringify(liveData.settingsConfig, null, 2);
 
     const { result, rerender } = renderHook(
-      ({ settingsConfig }: { settingsConfig: string }) =>
+      ({
+        settingsConfig,
+        initialData,
+      }: {
+        settingsConfig: string;
+        initialData: { settingsConfig: Record<string, unknown> };
+      }) =>
         useCommonConfigSnippet({
           settingsConfig,
           onConfigChange,
           initialData,
           initialEnabled: true,
         }),
-      { initialProps: { settingsConfig: storedConfig } },
+      {
+        initialProps: { settingsConfig: storedConfig, initialData: storedData },
+      },
     );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     await waitFor(() => expect(result.current.useCommonConfig).toBe(true));
+    expect(JSON.parse(onConfigChange.mock.calls.at(-1)?.[0])).toEqual({
+      apiKey: "provider-key",
+      plugin: "shared",
+    });
 
-    // 模拟表单先显示合并后的预览，随后 EditProviderDialog 读取 live 失败，
-    // 重新以数据库快照（不含通用配置）初始化表单
+    // 模拟 EditProviderDialog 读到 live 配置后替换 initialData 并重置表单
+    await act(async () => {
+      rerender({ settingsConfig: liveConfig, initialData: liveData });
+    });
+
+    expect(result.current.useCommonConfig).toBe(true);
+    expect(JSON.parse(onConfigChange.mock.calls.at(-1)?.[0])).toEqual({
+      apiKey: "live-key",
+      plugin: "shared",
+    });
+
+    // 模拟父组件应用了上面的合并预览
     await act(async () => {
       rerender({
         settingsConfig: JSON.stringify(
-          { apiKey: "provider-key", plugin: "shared" },
+          { apiKey: "live-key", plugin: "shared" },
           null,
           2,
         ),
+        initialData: liveData,
       });
     });
     expect(result.current.useCommonConfig).toBe(true);
 
+    // 用户手动从配置中移除片段时，仍按内容同步为未勾选
     await act(async () => {
-      rerender({ settingsConfig: storedConfig });
-    });
-    expect(result.current.useCommonConfig).toBe(true);
-
-    // 用户仍可正常取消勾选
-    await act(async () => {
-      result.current.handleCommonConfigToggle(false);
+      rerender({
+        settingsConfig: JSON.stringify({ apiKey: "live-key" }, null, 2),
+        initialData: liveData,
+      });
     });
     expect(result.current.useCommonConfig).toBe(false);
   });
 
-  it("Codex：异步合并片段期间外部改写 config.toml 不会把勾选翻成 false", async () => {
+  it("Codex：live 刷新重置 codexConfig 后，仍保持勾选并把片段合并回预览", async () => {
     apiMocks.getCommonConfigSnippet.mockResolvedValue(
       "[tui]\nnotifications = true\n",
     );
+    apiMocks.updateTomlCommonConfigSnippet.mockImplementation(
+      async (configToml: string, _snippet: string, enabled: boolean) =>
+        enabled ? `${configToml}\n\n[tui]\nnotifications = true\n` : configToml,
+    );
 
-    let resolveMerge: ((value: string) => void) | undefined;
-    apiMocks.updateTomlCommonConfigSnippet.mockImplementationOnce(
-      () =>
-        new Promise<string>((resolve) => {
-          resolveMerge = resolve;
+    const onConfigChange = vi.fn();
+    const storedData = {
+      settingsConfig: {
+        config: 'model_provider = "custom"\nmodel = "gpt-5"\n',
+      },
+    };
+    const liveData = {
+      settingsConfig: {
+        config: 'model_provider = "custom"\nmodel = "gpt-6-live"\n',
+      },
+    };
+
+    const { result, rerender } = renderHook(
+      ({
+        codexConfig,
+        initialData,
+      }: {
+        codexConfig: string;
+        initialData: { settingsConfig: Record<string, unknown> };
+      }) =>
+        useCodexCommonConfig({
+          codexConfig,
+          onConfigChange,
+          initialData,
+          initialEnabled: true,
         }),
+      {
+        initialProps: {
+          codexConfig: storedData.settingsConfig.config as string,
+          initialData: storedData,
+        },
+      },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await waitFor(() => expect(result.current.useCommonConfig).toBe(true));
+    expect(onConfigChange.mock.calls.at(-1)?.[0]).toContain("[tui]");
+    expect(onConfigChange.mock.calls.at(-1)?.[0]).toContain('model = "gpt-5"');
+
+    await act(async () => {
+      rerender({
+        codexConfig: liveData.settingsConfig.config as string,
+        initialData: liveData,
+      });
+    });
+
+    await waitFor(() =>
+      expect(onConfigChange.mock.calls.at(-1)?.[0]).toContain(
+        'model = "gpt-6-live"',
+      ),
+    );
+    expect(onConfigChange.mock.calls.at(-1)?.[0]).toContain("[tui]");
+    expect(result.current.useCommonConfig).toBe(true);
+  });
+
+  it("Codex：codexConfig 晚于片段加载初始化时，等待稳定后再合并片段", async () => {
+    apiMocks.getCommonConfigSnippet.mockResolvedValue(
+      "[tui]\nnotifications = true\n",
+    );
+    apiMocks.updateTomlCommonConfigSnippet.mockImplementation(
+      async (configToml: string, _snippet: string, enabled: boolean) =>
+        enabled ? `${configToml}\n\n[tui]\nnotifications = true\n` : configToml,
     );
 
     const onConfigChange = vi.fn();
     const initialData = {
-      settingsConfig: { config: 'model = "gpt-5"\n' },
+      settingsConfig: {
+        config: 'model_provider = "custom"\nmodel = "gpt-5"\n',
+      },
     };
 
     const { result, rerender } = renderHook(
@@ -104,25 +189,25 @@ describe("编辑供应商时保留 meta.commonConfigEnabled 勾选状态", () =>
           initialData,
           initialEnabled: true,
         }),
-      { initialProps: { codexConfig: 'model = "gpt-5"\n' } },
+      { initialProps: { codexConfig: "" } },
     );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     await waitFor(() => expect(result.current.useCommonConfig).toBe(true));
 
-    // 合并请求在飞期间，外部把 config.toml 替换成不含通用配置的内容
+    // 模拟 useCodexConfigState 在片段加载完成后才把 config.toml 填进来
     await act(async () => {
-      rerender({ codexConfig: 'model = "gpt-6-user-edit"\n' });
-      resolveMerge?.('model = "gpt-5"\n\n[tui]\nnotifications = true\n');
+      rerender({ codexConfig: initialData.settingsConfig.config as string });
     });
 
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await waitFor(() =>
+      expect(onConfigChange.mock.calls.at(-1)?.[0]).toContain("[tui]"),
+    );
+    expect(onConfigChange.mock.calls.at(-1)?.[0]).toContain('model = "gpt-5"');
     expect(result.current.useCommonConfig).toBe(true);
   });
 
-  it("Gemini：快照 env 不含片段时仍保持勾选，后续外部刷新 env 也不会取消勾选", async () => {
+  it("Gemini：live 刷新重置 env 后，仍保持勾选并把片段合并回预览", async () => {
     apiMocks.getCommonConfigSnippet.mockResolvedValue(
       JSON.stringify({ GEMINI_MODEL: "gemini-2.5-pro" }),
     );
@@ -144,12 +229,21 @@ describe("编辑供应商时保留 meta.commonConfigEnabled 勾选状态", () =>
         .join("\n");
 
     const onEnvChange = vi.fn();
-    const initialData = {
+    const storedData = {
       settingsConfig: { env: { GEMINI_API_KEY: "provider-key" } },
+    };
+    const liveData = {
+      settingsConfig: { env: { GEMINI_API_KEY: "live-key" } },
     };
 
     const { result, rerender } = renderHook(
-      ({ envValue }: { envValue: string }) =>
+      ({
+        envValue,
+        initialData,
+      }: {
+        envValue: string;
+        initialData: { settingsConfig: Record<string, unknown> };
+      }) =>
         useGeminiCommonConfig({
           envValue,
           onEnvChange,
@@ -158,27 +252,30 @@ describe("编辑供应商时保留 meta.commonConfigEnabled 勾选状态", () =>
           initialData,
           initialEnabled: true,
         }),
-      { initialProps: { envValue: "GEMINI_API_KEY=provider-key" } },
+      {
+        initialProps: {
+          envValue: "GEMINI_API_KEY=provider-key",
+          initialData: storedData,
+        },
+      },
     );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     await waitFor(() => expect(result.current.useCommonConfig).toBe(true));
+    expect(onEnvChange.mock.calls.at(-1)?.[0]).toContain(
+      "GEMINI_MODEL=gemini-2.5-pro",
+    );
 
     await act(async () => {
-      rerender({
-        envValue: "GEMINI_API_KEY=provider-key\nGEMINI_MODEL=gemini-2.5-pro",
-      });
+      rerender({ envValue: "GEMINI_API_KEY=live-key", initialData: liveData });
     });
+
     expect(result.current.useCommonConfig).toBe(true);
-
-    await act(async () => {
-      rerender({ envValue: "GEMINI_API_KEY=provider-key" });
-    });
-    expect(result.current.useCommonConfig).toBe(true);
-
-    await act(async () => {
-      result.current.handleCommonConfigToggle(false);
-    });
-    expect(result.current.useCommonConfig).toBe(false);
+    expect(onEnvChange.mock.calls.at(-1)?.[0]).toContain(
+      "GEMINI_API_KEY=live-key",
+    );
+    expect(onEnvChange.mock.calls.at(-1)?.[0]).toContain(
+      "GEMINI_MODEL=gemini-2.5-pro",
+    );
   });
 });

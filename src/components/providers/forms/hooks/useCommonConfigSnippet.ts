@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { useCommonConfigSyncGuard } from "./useCommonConfigSyncGuard";
 import {
   updateCommonConfigSnippet,
   hasCommonConfigSnippet,
@@ -37,11 +38,6 @@ export function useCommonConfigSnippet({
   enabled = true,
 }: UseCommonConfigSnippetProps) {
   const { t } = useTranslation();
-  // 编辑态下 meta.commonConfigEnabled 是“是否应用通用配置”的权威来源：
-  // 后端保存时会从供应商快照中剥离通用配置片段（runtime overlay），
-  // 因此不能在编辑态用“当前配置里是否包含片段”来反推勾选状态。
-  const isEditMode = Boolean(initialData);
-  const hasExplicitInitialEnabled = initialEnabled !== undefined;
   const [useCommonConfig, setUseCommonConfig] = useState(false);
   const [commonConfigSnippet, setCommonConfigSnippetState] = useState<string>(
     DEFAULT_COMMON_CONFIG_SNIPPET,
@@ -50,19 +46,23 @@ export function useCommonConfigSnippet({
   const [isLoading, setIsLoading] = useState(true);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  // 用于跟踪是否正在通过通用配置更新
-  const isUpdatingFromCommonConfig = useRef(false);
+  // 程序性配置写入的回显保护（替代 setTimeout 重置标记）
+  const syncGuard = useCommonConfigSyncGuard();
   // 用于跟踪新建模式是否已初始化默认勾选
   const hasInitializedNewMode = useRef(false);
-  // 用于跟踪编辑模式是否已初始化显式开关/预览
-  const hasInitializedEditMode = useRef(false);
+  // 用于识别 initialData 被 live 配置替换后的“表单重置窗口”
+  const lastInitialDataRef = useRef<typeof initialData | undefined>(undefined);
+  const lastInitialEnabledRef = useRef<boolean | undefined>(undefined);
+  const preResetConfigRef = useRef<string | null>(null);
+  const pendingResetConfigRef = useRef<string | null>(null);
 
   // 当预设变化时，重置初始化标记，使新预设能够重新触发初始化逻辑
   useEffect(() => {
     if (!enabled) return;
     hasInitializedNewMode.current = false;
-    hasInitializedEditMode.current = false;
-  }, [selectedPresetId, enabled, initialEnabled]);
+    lastInitialDataRef.current = undefined;
+    lastInitialEnabledRef.current = undefined;
+  }, [selectedPresetId, enabled]);
 
   // 初始化：从 config.json 加载，支持从 localStorage 迁移
   useEffect(() => {
@@ -120,47 +120,38 @@ export function useCommonConfigSnippet({
     };
   }, [enabled]);
 
-  // 初始化时检查通用配置片段（编辑模式）
+  // 编辑态初始化 / live 配置刷新：勾选状态以 meta.commonConfigEnabled 为准，
+  // 同时记录表单即将重置到的快照值，由下面的同步 effect 在重置落地后补回预览。
   useEffect(() => {
-    if (!enabled) return;
-    if (initialData && !isLoading && !hasInitializedEditMode.current) {
-      hasInitializedEditMode.current = true;
-
-      const configString = JSON.stringify(initialData.settingsConfig, null, 2);
-      const inferredHasCommon = hasCommonConfigSnippet(
-        configString,
-        commonConfigSnippet,
-      );
-
-      // 优先级：显式设置的 initialEnabled > 从配置推断的值
-      // 如果 initialEnabled 为 undefined，使用推断值
-      const hasCommon =
-        initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
-      setUseCommonConfig(hasCommon);
-
-      // 如果应该启用通用配置但配置中还没有，则自动添加
-      if (hasCommon && !inferredHasCommon) {
-        const { updatedConfig, error } = updateCommonConfigSnippet(
-          settingsConfig,
-          commonConfigSnippet,
-          true,
-        );
-        if (!error) {
-          isUpdatingFromCommonConfig.current = true;
-          onConfigChange(updatedConfig);
-          setTimeout(() => {
-            isUpdatingFromCommonConfig.current = false;
-          }, 0);
-        }
-      }
+    if (!enabled || !initialData || isLoading) return;
+    if (
+      lastInitialDataRef.current === initialData &&
+      lastInitialEnabledRef.current === initialEnabled
+    ) {
+      return;
     }
+
+    lastInitialDataRef.current = initialData;
+    lastInitialEnabledRef.current = initialEnabled;
+
+    const expectedConfig = JSON.stringify(initialData.settingsConfig, null, 2);
+    const inferredHasCommon = hasCommonConfigSnippet(
+      expectedConfig,
+      commonConfigSnippet,
+    );
+    const hasCommon =
+      initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
+
+    setCommonConfigError("");
+    setUseCommonConfig(hasCommon);
+    preResetConfigRef.current = settingsConfig;
+    pendingResetConfigRef.current = hasCommon ? expectedConfig : null;
   }, [
     enabled,
     initialData,
     initialEnabled,
     commonConfigSnippet,
     isLoading,
-    onConfigChange,
     settingsConfig,
   ]);
 
@@ -184,11 +175,8 @@ export function useCommonConfigSnippet({
             true,
           );
           if (!error) {
-            isUpdatingFromCommonConfig.current = true;
+            syncGuard.schedule(settingsConfig, updatedConfig);
             onConfigChange(updatedConfig);
-            setTimeout(() => {
-              isUpdatingFromCommonConfig.current = false;
-            }, 0);
           }
         }
       } catch {
@@ -221,15 +209,10 @@ export function useCommonConfigSnippet({
 
       setCommonConfigError("");
       setUseCommonConfig(checked);
-      // 标记正在通过通用配置更新
-      isUpdatingFromCommonConfig.current = true;
+      syncGuard.schedule(settingsConfig, updatedConfig);
       onConfigChange(updatedConfig);
-      // 在下一个事件循环中重置标记
-      setTimeout(() => {
-        isUpdatingFromCommonConfig.current = false;
-      }, 0);
     },
-    [settingsConfig, commonConfigSnippet, onConfigChange],
+    [settingsConfig, commonConfigSnippet, onConfigChange, syncGuard],
   );
 
   // 处理通用配置片段变化
@@ -256,6 +239,7 @@ export function useCommonConfigSnippet({
             previousSnippet,
             false,
           );
+          syncGuard.schedule(settingsConfig, updatedConfig);
           onConfigChange(updatedConfig);
           setUseCommonConfig(false);
         }
@@ -301,29 +285,64 @@ export function useCommonConfigSnippet({
           return;
         }
 
-        // 标记正在通过通用配置更新，避免触发状态检查
-        isUpdatingFromCommonConfig.current = true;
+        syncGuard.schedule(settingsConfig, addResult.updatedConfig);
         onConfigChange(addResult.updatedConfig);
-        // 在下一个事件循环中重置标记
-        setTimeout(() => {
-          isUpdatingFromCommonConfig.current = false;
-        }, 0);
       }
     },
-    [commonConfigSnippet, settingsConfig, useCommonConfig, onConfigChange],
+    [
+      commonConfigSnippet,
+      settingsConfig,
+      useCommonConfig,
+      onConfigChange,
+      syncGuard,
+    ],
   );
 
-  // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）。
-  // 编辑态且 meta.commonConfigEnabled 有显式值时跳过内容推断，防止打开编辑界面时
-  // 被“快照中暂无片段”的中间态 / 异步初始化竞态覆盖成未勾选。
+  // 配置变化同步 effect：先处理程序性写入回显，再处理 initialData 重置窗口，
+  // 最后才进行用户编辑触发的内容推断（兼容没有 commonConfigEnabled 的旧供应商）。
   useEffect(() => {
-    if (!enabled) return;
-    if (isUpdatingFromCommonConfig.current || isLoading) {
-      return;
+    if (!enabled || isLoading) return;
+    if (syncGuard.skip(settingsConfig)) return;
+
+    // initialData 被 live 配置替换后，表单会重置为 DB/live 快照（快照按设计
+    // 不含片段）。等到重置值落地后把片段补回编辑预览，期间不做内容推断。
+    if (pendingResetConfigRef.current !== null) {
+      const expected = pendingResetConfigRef.current;
+      if (settingsConfig === expected) {
+        pendingResetConfigRef.current = null;
+        preResetConfigRef.current = null;
+        const hasCommon =
+          initialEnabled !== undefined
+            ? initialEnabled
+            : hasCommonConfigSnippet(settingsConfig, commonConfigSnippet);
+        if (hasCommon) {
+          const { updatedConfig, error } = updateCommonConfigSnippet(
+            settingsConfig,
+            commonConfigSnippet,
+            true,
+          );
+          if (error) {
+            setCommonConfigError(error);
+            return;
+          }
+          if (updatedConfig !== settingsConfig) {
+            syncGuard.schedule(settingsConfig, updatedConfig);
+            onConfigChange(updatedConfig);
+          }
+        }
+        return;
+      }
+
+      if (settingsConfig === preResetConfigRef.current) {
+        // 还没等到表单重置
+        return;
+      }
+
+      // 重置没有如期发生（或用户先编辑了），清除窗口并按当前值继续处理
+      pendingResetConfigRef.current = null;
+      preResetConfigRef.current = null;
     }
-    if (isEditMode && hasExplicitInitialEnabled) {
-      return;
-    }
+
     const hasCommon = hasCommonConfigSnippet(
       settingsConfig,
       commonConfigSnippet,
@@ -334,8 +353,10 @@ export function useCommonConfigSnippet({
     settingsConfig,
     commonConfigSnippet,
     isLoading,
-    isEditMode,
-    hasExplicitInitialEnabled,
+    initialData,
+    initialEnabled,
+    onConfigChange,
+    syncGuard,
   ]);
 
   // 从编辑器当前内容提取通用配置片段
