@@ -1265,10 +1265,33 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
+/// Recursively clean JSON Schema objects for strict draft-07 validators (such as
+/// Moonshot / Kimi). When an object uses `$ref`, `type` must be defined in the
+/// referenced schema rather than the referencing parent schema.
+fn sanitize_json_schema_refs(schema: &mut Value) {
+    match schema {
+        Value::Object(map) => {
+            if map.contains_key("$ref") && map.contains_key("type") {
+                map.remove("type");
+            }
+            for value in map.values_mut() {
+                sanitize_json_schema_refs(value);
+            }
+        }
+        Value::Array(list) => {
+            for item in list {
+                sanitize_json_schema_refs(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
 ///
 /// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
 /// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
+/// Also sanitizes `$ref` objects to maintain compatibility with strict validators (e.g. Moonshot / Kimi).
 fn normalize_function_parameters(params: Option<&Value>) -> Value {
     let mut params = match params {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
@@ -1278,10 +1301,13 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
         match obj.get("type").and_then(|v| v.as_str()) {
             Some("object") => {}
             _ => {
-                obj.insert("type".to_string(), json!("object"));
+                if !obj.contains_key("$ref") {
+                    obj.insert("type".to_string(), json!("object"));
+                }
             }
         }
     }
+    sanitize_json_schema_refs(&mut params);
     params
 }
 
@@ -2442,6 +2468,54 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn responses_request_to_chat_sanitizes_schema_refs_type_compatibility() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "edit_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "patch": {
+                            "type": "object",
+                            "$ref": "#/$defs/__schema20"
+                        }
+                    },
+                    "$defs": {
+                        "__schema20": {
+                            "type": "object",
+                            "properties": {
+                                "lines": {
+                                    "type": "string",
+                                    "$ref": "#/$defs/LinesRef"
+                                }
+                            }
+                        }
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        // Sibling "type" removed where "$ref" is present for draft-07 validator compatibility
+        let patch_prop = &parameters["properties"]["patch"];
+        assert_eq!(patch_prop["$ref"], "#/$defs/__schema20");
+        assert!(patch_prop.get("type").is_none());
+
+        let nested_lines = &parameters["$defs"]["__schema20"]["properties"]["lines"];
+        assert_eq!(nested_lines["$ref"], "#/$defs/LinesRef");
+        assert!(nested_lines.get("type").is_none());
+
+        // Target schema in $defs without $ref retains its type
+        assert_eq!(parameters["$defs"]["__schema20"]["type"], "object");
     }
 
     #[test]
