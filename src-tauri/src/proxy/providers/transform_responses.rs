@@ -1806,8 +1806,9 @@ pub fn anthropic_to_responses(
     }
 
     // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
+    // Claude Desktop probes send max_tokens=1; OpenAI/Copilot require >= 16.
     if let Some(v) = body.get("max_tokens") {
-        result["max_output_tokens"] = v.clone();
+        result["max_output_tokens"] = super::transform::clamp_min_output_tokens(v);
     }
 
     // 直接透传的参数
@@ -3186,6 +3187,27 @@ mod tests {
         assert_eq!(result["input"][0]["content"][0]["text"], "Hello");
         // stop_sequences should not appear
         assert!(result.get("stop_sequences").is_none());
+    }
+
+    #[test]
+    fn test_max_output_tokens_clamped_to_minimum() {
+        // Claude Desktop sends max_tokens=1 as a model-availability probe;
+        // OpenAI / Copilot Responses require >= 16.
+        let input = json!({
+            "model": "gpt-5.6-sol",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["max_output_tokens"], 16);
+
+        let input2 = json!({
+            "model": "gpt-5.6-sol",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let result2 = anthropic_to_responses(input2, None, false, false).unwrap();
+        assert_eq!(result2["max_output_tokens"], 1024);
     }
 
     #[test]
