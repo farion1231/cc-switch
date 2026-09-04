@@ -1472,6 +1472,9 @@ pub fn run() {
             commands::get_pi_current_state,
             commands::update_pi_provider_usage_script,
             commands::get_pi_session_discovery,
+            // CodeBuddy native provider views
+            commands::get_codebuddy_current_model,
+            commands::import_codebuddy_from_live,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,
