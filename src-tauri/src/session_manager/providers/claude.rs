@@ -184,16 +184,25 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
     }
 
-    // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
+    // Extract last_active_at, summary, custom-title, and updated cwd from tail lines (reverse order)
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
     let mut custom_title: Option<String> = None;
+    let mut latest_cwd: Option<String> = None;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
+        if latest_cwd.is_none() {
+            if let Some(cwd) = value.get("cwd").and_then(Value::as_str) {
+                let trimmed = cwd.trim();
+                if !trimmed.is_empty() {
+                    latest_cwd = Some(trimmed.to_string());
+                }
+            }
+        }
         if last_active_at.is_none() {
             last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
@@ -218,11 +227,16 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 }
             }
         }
-        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
+        if last_active_at.is_some()
+            && summary.is_some()
+            && custom_title.is_some()
+            && latest_cwd.is_some()
+        {
             break;
         }
     }
 
+    let project_dir = latest_cwd.or(project_dir);
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
 
@@ -496,5 +510,24 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("帮我看看工作区的改动"));
+    }
+
+    #[test]
+    fn parse_session_updates_project_dir_on_cwd_change() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-cd.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"初始目录下的工作\"},\"sessionId\":\"session-cd\",\"timestamp\":\"2026-03-06T10:00:00Z\",\"cwd\":\"/path/A\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"OK\"},\"timestamp\":\"2026-03-06T10:01:00Z\",\"cwd\":\"/path/A\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"切换到新目录\"},\"sessionId\":\"session-cd\",\"timestamp\":\"2026-03-06T10:02:00Z\",\"cwd\":\"/path/B\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"已在路径B\"},\"timestamp\":\"2026-03-06T10:03:00Z\",\"cwd\":\"/path/B\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.project_dir.as_deref(), Some("/path/B"));
     }
 }
