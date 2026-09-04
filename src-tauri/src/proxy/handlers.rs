@@ -1030,6 +1030,84 @@ pub async fn handle_alpha_search(
     .await
 }
 
+/// Handler for Codex Live / Voice API (`/v1/live`).
+///
+/// Codex Desktop derives the Voice/Live endpoint from `base_url` as `{base_url}/live`.
+/// Under local proxy takeover, requests target `http://127.0.0.1:PORT/v1/live`.
+///
+/// Supported methods are forwarded to the active Codex provider's canonical `/live` route.
+/// If the active provider uses the Anthropic protocol (which has no Live/Voice support),
+/// return a clean, structured error response instead of a bare 404.
+pub async fn handle_codex_live(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
+    let uri = parts.uri;
+    let mut headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = req_body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
+    let body: Value = if body_bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&body_bytes).unwrap_or(Value::Null)
+    };
+
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/live");
+
+    if super::providers::codex_provider_uses_anthropic(&ctx.provider) {
+        let err = ProxyError::InvalidRequest(
+            "Codex Live / Voice is not supported with Anthropic upstream providers".to_string(),
+        );
+        log_forward_error(&state, &ctx, false, &err);
+        return build_codex_proxy_error_response(&ctx, &endpoint, &err);
+    }
+
+    let forwarder = ctx.create_forwarder(&state);
+    let mut result = match forwarder
+        .forward_with_retry(
+            &AppType::Codex,
+            method,
+            &endpoint,
+            body,
+            headers,
+            extensions,
+            ctx.get_providers(),
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, false, &err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
+        }
+    };
+
+    let connection_guard = result.connection_guard.take();
+    ctx.outbound_model = result.outbound_model.take();
+    ctx.provider = result.provider;
+
+    process_response(
+        result.response,
+        &ctx,
+        &state,
+        &CODEX_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
+}
+
 pub async fn handle_grokbuild_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,

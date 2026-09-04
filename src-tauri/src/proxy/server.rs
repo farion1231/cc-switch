@@ -363,6 +363,12 @@ impl ProxyServer {
                 "/codex/v1/alpha/search",
                 post(handlers::handle_alpha_search),
             )
+            // Codex Voice / Live API (Codex Desktop). All local aliases normalize to
+            // the selected provider's canonical `/live` route.
+            .route("/live", any(handlers::handle_codex_live))
+            .route("/v1/live", any(handlers::handle_codex_live))
+            .route("/v1/v1/live", any(handlers::handle_codex_live))
+            .route("/codex/v1/live", any(handlers::handle_codex_live))
             // Gemini API (支持带前缀和不带前缀)
             //
             // 用 `any(..)` 覆盖所有 HTTP 方法：除了 POST `:generateContent` /
@@ -624,5 +630,243 @@ mod tests {
             full_url_request.body["commands"]["search_query"][0]["q"],
             "full URL"
         );
+    }
+
+    #[tokio::test]
+    async fn live_routes_forward_to_canonical_upstream() {
+        let captured = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+
+        let mock_app = axum::Router::new().route(
+            "/v1/live",
+            any(
+                move |uri: axum::http::Uri,
+                      headers: axum::http::HeaderMap,
+                      body: axum::extract::Json<Value>| {
+                    let captured = captured_clone.clone();
+                    async move {
+                        let path_and_query = uri
+                            .path_and_query()
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| uri.path().to_string());
+                        let authorization = headers
+                            .get(header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string);
+                        captured.lock().await.push(CapturedRequest {
+                            path_and_query,
+                            authorization,
+                            body: body.0,
+                        });
+
+                        (
+                            StatusCode::OK,
+                            [(
+                                header::HeaderName::from_static("x-upstream-live"),
+                                "live-session-1",
+                            )],
+                            r#"{"session":{"id":"sess_123"}}"#,
+                        )
+                    }
+                },
+            ),
+        );
+
+        let mock_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "codex-live-upstream".to_string(),
+            "Codex Live Upstream".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save test provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("select test provider");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let aliases = [
+            "/live",
+            "/v1/live",
+            "/v1/v1/live",
+            "/codex/v1/live",
+        ];
+
+        for (index, path) in aliases.iter().enumerate() {
+            let response = client
+                .post(format!(
+                    "http://127.0.0.1:{}{}?model=gpt-4o-realtime",
+                    proxy_info.port, path
+                ))
+                .header(header::AUTHORIZATION, "Bearer client-secret")
+                .json(&json!({
+                    "id": format!("live-{index}"),
+                    "voice": "alloy"
+                }))
+                .send()
+                .await
+                .expect("send live request");
+
+            assert_eq!(response.status(), StatusCode::OK, "alias {path}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get("x-upstream-live")
+                    .and_then(|value| value.to_str().ok()),
+                Some("live-session-1"),
+                "alias {path}"
+            );
+            assert_eq!(
+                response.text().await.expect("read proxy response"),
+                r#"{"session":{"id":"sess_123"}}"#,
+                "alias {path}"
+            );
+        }
+
+        // Full-URL provider test: derived sibling `/v1/live`
+        let mut full_url_provider = Provider::with_id(
+            "codex-live-full-url".to_string(),
+            "Codex Live Full URL".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1/responses?api-version=test"),
+                "auth": {"OPENAI_API_KEY": "full-url-secret"}
+            }),
+            None,
+        );
+        full_url_provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+        db.save_provider("codex", &full_url_provider)
+            .expect("save full URL provider");
+        db.set_current_provider("codex", &full_url_provider.id)
+            .expect("select full URL provider");
+
+        let response = client
+            .post(format!(
+                "http://127.0.0.1:{}/v1/live?model=gpt-4o-realtime",
+                proxy_info.port
+            ))
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .json(&json!({
+                "id": "live-full-url",
+                "voice": "echo"
+            }))
+            .send()
+            .await
+            .expect("send full URL live request");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.text().await.expect("read full URL response"),
+            r#"{"session":{"id":"sess_123"}}"#
+        );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+
+        let captured = captured.lock().await;
+        assert_eq!(captured.len(), aliases.len() + 1);
+        for (index, request) in captured.iter().take(aliases.len()).enumerate() {
+            assert_eq!(
+                request.path_and_query,
+                "/v1/live?model=gpt-4o-realtime"
+            );
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer upstream-secret")
+            );
+            assert_eq!(request.body["id"], format!("live-{index}"));
+            assert_eq!(request.body["voice"], "alloy");
+        }
+
+        let full_url_request = captured.last().expect("full URL request captured");
+        assert_eq!(
+            full_url_request.path_and_query,
+            "/v1/live?api-version=test&model=gpt-4o-realtime"
+        );
+        assert_eq!(
+            full_url_request.authorization.as_deref(),
+            Some("Bearer full-url-secret")
+        );
+        assert_eq!(full_url_request.body["id"], "live-full-url");
+        assert_eq!(full_url_request.body["voice"], "echo");
+    }
+
+    #[tokio::test]
+    async fn live_routes_return_structured_error_for_anthropic_provider() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let mut provider = Provider::with_id(
+            "codex-anthropic-upstream".to_string(),
+            "Codex Anthropic Upstream".to_string(),
+            json!({
+                "base_url": "https://api.anthropic.com",
+                "api_format": "anthropic",
+                "auth": {"ANTHROPIC_API_KEY": "sk-ant-test"}
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("anthropic".to_string()),
+            ..ProviderMeta::default()
+        });
+        db.save_provider("codex", &provider)
+            .expect("save test provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("select test provider");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+
+        let response = client
+            .post(format!("http://127.0.0.1:{}/v1/live", proxy_info.port))
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .json(&json!({"voice": "alloy"}))
+            .send()
+            .await
+            .expect("send live request");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value = response.json().await.expect("read json error response");
+        assert_eq!(body["error"]["type"], "proxy_error");
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not supported with Anthropic"));
+
+        proxy.stop().await.expect("stop test proxy");
     }
 }

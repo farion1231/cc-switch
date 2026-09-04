@@ -1483,6 +1483,8 @@ impl RequestForwarder {
 
         let is_codex_alpha_search = matches!(app_type, AppType::Codex)
             && split_endpoint_and_query(&effective_endpoint).0 == "/alpha/search";
+        let is_codex_live = matches!(app_type, AppType::Codex)
+            && split_endpoint_and_query(&effective_endpoint).0 == "/live";
 
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
@@ -1492,6 +1494,8 @@ impl RequestForwarder {
             )
         } else if is_full_url && is_codex_alpha_search {
             rewrite_codex_alpha_search_full_url(&base_url, passthrough_query.as_deref())?
+        } else if is_full_url && is_codex_live {
+            rewrite_codex_live_full_url(&base_url, passthrough_query.as_deref())?
         } else if is_full_url
             || codex_chat_base_is_full_endpoint
             || codex_anthropic_base_is_full_endpoint
@@ -3332,6 +3336,56 @@ fn rewrite_codex_alpha_search_full_url(
         .checked_sub(suffix.len())
         .ok_or_else(|| ProxyError::ConfigError("Invalid Codex full URL".to_string()))?;
     let mut rewritten = format!("{}/alpha/search", &url_without_query[..prefix_len]);
+
+    let request_query = request_query.filter(|query| !query.is_empty());
+    let base_query = base_query.filter(|query| !query.is_empty());
+    match (base_query, request_query) {
+        (Some(base), Some(request)) => rewritten.push_str(&format!("?{base}&{request}")),
+        (Some(base), None) => rewritten.push_str(&format!("?{base}")),
+        (None, Some(request)) => rewritten.push_str(&format!("?{request}")),
+        (None, None) => {}
+    }
+
+    Ok(rewritten)
+}
+
+fn rewrite_codex_live_full_url(
+    base_url: &str,
+    request_query: Option<&str>,
+) -> Result<String, ProxyError> {
+    let trimmed = base_url.trim();
+    let parsed = url::Url::parse(trimmed).map_err(|_| {
+        ProxyError::ConfigError("Codex Live requires a valid full Responses URL".to_string())
+    })?;
+
+    let without_fragment = trimmed
+        .split_once('#')
+        .map_or(trimmed, |(head, _fragment)| head);
+    let (url_without_query, base_query) = without_fragment
+        .split_once('?')
+        .map_or((without_fragment, None), |(head, query)| {
+            (head, Some(query))
+        });
+    let url_without_query = url_without_query.trim_end_matches('/');
+
+    let parsed_path = parsed.path().trim_end_matches('/').to_string();
+    let suffix = if parsed_path.ends_with("/responses/compact") {
+        "/responses/compact"
+    } else if parsed_path.ends_with("/responses") {
+        "/responses"
+    } else if parsed_path.ends_with("/chat/completions") {
+        "/chat/completions"
+    } else {
+        return Err(ProxyError::ConfigError(
+            "Codex Live cannot derive /live from an opaque full URL; use a base URL or a full URL ending in /responses".to_string(),
+        ));
+    };
+
+    let prefix_len = url_without_query
+        .len()
+        .checked_sub(suffix.len())
+        .ok_or_else(|| ProxyError::ConfigError("Invalid Codex full URL".to_string()))?;
+    let mut rewritten = format!("{}/live", &url_without_query[..prefix_len]);
 
     let request_query = request_query.filter(|query| !query.is_empty());
     let base_query = base_query.filter(|query| !query.is_empty());
