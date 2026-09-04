@@ -650,6 +650,20 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["runapi", "run", "aggregator", "gateway"],
   },
+  code2ai: {
+    name: "code2ai",
+    displayName: "Code2AI",
+    category: "ai-provider",
+    keywords: [
+      "code2ai",
+      "code2ai.codes",
+      "code2ai flex",
+      "claude code",
+      "relay",
+      "gateway",
+    ],
+    defaultColor: "#10A37F",
+  },
   relaxcode: {
     name: "relaxcode",
     displayName: "RelaxyCode",

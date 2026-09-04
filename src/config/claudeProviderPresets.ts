@@ -1811,4 +1811,34 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "Code2AI",
+    websiteUrl: "https://www.code2ai.codes",
+    apiKeyUrl: "https://console.code2ai.codes",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://code2ai.codes",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "third_party",
+    endpointCandidates: ["https://code2ai.codes"],
+    icon: "code2ai",
+    iconColor: "#10A37F",
+  },
+  {
+    name: "Code2AI Flex",
+    websiteUrl: "https://flex.code2ai.codes",
+    apiKeyUrl: "https://flex.code2ai.codes",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://flex-api.code2ai.codes",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://flex-api.code2ai.codes"],
+    icon: "code2ai",
+    iconColor: "#10A37F",
+  },
 ];
