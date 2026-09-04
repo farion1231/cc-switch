@@ -125,9 +125,7 @@ fn upsert_entry_locked(path: &Path, entry: &Value) -> Result<bool, AppError> {
         .cloned()
         .unwrap_or_default();
 
-    let existing = entries
-        .iter_mut()
-        .find(|e| entry_id(e).ok().as_deref() == Some(id));
+    let existing = entries.iter_mut().find(|e| entry_id(e).ok() == Some(id));
     match existing {
         Some(slot) => {
             *slot = entry.clone();
@@ -153,7 +151,7 @@ fn remove_entry_locked(path: &Path, id: &str) -> Result<bool, AppError> {
         return Ok(false);
     };
     let before = models.len();
-    models.retain(|e| entry_id(e).ok().as_deref() != Some(id));
+    models.retain(|e| entry_id(e).ok() != Some(id));
     if models.len() == before {
         return Ok(false);
     }
