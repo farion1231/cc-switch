@@ -5,7 +5,8 @@ import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
-export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
+export type DirectoryAppId =
+  Exclude<AppId, "claude-desktop"> | "codebuddy" | "workbuddy";
 type AppDirectoryKey =
   | "claude"
   | "codex"
@@ -14,7 +15,9 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes"
-  | "pi";
+  | "pi"
+  | "codebuddy"
+  | "workbuddy";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -27,6 +30,8 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   pi: string;
+  codebuddy: string;
+  workbuddy: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -42,6 +47,8 @@ const APP_DIRECTORY_META: Record<
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   pi: { key: "pi", defaultFolder: ".pi/agent" },
+  codebuddy: { key: "codebuddy", defaultFolder: ".codebuddy" },
+  workbuddy: { key: "workbuddy", defaultFolder: ".workbuddy" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -56,6 +63,8 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+  codebuddy: "codebuddyConfigDir",
+  workbuddy: "workbuddyConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -143,6 +152,8 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    codebuddy: "",
+    workbuddy: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -156,6 +167,8 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    codebuddy: "",
+    workbuddy: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
 
@@ -185,6 +198,8 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultPiDir,
+          defaultCodebuddyDir,
+          defaultWorkbuddyDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
@@ -204,6 +219,8 @@ export function useDirectorySettings({
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("pi"),
+          computeDefaultConfigDir("codebuddy"),
+          computeDefaultConfigDir("workbuddy"),
         ]);
 
         if (!active) return;
@@ -220,6 +237,8 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           pi: defaultPiDir ?? "",
+          codebuddy: defaultCodebuddyDir ?? "",
+          workbuddy: defaultWorkbuddyDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -235,6 +254,8 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           pi: piDir || defaultsRef.current.pi,
+          codebuddy: defaultsRef.current.codebuddy,
+          workbuddy: defaultsRef.current.workbuddy,
         });
       } catch (error) {
         console.error(
@@ -378,6 +399,8 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         pi: overrides?.pi ?? defaultsRef.current.pi,
+        codebuddy: overrides?.codebuddy ?? defaultsRef.current.codebuddy,
+        workbuddy: overrides?.workbuddy ?? defaultsRef.current.workbuddy,
       });
     },
     [],

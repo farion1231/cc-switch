@@ -42,8 +42,13 @@ pub fn get_claude_config_dir() -> PathBuf {
     get_home_dir().join(".claude")
 }
 
-/// 获取 CodeBuddy 配置目录路径（`$CODEBUDDY_HOME` 或 `~/.codebuddy`）。
+/// 获取 CodeBuddy 配置目录路径。
+/// 优先级：设置中的配置目录覆盖 > `$CODEBUDDY_HOME` > `~/.codebuddy`。
 pub fn get_codebuddy_config_dir() -> PathBuf {
+    if let Some(custom) = crate::settings::get_codebuddy_override_dir() {
+        return custom;
+    }
+
     if let Ok(home) = std::env::var("CODEBUDDY_HOME") {
         let trimmed = home.trim();
         if !trimmed.is_empty() {
@@ -54,8 +59,13 @@ pub fn get_codebuddy_config_dir() -> PathBuf {
     get_home_dir().join(".codebuddy")
 }
 
-/// 获取 WorkBuddy 配置目录路径（`$WORKBUDDY_HOME` 或 `~/.workbuddy`）。
+/// 获取 WorkBuddy 配置目录路径。
+/// 优先级：设置中的配置目录覆盖 > `$WORKBUDDY_HOME` > `~/.workbuddy`。
 pub fn get_workbuddy_config_dir() -> PathBuf {
+    if let Some(custom) = crate::settings::get_workbuddy_override_dir() {
+        return custom;
+    }
+
     if let Ok(home) = std::env::var("WORKBUDDY_HOME") {
         let trimmed = home.trim();
         if !trimmed.is_empty() {

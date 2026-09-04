@@ -68,14 +68,9 @@ const UNKNOWN_MODEL: &str = "unknown";
 /// 正常只有一层工作目录；多一层余量兼容未来的嵌套布局（如子 agent）。
 const MAX_DIR_DEPTH: usize = 3;
 
-/// 获取 WorkBuddy 配置目录（`$WORKBUDDY_HOME` 或 `~/.workbuddy`）。
+/// 获取 WorkBuddy 配置目录（优先级：设置覆盖 > `$WORKBUDDY_HOME` > `~/.workbuddy`）。
 fn get_workbuddy_config_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("WORKBUDDY_HOME") {
-        if !home.trim().is_empty() {
-            return PathBuf::from(home);
-        }
-    }
-    crate::config::get_home_dir().join(".workbuddy")
+    crate::config::get_workbuddy_config_dir()
 }
 
 /// 从 JSONL 行中解析出的单次 API 调用用量。
