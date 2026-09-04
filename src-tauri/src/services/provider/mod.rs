@@ -2,11 +2,11 @@
 //!
 //! Handles provider CRUD operations, switching, and configuration management.
 
+mod codebuddy;
 mod endpoints;
 mod gemini_auth;
 mod live;
 mod pi;
-mod codebuddy;
 mod usage;
 
 use indexmap::IndexMap;
