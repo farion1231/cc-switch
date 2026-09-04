@@ -111,8 +111,16 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 8] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi",
+const VALID_TOOLS: [&str; 9] = [
+    "claude",
+    "codex",
+    "gemini",
+    "grok",
+    "opencode",
+    "openclaw",
+    "hermes",
+    "pi",
+    "codebuddy",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -434,6 +442,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "codebuddy" => "CodeBuddy",
         _ => "Unknown",
     }
 }
@@ -515,6 +524,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
+        "codebuddy" => Some("npm i -g @tencent-ai/codebuddy-code@latest"),
         _ => None,
     }
 }
@@ -824,6 +834,9 @@ async fn get_single_tool_version_impl(
         "hermes" => fetch_hermes_latest_version(&client, local).await,
         "pi" => {
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
+        }
+        "codebuddy" => {
+            fetch_npm_latest_for_tool(&client, "@tencent-ai/codebuddy-code", tool, local).await
         }
         _ => None,
     };
@@ -2510,6 +2523,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
+        "codebuddy" => Some("@tencent-ai/codebuddy-code"),
         _ => None,
     }
 }
