@@ -27,6 +27,12 @@ fn response_object_from_event(data: &Value) -> &Value {
     data.get("response").unwrap_or(data)
 }
 
+fn anthropic_message_id(response_id: &str) -> String {
+    response_id
+        .strip_prefix("resp_")
+        .map_or_else(|| response_id.to_string(), |suffix| format!("msg_{suffix}"))
+}
+
 fn anthropic_sse(event_name: &str, payload: &Value) -> Bytes {
     Bytes::from(format!(
         "event: {event_name}\ndata: {}\n\n",
@@ -92,12 +98,17 @@ fn responses_json_to_anthropic_sse(
     let usage = message.get("usage").cloned().unwrap_or_else(|| json!({}));
     let mut start_usage = usage.clone();
     start_usage["output_tokens"] = json!(0);
+    let message_id = message
+        .get("id")
+        .and_then(Value::as_str)
+        .map(anthropic_message_id)
+        .unwrap_or_default();
     let mut events = vec![anthropic_sse(
         "message_start",
         &json!({
             "type": "message_start",
             "message": {
-                "id": message.get("id").cloned().unwrap_or_else(|| json!("")),
+                "id": message_id,
                 "type": "message",
                 "role": "assistant",
                 "model": message.get("model").cloned().unwrap_or_else(|| json!("")),
@@ -294,6 +305,172 @@ struct StreamedTextState {
     active_keyed_part: Option<usize>,
     unkeyed: String,
     unkeyed_follows_keyed: bool,
+}
+
+#[derive(Clone)]
+struct MessageTextEmission {
+    source_text: String,
+    source_char_offset: usize,
+    output_keys: Vec<(u64, u64)>,
+    annotations: Vec<Value>,
+}
+
+struct CompletedTranscriptPrefix {
+    text: String,
+    emitted_annotations: Vec<Value>,
+}
+
+#[derive(Default)]
+struct EmittedMessageTextTranscript {
+    text: String,
+    total_chars: usize,
+    emitted_chars_by_part: HashMap<(u64, u64), usize>,
+    start_chars_by_part: HashMap<(u64, u64), usize>,
+    annotations: Vec<((u64, u64), Value)>,
+    closed_parts: HashSet<(u64, u64)>,
+    last_text_part: Option<(u64, u64)>,
+    invalid: bool,
+}
+
+impl EmittedMessageTextTranscript {
+    fn invalidate(&mut self) {
+        self.invalid = true;
+    }
+
+    fn record_delta(&mut self, data: &Value, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        let output_key = data
+            .get("output_index")
+            .and_then(Value::as_u64)
+            .zip(data.get("content_index").and_then(Value::as_u64));
+        let source_char_offset = output_key
+            .and_then(|key| self.emitted_chars_by_part.get(&key).copied())
+            .unwrap_or_default();
+        self.record_emission(&MessageTextEmission {
+            source_text: delta.to_string(),
+            source_char_offset,
+            output_keys: output_key.into_iter().collect(),
+            annotations: Vec::new(),
+        });
+    }
+
+    fn record_emission(&mut self, emission: &MessageTextEmission) {
+        if emission.source_text.is_empty() && emission.annotations.is_empty() {
+            return;
+        }
+        let mut output_keys = emission.output_keys.iter().copied();
+        let Some(output_key) = output_keys.next() else {
+            self.invalid = true;
+            return;
+        };
+        if output_keys.any(|candidate| candidate != output_key) {
+            self.invalid = true;
+            return;
+        }
+
+        if !emission.source_text.is_empty() {
+            let emitted_chars = self
+                .emitted_chars_by_part
+                .get(&output_key)
+                .copied()
+                .unwrap_or_default();
+            if emission.source_char_offset != emitted_chars {
+                self.invalid = true;
+                return;
+            }
+
+            if self.last_text_part != Some(output_key) {
+                if self.closed_parts.contains(&output_key) {
+                    self.invalid = true;
+                    return;
+                }
+                if let Some(previous) = self.last_text_part.replace(output_key) {
+                    self.closed_parts.insert(previous);
+                }
+            }
+
+            let source_chars = emission.source_text.chars().count();
+            let global_start = self.total_chars;
+            if emitted_chars == 0 {
+                let Some(part_start) = global_start.checked_sub(emission.source_char_offset) else {
+                    self.invalid = true;
+                    return;
+                };
+                self.start_chars_by_part.insert(output_key, part_start);
+            }
+            self.text.push_str(&emission.source_text);
+            self.total_chars += source_chars;
+            self.emitted_chars_by_part
+                .insert(output_key, emitted_chars + source_chars);
+        }
+
+        if !emission.annotations.is_empty() {
+            if !self.start_chars_by_part.contains_key(&output_key) {
+                self.invalid = true;
+                return;
+            }
+            for annotation in &emission.annotations {
+                if !self
+                    .annotations
+                    .iter()
+                    .any(|(key, value)| *key == output_key && value == annotation)
+                {
+                    self.annotations.push((output_key, annotation.clone()));
+                }
+            }
+        }
+    }
+
+    fn completed_prefix(
+        &self,
+        full_text: &str,
+        content_index: u64,
+    ) -> Option<CompletedTranscriptPrefix> {
+        if self.invalid || self.text.is_empty() || !full_text.starts_with(&self.text) {
+            return None;
+        }
+        let distinct_parts = self
+            .emitted_chars_by_part
+            .keys()
+            .filter(|(_, content)| *content == content_index)
+            .count();
+        if distinct_parts < 2
+            || self
+                .emitted_chars_by_part
+                .keys()
+                .any(|(_, content)| *content != content_index)
+        {
+            return None;
+        }
+
+        let mut emitted_annotations = Vec::new();
+        for (output_key, annotation) in &self.annotations {
+            let part_start = *self.start_chars_by_part.get(output_key)?;
+            let shifted = shifted_annotation(annotation, part_start);
+            if !emitted_annotations.contains(&shifted) {
+                emitted_annotations.push(shifted);
+            }
+        }
+        Some(CompletedTranscriptPrefix {
+            text: self.text.clone(),
+            emitted_annotations,
+        })
+    }
+}
+
+fn shifted_annotation(annotation: &Value, char_offset: usize) -> Value {
+    let mut shifted = annotation.clone();
+    let offset = u64::try_from(char_offset).unwrap_or(u64::MAX);
+    if let Some(object) = shifted.as_object_mut() {
+        for field in ["start_index", "end_index"] {
+            if let Some(index) = object.get(field).and_then(Value::as_u64) {
+                object.insert(field.to_string(), json!(index.saturating_add(offset)));
+            }
+        }
+    }
+    shifted
 }
 
 impl StreamedTextState {
@@ -512,13 +689,72 @@ impl StreamedTextState {
         item_id: Option<&str>,
         content_index: u64,
     ) -> String {
+        self.missing_suffix_with_emitted(
+            full_text,
+            output_index,
+            item_id,
+            content_index,
+            false,
+            None,
+        )
+    }
+
+    fn unique_prefix_compatible_part_index(
+        &self,
+        full_text: &str,
+        content_index: u64,
+    ) -> Option<usize> {
+        if !self.unkeyed.is_empty() {
+            return None;
+        }
+        let mut candidate = None;
+        for (index, part) in self
+            .parts
+            .iter()
+            .enumerate()
+            .filter(|(_, part)| !part.discarded && !part.text.is_empty())
+        {
+            let matches_content = part
+                .output_keys
+                .iter()
+                .any(|(_, content)| *content == content_index)
+                || part
+                    .item_keys
+                    .iter()
+                    .any(|(_, content)| *content == content_index);
+            if !matches_content || candidate.is_some() {
+                return None;
+            }
+            candidate = Some((index, part));
+        }
+        let (index, part) = candidate?;
+        full_text.starts_with(&part.text).then_some(index)
+    }
+
+    fn missing_suffix_with_emitted(
+        &mut self,
+        full_text: &str,
+        output_index: Option<u64>,
+        item_id: Option<&str>,
+        content_index: u64,
+        allow_unique_terminal_alias: bool,
+        emitted_out: Option<&mut Option<String>>,
+    ) -> String {
         let output_key = output_index.map(|index| (index, content_index));
         let item_key = item_id.map(|id| (id.to_string(), content_index));
         if self.key_pair_conflicts(output_key, item_key.as_ref()) {
             return String::new();
         }
         let keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
-        let emitted = keyed_index.map(|index| self.parts[index].text.clone());
+        let reconciled_index = keyed_index.or_else(|| {
+            allow_unique_terminal_alias
+                .then(|| self.unique_prefix_compatible_part_index(full_text, content_index))
+                .flatten()
+        });
+        let emitted = reconciled_index.map(|index| self.parts[index].text.clone());
+        if let Some(emitted_out) = emitted_out {
+            *emitted_out = emitted.clone();
+        }
 
         let missing = if !self.unkeyed.is_empty() {
             let unkeyed = self.unkeyed.clone();
@@ -601,7 +837,8 @@ impl StreamedTextState {
         };
 
         if output_key.is_some() || item_key.is_some() {
-            let index = keyed_index.unwrap_or_else(|| self.push_part(output_key, item_key.clone()));
+            let index =
+                reconciled_index.unwrap_or_else(|| self.push_part(output_key, item_key.clone()));
             self.bind_keys(index, output_key, item_key);
             self.parts[index].text = full_text.to_string();
             if self.active_keyed_part == Some(index) {
@@ -651,6 +888,7 @@ struct BufferedCitationTextState {
     emitted_unkeyed_annotations: Vec<BufferedCitationAnnotation>,
     emitted_output_parts: HashSet<(u64, u64)>,
     emitted_item_parts: HashSet<(String, u64)>,
+    emissions: Vec<MessageTextEmission>,
 }
 
 impl BufferedCitationTextState {
@@ -1500,6 +1738,29 @@ impl BufferedCitationTextState {
         rendered
     }
 
+    fn take_emissions(&mut self) -> Vec<MessageTextEmission> {
+        std::mem::take(&mut self.emissions)
+    }
+
+    fn track_rendered_emission(
+        &mut self,
+        rendered: Option<String>,
+        source_text: String,
+        source_char_offset: usize,
+        output_key: Option<(u64, u64)>,
+        annotations: Vec<Value>,
+    ) -> Option<String> {
+        if rendered.is_some() {
+            self.emissions.push(MessageTextEmission {
+                source_text,
+                source_char_offset,
+                output_keys: output_key.into_iter().collect(),
+                annotations,
+            });
+        }
+        rendered
+    }
+
     fn render_part_pending(&mut self, index: usize) -> Option<String> {
         let part = self
             .parts
@@ -1507,6 +1768,9 @@ impl BufferedCitationTextState {
             .filter(|part| !part.discarded && Self::has_pending_output(part))?;
         let emitted_bytes = part.emitted_bytes.min(part.text.len());
         let missing = part.text[emitted_bytes..].to_string();
+        let source_text = missing.clone();
+        let source_char_offset = part.text[..emitted_bytes].chars().count();
+        let output_keys = part.output_keys.clone();
         let annotations = Self::pending_annotation_values(part);
         let unkeyed = part.output_keys.is_empty() && part.item_keys.is_empty();
         let emitted_unkeyed_annotations = if unkeyed {
@@ -1547,16 +1811,26 @@ impl BufferedCitationTextState {
         }
         self.mark_part_emitted(index);
 
-        if emitted_bytes == 0 && !missing.is_empty() {
-            return Some(text_with_url_citations(&missing, &annotations));
+        let rendered = if emitted_bytes == 0 && !missing.is_empty() {
+            Some(text_with_url_citations(&missing, &annotations))
+        } else {
+            let sources = text_with_url_citations("", &annotations);
+            match (missing.is_empty(), sources.is_empty()) {
+                (false, false) => Some(format!("{missing}\n\n{sources}")),
+                (false, true) => Some(missing),
+                (true, false) => Some(sources),
+                (true, true) => None,
+            }
+        };
+        if rendered.is_some() {
+            self.emissions.push(MessageTextEmission {
+                source_text,
+                source_char_offset,
+                output_keys,
+                annotations,
+            });
         }
-        let sources = text_with_url_citations("", &annotations);
-        match (missing.is_empty(), sources.is_empty()) {
-            (false, false) => Some(format!("{missing}\n\n{sources}")),
-            (false, true) => Some(missing),
-            (true, false) => Some(sources),
-            (true, true) => None,
-        }
+        rendered
     }
 
     fn append_part_annotations(&mut self, index: usize, value: &Value) {
@@ -1591,23 +1865,58 @@ impl BufferedCitationTextState {
         self.mark_part_emitted(index);
     }
 
+    fn unique_prefix_compatible_part_index(
+        &self,
+        full_text: &str,
+        content_index: u64,
+    ) -> Option<usize> {
+        let mut candidate = None;
+        for (index, part) in self
+            .parts
+            .iter()
+            .enumerate()
+            .filter(|(_, part)| !part.discarded && !part.text.is_empty())
+        {
+            let matches_content = part
+                .output_keys
+                .iter()
+                .any(|(_, content)| *content == content_index)
+                || part
+                    .item_keys
+                    .iter()
+                    .any(|(_, content)| *content == content_index);
+            if !matches_content || candidate.is_some() {
+                return None;
+            }
+            candidate = Some((index, part));
+        }
+        let (index, part) = candidate?;
+        full_text.starts_with(&part.text).then_some(index)
+    }
+
     fn render_message_part(
         &mut self,
         part: &Value,
         output_index: Option<u64>,
         item_id: Option<&str>,
         content_index: u64,
+        allow_unique_terminal_alias: bool,
     ) -> Option<String> {
         let output_key = output_index.map(|index| (index, content_index));
         let item_key = item_id.map(|id| (id.to_string(), content_index));
         if self.key_pair_conflicts(output_key, item_key.as_ref()) {
             return None;
         }
-        let keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
         let text = part
             .get("text")
             .and_then(Value::as_str)
             .filter(|text| !text.is_empty())?;
+        let exact_keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        let keyed_index = exact_keyed_index.or_else(|| {
+            allow_unique_terminal_alias
+                .then(|| self.unique_prefix_compatible_part_index(text, content_index))
+                .flatten()
+        });
         if let Some(index) = keyed_index.filter(|index| {
             Self::has_pending_output(&self.parts[*index])
                 && Self::snapshot_matches(&self.parts[*index], text)
@@ -1655,7 +1964,14 @@ impl BufferedCitationTextState {
                     item_key,
                 );
                 let sources = text_with_url_citations("", &annotations);
-                return (!sources.is_empty()).then_some(sources);
+                let rendered = (!sources.is_empty()).then_some(sources);
+                return self.track_rendered_emission(
+                    rendered,
+                    String::new(),
+                    text.chars().count(),
+                    output_key,
+                    annotations,
+                );
             }
             EmittedUnkeyedTerminalMatch::MissingSuffix {
                 suffix,
@@ -1710,12 +2026,23 @@ impl BufferedCitationTextState {
                     item_key,
                 );
                 let sources = text_with_url_citations("", &annotations);
-                return match (suffix.is_empty(), sources.is_empty()) {
+                let rendered = match (suffix.is_empty(), sources.is_empty()) {
                     (false, false) => Some(format!("{suffix}\n\n{sources}")),
-                    (false, true) => Some(suffix),
+                    (false, true) => Some(suffix.clone()),
                     (true, false) => Some(sources),
                     (true, true) => None,
                 };
+                let source_char_offset = text
+                    .strip_suffix(&suffix)
+                    .map(|prefix| prefix.chars().count())
+                    .unwrap_or_default();
+                return self.track_rendered_emission(
+                    rendered,
+                    suffix,
+                    source_char_offset,
+                    output_key,
+                    annotations,
+                );
             }
             EmittedUnkeyedTerminalMatch::NoMatch => {}
         }
@@ -1738,8 +2065,25 @@ impl BufferedCitationTextState {
         }
         let rendered = text_with_url_citations(text, &annotations);
         self.remember_rendered_terminal_part(text, &annotations, output_key, item_key);
-        Some(rendered)
+        self.track_rendered_emission(Some(rendered), text.to_string(), 0, output_key, annotations)
     }
+}
+
+fn render_pending_buffered_text(
+    buffered: &mut BufferedCitationTextState,
+    transcript: &mut EmittedMessageTextTranscript,
+) -> Vec<String> {
+    let rendered = buffered.render_pending_parts();
+    for emission in buffered.take_emissions() {
+        transcript.record_emission(&emission);
+    }
+    rendered
+}
+
+struct MessageTextReconciliationContext<'transcript> {
+    allow_unique_terminal_alias: bool,
+    record_recovery_emissions: bool,
+    emitted_transcript: Option<&'transcript mut EmittedMessageTextTranscript>,
 }
 
 fn missing_message_text_parts(
@@ -1747,75 +2091,176 @@ fn missing_message_text_parts(
     output_index: Option<u64>,
     streamed_text: &mut StreamedTextState,
     mut buffered_citations: Option<&mut BufferedCitationTextState>,
+    context: MessageTextReconciliationContext<'_>,
 ) -> Vec<String> {
+    let MessageTextReconciliationContext {
+        allow_unique_terminal_alias,
+        record_recovery_emissions,
+        mut emitted_transcript,
+    } = context;
     if item.get("type").and_then(Value::as_str) != Some("message") {
         return Vec::new();
     }
     let item_id = item.get("id").and_then(Value::as_str);
-    let mut missing_parts = Vec::new();
-    for (content_index, part) in item
-        .get("content")
-        .and_then(Value::as_array)
+    let content = item.get("content").and_then(Value::as_array);
+    let nonempty_text_parts = content
         .into_iter()
         .flatten()
-        .enumerate()
-    {
+        .filter(|part| match part.get("type").and_then(Value::as_str) {
+            Some("output_text") => part
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.is_empty()),
+            Some("refusal") => part
+                .get("refusal")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.is_empty()),
+            _ => false,
+        })
+        .count();
+    let allow_completed_text_alias = allow_unique_terminal_alias && nonempty_text_parts == 1;
+    let reconcile = |streamed_text: &mut StreamedTextState,
+                     full_text: &str,
+                     content_index: u64,
+                     allow_terminal_alias: bool| {
+        if allow_terminal_alias {
+            streamed_text.missing_suffix_with_emitted(
+                full_text,
+                output_index,
+                item_id,
+                content_index,
+                true,
+                None,
+            )
+        } else {
+            streamed_text.missing_suffix(full_text, output_index, item_id, content_index)
+        }
+    };
+    let mut missing_parts = Vec::new();
+    for (content_index, part) in content.into_iter().flatten().enumerate() {
         match part.get("type").and_then(Value::as_str) {
             Some("output_text") => {
-                if let Some(buffered) = buffered_citations.as_deref_mut() {
-                    let content_index = content_index as u64;
-                    if let Some(full_text) = part
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .filter(|text| !text.is_empty())
-                    {
-                        if streamed_text.has_part_matching_terminal(
-                            full_text,
-                            output_index,
-                            item_id,
-                            content_index,
-                        ) {
-                            let missing = streamed_text.missing_suffix(
-                                full_text,
-                                output_index,
-                                item_id,
-                                content_index,
-                            );
-                            let output_key = output_index.map(|index| (index, content_index));
-                            let item_key = item_id.map(|id| (id.to_string(), content_index));
-                            let annotations = buffered.collect_annotations(
-                                output_key,
-                                item_key.as_ref(),
-                                Some(part),
-                            );
-                            buffered.mark_emitted(output_key, item_key);
-                            let sources = text_with_url_citations("", &annotations);
-                            match (missing.is_empty(), sources.is_empty()) {
-                                (false, false) => {
-                                    missing_parts.push(format!("{missing}\n\n{sources}"));
-                                }
-                                (false, true) => missing_parts.push(missing),
-                                (true, false) => missing_parts.push(sources),
-                                (true, true) => {}
-                            }
-                        } else if let Some(text) =
-                            buffered.render_message_part(part, output_index, item_id, content_index)
-                        {
-                            missing_parts.push(text);
-                        }
-                    }
-                } else if let Some(full_text) = part
+                let content_index = content_index as u64;
+                let Some(full_text) = part
                     .get("text")
                     .and_then(Value::as_str)
                     .filter(|text| !text.is_empty())
-                {
-                    let missing = streamed_text.missing_suffix(
+                else {
+                    continue;
+                };
+                let transcript_match = allow_completed_text_alias
+                    .then(|| {
+                        emitted_transcript.as_ref().and_then(|transcript| {
+                            (**transcript).completed_prefix(full_text, content_index)
+                        })
+                    })
+                    .flatten();
+                if let Some(transcript_match) = transcript_match {
+                    let missing = full_text
+                        .strip_prefix(&transcript_match.text)
+                        .unwrap_or_default()
+                        .to_string();
+                    let annotations = part
+                        .get("annotations")
+                        .and_then(Value::as_array)
+                        .map(|annotations| {
+                            annotations
+                                .iter()
+                                .filter(|annotation| {
+                                    !transcript_match.emitted_annotations.contains(annotation)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let sources = text_with_url_citations("", &annotations);
+                    match (missing.is_empty(), sources.is_empty()) {
+                        (false, false) => {
+                            missing_parts.push(format!("{missing}\n\n{sources}"));
+                        }
+                        (false, true) => missing_parts.push(missing),
+                        (true, false) => missing_parts.push(sources),
+                        (true, true) => {}
+                    }
+                    continue;
+                }
+
+                if let Some(buffered) = buffered_citations.as_deref_mut() {
+                    if streamed_text.has_part_matching_terminal(
                         full_text,
                         output_index,
                         item_id,
-                        content_index as u64,
+                        content_index,
+                    ) {
+                        let missing = reconcile(
+                            streamed_text,
+                            full_text,
+                            content_index,
+                            allow_completed_text_alias,
+                        );
+                        let output_key = output_index.map(|index| (index, content_index));
+                        let item_key = item_id.map(|id| (id.to_string(), content_index));
+                        let annotations =
+                            buffered.collect_annotations(output_key, item_key.as_ref(), Some(part));
+                        buffered.mark_emitted(output_key, item_key);
+                        let sources = text_with_url_citations("", &annotations);
+                        let rendered = match (missing.is_empty(), sources.is_empty()) {
+                            (false, false) => Some(format!("{missing}\n\n{sources}")),
+                            (false, true) => Some(missing.clone()),
+                            (true, false) => Some(sources),
+                            (true, true) => None,
+                        };
+                        if record_recovery_emissions && rendered.is_some() {
+                            if let Some(transcript) = emitted_transcript.as_mut() {
+                                let source_char_offset = full_text
+                                    .strip_suffix(&missing)
+                                    .map(|prefix| prefix.chars().count())
+                                    .unwrap_or_default();
+                                (**transcript).record_emission(&MessageTextEmission {
+                                    source_text: missing,
+                                    source_char_offset,
+                                    output_keys: output_key.into_iter().collect(),
+                                    annotations,
+                                });
+                            }
+                        }
+                        if let Some(rendered) = rendered {
+                            missing_parts.push(rendered);
+                        }
+                    } else if let Some(text) = buffered.render_message_part(
+                        part,
+                        output_index,
+                        item_id,
+                        content_index,
+                        allow_completed_text_alias,
+                    ) {
+                        missing_parts.push(text);
+                    }
+                } else {
+                    let missing = reconcile(
+                        streamed_text,
+                        full_text,
+                        content_index,
+                        allow_completed_text_alias,
                     );
                     if !missing.is_empty() {
+                        if record_recovery_emissions {
+                            if let Some(transcript) = emitted_transcript.as_mut() {
+                                let source_char_offset = full_text
+                                    .strip_suffix(&missing)
+                                    .map(|prefix| prefix.chars().count())
+                                    .unwrap_or_default();
+                                (**transcript).record_emission(&MessageTextEmission {
+                                    source_text: missing.clone(),
+                                    source_char_offset,
+                                    output_keys: output_index
+                                        .map(|index| (index, content_index))
+                                        .into_iter()
+                                        .collect(),
+                                    annotations: Vec::new(),
+                                });
+                            }
+                        }
                         missing_parts.push(missing);
                     }
                 }
@@ -1826,18 +2271,23 @@ fn missing_message_text_parts(
                     .and_then(Value::as_str)
                     .filter(|text| !text.is_empty())
                 {
-                    let missing = streamed_text.missing_suffix(
-                        full_text,
-                        output_index,
-                        item_id,
-                        content_index as u64,
-                    );
+                    let missing = reconcile(streamed_text, full_text, content_index as u64, false);
                     if !missing.is_empty() {
                         missing_parts.push(missing);
                     }
                 }
             }
             _ => {}
+        }
+    }
+    if let Some(buffered) = buffered_citations {
+        let emissions = buffered.take_emissions();
+        if record_recovery_emissions {
+            if let Some(transcript) = emitted_transcript {
+                for emission in &emissions {
+                    transcript.record_emission(emission);
+                }
+            }
         }
     }
     missing_parts
@@ -2357,6 +2807,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         let mut current_text_index: Option<u32> = None;
         let mut streamed_text = StreamedTextState::default();
         let mut buffered_citation_text = BufferedCitationTextState::default();
+        let mut emitted_text_transcript = EmittedMessageTextTranscript::default();
         let mut preserve_web_search_citations = false;
         let mut tool_index_by_item_id: HashMap<String, u32> = HashMap::new();
         let mut tool_name_by_index: HashMap<u32, String> = HashMap::new();
@@ -2522,7 +2973,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             "response.created" => {
                                 let response_obj = response_object_from_event(&data);
                                 if let Some(id) = response_obj.get("id").and_then(|i| i.as_str()) {
-                                    message_id = Some(id.to_string());
+                                    message_id = Some(anthropic_message_id(id));
                                 }
                                 if let Some(model) =
                                     response_obj.get("model").and_then(|m| m.as_str())
@@ -2653,6 +3104,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         continue;
                                     }
                                     streamed_text.record_delta(&data, delta);
+                                    emitted_text_transcript.record_delta(&data, delta);
                                     let index = if let Some(index) = current_text_index {
                                         index
                                     } else {
@@ -2709,6 +3161,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             "response.refusal.delta" => {
                                 if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
                                     streamed_text.record_delta(&data, delta);
+                                    emitted_text_transcript.invalidate();
                                     let index = if let Some(index) = current_text_index {
                                         index
                                     } else {
@@ -2786,8 +3239,10 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         preserve_web_search_citations = true;
                                     }
                                     if preserve_web_search_citations && item_type != "message" {
-                                        let pending_text =
-                                            buffered_citation_text.render_pending_parts();
+                                        let pending_text = render_pending_buffered_text(
+                                            &mut buffered_citation_text,
+                                            &mut emitted_text_transcript,
+                                        );
                                         let mut reusable_text_index = None;
                                         if !pending_text.is_empty() {
                                             if let Some(index) = current_text_index.take() {
@@ -3490,7 +3945,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                 }
                                 if !has_sent_message_start {
                                     if let Some(id) = response_obj.get("id").and_then(Value::as_str) {
-                                        message_id = Some(id.to_string());
+                                        message_id = Some(anthropic_message_id(id));
                                     }
                                     if let Some(model) =
                                         response_obj.get("model").and_then(Value::as_str)
@@ -3810,6 +4265,42 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     }
                                 }
 
+                                if preserve_web_search_citations {
+                                    let pending_text = render_pending_buffered_text(
+                                        &mut buffered_citation_text,
+                                        &mut emitted_text_transcript,
+                                    );
+                                    let mut reusable_text_index =
+                                        terminal_reusable_text_index.take();
+                                    if !pending_text.is_empty() {
+                                        has_substantive_output = true;
+                                        if let Some(text_index) = current_text_index.take() {
+                                            let was_open = open_indices.remove(&text_index);
+                                            if was_open {
+                                                yield Ok(anthropic_sse(
+                                                    "content_block_stop",
+                                                    &json!({"type":"content_block_stop","index":text_index}),
+                                                ));
+                                            } else {
+                                                reusable_text_index.get_or_insert(text_index);
+                                            }
+                                        }
+                                    }
+                                    for text in pending_text {
+                                        let index = reusable_text_index.take().unwrap_or_else(|| {
+                                            let index = next_content_index;
+                                            next_content_index += 1;
+                                            index
+                                        });
+                                        for event in text_block_events(index, &text) {
+                                            yield Ok(event);
+                                        }
+                                    }
+                                }
+
+                                let allow_unique_terminal_alias =
+                                    event_name == "response.completed"
+                                        && terminal_message_items.len() == 1;
                                 for (output_index, item) in terminal_message_items {
                                     let buffered_citations =
                                         preserve_web_search_citations
@@ -3819,6 +4310,11 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         Some(output_index),
                                         &mut streamed_text,
                                         buffered_citations,
+                                        MessageTextReconciliationContext {
+                                            allow_unique_terminal_alias,
+                                            record_recovery_emissions: false,
+                                            emitted_transcript: Some(&mut emitted_text_transcript),
+                                        },
                                     );
                                     if missing_text.is_empty() {
                                         continue;
@@ -3852,38 +4348,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         }
                                     }
                                 }
-                                if preserve_web_search_citations {
-                                    let pending_text =
-                                        buffered_citation_text.render_pending_parts();
-                                    let mut reusable_text_index =
-                                        terminal_reusable_text_index.take();
-                                    if !pending_text.is_empty() {
-                                        has_substantive_output = true;
-                                        if let Some(text_index) = current_text_index.take() {
-                                            let was_open = open_indices.remove(&text_index);
-                                            if was_open {
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_stop",
-                                                    &json!({"type":"content_block_stop","index":text_index}),
-                                                ));
-                                            } else {
-                                                reusable_text_index.get_or_insert(text_index);
-                                            }
-                                        }
-                                    }
-                                    for text in pending_text {
-                                        let index =
-                                            reusable_text_index.take().unwrap_or_else(|| {
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                index
-                                            });
-                                        for event in text_block_events(index, &text) {
-                                            yield Ok(event);
-                                        }
-                                    }
-                                }
-
                                 let terminal_status = response_obj
                                     .get("status")
                                     .and_then(Value::as_str)
@@ -4068,8 +4532,10 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     Some("web_search_call") => {
                                         has_substantive_output = true;
                                         if preserve_web_search_citations {
-                                            let pending_text =
-                                                buffered_citation_text.render_pending_parts();
+                                            let pending_text = render_pending_buffered_text(
+                                                &mut buffered_citation_text,
+                                                &mut emitted_text_transcript,
+                                            );
                                             let mut reusable_text_index = None;
                                             if !pending_text.is_empty() {
                                                 if let Some(text_index) =
@@ -4377,6 +4843,13 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             data.get("output_index").and_then(Value::as_u64),
                                             &mut streamed_text,
                                             buffered_citations,
+                                            MessageTextReconciliationContext {
+                                                allow_unique_terminal_alias: false,
+                                                record_recovery_emissions: true,
+                                                emitted_transcript: Some(
+                                                    &mut emitted_text_transcript,
+                                                ),
+                                            },
                                         );
                                         if !missing_text.is_empty() {
                                             has_substantive_output = true;
@@ -4494,7 +4967,10 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                 && !has_open_reasoning
             {
                 if preserve_web_search_citations {
-                    let pending_text = buffered_citation_text.render_pending_parts();
+                    let pending_text = render_pending_buffered_text(
+                        &mut buffered_citation_text,
+                        &mut emitted_text_transcript,
+                    );
                     let mut reusable_text_index = None;
                     if !pending_text.is_empty() {
                         if let Some(index) = current_text_index.take() {
@@ -4572,6 +5048,17 @@ mod tests {
     use futures::stream;
     use futures::StreamExt;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_anthropic_message_id_rewrites_only_response_namespace() {
+        for (response_id, expected) in [
+            ("resp_example", "msg_example"),
+            ("msg_example", "msg_example"),
+            ("gateway_resp_example", "gateway_resp_example"),
+        ] {
+            assert_eq!(anthropic_message_id(response_id), expected);
+        }
+    }
 
     async fn convert_stream_text(input: impl Into<Bytes>) -> String {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
@@ -4673,6 +5160,24 @@ mod tests {
     }
 
     #[test]
+    fn test_completed_alias_does_not_match_only_a_subset_of_streamed_parts() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "First part.",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 3, "content_index": 0}),
+            "Second part.",
+        );
+
+        assert_eq!(
+            state.missing_suffix_with_emitted("First part.", Some(0), None, 0, true, None,),
+            "First part."
+        );
+    }
+
+    #[test]
     fn test_unkeyed_streamed_text_reconciles_with_later_terminal_keys() {
         let mut streamed = StreamedTextState::default();
         streamed.record_delta(&json!({}), "Before search.");
@@ -4693,10 +5198,18 @@ mod tests {
             }]
         });
         let mut buffered = BufferedCitationTextState::default();
-        assert!(
-            missing_message_text_parts(&item, Some(0), &mut streamed, Some(&mut buffered))
-                .is_empty()
-        );
+        assert!(missing_message_text_parts(
+            &item,
+            Some(0),
+            &mut streamed,
+            Some(&mut buffered),
+            MessageTextReconciliationContext {
+                allow_unique_terminal_alias: false,
+                record_recovery_emissions: false,
+                emitted_transcript: None,
+            },
+        )
+        .is_empty());
     }
 
     #[test]
@@ -4975,7 +5488,7 @@ mod tests {
 
         let terminal = json!({"text": "Full", "annotations": []});
         assert_eq!(
-            state.render_message_part(&terminal, Some(0), Some("msg_fuller"), 0),
+            state.render_message_part(&terminal, Some(0), Some("msg_fuller"), 0, false),
             Some("Full text.".to_string())
         );
         assert!(state.render_pending_parts().is_empty());
@@ -5001,7 +5514,7 @@ mod tests {
         }));
         let terminal = json!({"text": "Before", "annotations": []});
         assert_eq!(
-            state.render_message_part(&terminal, Some(0), Some("msg_delayed"), 0),
+            state.render_message_part(&terminal, Some(0), Some("msg_delayed"), 0, false),
             Some(" after".to_string())
         );
         assert!(state.render_pending_parts().is_empty());
@@ -5281,10 +5794,121 @@ mod tests {
             }]
         });
         let rendered = state
-            .render_message_part(&terminal, Some(0), Some("msg_terminal"), 0)
+            .render_message_part(&terminal, Some(0), Some("msg_terminal"), 0, false)
             .expect("fuller terminal suffix and citation should be emitted");
         assert!(rendered.starts_with(" after"));
         assert!(rendered.contains("https://example.com/after"));
+    }
+
+    #[test]
+    fn test_emission_transcript_filters_shifted_existing_citations() {
+        let mut state = BufferedCitationTextState::default();
+        let mut transcript = EmittedMessageTextTranscript::default();
+        let first = json!({
+            "item_id": "msg_first",
+            "output_index": 1,
+            "content_index": 0
+        });
+        state.record_delta(&first, "First part.");
+        state.record_annotation(
+            &first,
+            &json!({
+                "type": "url_citation",
+                "start_index": 0,
+                "end_index": 5,
+                "url": "https://example.com/first",
+                "title": "First"
+            }),
+        );
+        assert_eq!(state.render_pending_parts().len(), 1);
+        for emission in state.take_emissions() {
+            transcript.record_emission(&emission);
+        }
+
+        let second = json!({
+            "item_id": "msg_second",
+            "output_index": 3,
+            "content_index": 0
+        });
+        state.record_delta(&second, "Second part.");
+        state.record_annotation(
+            &second,
+            &json!({
+                "type": "url_citation",
+                "start_index": 0,
+                "end_index": 6,
+                "url": "https://example.com/second",
+                "title": "Second"
+            }),
+        );
+        assert_eq!(state.render_pending_parts().len(), 1);
+        for emission in state.take_emissions() {
+            transcript.record_emission(&emission);
+        }
+
+        let terminal = json!({
+            "text": "First part.Second part.New suffix.",
+            "annotations": [
+                {
+                    "type": "url_citation",
+                    "start_index": 0,
+                    "end_index": 5,
+                    "url": "https://example.com/first",
+                    "title": "First"
+                },
+                {
+                    "type": "url_citation",
+                    "start_index": 11,
+                    "end_index": 17,
+                    "url": "https://example.com/second",
+                    "title": "Second"
+                },
+                {
+                    "type": "url_citation",
+                    "start_index": 23,
+                    "end_index": 26,
+                    "url": "https://example.com/new",
+                    "title": "New"
+                }
+            ]
+        });
+        let full_text = terminal["text"].as_str().unwrap();
+        let prefix = transcript
+            .completed_prefix(full_text, 0)
+            .expect("the downstream transcript should match the completed aggregate");
+        let suffix = full_text.strip_prefix(&prefix.text).unwrap();
+        let annotations = terminal["annotations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|annotation| !prefix.emitted_annotations.contains(annotation))
+            .cloned()
+            .collect::<Vec<_>>();
+        let sources = text_with_url_citations("", &annotations);
+        let rendered = format!("{suffix}\n\n{sources}");
+
+        assert!(rendered.starts_with("New suffix."));
+        assert!(!rendered.contains("https://example.com/first"));
+        assert!(!rendered.contains("https://example.com/second"));
+        assert!(rendered.contains("https://example.com/new"));
+    }
+
+    #[test]
+    fn test_emission_transcript_tracks_many_small_unicode_deltas_incrementally() {
+        let mut transcript = EmittedMessageTextTranscript::default();
+        let first = json!({"output_index": 1, "content_index": 0});
+        for _ in 0..4096 {
+            transcript.record_delta(&first, "界");
+        }
+        transcript.record_delta(&json!({"output_index": 3, "content_index": 0}), "终");
+
+        let terminal = format!("{}终", "界".repeat(4096));
+        let prefix = transcript
+            .completed_prefix(&terminal, 0)
+            .expect("the incremental transcript should preserve Unicode character offsets");
+
+        assert_eq!(transcript.total_chars, 4097);
+        assert_eq!(prefix.text, terminal);
     }
 
     #[test]
@@ -5297,7 +5921,7 @@ mod tests {
 
         let terminal = json!({"text": "FirstSecond", "annotations": []});
         assert_eq!(
-            state.render_message_part(&terminal, Some(0), Some("msg_combined"), 0),
+            state.render_message_part(&terminal, Some(0), Some("msg_combined"), 0, false),
             Some("Second".to_string())
         );
         assert!(state.render_pending_parts().is_empty());
@@ -5317,13 +5941,13 @@ mod tests {
         state.record_delta(&keyed, " after");
         let stale = json!({"text": "Before", "annotations": []});
         assert_eq!(
-            state.render_message_part(&stale, Some(0), Some("msg_tail"), 0),
+            state.render_message_part(&stale, Some(0), Some("msg_tail"), 0, false),
             Some(" after".to_string())
         );
 
         let complete = json!({"text": "Before after", "annotations": []});
         assert_eq!(
-            state.render_message_part(&complete, Some(0), Some("msg_tail"), 0),
+            state.render_message_part(&complete, Some(0), Some("msg_tail"), 0, false),
             None
         );
     }
@@ -5364,12 +5988,12 @@ mod tests {
         state.record_delta(&unkeyed, "Second.");
         let first = json!({"text": "First.", "annotations": []});
         assert_eq!(
-            state.render_message_part(&first, Some(0), Some("msg_first"), 0),
+            state.render_message_part(&first, Some(0), Some("msg_first"), 0, false),
             None
         );
         let second = json!({"text": "Second.", "annotations": []});
         assert_eq!(
-            state.render_message_part(&second, Some(1), Some("msg_second"), 0),
+            state.render_message_part(&second, Some(1), Some("msg_second"), 0, false),
             Some("Second.".to_string())
         );
         assert!(state.render_pending_parts().is_empty());
@@ -5404,7 +6028,7 @@ mod tests {
             "annotations": [already_emitted, terminal_only]
         });
         let rendered = state
-            .render_message_part(&terminal, Some(0), Some("msg_rust"), 0)
+            .render_message_part(&terminal, Some(0), Some("msg_rust"), 0, false)
             .expect("the terminal-only citation should still be emitted");
         assert!(!rendered.contains("https://www.rust-lang.org/"));
         assert!(rendered.contains("https://doc.rust-lang.org/"));
@@ -5435,7 +6059,7 @@ mod tests {
         state.record_delta(&keyed, "Rust");
         let terminal = json!({"text": "Rust", "annotations": [citation]});
         assert_eq!(
-            state.render_message_part(&terminal, Some(0), Some("msg_tail"), 0),
+            state.render_message_part(&terminal, Some(0), Some("msg_tail"), 0, false),
             Some("[Rust](https://www.rust-lang.org/)".to_string())
         );
     }
@@ -5476,7 +6100,7 @@ mod tests {
         let mut state = BufferedCitationTextState::default();
         let first = json!({"text": "Before", "annotations": []});
         assert_eq!(
-            state.render_message_part(&first, Some(0), Some("msg_terminal_only"), 0),
+            state.render_message_part(&first, Some(0), Some("msg_terminal_only"), 0, false,),
             Some("Before".to_string())
         );
 
@@ -5491,7 +6115,7 @@ mod tests {
             }]
         });
         let rendered = state
-            .render_message_part(&enriched, Some(0), Some("msg_terminal_only"), 0)
+            .render_message_part(&enriched, Some(0), Some("msg_terminal_only"), 0, false)
             .expect("late suffix and citation should be emitted");
         assert!(rendered.starts_with(" after"));
         assert!(rendered.contains("https://example.com/after"));
@@ -5522,7 +6146,17 @@ mod tests {
         });
 
         assert_eq!(
-            missing_message_text_parts(&item, Some(2), &mut streamed, Some(&mut buffered)),
+            missing_message_text_parts(
+                &item,
+                Some(2),
+                &mut streamed,
+                Some(&mut buffered),
+                MessageTextReconciliationContext {
+                    allow_unique_terminal_alias: false,
+                    record_recovery_emissions: false,
+                    emitted_transcript: None,
+                },
+            ),
             vec!["After search."]
         );
         assert_eq!(
@@ -6426,6 +7060,7 @@ mod tests {
             text_deltas,
             vec!["Combined [answer](https://example.com/result)."]
         );
+        assert!(merged.contains("\"id\":\"msg_multi_fallback\""));
         assert!(merged.contains("\"web_search_requests\":2"));
         assert!(merged.contains("event: message_stop"));
     }
@@ -6462,7 +7097,717 @@ mod tests {
             .collect();
 
         assert_eq!(text_deltas, vec!["Already streamed."]);
+        assert!(merged.contains("\"id\":\"msg_text\""));
         assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_completed_index_drift_does_not_duplicate_finalized_text() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_index_drift\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_index_drift\",\"output_index\":1,\"content_index\":0,\"delta\":\"Already streamed once.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_index_drift\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed once.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_index_drift\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed once.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Already streamed once."]);
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_does_not_replay_already_streamed_later_parts() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_combined_terminal\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"Second part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Second part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_combined_terminal\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["First part.", "Second part."]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_emits_only_the_new_suffix() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_combined_suffix\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"Second part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Second part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_combined_suffix\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.New suffix.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(
+            text_deltas,
+            vec!["First part.", "Second part.", "New suffix."]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_reconciles_across_citation_mode_transition() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_cross_state\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_before\",\"output_index\":0,\"content_index\":0,\"delta\":\"Before search.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_before\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before search.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_cross_state\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ws_cross_state\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"delta\":\"After search.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"msg_after\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"After search.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_cross_state\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before search.After search.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Before search.", "After search."]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_does_not_assume_output_index_order() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_reverse_arrival\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"Second part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Second part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_reverse_arrival\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(
+            text_deltas,
+            vec!["Second part.", "First part.", "First part.Second part."]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_does_not_hide_interleaved_arrival() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_interleaved_arrival\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First \"}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"Second.\"}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Second.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_interleaved_arrival\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(
+            text_deltas,
+            vec!["First ", "Second.", "part.", "First part.Second."]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_completed_index_drift_emits_only_the_missing_suffix() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_index_drift_suffix\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_index_drift_suffix\",\"output_index\":1,\"content_index\":0,\"delta\":\"Already streamed\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_index_drift_suffix\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_index_drift_suffix\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed and completed.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Already streamed", " and completed."]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_index_drift_does_not_guess_between_ambiguous_text_parts() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ambiguous_drift\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_ambiguous_a\",\"output_index\":1,\"content_index\":0,\"delta\":\"Repeated.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_ambiguous_a\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Repeated.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_ambiguous_b\",\"output_index\":2,\"content_index\":0,\"delta\":\"Repeated.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"msg_ambiguous_b\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Repeated.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ambiguous_drift\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Repeated.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Repeated.", "Repeated.", "Repeated."]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_index_drift_does_not_alias_a_reverse_prefix() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_reverse_prefix\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_reverse_prefix\",\"output_index\":1,\"content_index\":0,\"delta\":\"Longer text\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_reverse_prefix\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Longer text\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_reverse_prefix\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Longer\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Longer text", "Longer"]);
+    }
+
+    #[tokio::test]
+    async fn test_incomplete_index_drift_does_not_use_completed_alias_fallback() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_incomplete_drift\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_incomplete_drift\",\"output_index\":1,\"content_index\":0,\"delta\":\"Partial\"}\n\n",
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_incomplete_drift\",\"model\":\"gpt-5.6\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Partial terminal\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Partial", "Partial terminal"]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_index_drift_does_not_reuse_one_candidate_across_messages() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_reused_candidate\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_reused_candidate\",\"output_index\":2,\"content_index\":0,\"delta\":\"A\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"msg_reused_candidate\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"A\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_reused_candidate\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"AB\",\"annotations\":[]}]},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ABC\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["A", "AB", "ABC"]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_index_drift_does_not_duplicate_buffered_citation_text() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_citation_drift\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_citation_drift\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_citation_drift\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_citation_drift\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_citation_drift\",\"output_index\":1,\"content_index\":0,\"delta\":\"Rust docs are online.\"}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_citation_drift\",\"output_index\":1,\"content_index\":0,\"text\":\"Rust docs are online.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_citation_drift\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_citation_drift\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Rust docs are online."]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_does_not_duplicate_buffered_citation_parts() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_combined_citations\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_combined_citations\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_combined_citations\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"combined terminal\"}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First part.\"}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"text\":\"First part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"Second part.\"}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"text\":\"Second part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Second part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_combined_citations\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["First part.", "Second part."]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_flushes_pending_buffered_part_once() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_pending_citation\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_pending_citation\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_pending_citation\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"pending terminal\"}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First part.\"}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"text\":\"First part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"Second part.\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_pending_citation\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(
+            text_deltas,
+            vec!["First part.", "Second part."],
+            "converted SSE: {merged}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_flushes_pending_citation_once() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_pending_source\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_pending_source\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_pending_source\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"pending source\"}}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"Second part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Second part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_suffix\",\"output_index\":5,\"content_index\":0,\"delta\":\"New suffix.\"}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_suffix\",\"output_index\":5,\"content_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":3,\"url\":\"https://example.com/new\",\"title\":\"New\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_pending_source\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.New suffix.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":23,\"end_index\":26,\"url\":\"https://example.com/new\",\"title\":\"New\"}]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+        let emitted_text = text_deltas.join("\n");
+
+        assert_eq!(emitted_text.matches("First part.").count(), 1);
+        assert_eq!(emitted_text.matches("Second part.").count(), 1);
+        assert_eq!(
+            emitted_text.matches("suffix.").count(),
+            1,
+            "text deltas: {text_deltas:?}\nconverted SSE: {merged}"
+        );
+        assert_eq!(emitted_text.matches("https://example.com/new").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_reconciles_buffered_done_only_parts() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_buffered_done_only\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_buffered_done_only\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_buffered_done_only\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"done only\"}}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Second part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_buffered_done_only\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["First part.", "Second part."]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_reconciles_delta_and_done_only_parts() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_mixed_recovery\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First part.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Second part.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mixed_recovery\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["First part.", "Second part."]);
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_message_keeps_refusal_out_of_transcript_aliasing() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_mixed_refusal\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"First part.\"}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"Second part.\"}\n\n",
+            "event: response.refusal.delta\n",
+            "data: {\"type\":\"response.refusal.delta\",\"item_id\":\"msg_refusal\",\"output_index\":4,\"content_index\":0,\"delta\":\"Refused.\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mixed_refusal\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"First part.Second part.\",\"annotations\":[]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(
+            text_deltas,
+            vec![
+                "First part.",
+                "Second part.",
+                "Refused.",
+                "First part.Second part."
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_completed_combined_unicode_citations_emit_only_new_suffix_source() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_unicode_citations\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_unicode_citations\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_unicode_citations\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Unicode citations\"}}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"delta\":\"甲文。\"}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_first\",\"output_index\":1,\"content_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":1,\"url\":\"https://example.com/first\",\"title\":\"甲\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"甲文。\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":1,\"url\":\"https://example.com/first\",\"title\":\"甲\"}]}]}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"delta\":\"乙文。\"}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_second\",\"output_index\":3,\"content_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":1,\"url\":\"https://example.com/second\",\"title\":\"乙\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,\"item\":{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"乙文。\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":1,\"url\":\"https://example.com/second\",\"title\":\"乙\"}]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_unicode_citations\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"甲文。乙文。新增。\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":1,\"url\":\"https://example.com/first\",\"title\":\"甲\"},{\"type\":\"url_citation\",\"start_index\":3,\"end_index\":4,\"url\":\"https://example.com/second\",\"title\":\"乙\"},{\"type\":\"url_citation\",\"start_index\":6,\"end_index\":8,\"url\":\"https://example.com/new\",\"title\":\"新增\"}]}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas.len(), 3);
+        assert!(text_deltas[0].contains("https://example.com/first"));
+        assert!(text_deltas[1].contains("https://example.com/second"));
+        assert!(text_deltas[2].starts_with("新增。"));
+        assert!(!text_deltas[2].contains("https://example.com/first"));
+        assert!(!text_deltas[2].contains("https://example.com/second"));
+        assert!(text_deltas[2].contains("https://example.com/new"));
+        let emitted_text = text_deltas.join("\n");
+        assert_eq!(emitted_text.matches("https://example.com/first").count(), 1);
+        assert_eq!(
+            emitted_text.matches("https://example.com/second").count(),
+            1
+        );
+        assert_eq!(emitted_text.matches("https://example.com/new").count(), 1);
     }
 
     #[tokio::test]
@@ -6582,6 +7927,7 @@ mod tests {
 
         let merged = convert_stream_text(input).await;
         assert!(merged.contains("event: message_start"));
+        assert!(merged.contains("\"id\":\"msg_json\""));
         assert!(merged.contains("\"text\":\"hello\""));
         assert!(merged.contains("event: message_stop"));
     }
@@ -6628,7 +7974,7 @@ mod tests {
             .collect::<String>();
 
         assert!(merged.contains("\"type\":\"message_start\""));
-        assert!(merged.contains("\"id\":\"resp_1\""));
+        assert!(merged.contains("\"id\":\"msg_1\""));
         assert!(merged.contains("\"model\":\"gpt-4o\""));
         assert!(merged.contains("\"type\":\"tool_use\""));
         assert!(merged.contains("\"name\":\"get_weather\""));
