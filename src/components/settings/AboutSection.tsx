@@ -42,6 +42,7 @@ import { isWindows } from "@/lib/platform";
 import { isUpdateAvailable } from "@/lib/version";
 import { ToolUpgradeConfirmDialog } from "./ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "./ToolInstallRow";
+import { ProviderIcon } from "@/components/ProviderIcon";
 
 interface AboutSectionProps {
   isPortable: boolean;
@@ -68,6 +69,7 @@ const TOOL_NAMES = [
   "openclaw",
   "hermes",
   "pi",
+  "codebuddy",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 type ToolLifecycleAction = "install" | "update";
@@ -141,7 +143,9 @@ npm i -g openclaw@latest
 # Hermes
 ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
 # Pi
-npm i -g @earendil-works/pi-coding-agent@latest`;
+npm i -g @earendil-works/pi-coding-agent@latest
+# CodeBuddy
+npm i -g @tencent-ai/codebuddy-code@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
@@ -158,7 +162,9 @@ npm i -g openclaw@latest
 # Hermes
 ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
-npm i -g @earendil-works/pi-coding-agent@latest`;
+npm i -g @earendil-works/pi-coding-agent@latest
+# CodeBuddy
+npm i -g @tencent-ai/codebuddy-code@latest`;
 
 const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -173,6 +179,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  codebuddy: "CodeBuddy",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -181,7 +188,10 @@ function toolDisplayName(tool: string): string {
   return TOOL_DISPLAY_NAMES[tool as ToolName] ?? tool;
 }
 
-const TOOL_APP_IDS: Record<ToolName, AppId> = {
+// 工具 → 托管应用（B 层 AppId），用于拿 APP_ICON_MAP 里的品牌图标。
+// 仅做用量/会话导入的 codebuddy 还不是 AppId，故该键不在此表（图标走
+// TOOL_CARD_ICONS 的图标库回退，见下方 TOOL_CARD_ICONS）。
+const TOOL_APP_IDS: Partial<Record<ToolName, AppId>> = {
   claude: "claude",
   codex: "codex",
   gemini: "gemini",
@@ -190,6 +200,12 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   openclaw: "openclaw",
   hermes: "hermes",
   pi: "pi",
+};
+
+// 工具卡片图标：优先用托管应用的 APP_ICON_MAP；非托管工具（codebuddy）从
+// 图标库（icons/extracted）按名称取官方品牌图。
+const TOOL_CARD_ICONS: Partial<Record<ToolName, string>> = {
+  codebuddy: "codebuddy",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
@@ -1048,8 +1064,21 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         <div className="grid gap-3 px-1 sm:grid-cols-2 xl:grid-cols-3">
           {TOOL_NAMES.map((toolName, index) => {
             const tool = toolVersionByName.get(toolName);
-            const appConfig = APP_ICON_MAP[TOOL_APP_IDS[toolName]];
+            const toolAppId = TOOL_APP_IDS[toolName];
+            const appConfig = toolAppId ? APP_ICON_MAP[toolAppId] : undefined;
             const displayName = TOOL_DISPLAY_NAMES[toolName];
+            const registryIconName = TOOL_CARD_ICONS[toolName];
+            const cardIcon = appConfig?.icon ? (
+              appConfig.icon
+            ) : registryIconName ? (
+              <ProviderIcon
+                icon={registryIconName}
+                name={displayName}
+                size={18}
+              />
+            ) : (
+              <Terminal className="h-4 w-4" />
+            );
             // 单卡片 loading 用「结果是否已到」而非「整批是否结束」驱动，实现渐进式刷新：
             //   - loadingTools[t]：本工具探测在途（首次加载或单工具刷新）；
             //   - isLoadingTools && !has(t)：整批进行中且该工具尚未返回——覆盖首帧/刷新时
@@ -1089,7 +1118,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-background/80 text-muted-foreground">
-                      {appConfig?.icon ?? <Terminal className="h-4 w-4" />}
+                      {cardIcon}
                     </span>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">
