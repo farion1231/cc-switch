@@ -753,9 +753,16 @@ fn build_rollout_index(files: &[PathBuf]) -> RolloutIndex {
         if let Some(thread_id) = thread_id_from_filename(path) {
             index.entry(thread_id).or_default().push(path.clone());
         }
+        if let Some(leading_id) = leading_thread_id_from_filename(path) {
+            let entry = index.entry(leading_id).or_default();
+            if !entry.contains(path) {
+                entry.push(path.clone());
+            }
+        }
     }
     for paths in index.values_mut() {
         paths.sort();
+        paths.dedup();
     }
     index
 }
@@ -1001,10 +1008,7 @@ fn parse_codex_file(
     })
 }
 
-fn parent_signatures_before(
-    parent_path: &Path,
-    cutoff: DateTime<Utc>,
-) -> Result<Vec<TokenUsageSignature>, String> {
+fn parent_timeline(parent_path: &Path) -> Result<Arc<ParentTokenTimeline>, String> {
     let file = fs::File::open(parent_path)
         .map_err(|error| format!("无法打开父 rollout {}: {error}", parent_path.display()))?;
     let stamp = ParentFileStamp::from_file(&file);
@@ -1018,7 +1022,7 @@ fn parent_signatures_before(
         })
     });
     if let Some(timeline) = cached_timeline {
-        return timeline.signatures_before(parent_path, cutoff);
+        return Ok(timeline);
     }
 
     let mut events = Vec::new();
@@ -1072,7 +1076,6 @@ fn parent_signatures_before(
         max_timestamp,
         has_token_without_timestamp,
     });
-    let result = timeline.signatures_before(parent_path, cutoff);
     if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
         caches.parent_timelines.insert(
             parent_path.to_path_buf(),
@@ -1082,7 +1085,15 @@ fn parent_signatures_before(
             },
         );
     }
-    result
+    Ok(timeline)
+}
+
+fn parent_signatures_before(
+    parent_path: &Path,
+    cutoff: DateTime<Utc>,
+) -> Result<Vec<TokenUsageSignature>, String> {
+    let timeline = parent_timeline(parent_path)?;
+    timeline.signatures_before(parent_path, cutoff)
 }
 
 fn resolve_parent_signatures(
@@ -1094,19 +1105,48 @@ fn resolve_parent_signatures(
         return Err(format!("找不到父 rollout: {parent_id}"));
     };
 
-    let mut snapshots = Vec::with_capacity(candidates.len());
+    if candidates.len() == 1 {
+        return parent_signatures_before(&candidates[0], cutoff);
+    }
+
+    // 当父线程跨越多个 rollout 文件（例如分页 rollout：rollout-…-<threadId>_<rolloutId>.jsonl）时，
+    // 跨文件拼接事件时间线并统一做 cutoff 截断与去重。
+    let mut combined_events = Vec::new();
+    let mut overall_max_timestamp = None;
+
     for candidate in candidates {
-        snapshots.push(parent_signatures_before(candidate, cutoff)?);
+        let timeline = parent_timeline(candidate)?;
+        if timeline.has_token_without_timestamp {
+            return Err(format!(
+                "父 rollout {} 包含缺少 timestamp 的 token_count，无法确定截断点",
+                candidate.display()
+            ));
+        }
+        overall_max_timestamp = match (overall_max_timestamp, timeline.max_timestamp) {
+            (Some(curr), Some(t)) => Some(curr.max(t)),
+            (None, t) => t,
+            (t, None) => t,
+        };
+        combined_events.extend(timeline.events.clone());
     }
-    let Some(first) = snapshots.first() else {
-        return Err(format!("找不到父 rollout: {parent_id}"));
-    };
-    if snapshots.iter().skip(1).any(|snapshot| snapshot != first) {
-        return Err(format!(
-            "父 rollout UUID {parent_id} 对应多个内容不一致的文件"
-        ));
+
+    match overall_max_timestamp {
+        Some(max) if max < cutoff => Err(format!(
+            "父 rollout {parent_id} 尚未写到 child fork 时刻 (parent max: {max}, child fork: {cutoff})"
+        )),
+        None => Err(format!(
+            "父 rollout {parent_id} 不含任何带 timestamp 的记录"
+        )),
+        Some(_) => {
+            combined_events.sort_by_key(|e| e.timestamp);
+            combined_events.dedup_by(|a, b| a.timestamp == b.timestamp && a.signature == b.signature);
+            Ok(combined_events
+                .into_iter()
+                .filter(|event| event.timestamp <= cutoff)
+                .map(|event| event.signature)
+                .collect())
+        }
     }
-    Ok(first.clone())
 }
 
 fn matching_replay_prefix(child: &[ParsedTokenEvent], parent: &[TokenUsageSignature]) -> usize {
@@ -2529,6 +2569,66 @@ mod tests {
             .is_empty());
         assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
         assert_eq!(replay_caches().lock().unwrap().parent_timelines.len(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_build_rollout_index_includes_leading_thread_id() {
+        let temp = tempdir().unwrap();
+        let page1 = temp.path().join(format!("rollout-2026-09-02T05-00-00-{PARENT_ID}.jsonl"));
+        let page2 = temp.path().join(format!("rollout-2026-09-02T05-50-45-{PARENT_ID}_{CHILD_A_ID}.jsonl"));
+        let files = vec![page1.clone(), page2.clone()];
+        let index = build_rollout_index(&files);
+
+        // PARENT_ID should map to both page1 and page2
+        let parent_files = index.get(PARENT_ID).expect("PARENT_ID must be indexed");
+        assert_eq!(parent_files.len(), 2);
+        assert!(parent_files.contains(&page1));
+        assert!(parent_files.contains(&page2));
+
+        // CHILD_A_ID should also map to page2
+        let child_files = index.get(CHILD_A_ID).expect("CHILD_A_ID must be indexed");
+        assert_eq!(child_files.len(), 1);
+        assert!(child_files.contains(&page2));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_resolve_parent_signatures_across_paginated_rollouts() {
+        clear_codex_replay_caches();
+        let temp = tempdir().unwrap();
+        let page1 = temp.path().join(format!("rollout-2026-09-02T05-00-00-{PARENT_ID}.jsonl"));
+        let page2 = temp.path().join(format!("rollout-2026-09-02T05-50-45-{PARENT_ID}_{CHILD_A_ID}.jsonl"));
+
+        write_jsonl(
+            &page1,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-09-02T05:10:00Z"),
+                turn_context_at("2026-09-02T05:10:10Z"),
+            ],
+        );
+
+        write_jsonl(
+            &page2,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(200, 100, 20, "2026-09-02T05:55:00Z"),
+                turn_context_at("2026-09-02T05:55:10Z"),
+            ],
+        );
+
+        let files = vec![page1, page2];
+        let index = build_rollout_index(&files);
+
+        // Child forks after page 2 has started writing
+        let child_fork_time = "2026-09-02T05:52:00Z".parse::<DateTime<Utc>>().unwrap();
+        let signatures = resolve_parent_signatures(PARENT_ID, child_fork_time, &index).unwrap();
+        assert_eq!(signatures.len(), 1); // Only page1's token_count is before 05:52:00
+
+        let child_fork_time_late = "2026-09-02T05:56:00Z".parse::<DateTime<Utc>>().unwrap();
+        let signatures_late = resolve_parent_signatures(PARENT_ID, child_fork_time_late, &index).unwrap();
+        assert_eq!(signatures_late.len(), 2); // Both page1 and page2 token_counts are included
     }
 
     #[cfg(any(unix, windows))]
