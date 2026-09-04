@@ -3122,7 +3122,14 @@ impl SkillService {
     /// 下载并解压 ZIP
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
         let client = crate::proxy::http_client::get();
-        let response = client.get(url).send().await?;
+        let mut request = client.get(url);
+        if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
+            let token_trimmed = token.trim();
+            if !token_trimmed.is_empty() {
+                request = request.header("Authorization", format!("Bearer {}", token_trimmed));
+            }
+        }
+        let response = request.send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
