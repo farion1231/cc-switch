@@ -116,25 +116,17 @@ export function CodeBuddyProviderForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-1.5">
-        <Label htmlFor="codebuddy-name">
-          {t("codebuddy.form.name", { defaultValue: "名称" })}
-        </Label>
+        <Label htmlFor="codebuddy-name">{t("codebuddy.form.name")}</Label>
         <Input
           id="codebuddy-name"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder={t("codebuddy.form.namePlaceholder", {
-            defaultValue: "例如：我的 DeepSeek",
-          })}
+          placeholder={t("codebuddy.form.namePlaceholder")}
         />
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="codebuddy-key">
-          {t("codebuddy.form.modelKey", {
-            defaultValue: "模型 ID（models.json 的 id，创建后不可改）",
-          })}
-        </Label>
+        <Label htmlFor="codebuddy-key">{t("codebuddy.form.modelKey")}</Label>
         <Input
           id="codebuddy-key"
           value={modelKey}
@@ -146,9 +138,7 @@ export function CodeBuddyProviderForm({
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="codebuddy-url">
-          {t("codebuddy.form.url", { defaultValue: "API 地址" })}
-        </Label>
+        <Label htmlFor="codebuddy-url">{t("codebuddy.form.url")}</Label>
         <Input
           id="codebuddy-url"
           value={url}
@@ -158,9 +148,7 @@ export function CodeBuddyProviderForm({
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="codebuddy-api-key">
-          {t("codebuddy.form.apiKey", { defaultValue: "API Key" })}
-        </Label>
+        <Label htmlFor="codebuddy-api-key">{t("codebuddy.form.apiKey")}</Label>
         <Input
           id="codebuddy-api-key"
           type="password"
@@ -173,9 +161,7 @@ export function CodeBuddyProviderForm({
       <div className="space-y-3 rounded-lg border p-3">
         <div className="flex items-center justify-between gap-4">
           <Label htmlFor="codebuddy-tool">
-            {t("codebuddy.form.supportsToolCall", {
-              defaultValue: "支持工具调用",
-            })}
+            {t("codebuddy.form.supportsToolCall")}
           </Label>
           <Switch
             id="codebuddy-tool"
@@ -185,9 +171,7 @@ export function CodeBuddyProviderForm({
         </div>
         <div className="flex items-center justify-between gap-4">
           <Label htmlFor="codebuddy-images">
-            {t("codebuddy.form.supportsImages", {
-              defaultValue: "支持图片输入",
-            })}
+            {t("codebuddy.form.supportsImages")}
           </Label>
           <Switch
             id="codebuddy-images"
@@ -197,9 +181,7 @@ export function CodeBuddyProviderForm({
         </div>
         <div className="flex items-center justify-between gap-4">
           <Label htmlFor="codebuddy-reasoning">
-            {t("codebuddy.form.supportsReasoning", {
-              defaultValue: "支持推理",
-            })}
+            {t("codebuddy.form.supportsReasoning")}
           </Label>
           <Switch
             id="codebuddy-reasoning"

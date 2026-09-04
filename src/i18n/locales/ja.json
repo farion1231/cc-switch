@@ -920,6 +920,18 @@
     "codebuddy": "CodeBuddy",
     "workbuddy": "WorkBuddy"
   },
+  "codebuddy": {
+    "form": {
+      "name": "名前",
+      "namePlaceholder": "例：マイ DeepSeek エンドポイント",
+      "modelKey": "モデル ID（models.json の id。作成後は変更不可）",
+      "url": "API URL",
+      "apiKey": "API キー",
+      "supportsToolCall": "ツール呼び出しをサポート",
+      "supportsImages": "画像入力をサポート",
+      "supportsReasoning": "推論をサポート"
+    }
+  },
   "pi": {
     "empty": {
       "title": "API キープロバイダーはまだありません",

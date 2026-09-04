@@ -920,6 +920,18 @@
     "codebuddy": "CodeBuddy",
     "workbuddy": "WorkBuddy"
   },
+  "codebuddy": {
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "e.g., My DeepSeek endpoint",
+      "modelKey": "Model ID (id in models.json; cannot be changed after creation)",
+      "url": "API URL",
+      "apiKey": "API Key",
+      "supportsToolCall": "Supports tool calling",
+      "supportsImages": "Supports image input",
+      "supportsReasoning": "Supports reasoning"
+    }
+  },
   "pi": {
     "empty": {
       "title": "No API key providers yet",

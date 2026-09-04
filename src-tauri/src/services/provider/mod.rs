@@ -4459,6 +4459,13 @@ impl ProviderService {
     ///
     /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
+        // CodeBuddy additive but keeps a native "current model" concept
+        // (settings.json.model). We mirror it into the DB current flag so the
+        // generic provider list highlights the active endpoint.
+        if matches!(app_type, AppType::CodeBuddy) {
+            return crate::settings::get_effective_current_provider(&state.db, &app_type)
+                .map(|opt| opt.unwrap_or_default());
+        }
         // Additive mode apps have no "current" provider concept
         if app_type.is_additive_mode() {
             return Ok(String::new());
