@@ -1806,8 +1806,19 @@ pub fn anthropic_to_responses(
     }
 
     // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
+    // Upstreams like OpenCode Zen Muse require max_output_tokens >= 16;
+    // clamp small probes (e.g. Claude Desktop availability check with max_tokens=1) to 16 (#7103).
     if let Some(v) = body.get("max_tokens") {
-        result["max_output_tokens"] = v.clone();
+        let clamped = if let Some(n) = v.as_u64() {
+            if n < 16 {
+                json!(16)
+            } else {
+                v.clone()
+            }
+        } else {
+            v.clone()
+        };
+        result["max_output_tokens"] = clamped;
     }
 
     // 直接透传的参数
@@ -5005,6 +5016,21 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert_eq!(result["max_output_tokens"], json!(1024));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_clamps_min_max_output_tokens() {
+        // Claude Desktop availability probe sends max_tokens=1;
+        // Responses upstreams (e.g. OpenCode Zen Muse) require max_output_tokens >= 16 (#7103).
+        let input = json!({
+            "model": "muse-spark-1.3",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+
+        assert_eq!(result["max_output_tokens"], json!(16));
     }
 
     // ==================== 第二轮：P0 + P1 字段对齐 ====================
