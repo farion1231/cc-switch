@@ -40,7 +40,7 @@ mod workspace;
 
 pub use auth::*;
 pub use balance::*;
-pub use codebuddy::*;
+pub(crate) use codebuddy::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;

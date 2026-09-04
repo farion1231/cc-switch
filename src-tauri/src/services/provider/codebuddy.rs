@@ -45,7 +45,7 @@ pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
 
 pub(super) fn add(
     state: &AppState,
-    mut provider: Provider,
+    provider: Provider,
     add_to_live: bool,
 ) -> Result<bool, AppError> {
     let _guard =
@@ -69,16 +69,14 @@ pub(super) fn add(
     let _ = add_to_live;
     crate::codebuddy_config::upsert_model_entry(&provider.settings_config)?;
 
-    if let Err(error) = state.db.save_provider(CODEBUDDY_APP, &provider) {
-        return Err(error);
-    }
+    state.db.save_provider(CODEBUDDY_APP, &provider)?;
     Ok(true)
 }
 
 pub(super) fn update(
     state: &AppState,
     original_id: Option<&str>,
-    mut provider: Provider,
+    provider: Provider,
 ) -> Result<bool, AppError> {
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
@@ -98,9 +96,7 @@ pub(super) fn update(
 
     // 写回原生文件（合并语义由 codebuddy_config 保证），再落 DB。
     crate::codebuddy_config::upsert_model_entry(&provider.settings_config)?;
-    if let Err(error) = state.db.save_provider(CODEBUDDY_APP, &provider) {
-        return Err(error);
-    }
+    state.db.save_provider(CODEBUDDY_APP, &provider)?;
     Ok(true)
 }
 
