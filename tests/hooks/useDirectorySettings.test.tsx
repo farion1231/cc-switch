@@ -98,6 +98,8 @@ describe("useDirectorySettings", () => {
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
       pi: "/remote/pi",
+      codebuddy: "/home/mock/.codebuddy",
+      workbuddy: "/home/mock/.workbuddy",
     });
   });
 

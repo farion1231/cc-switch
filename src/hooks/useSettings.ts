@@ -48,7 +48,7 @@ export interface UseSettingsResult {
   acknowledgeRestart: () => void;
 }
 
-export type { SettingsFormState, ResolvedDirectories };
+export type { SettingsFormState, ResolvedDirectories, DirectoryAppId };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
   if (!value) return undefined;
@@ -119,6 +119,8 @@ export function useSettings(): UseSettingsResult {
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
+      codebuddy: sanitizeDir(data?.codebuddyConfigDir),
+      workbuddy: sanitizeDir(data?.workbuddyConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -201,6 +203,12 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.openclawConfigDir,
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedCodebuddyDir = sanitizeDir(
+          mergedSettings.codebuddyConfigDir,
+        );
+        const sanitizedWorkbuddyDir = sanitizeDir(
+          mergedSettings.workbuddyConfigDir,
+        );
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -216,6 +224,8 @@ export function useSettings(): UseSettingsResult {
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
+          codebuddyConfigDir: sanitizedCodebuddyDir,
+          workbuddyConfigDir: sanitizedWorkbuddyDir,
           language: mergedSettings.language,
         };
 
@@ -336,6 +346,12 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.openclawConfigDir,
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedCodebuddyDir = sanitizeDir(
+          mergedSettings.codebuddyConfigDir,
+        );
+        const sanitizedWorkbuddyDir = sanitizeDir(
+          mergedSettings.workbuddyConfigDir,
+        );
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -359,6 +375,8 @@ export function useSettings(): UseSettingsResult {
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
+          codebuddyConfigDir: sanitizedCodebuddyDir,
+          workbuddyConfigDir: sanitizedWorkbuddyDir,
           language: mergedSettings.language,
         };
 

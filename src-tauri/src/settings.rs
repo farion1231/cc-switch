@@ -433,6 +433,10 @@ pub struct AppSettings {
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codebuddy_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workbuddy_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -550,6 +554,8 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
+            codebuddy_config_dir: None,
+            workbuddy_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -633,6 +639,20 @@ impl AppSettings {
 
         self.pi_config_dir = self
             .pi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.codebuddy_config_dir = self
+            .codebuddy_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.workbuddy_config_dir = self
+            .workbuddy_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -968,6 +988,22 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .pi_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
+pub fn get_codebuddy_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .codebuddy_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
+pub fn get_workbuddy_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .workbuddy_config_dir
         .as_ref()
         .map(|path| resolve_override_path(path))
 }

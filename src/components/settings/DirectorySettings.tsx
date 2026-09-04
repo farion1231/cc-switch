@@ -3,10 +3,7 @@ import { FolderSearch, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
-import type { AppId } from "@/lib/api";
-import type { ResolvedDirectories } from "@/hooks/useSettings";
-
-type DirectoryAppId = Exclude<AppId, "claude-desktop">;
+import type { ResolvedDirectories, DirectoryAppId } from "@/hooks/useSettings";
 
 interface DirectorySettingsProps {
   appConfigDir?: string;
@@ -22,6 +19,8 @@ interface DirectorySettingsProps {
   openclawDir?: string;
   hermesDir?: string;
   piDir?: string;
+  codebuddyDir?: string;
+  workbuddyDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -41,6 +40,8 @@ export function DirectorySettings({
   openclawDir,
   hermesDir,
   piDir,
+  codebuddyDir,
+  workbuddyDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -183,6 +184,28 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("pi", val)}
           onBrowse={() => onBrowseDirectory("pi")}
           onReset={() => onResetDirectory("pi")}
+        />
+
+        <DirectoryInput
+          label={t("settings.codebuddyConfigDir")}
+          description={undefined}
+          value={codebuddyDir}
+          resolvedValue={resolvedDirs.codebuddy}
+          placeholder={t("settings.browsePlaceholderCodebuddy")}
+          onChange={(val) => onDirectoryChange("codebuddy", val)}
+          onBrowse={() => onBrowseDirectory("codebuddy")}
+          onReset={() => onResetDirectory("codebuddy")}
+        />
+
+        <DirectoryInput
+          label={t("settings.workbuddyConfigDir")}
+          description={undefined}
+          value={workbuddyDir}
+          resolvedValue={resolvedDirs.workbuddy}
+          placeholder={t("settings.browsePlaceholderWorkbuddy")}
+          onChange={(val) => onDirectoryChange("workbuddy", val)}
+          onBrowse={() => onBrowseDirectory("workbuddy")}
+          onReset={() => onResetDirectory("workbuddy")}
         />
       </section>
     </div>
