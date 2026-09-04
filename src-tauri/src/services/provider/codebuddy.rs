@@ -18,7 +18,8 @@ use serde_json::Value;
 const CODEBUDDY_APP: &str = "codebuddy";
 
 pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
     match crate::codebuddy_config::list_model_entries() {
         Ok(entries) => {
             if let Err(error) = sync_native_locked(state, &entries) {
@@ -34,7 +35,8 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
 }
 
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
     let entries = crate::codebuddy_config::list_model_entries()?;
     let imported = sync_native_locked(state, &entries)?;
     align_db_current_with_native(state)?;
@@ -46,7 +48,8 @@ pub(super) fn add(
     mut provider: Provider,
     add_to_live: bool,
 ) -> Result<bool, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
     let app_type = AppType::CodeBuddy;
     ProviderService::validate_provider_settings(&app_type, &provider)?;
 
@@ -61,11 +64,10 @@ pub(super) fn add(
         )));
     }
 
-    if add_to_live {
-        // upsert 在 id 已存在于原生文件时报“已存在”语义由调用方定：这里直接幂等覆盖
-        // 新条目（id 冲突已在 DB 检查过，原生存在但 DB 没有的情况走 list 同步）。
-        crate::codebuddy_config::upsert_model_entry(&provider.settings_config)?;
-    }
+    // 原生 models.json 是 CodeBuddy 的事实源：新增供应商总是写入原生（合并语义
+    // 由 codebuddy_config 保证），add_to_live 在此不再额外区分（与 DB 镜像一致）。
+    let _ = add_to_live;
+    crate::codebuddy_config::upsert_model_entry(&provider.settings_config)?;
 
     if let Err(error) = state.db.save_provider(CODEBUDDY_APP, &provider) {
         return Err(error);
@@ -78,7 +80,8 @@ pub(super) fn update(
     original_id: Option<&str>,
     mut provider: Provider,
 ) -> Result<bool, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
     let original_id = original_id.unwrap_or(&provider.id).to_string();
     if original_id != provider.id {
         return Err(AppError::InvalidInput(
@@ -102,7 +105,8 @@ pub(super) fn update(
 }
 
 pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
     if state.db.get_provider_by_id(id, CODEBUDDY_APP)?.is_none() {
         return Ok(());
     }
@@ -111,16 +115,25 @@ pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
 }
 
 pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
-    // "从 live 移除"与"删除供应商"在本服务的原生事实源模型下等价。
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
-    remove_native_and_db(state, id)?;
+    // "从 live 移除" = 仅从原生 models.json 移除，保留 DB 记录（镜像仍可重新
+    // 设为当前模型，enable 会把它写回原生）。
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
+    if state.db.get_provider_by_id(id, CODEBUDDY_APP)?.is_none() {
+        return Ok(());
+    }
+    crate::codebuddy_config::remove_model_entry(id)?;
+    if crate::codebuddy_config::current_model_id()?.as_deref() == Some(id) {
+        crate::codebuddy_config::set_current_model_id(None)?;
+    }
     Ok(())
 }
 
 /// 切换供应商 = 把该模型端点设为 CodeBuddy 的当前模型（写入 settings.json），
 /// 同时确保条目已在 models.json，并同步 DB 的 current 标记供 UI 展示。
 pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(CODEBUDDY_APP));
     let provider = state
         .db
         .get_provider_by_id(id, CODEBUDDY_APP)?

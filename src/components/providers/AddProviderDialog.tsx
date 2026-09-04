@@ -53,6 +53,7 @@ export function AddProviderDialog({
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "pi" &&
+    appId !== "codebuddy" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
@@ -197,7 +198,8 @@ export function AddProviderDialog({
         (appId === "opencode" ||
           appId === "openclaw" ||
           appId === "hermes" ||
-          appId === "pi") &&
+          appId === "pi" ||
+          appId === "codebuddy") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -309,8 +311,7 @@ export function AddProviderDialog({
           }
         } else if (appId === "opencode") {
           const options = parsedConfig.options as
-            | Record<string, any>
-            | undefined;
+            Record<string, any> | undefined;
           if (options?.baseURL) {
             addUrl(options.baseURL);
           }
