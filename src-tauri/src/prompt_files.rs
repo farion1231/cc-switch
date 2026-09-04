@@ -27,6 +27,13 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
+        AppType::CodeBuddy => {
+            return Err(AppError::localized(
+                "app.prompts_unsupported",
+                "当前应用暂不支持 Prompts",
+                "This app does not support Prompts",
+            ))
+        }
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -37,6 +44,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
         AppType::Pi => "AGENTS.md",
+        AppType::CodeBuddy => unreachable!("CodeBuddy does not support Prompts"),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
