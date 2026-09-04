@@ -1322,14 +1322,21 @@ pub fn run() {
             });
 
             // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
+            // CC_SWITCH_WEBKIT_HW=1 逃生开关(与 main.rs 的环境变量开关注同一开关):
+            // 跳过禁用,保留硬件加速。软件渲染在 2K/4K 屏上拖动窗口会拖影。
             #[cfg(target_os = "linux")]
             {
-                if let Some(window) = app.get_webview_window("main") {
+                if std::env::var("CC_SWITCH_WEBKIT_HW").as_deref() == Ok("1") {
+                    log::info!("CC_SWITCH_WEBKIT_HW=1: 保留 WebKitGTK 硬件加速");
+                } else if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
-                        use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};
+                        use webkit2gtk::{SettingsExt, HardwareAccelerationPolicy, WebViewExt};
                         let wk_webview = webview.inner();
                         if let Some(settings) = WebViewExt::settings(&wk_webview) {
-                            SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
+                            SettingsExt::set_hardware_acceleration_policy(
+                                &settings,
+                                HardwareAccelerationPolicy::Never,
+                            );
                             log::info!("已禁用 WebKitGTK 硬件加速");
                         }
                     });
