@@ -624,6 +624,13 @@ impl ProxyService {
             true,
             fable_model,
         );
+        if let Some(upstream_default) = default_model {
+            let mut client_default = CLAUDE_TAKEOVER_SONNET_MODEL.to_string();
+            if Self::has_claude_one_m_marker(upstream_default) {
+                client_default.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
+            }
+            fields.push(("ANTHROPIC_MODEL", client_default));
+        }
         if let Some(subagent_model) = subagent_model {
             fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", subagent_model.to_string()));
         }
@@ -4193,7 +4200,7 @@ mod tests {
             .get("env")
             .and_then(|value| value.as_object())
             .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_MODEL", None);
+        assert_env_str(env, "ANTHROPIC_MODEL", Some("claude-sonnet-4-6"));
         assert_env_str(
             env,
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -4265,6 +4272,7 @@ mod tests {
             .and_then(|value| value.as_object())
             .expect("env should exist");
         assert_env_str(env, "CLAUDE_CODE_SUBAGENT_MODEL", None);
+        assert_env_str(env, "ANTHROPIC_MODEL", None);
     }
 
     #[test]
@@ -4311,7 +4319,7 @@ mod tests {
             .get("env")
             .and_then(|value| value.as_object())
             .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_MODEL", None);
+        assert_env_str(env, "ANTHROPIC_MODEL", Some("claude-sonnet-4-6"));
         assert_env_str(
             env,
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
