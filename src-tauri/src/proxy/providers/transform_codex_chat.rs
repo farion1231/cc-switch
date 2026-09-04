@@ -705,7 +705,7 @@ fn append_responses_item_as_chat_message(
                     item.get("id"),
                     item.get("name")
                 );
-                return;
+                return Ok(());
             }
             let media_plan = item
                 .get("output")
