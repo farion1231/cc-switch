@@ -114,6 +114,11 @@ export function useGeminiCommonConfig({
   selectedPresetId,
 }: UseGeminiCommonConfigProps) {
   const { t } = useTranslation();
+  // 编辑态下 meta.commonConfigEnabled 是“是否应用通用配置”的权威来源：
+  // 后端保存时会从供应商快照中剥离通用配置片段（runtime overlay），
+  // 因此不能在编辑态用“当前 env 里是否包含片段”来反推勾选状态。
+  const isEditMode = Boolean(initialData);
+  const hasExplicitInitialEnabled = initialEnabled !== undefined;
   const [useCommonConfig, setUseCommonConfig] = useState(false);
   const [commonConfigSnippet, setCommonConfigSnippetState] = useState<string>(
     DEFAULT_GEMINI_COMMON_CONFIG_SNIPPET,
@@ -530,9 +535,14 @@ export function useGeminiCommonConfig({
     ],
   );
 
-  // 当 env 变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）
+  // 当 env 变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）。
+  // 编辑态且 meta.commonConfigEnabled 有显式值时跳过内容推断，防止打开编辑界面时
+  // 被“快照中暂无片段”的中间态 / 异步初始化竞态覆盖成未勾选。
   useEffect(() => {
     if (isUpdatingFromCommonConfig.current || isLoading) {
+      return;
+    }
+    if (isEditMode && hasExplicitInitialEnabled) {
       return;
     }
     const parsed = parseSnippetEnv(commonConfigSnippet);
@@ -548,6 +558,8 @@ export function useGeminiCommonConfig({
     hasEnvCommonConfigSnippet,
     isLoading,
     parseSnippetEnv,
+    isEditMode,
+    hasExplicitInitialEnabled,
   ]);
 
   // 从编辑器当前内容提取通用配置片段

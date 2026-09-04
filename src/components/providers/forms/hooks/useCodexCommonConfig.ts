@@ -52,6 +52,11 @@ export function useCodexCommonConfig({
   selectedPresetId,
 }: UseCodexCommonConfigProps) {
   const { t } = useTranslation();
+  // 编辑态下 meta.commonConfigEnabled 是“是否应用通用配置”的权威来源：
+  // 后端保存时会从供应商快照中剥离通用配置片段（runtime overlay），
+  // 因此不能在编辑态用“当前 config.toml 里是否包含片段”来反推勾选状态。
+  const isEditMode = Boolean(initialData);
+  const hasExplicitInitialEnabled = initialEnabled !== undefined;
   const [useCommonConfig, setUseCommonConfig] = useState(false);
   const [commonConfigSnippet, setCommonConfigSnippetState] = useState<string>(
     DEFAULT_CODEX_COMMON_CONFIG_SNIPPET,
@@ -204,6 +209,11 @@ export function useCodexCommonConfig({
     const hasCommon =
       initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
 
+    // 勾选状态先落定，再异步合并片段用于编辑预览。meta.commonConfigEnabled
+    // 是权威来源：即使后端合并失败或被外部改动作废，也不能把勾选翻掉。
+    setCommonConfigError("");
+    setUseCommonConfig(hasCommon);
+
     // 如果应该启用通用配置但配置中还没有，则自动添加
     if (hasCommon && !inferredHasCommon && parsedSnippet.hasContent) {
       let cancelled = false;
@@ -219,12 +229,9 @@ export function useCodexCommonConfig({
         }
         if (error) {
           setCommonConfigError(error);
-          setUseCommonConfig(false);
           return;
         }
 
-        setCommonConfigError("");
-        setUseCommonConfig(true);
         isUpdatingFromCommonConfig.current = true;
         onConfigChange(updatedConfig);
         setTimeout(() => {
@@ -235,9 +242,6 @@ export function useCodexCommonConfig({
         cancelled = true;
       };
     }
-
-    setCommonConfigError("");
-    setUseCommonConfig(hasCommon);
   }, [
     codexConfig,
     commonConfigSnippet,
@@ -482,9 +486,14 @@ export function useCodexCommonConfig({
     ],
   );
 
-  // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）
+  // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）。
+  // 编辑态且 meta.commonConfigEnabled 有显式值时跳过内容推断，防止打开编辑界面时
+  // 被“快照中暂无片段”的中间态 / 异步初始化竞态覆盖成未勾选。
   useEffect(() => {
     if (isUpdatingFromCommonConfig.current || isLoading) {
+      return;
+    }
+    if (isEditMode && hasExplicitInitialEnabled) {
       return;
     }
     const parsedSnippet = parseCommonConfigSnippet(commonConfigSnippet);
@@ -497,7 +506,14 @@ export function useCodexCommonConfig({
       commonConfigSnippet,
     );
     setUseCommonConfig(hasCommon);
-  }, [codexConfig, commonConfigSnippet, isLoading, parseCommonConfigSnippet]);
+  }, [
+    codexConfig,
+    commonConfigSnippet,
+    isLoading,
+    parseCommonConfigSnippet,
+    isEditMode,
+    hasExplicitInitialEnabled,
+  ]);
 
   // 从编辑器当前内容提取通用配置片段
   const handleExtract = useCallback(async () => {
