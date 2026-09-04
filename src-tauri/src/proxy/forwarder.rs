@@ -1663,6 +1663,27 @@ impl RequestForwarder {
             );
         }
 
+        // Moonshot / Kimi Chat Completions reject `$ref` nodes that carry sibling
+        // keywords, which Codex Desktop's built-in tool schemas do (#6867). Move
+        // each such `$ref` into `allOf` for that upstream only; every other
+        // provider keeps byte-identical tool schemas (prompt-cache prefix intact).
+        if codex_responses_to_chat
+            && super::providers::transform_codex_chat_moonshot_schema::upstream_requires_ref_sibling_all_of(
+                &base_url,
+            )
+        {
+            let rewritten =
+                super::providers::transform_codex_chat_moonshot_schema::wrap_ref_siblings_in_chat_tools(
+                    &mut request_body,
+                );
+            if rewritten > 0 {
+                log::debug!(
+                    "[Codex] Moved `$ref` siblings into allOf for {rewritten} tool schema(s) (Moonshot upstream, provider={})",
+                    provider.id
+                );
+            }
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }

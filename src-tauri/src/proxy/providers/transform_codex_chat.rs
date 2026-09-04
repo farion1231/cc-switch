@@ -1282,40 +1282,7 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
             }
         }
     }
-    strip_ref_siblings(&mut params);
     params
-}
-
-/// Strip sibling keys from any schema node that contains `$ref`.
-///
-/// Pydantic-generated `$defs` (e.g. Codex's built-in `automation_update` tool)
-/// emit nodes like `{"type": "string", "format": "uuid", "$ref": "#/$defs/x"}`.
-/// Draft 2020-12 tolerates `$ref` siblings and OpenAI/Anthropic accept them,
-/// but strict validators (Moonshot's "moonshot flavored json schema" check,
-/// and other OpenAI-compatible gateways) reject the whole request with
-/// HTTP 400 ("type should be defined in the referenced schema instead of the
-/// parent schema"). Dropping the siblings preserves semantics: the referenced
-/// schema already carries the authoritative constraints.
-fn strip_ref_siblings(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            if map.contains_key("$ref") && map.len() > 1 {
-                let ref_value = map.get("$ref").cloned().unwrap_or(Value::Null);
-                map.clear();
-                map.insert("$ref".to_string(), ref_value);
-                return;
-            }
-            for child in map.values_mut() {
-                strip_ref_siblings(child);
-            }
-        }
-        Value::Array(items) => {
-            for child in items.iter_mut() {
-                strip_ref_siblings(child);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
@@ -2062,56 +2029,6 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
 mod tests {
     use super::*;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    #[test]
-    fn strips_ref_siblings_in_function_parameters() {
-        // Pydantic $defs style: $ref with sibling type/format/description,
-        // which Moonshot's schema validator rejects with HTTP 400.
-        let mut params = json!({
-            "type": "object",
-            "properties": {
-                "targetThreadId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "format": "uuid",
-                    "description": "Target thread UUID",
-                    "$ref": "#/$defs/__schema2"
-                },
-                "plain": {"type": "string", "description": "untouched"}
-            },
-            "$defs": {
-                "__schema2": {"type": "string"}
-            }
-        });
-        strip_ref_siblings(&mut params);
-        assert_eq!(
-            params["properties"]["targetThreadId"],
-            json!({"$ref": "#/$defs/__schema2"})
-        );
-        // Non-$ref nodes keep their siblings.
-        assert_eq!(
-            params["properties"]["plain"],
-            json!({"type": "string", "description": "untouched"})
-        );
-        // $defs content itself is preserved.
-        assert_eq!(params["$defs"]["__schema2"], json!({"type": "string"}));
-    }
-
-    #[test]
-    fn normalize_parameters_also_strips_ref_siblings() {
-        let params = normalize_function_parameters(Some(&json!({
-            "type": "object",
-            "properties": {
-                "x": {"type": "string", "$ref": "#/$defs/a"}
-            },
-            "$defs": {"a": {"type": "string"}}
-        })));
-        assert_eq!(
-            params["properties"]["x"],
-            json!({"$ref": "#/$defs/a"})
-        );
-        assert_eq!(params["type"], json!("object"));
-    }
 
     fn large_test_image_data_url() -> String {
         let bytes = b"CC_SWITCH_TOOL_MEDIA_SENTINEL".repeat(400);
