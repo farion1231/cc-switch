@@ -205,6 +205,7 @@ fn test_build_gemini_provider_with_model() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("gemini".to_string()),
@@ -258,6 +259,7 @@ fn test_build_gemini_provider_without_model() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("gemini".to_string()),
@@ -304,6 +306,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -351,6 +354,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
 /// 构造一个只带用量脚本字段的 provider 请求，其余保持最小。
 fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImportRequest {
     DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -434,6 +438,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -482,6 +487,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -535,6 +541,7 @@ fn test_parse_and_merge_config_claude() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -658,6 +665,7 @@ fn test_parse_and_merge_config_url_override() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -720,6 +728,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -776,6 +785,7 @@ fn test_build_claude_provider_without_config_unchanged() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        grokbuild_models: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
