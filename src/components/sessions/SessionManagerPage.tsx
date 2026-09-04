@@ -56,6 +56,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { isTextEditableTarget } from "@/utils/domUtils";
 import { isMac } from "@/lib/platform";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
@@ -794,6 +795,42 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     if (selectedDeletableSessions.length === 0) return;
     setDeleteTargets(selectedDeletableSessions);
   };
+
+  // Issue #6048: Delete/Backspace deletes the selected session (or the batch
+  // selection when in selection mode). Both paths open the existing confirm
+  // dialog, so a confirmation is always required before anything is removed.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Delete" && event.key !== "Backspace") return;
+      if (event.defaultPrevented) return;
+      // Don't hijack typing in inputs / search / contenteditable areas.
+      if (isTextEditableTarget(event.target)) return;
+      // Skip while a confirm dialog is already open or a deletion is running.
+      if (deleteTargets !== null || isDeleting) return;
+
+      if (selectionMode) {
+        if (selectedDeletableSessions.length === 0) return;
+        event.preventDefault();
+        setDeleteTargets(selectedDeletableSessions);
+        return;
+      }
+
+      if (!selectedSession || !selectedSession.sourcePath) return;
+      event.preventDefault();
+      setDeleteTargets([selectedSession]);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [
+    selectedSession,
+    selectionMode,
+    selectedDeletableSessions,
+    deleteTargets,
+    isDeleting,
+  ]);
 
   const exitSelectionMode = () => {
     setSelectionMode(false);

@@ -695,4 +695,76 @@ describe("SessionManagerPage", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   });
+
+  it("opens the delete confirm dialog when pressing Delete with a session selected", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    const dialog = await screen.findByTestId("confirm-dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText(/Alpha Session/)).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /删除会话/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument(),
+    );
+    expect(toastSuccessMock).toHaveBeenCalled();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("does not delete when Delete is pressed while typing in the search input", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    openSearch();
+    const searchInput = screen.getByRole("textbox");
+
+    fireEvent.change(searchInput, { target: { value: "Alpha" } });
+    fireEvent.keyDown(searchInput, { key: "Backspace" });
+    fireEvent.keyDown(searchInput, { key: "Delete" });
+
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Alpha Session" }),
+    ).toBeInTheDocument();
+  });
+
+  it("triggers batch delete with Delete when in selection mode", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /批量管理/i }));
+    fireEvent.click(screen.getByRole("button", { name: /全选当前/i }));
+
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    const dialog = await screen.findByTestId("confirm-dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /删除所选会话/i }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+      expect(screen.queryByText("Beta Session")).not.toBeInTheDocument();
+    });
+    expect(toastSuccessMock).toHaveBeenCalled();
+  });
 });
