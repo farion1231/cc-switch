@@ -652,17 +652,34 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
     // 1. 处理核心字段（强类型）
     match typ {
         "stdio" => {
-            let cmd = spec.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            // trim：历史/手写配置的 command 可能带尾随空格，codex 会找不到可执行文件
+            let cmd = spec
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
             t["command"] = toml_edit::value(cmd);
 
-            if let Some(args) = spec.get("args").and_then(|v| v.as_array()) {
+            // args：接受数组或字符串（字符串按空白拆分）。TOML 的 args 必须是数组，
+            // 若 server_config 把 args 存成字符串（如 "serve --mcp"），原逻辑只认数组、
+            // 会静默丢掉整行，导致 MCP 启动缺参数。
+            let args_vec: Vec<String> = match spec.get("args") {
+                Some(v) => match v {
+                    Value::Array(arr) => arr
+                        .iter()
+                        .filter_map(|x| x.as_str().map(str::to_owned))
+                        .collect(),
+                    Value::String(s) => s.split_whitespace().map(str::to_owned).collect(),
+                    _ => Vec::new(),
+                },
+                None => Vec::new(),
+            };
+            if !args_vec.is_empty() {
                 let mut arr_v = Array::default();
-                for a in args.iter().filter_map(|x| x.as_str()) {
-                    arr_v.push(a);
+                for a in &args_vec {
+                    arr_v.push(a.as_str());
                 }
-                if !arr_v.is_empty() {
-                    t["args"] = Item::Value(toml_edit::Value::Array(arr_v));
-                }
+                t["args"] = Item::Value(toml_edit::Value::Array(arr_v));
             }
 
             if let Some(cwd) = spec.get("cwd").and_then(|v| v.as_str()) {
