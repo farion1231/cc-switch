@@ -3505,6 +3505,13 @@ fn merge_json_override_inner(target: &mut Value, patch: &Value, is_top_level: bo
                     );
                     continue;
                 }
+                if patch_value.is_null() {
+                    // RFC 7396 JSON Merge Patch semantics: null value removes the key
+                    if target_map.remove(key).is_some() {
+                        changed = true;
+                    }
+                    continue;
+                }
                 match target_map.get_mut(key) {
                     Some(target_value) => {
                         changed |= merge_json_override_inner(target_value, patch_value, false);
@@ -5246,5 +5253,45 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    #[test]
+    fn test_merge_json_override_null_deletes_field() {
+        let mut target = serde_json::json!({
+            "model": "glm-5",
+            "thinking": {
+                "type": "disabled"
+            },
+            "temperature": 0.7,
+            "metadata": {
+                "user_id": 123,
+                "temp": "flag"
+            }
+        });
+
+        let patch = serde_json::json!({
+            "thinking": null,
+            "metadata": {
+                "temp": null
+            },
+            "stream": true,
+            "temperature": 0.5
+        });
+
+        let changed = merge_json_override(&mut target, &patch);
+        assert!(changed);
+
+        assert_eq!(target.get("temperature"), Some(&serde_json::json!(0.5)));
+        assert_eq!(target.get("thinking"), None, "thinking field must be deleted when null");
+        assert_eq!(
+            target.pointer("/metadata/temp"),
+            None,
+            "nested metadata.temp must be deleted when null"
+        );
+        assert_eq!(
+            target.pointer("/metadata/user_id"),
+            Some(&serde_json::json!(123)),
+            "unrelated nested fields must be preserved"
+        );
     }
 }
