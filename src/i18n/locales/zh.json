@@ -920,6 +920,18 @@
     "codebuddy": "CodeBuddy",
     "workbuddy": "WorkBuddy"
   },
+  "codebuddy": {
+    "form": {
+      "name": "名称",
+      "namePlaceholder": "例如：我的 DeepSeek 端点",
+      "modelKey": "模型 ID（models.json 的 id，创建后不可改）",
+      "url": "API 地址",
+      "apiKey": "API Key",
+      "supportsToolCall": "支持工具调用",
+      "supportsImages": "支持图片输入",
+      "supportsReasoning": "支持推理"
+    }
+  },
   "pi": {
     "empty": {
       "title": "还没有添加 API Key 供应商",
