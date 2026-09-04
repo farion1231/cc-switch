@@ -14,6 +14,19 @@ type UsageQueryOptions = {
   refetchIntervalInBackground?: boolean;
 };
 
+function getUsagePollingOptions(options?: UsageQueryOptions) {
+  const refetchInterval =
+    options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS;
+
+  return {
+    refetchInterval,
+    // The dashboard is commonly left open while the user works in a CLI.
+    // Keep its opt-in polling alive after the window loses focus.
+    refetchIntervalInBackground:
+      options?.refetchIntervalInBackground ?? Boolean(refetchInterval),
+  };
+}
+
 type RequestLogsQueryArgs = {
   filters: LogFilters;
   range: UsageRangeSelection;
@@ -183,8 +196,7 @@ export function useUsageSummary(
         effective.model,
       );
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
-    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    ...getUsagePollingOptions(options),
   });
 }
 
@@ -210,8 +222,7 @@ export function useUsageSummaryByApp(
         filters?.model,
       );
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
-    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    ...getUsagePollingOptions(options),
   });
 }
 
@@ -239,8 +250,7 @@ export function useUsageTrends(
         effective.model,
       );
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
-    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    ...getUsagePollingOptions(options),
   });
 }
 
@@ -268,8 +278,7 @@ export function useProviderStats(
         effective.model,
       );
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
-    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    ...getUsagePollingOptions(options),
   });
 }
 
@@ -297,8 +306,7 @@ export function useModelStats(
         effective.model,
       );
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
-    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    ...getUsagePollingOptions(options),
   });
 }
 
@@ -326,8 +334,7 @@ export function useRequestLogs({
       const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
-    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    ...getUsagePollingOptions(options),
   });
 }
 
