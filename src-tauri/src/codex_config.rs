@@ -2655,6 +2655,29 @@ fn codex_config_routes_third_party_without_token_slot(config_text: &str) -> bool
 /// applied after provider headers, so even an explicit
 /// `http_headers.Authorization` is overwritten and the ChatGPT access
 /// token + account id go to the third-party endpoint. A top-level
+fn is_local_loopback_url(url: &str) -> bool {
+    let url = url.trim().to_ascii_lowercase();
+    let without_scheme = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(&url);
+    without_scheme.starts_with("127.0.0.1")
+        || without_scheme.starts_with("localhost")
+        || without_scheme.starts_with("0.0.0.0")
+        || without_scheme.starts_with("[::1]")
+        || without_scheme.starts_with("[::]")
+        || without_scheme.starts_with("::1")
+        || without_scheme.starts_with("::")
+}
+
+/// Whether a config with NO injectable API key still routes third-party
+/// traffic through the `auth.json` fallback. On 0.149 a custom provider
+/// with `requires_openai_auth = true` and no `env_key` /
+/// `experimental_bearer_token` short-circuit resolves to whatever `auth.json`
+/// holds — under login preservation that is the official OAuth login,
+/// applied after provider headers, so even an explicit
+/// `http_headers.Authorization` is overwritten and the ChatGPT access
+/// token + account id go to the third-party endpoint. A top-level
 /// `openai_base_url` reroutes the built-in `openai` provider the same way
 /// (other built-ins never read the OAuth login). With a token present the
 /// injected bearer short-circuits the fallback instead (bridge contract),
@@ -2668,7 +2691,7 @@ fn codex_config_falls_back_to_official_auth_for_third_party(config_text: &str) -
         doc.get("openai_base_url")
             .and_then(|item| item.as_str())
             .map(str::trim)
-            .is_some_and(|url| !url.is_empty())
+            .is_some_and(|url| !url.is_empty() && !is_local_loopback_url(url))
     };
     match active_codex_model_provider_id(&doc) {
         Some(id) if is_custom_codex_model_provider_id(&id) => doc
@@ -5016,6 +5039,9 @@ http_headers = { Authorization = "Bearer explicit-header-token" }
             "model_provider = \"custom\"\n",
             // openai_base_url is inert for non-openai built-ins
             "model_provider = \"ollama\"\nopenai_base_url = \"https://relay.example/v1\"\n",
+            // local loopback proxy endpoints do not leak credentials externally (#7052)
+            "openai_base_url = \"http://127.0.0.1:10100/v1\"\n",
+            "openai_base_url = \"http://localhost:8000/v1\"\n",
         ] {
             assert!(
                 !codex_config_falls_back_to_official_auth_for_third_party(safe),
