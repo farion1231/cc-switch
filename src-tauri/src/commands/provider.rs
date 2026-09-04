@@ -479,20 +479,40 @@ pub async fn queryProviderUsage(
         &providerId,
     )
     .await;
-    if let Ok(snapshot) = &inner {
-        let payload = serde_json::json!({
-            "kind": "script",
-            "appType": app_type.as_str(),
-            "providerId": &providerId,
-            "data": snapshot,
-        });
-        if let Err(e) = app_handle.emit("usage-cache-updated", payload) {
-            log::error!("emit usage-cache-updated (script) 失败: {e}");
+    match &inner {
+        Ok(snapshot) => {
+            if !snapshot.success {
+                if let Some(err) = &snapshot.error {
+                    log::warn!(
+                        "供应商用量查询返回业务失败 ({}/{}): {}",
+                        app_type.as_str(),
+                        &providerId,
+                        err
+                    );
+                }
+            }
+            let payload = serde_json::json!({
+                "kind": "script",
+                "appType": app_type.as_str(),
+                "providerId": &providerId,
+                "data": snapshot,
+            });
+            if let Err(e) = app_handle.emit("usage-cache-updated", payload) {
+                log::error!("emit usage-cache-updated (script) 失败: {e}");
+            }
+            state
+                .usage_cache
+                .put_script(app_type, providerId, snapshot.clone());
+            crate::tray::schedule_tray_refresh(&app_handle);
         }
-        state
-            .usage_cache
-            .put_script(app_type, providerId, snapshot.clone());
-        crate::tray::schedule_tray_refresh(&app_handle);
+        Err(e) => {
+            log::warn!(
+                "供应商用量查询传输失败 ({}/{}): {}",
+                app_type.as_str(),
+                &providerId,
+                e
+            );
+        }
     }
     inner
 }
