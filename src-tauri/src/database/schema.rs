@@ -1351,6 +1351,85 @@ impl Database {
             return Ok(());
         }
 
+        // A prior partial migration can leave a fully migrated v11 table while
+        // user_version still reports v10. Rebuilding it again would erase both
+        // model dimensions in the SELECT below, collapsing otherwise distinct
+        // rows onto the same primary key. Only skip when the exact v11 key and
+        // every v10 value column are present. The rebuild below is likewise
+        // limited to the exact v10 shape so mixed schemas cannot lose data.
+        let table_columns = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name, pk FROM pragma_table_info('usage_daily_rollups')
+                     ORDER BY cid",
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("v10 -> v11 检查 usage_daily_rollups 结构失败: {e}"))
+                })?;
+            let columns = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(|e| {
+                    AppError::Database(format!("v10 -> v11 查询 usage_daily_rollups 结构失败: {e}"))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    AppError::Database(format!("v10 -> v11 读取 usage_daily_rollups 结构失败: {e}"))
+                })?;
+            columns
+        };
+        let mut primary_key_columns = table_columns
+            .iter()
+            .filter(|(_, pk)| *pk > 0)
+            .map(|(name, pk)| (*pk, name.as_str()))
+            .collect::<Vec<_>>();
+        primary_key_columns.sort_unstable_by_key(|(pk, _)| *pk);
+        let primary_key_matches = |expected: &[&str]| {
+            primary_key_columns
+                .iter()
+                .map(|(_, name)| *name)
+                .eq(expected.iter().copied())
+        };
+
+        const V10_PRIMARY_KEY: [&str; 4] = ["date", "app_type", "provider_id", "model"];
+        const V11_PRIMARY_KEY: [&str; 6] = [
+            "date",
+            "app_type",
+            "provider_id",
+            "model",
+            "request_model",
+            "pricing_model",
+        ];
+        const VALUE_COLUMNS: [&str; 8] = [
+            "request_count",
+            "success_count",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+            "total_cost_usd",
+            "avg_latency_ms",
+        ];
+        let has_all_value_columns = VALUE_COLUMNS
+            .iter()
+            .all(|expected| table_columns.iter().any(|(name, _)| name == expected));
+
+        if primary_key_matches(&V11_PRIMARY_KEY) && has_all_value_columns {
+            log::info!("v10 -> v11：usage_daily_rollups 已是 v11 主键结构，保留现有维度并跳过重建");
+            return Ok(());
+        }
+
+        let has_exact_v10_shape = primary_key_matches(&V10_PRIMARY_KEY)
+            && has_all_value_columns
+            && table_columns.len() == V10_PRIMARY_KEY.len() + VALUE_COLUMNS.len();
+        if !has_exact_v10_shape {
+            return Err(AppError::Database(
+                "v10 -> v11 无法安全迁移 usage_daily_rollups：表结构既不是预期的 v10，也不是已迁移的 v11；已停止迁移以避免丢失模型维度"
+                    .to_string(),
+            ));
+        }
+
         conn.execute_batch(
             "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
              CREATE TABLE usage_daily_rollups (
