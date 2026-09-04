@@ -94,7 +94,7 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         Err(_) => None,
     };
 
-    let catalog = if let Some(catalog_path) =
+    let mut catalog = if let Some(catalog_path) =
         active_catalog_path.as_ref().filter(|path| path.exists())
     {
         match crate::codex_config::read_codex_model_catalog_text(catalog_path) {
@@ -112,6 +112,43 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         }
         json!({"models": []})
     };
+
+    // Cross-protocol compatibility (#6922):
+    // Codex expects top-level `models`, while Claude Code and OpenAI clients expect top-level `data`.
+    if let Some(models_val) = catalog.get("models").and_then(|m| m.as_array()) {
+        if catalog.get("data").is_none() {
+            let data: Vec<Value> = models_val
+                .iter()
+                .map(|entry| {
+                    let id = entry
+                        .get("slug")
+                        .or_else(|| entry.get("id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    let display_name = entry
+                        .get("display_name")
+                        .or_else(|| entry.get("name"))
+                        .and_then(|v| v.as_str());
+                    let mut obj = json!({
+                        "id": id,
+                        "object": "model",
+                    });
+                    if let Some(name) = display_name {
+                        obj["display_name"] = json!(name);
+                    }
+                    obj
+                })
+                .collect();
+            if let Some(obj) = catalog.as_object_mut() {
+                obj.insert("data".to_string(), Value::Array(data));
+            }
+        }
+    } else if catalog.get("data").is_none() {
+        if let Some(obj) = catalog.as_object_mut() {
+            obj.insert("data".to_string(), json!([]));
+        }
+    }
+
     Ok(Json(catalog))
 }
 
@@ -3574,5 +3611,13 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+
+    #[tokio::test]
+    async fn handle_models_includes_both_models_and_data_arrays() {
+        let resp = super::handle_models().await.expect("handle_models should succeed");
+        let val = resp.0;
+        assert!(val.get("models").is_some(), "models array must be present for Codex");
+        assert!(val.get("data").is_some(), "data array must be present for Claude/OpenAI clients");
     }
 }
