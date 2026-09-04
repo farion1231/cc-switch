@@ -114,7 +114,7 @@ export function CodeBuddyProviderForm({
   );
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form id="provider-form" onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-1.5">
         <Label htmlFor="codebuddy-name">{t("codebuddy.form.name")}</Label>
         <Input
