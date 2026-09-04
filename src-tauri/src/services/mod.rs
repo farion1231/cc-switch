@@ -1,3 +1,6 @@
+#[cfg(test)]
+pub(crate) static SUPPRESS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub mod balance;
 pub mod codex_oauth_models;
 pub mod coding_plan;
