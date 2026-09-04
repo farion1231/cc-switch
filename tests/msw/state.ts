@@ -273,6 +273,7 @@ export const resetProviderState = () => {
     openclaw: {},
     hermes: {},
     pi: {},
+    codebuddy: {},
   };
 };
 
