@@ -312,4 +312,28 @@ mod tests {
             Some("glm-5.5-flash".to_string())
         );
     }
+
+    #[test]
+    fn baseline_uses_candidate_head_under_failover() {
+        // 故障转移下识别基准取候选队列头部（与接管 live 注入同源），而非
+        // settings 中的"当前供应商"：头部 c 无显式 env → 基准回落到规则 model
+        // （glm-flash），请求 glm-flash 命中并改道；a 显式 env 的 "x" 不参与基准。
+        let c = provider_with_env("c", json!({}));
+        let a = provider_with_env("a", json!({"CLAUDE_CODE_SUBAGENT_MODEL": "x"}));
+        let plan = plan_subagent_route(
+            vec![c, a],
+            &AppType::Claude,
+            Some(&route("b", Some("glm-flash"))),
+            "glm-flash",
+            resolve_exists,
+        );
+        assert_eq!(
+            plan.providers
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            ["b", "c", "a"]
+        );
+        assert_eq!(plan.model_override, Some("glm-flash".to_string()));
+    }
 }
