@@ -52,6 +52,21 @@ pub(crate) fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
     }
 }
 
+/// 解析 subagent_route 列：非 NULL 但 JSON 损坏时容错为 None（关闭路由），
+/// 不让单条脏数据阻塞配置读取，但留下带 app_type 的告警日志便于排查。
+fn parse_subagent_route_column(app_type: &str, raw: Option<String>) -> Option<SubagentRoute> {
+    let raw = raw?;
+    match serde_json::from_str::<Option<SubagentRoute>>(&raw) {
+        Ok(route) => route,
+        Err(error) => {
+            log::warn!(
+                "[SubagentRoute] 应用 {app_type} 的 subagent_route JSON 损坏，按未配置处理: {error}"
+            );
+            None
+        }
+    }
+}
+
 impl Database {
     // ==================== Global Proxy Config ====================
 
@@ -242,12 +257,10 @@ impl Database {
                         circuit_error_rate_threshold: row.get(10)?,
                         circuit_min_requests: row.get::<_, i32>(11)? as u32,
                         // 损坏的 JSON 容错为 None（关闭路由），不让单条脏数据阻塞配置读取
-                        subagent_route: row
-                            .get::<_, Option<String>>(12)?
-                            .and_then(|s| {
-                                serde_json::from_str::<Option<SubagentRoute>>(&s).ok()
-                            })
-                            .flatten(),
+                        subagent_route: parse_subagent_route_column(
+                            app_type,
+                            row.get::<_, Option<String>>(12)?,
+                        ),
                     })
                 },
             )
