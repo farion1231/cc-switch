@@ -776,18 +776,22 @@ impl Database {
     // ==================== Live Backup ====================
 
     /// 保存 Live 配置备份
+    ///
+    /// `provider_id`：备份归属的供应商（备份写入时的当前供应商），
+    /// 供恢复路径校验备份内容是否仍属于当前供应商。
     pub async fn save_live_backup(
         &self,
         app_type: &str,
         config_json: &str,
+        provider_id: Option<&str>,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         let now = chrono::Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT OR REPLACE INTO proxy_live_backup (app_type, original_config, backed_up_at)
-             VALUES (?1, ?2, ?3)",
-            rusqlite::params![app_type, config_json, now],
+            "INSERT OR REPLACE INTO proxy_live_backup (app_type, original_config, backed_up_at, provider_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![app_type, config_json, now, provider_id],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -811,13 +815,14 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         let result = conn.query_row(
-            "SELECT app_type, original_config, backed_up_at FROM proxy_live_backup WHERE app_type = ?1",
+            "SELECT app_type, original_config, backed_up_at, provider_id FROM proxy_live_backup WHERE app_type = ?1",
             rusqlite::params![app_type],
             |row| {
                 Ok(LiveBackup {
                     app_type: row.get(0)?,
                     original_config: row.get(1)?,
                     backed_up_at: row.get(2)?,
+                    provider_id: row.get(3)?,
                 })
             },
         );

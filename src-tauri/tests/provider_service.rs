@@ -2096,7 +2096,7 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
     )
     .expect("write taken over live");
 
-    futures::executor::block_on(state.db.save_live_backup("claude", "{\"env\":{}}"))
+    futures::executor::block_on(state.db.save_live_backup("claude", "{\"env\":{}}", None))
         .expect("seed live backup");
 
     let mut proxy_config = futures::executor::block_on(state.db.get_proxy_config_for_app("claude"))
@@ -2225,6 +2225,7 @@ wire_api = "responses"
                 "config": old_provider_config
             }))
             .expect("serialize backup"),
+            None,
         ),
     )
     .expect("seed Codex live backup");

@@ -1049,6 +1049,7 @@ mod tests {
         db.save_live_backup(
             "claude",
             &serde_json::to_string(&original.settings_config).expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed stale backup");
@@ -1370,7 +1371,7 @@ GEMINI_TIMEOUT_MS=30000
 
         // 关代理时这份快照会被原样写回 live。若清不动它却照样清了片段、置了完成标记，
         // 代理一停凭据就复活，而一次性标记保证不会再清第二次。
-        db.save_live_backup("gemini", "}not json{")
+        db.save_live_backup("gemini", "}not json{", None)
             .await
             .expect("seed backup");
 
@@ -1930,6 +1931,7 @@ requires_openai_auth = true
         db.save_live_backup(
             "codex",
             &serde_json::to_string(&original.settings_config).expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -2043,7 +2045,7 @@ requires_openai_auth = true
 
         // Claude Desktop keeps backup state from takeover startup; this sentinel only
         // marks takeover as active so provider updates rewrite the 3P profile.
-        db.save_live_backup("claude-desktop", "{}")
+        db.save_live_backup("claude-desktop", "{}", None)
             .await
             .expect("seed live backup");
         {
@@ -3364,6 +3366,7 @@ wire_api = "responses"
                             "config": "model = \"gpt-5.4\"\n"
                         }))
                         .expect("serialize baseline backup"),
+                        None,
                     )
                     .await
                     .expect("save baseline backup");
@@ -4239,11 +4242,11 @@ impl ProviderService {
             }
         }
         let backup_restore = match previous_backup {
-            Some(backup) => futures::executor::block_on(
-                state
-                    .db
-                    .save_live_backup(AppType::Codex.as_str(), &backup.original_config),
-            ),
+            Some(backup) => futures::executor::block_on(state.db.save_live_backup(
+                AppType::Codex.as_str(),
+                &backup.original_config,
+                backup.provider_id.as_deref(),
+            )),
             None => {
                 futures::executor::block_on(state.db.delete_live_backup(AppType::Codex.as_str()))
             }
@@ -6134,7 +6137,10 @@ impl ProviderService {
             if cleaned != original {
                 let text = serde_json::to_string(&cleaned)
                     .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
-                state.db.save_live_backup(app.as_str(), &text).await?;
+                state
+                    .db
+                    .save_live_backup(app.as_str(), &text, backup.provider_id.as_deref())
+                    .await?;
                 log::info!("已从 Gemini 代理接管备份中清除泄漏的共享凭据");
             }
         }

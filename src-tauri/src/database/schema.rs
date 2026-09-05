@@ -261,9 +261,12 @@ impl Database {
         // 注意：circuit_breaker_config 已合并到 proxy_config 表中
 
         // 16. Proxy Live Backup 表 (Live 配置备份)
+        // provider_id = 备份归属的供应商（备份写入时的当前供应商），NULL 为旧版本备份；
+        // 恢复路径据此拒绝把外部切换前留下的旧备份内容归到新供应商名下。
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_live_backup (
-            app_type TEXT PRIMARY KEY, original_config TEXT NOT NULL, backed_up_at TEXT NOT NULL
+            app_type TEXT PRIMARY KEY, original_config TEXT NOT NULL, backed_up_at TEXT NOT NULL,
+            provider_id TEXT
         )",
             [],
         )
@@ -418,6 +421,9 @@ impl Database {
             "in_failover_queue",
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
+
+        // 确保 proxy_live_backup.provider_id 列存在（对于接管备份表已建库的安装）
+        Self::add_column_if_missing(conn, "proxy_live_backup", "provider_id", "TEXT")?;
 
         // 删除旧的 failover_queue 表（如果存在）
         let _ = conn.execute("DROP INDEX IF EXISTS idx_failover_queue_order", []);
