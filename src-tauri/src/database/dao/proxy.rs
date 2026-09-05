@@ -224,7 +224,7 @@ impl Database {
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
+                        circuit_error_rate_threshold, circuit_min_requests, subagent_route
                  FROM proxy_config WHERE app_type = ?1",
                 [app_type],
                 |row| {
@@ -241,8 +241,13 @@ impl Database {
                         circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
                         circuit_error_rate_threshold: row.get(10)?,
                         circuit_min_requests: row.get::<_, i32>(11)? as u32,
-                        // v19 列的 DAO 读写由 subagent 路由任务接入，此处先取 None（关闭）
-                        subagent_route: None,
+                        // 损坏的 JSON 容错为 None（关闭路由），不让单条脏数据阻塞配置读取
+                        subagent_route: row
+                            .get::<_, Option<String>>(12)?
+                            .and_then(|s| {
+                                serde_json::from_str::<Option<SubagentRoute>>(&s).ok()
+                            })
+                            .flatten(),
                     })
                 },
             )
@@ -281,6 +286,14 @@ impl Database {
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
+        // 序列化路由规则：None 写 SQL NULL，Some 写 JSON 字符串
+        let subagent_route_json = match config.subagent_route.as_ref() {
+            Some(route) => {
+                Some(serde_json::to_string(route).map_err(|e| AppError::Database(e.to_string()))?)
+            }
+            None => None,
+        };
+
         conn.execute(
             "UPDATE proxy_config SET
                 enabled = ?2,
@@ -294,6 +307,7 @@ impl Database {
                 circuit_timeout_seconds = ?10,
                 circuit_error_rate_threshold = ?11,
                 circuit_min_requests = ?12,
+                subagent_route = ?13,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
             rusqlite::params![
@@ -309,6 +323,7 @@ impl Database {
                 config.circuit_timeout_seconds as i32,
                 config.circuit_error_rate_threshold,
                 config.circuit_min_requests as i32,
+                subagent_route_json,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -907,8 +922,9 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::database::Database;
+    use crate::database::{lock_conn, Database};
     use crate::error::AppError;
+    use serial_test::serial;
 
     #[tokio::test]
     async fn test_default_cost_multiplier_round_trip() -> Result<(), AppError> {
@@ -979,6 +995,49 @@ mod tests {
                 ..
             }
         ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn subagent_route_roundtrip_disable_and_corruption_fallback() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        // 1. 写入 Some 并读回
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.subagent_route = Some(crate::proxy::types::SubagentRoute {
+            provider_id: "b".to_string(),
+            model: Some("glm-5.5-flash".to_string()),
+        });
+        db.update_proxy_config_for_app(config).await.unwrap();
+        let read = db.get_proxy_config_for_app("claude").await.unwrap();
+        assert_eq!(
+            read.subagent_route,
+            Some(crate::proxy::types::SubagentRoute {
+                provider_id: "b".to_string(),
+                model: Some("glm-5.5-flash".to_string()),
+            })
+        );
+
+        // 2. 置回 None 并读回
+        let mut config = read;
+        config.subagent_route = None;
+        db.update_proxy_config_for_app(config).await.unwrap();
+        let read = db.get_proxy_config_for_app("claude").await.unwrap();
+        assert!(read.subagent_route.is_none());
+
+        // 3. 库中 JSON 损坏 → 容错为 None，不报错
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_config SET subagent_route = '{bad json' WHERE app_type = 'claude'",
+                [],
+            )
+            .unwrap();
+        }
+        let broken = db.get_proxy_config_for_app("claude").await.unwrap();
+        assert!(broken.subagent_route.is_none());
 
         Ok(())
     }
