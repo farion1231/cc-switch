@@ -68,6 +68,13 @@ export function SubagentRouteConfigPanel({
             : null,
       });
       toast.success(t("proxy.settings.toast.saved"), { closeButton: true });
+      // 面板可用说明代理接管生效中：注入到 live env 的模型需重启 Claude Code 才生效
+      if (!disabled) {
+        toast.info(t("proxy.subagentRoute.restartHint"), {
+          duration: 10000,
+          closeButton: true,
+        });
+      }
     } catch (e) {
       toast.error(t("proxy.settings.toast.saveFailed", { error: String(e) }));
     }

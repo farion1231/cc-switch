@@ -2927,7 +2927,8 @@
       "model": "模型",
       "modelPlaceholder": "傳送給目標供應商的模型名稱（如 glm-5.5-flash）",
       "targetMissingWarning": "路由目標供應商已不存在，請重新選擇或關閉開關。",
-      "modelRequiredHint": "請填寫模型名稱，代理據此區分 subagent 請求。"
+      "modelRequiredHint": "請填寫模型名稱，代理據此區分 subagent 請求。",
+      "restartHint": "已儲存。執行中的 Claude Code 需重新啟動後才會使用新的 subagent 模型。"
     },
     "autoFailover": {
       "info": "當故障轉移佇列中設定了多個供應商時，系統會在請求失敗時按優先順序依次嘗試。當某個供應商連續失敗達到閾值時，斷路器會打開並在一段時間內跳過該供應商。",
