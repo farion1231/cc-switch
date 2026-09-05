@@ -241,6 +241,8 @@ impl Database {
                         circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
                         circuit_error_rate_threshold: row.get(10)?,
                         circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                        // v19 列的 DAO 读写由 subagent 路由任务接入，此处先取 None（关闭）
+                        subagent_route: None,
                     })
                 },
             )
@@ -265,6 +267,7 @@ impl Database {
                     circuit_timeout_seconds: 60,
                     circuit_error_rate_threshold: 0.6,
                     circuit_min_requests: 10,
+                    subagent_route: None,
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
