@@ -434,6 +434,7 @@ impl ProxyService {
         config: &mut Value,
         proxy_url: &str,
         provider: &Provider,
+        subagent_injection: Option<&str>,
     ) {
         let auth_policy = if provider.uses_managed_account_auth() {
             // Codex 系（含仅凭 base_url 识别、无 provider_type meta 的）必须保留
@@ -458,6 +459,11 @@ impl ProxyService {
         } else {
             Self::build_claude_takeover_model_fields(config)
         };
+        let takeover_model_fields = Self::apply_subagent_route_injection(
+            takeover_model_fields,
+            provider,
+            subagent_injection,
+        );
 
         Self::apply_claude_takeover_fields_with_policy_and_models(
             config,
@@ -465,6 +471,54 @@ impl ProxyService {
             auth_policy,
             takeover_model_fields,
         );
+    }
+
+    /// 计算接管 live env 需要注入的 subagent 模型名（spec §6）：
+    /// 规则启用且带模型名、且供应商未显式设置 CLAUDE_CODE_SUBAGENT_MODEL 时返回 Some。
+    async fn claude_subagent_route_injection(db: &Database, provider: &Provider) -> Option<String> {
+        let route = db
+            .get_proxy_config_for_app(AppType::Claude.as_str())
+            .await
+            .ok()?
+            .subagent_route?;
+        let injected = route.model?.trim().to_string();
+        if injected.is_empty() {
+            return None;
+        }
+        let explicit = provider
+            .settings_config
+            .get("env")
+            .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if explicit.is_some() {
+            return None;
+        }
+        Some(injected)
+    }
+
+    /// 把 subagent 注入合并进接管模型字段（用户显式配置优先，spec §6）
+    fn apply_subagent_route_injection(
+        mut fields: Vec<(&'static str, String)>,
+        provider: &Provider,
+        injection: Option<&str>,
+    ) -> Vec<(&'static str, String)> {
+        let Some(injected) = injection.map(str::trim).filter(|s| !s.is_empty()) else {
+            return fields;
+        };
+        let explicit = provider
+            .settings_config
+            .get("env")
+            .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if explicit.is_some() {
+            return fields;
+        }
+        fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", injected.to_string()));
+        fields
     }
 
     fn apply_claude_takeover_fields_with_policy(
@@ -699,10 +753,13 @@ impl ProxyService {
         let mut effective_settings = effective_provider.settings_config.clone();
         let (proxy_url, _) = self.build_proxy_urls().await?;
 
+        let subagent_injection =
+            Self::claude_subagent_route_injection(&self.db, &effective_provider).await;
         Self::apply_claude_takeover_fields_for_provider(
             &mut effective_settings,
             &proxy_url,
             &effective_provider,
+            subagent_injection.as_deref(),
         );
         self.write_claude_live(&effective_settings)?;
         Ok(())
@@ -2012,10 +2069,13 @@ impl ProxyService {
         if let Ok(mut live_config) = self.read_claude_live() {
             let claude_provider = self.require_current_provider_for_app(&AppType::Claude)?;
             let claude_provider = self.claude_provider_with_effective_settings(&claude_provider)?;
+            let subagent_injection =
+                Self::claude_subagent_route_injection(&self.db, &claude_provider).await;
             Self::apply_claude_takeover_fields_for_provider(
                 &mut live_config,
                 &proxy_url,
                 &claude_provider,
+                subagent_injection.as_deref(),
             );
             self.write_claude_live(&live_config)?;
             log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
@@ -2070,10 +2130,13 @@ impl ProxyService {
                 let claude_provider = self.require_current_provider_for_app(&AppType::Claude)?;
                 let claude_provider =
                     self.claude_provider_with_effective_settings(&claude_provider)?;
+                let subagent_injection =
+                    Self::claude_subagent_route_injection(&self.db, &claude_provider).await;
                 Self::apply_claude_takeover_fields_for_provider(
                     &mut live_config,
                     &proxy_url,
                     &claude_provider,
+                    subagent_injection.as_deref(),
                 );
                 self.write_claude_live(&live_config)?;
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
@@ -2135,10 +2198,13 @@ impl ProxyService {
                         .flatten();
                     if let Some(provider) = claude_provider.as_ref() {
                         let provider = self.claude_provider_with_effective_settings(provider)?;
+                        let subagent_injection =
+                            Self::claude_subagent_route_injection(&self.db, &provider).await;
                         Self::apply_claude_takeover_fields_for_provider(
                             &mut live_config,
                             &proxy_url,
                             &provider,
+                            subagent_injection.as_deref(),
                         );
                     } else {
                         Self::apply_claude_takeover_fields_with_policy(
@@ -4130,6 +4196,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4187,6 +4254,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4258,6 +4326,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4305,6 +4374,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4358,6 +4428,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4396,6 +4467,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4429,6 +4501,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4468,6 +4541,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4506,6 +4580,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -4547,6 +4622,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            None,
         );
 
         let env = live_config
@@ -9969,5 +10045,42 @@ experimental_bearer_token = "PROXY_MANAGED"
             .expect("read backup")
             .expect("backup exists");
         assert_eq!(backup.original_config, original_backup);
+    }
+
+    #[test]
+    fn subagent_injection_appends_when_rule_active_and_env_unset() {
+        let provider = Provider::with_id("a".to_string(), "A".to_string(), json!({}), None);
+        let fields = vec![("ANTHROPIC_MODEL", "claude-sonnet-4-5".to_string())];
+        let merged =
+            ProxyService::apply_subagent_route_injection(fields, &provider, Some("glm-5.5-flash"));
+        assert_eq!(
+            merged,
+            vec![
+                ("ANTHROPIC_MODEL", "claude-sonnet-4-5".to_string()),
+                ("CLAUDE_CODE_SUBAGENT_MODEL", "glm-5.5-flash".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn subagent_injection_skips_when_provider_sets_env_explicitly() {
+        let provider = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "my-own"}}),
+            None,
+        );
+        let fields: Vec<(&'static str, String)> = Vec::new();
+        let merged =
+            ProxyService::apply_subagent_route_injection(fields, &provider, Some("glm-5.5-flash"));
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn subagent_injection_noop_without_rule_model() {
+        let provider = Provider::with_id("a".to_string(), "A".to_string(), json!({}), None);
+        let fields: Vec<(&'static str, String)> = Vec::new();
+        let merged = ProxyService::apply_subagent_route_injection(fields, &provider, None);
+        assert!(merged.is_empty());
     }
 }
