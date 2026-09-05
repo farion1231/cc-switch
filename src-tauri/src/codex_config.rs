@@ -7852,7 +7852,10 @@ model_catalog_json = "cc-switch-model-catalog.json"
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside_dir, base_dir.join("link")).expect("symlink");
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")).expect("symlink");
+        if let Err(e) = std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")) {
+            eprintln!("[SKIP] no symlink privilege on this Windows account: {e}");
+            return;
+        }
 
         let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
 "#;
