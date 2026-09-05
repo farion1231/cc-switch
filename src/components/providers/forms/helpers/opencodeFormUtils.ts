@@ -133,16 +133,17 @@ export function isKnownModelKey(key: string): boolean {
   );
 }
 
-export function getModelExtraFields(
+/** Return editable top-level model properties that are siblings of `options`. */
+export function getModelAdvancedFields(
   model: OpenCodeModel,
 ): Record<string, string> {
-  const extra: Record<string, string> = {};
-  for (const [k, v] of Object.entries(model)) {
-    if (!isKnownModelKey(k)) {
-      extra[k] = typeof v === "string" ? v : JSON.stringify(v);
+  const advanced: Record<string, string> = {};
+  for (const [key, value] of Object.entries(model)) {
+    if (!isKnownModelKey(key)) {
+      advanced[key] = typeof value === "string" ? value : JSON.stringify(value);
     }
   }
-  return extra;
+  return advanced;
 }
 
 export function toOpencodeExtraOptions(
