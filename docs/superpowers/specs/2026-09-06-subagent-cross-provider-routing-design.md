@@ -138,7 +138,7 @@ serde 带 `#[serde(default)]`，旧配置反序列化兼容。
   - 规则启用但既无 `route.model`、A 也未显式设置 subagent env → 提示「当前无法区分
     subagent 请求，请填写模型名」。
 - 数据读写复用现有 proxy_config 的 get/update Tauri 命令，不新增 command。
-- i18n：en / zh / ja / de 四语言补齐 key。
+- i18n：en / zh / zh-TW / ja 四语言补齐 key。
 
 ## 9. 边界与错误处理
 
