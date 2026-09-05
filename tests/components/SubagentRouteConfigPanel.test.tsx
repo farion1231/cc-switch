@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { SubagentRouteConfigPanel } from "@/components/proxy/SubagentRouteConfigPanel";
 
 const mockConfig = {
@@ -89,5 +90,26 @@ describe("SubagentRouteConfigPanel", () => {
     expect(
       screen.getByText(/proxy\.subagentRoute\.targetMissingWarning/),
     ).toBeDefined();
+  });
+
+  it("面板可用（接管生效）时保存后提示重启 Claude Code", async () => {
+    const infoSpy = vi.spyOn(toast, "info").mockReturnValue("");
+    const user = userEvent.setup();
+    render(<SubagentRouteConfigPanel appType="claude" disabled={false} />);
+    fireEvent.click(screen.getByRole("switch"));
+    await user.click(screen.getByTestId("subagent-route-provider-trigger"));
+    await user.click(
+      await screen.findByRole("option", { name: "Provider B" }),
+    );
+    fireEvent.change(screen.getByTestId("subagent-route-model-input"), {
+      target: { value: "glm-5.5-flash" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1));
+    expect(infoSpy).toHaveBeenCalledWith(
+      "proxy.subagentRoute.restartHint",
+      expect.objectContaining({ duration: 10000 }),
+    );
+    infoSpy.mockRestore();
   });
 });
