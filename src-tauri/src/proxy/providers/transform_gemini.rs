@@ -689,6 +689,8 @@ fn convert_message_content_to_parts(
                 // reject with "missing a `thought_signature`".
                 if let Some(sig) = thought_signature_by_id.get(id) {
                     function_call["thoughtSignature"] = json!(sig);
+                } else {
+                    function_call["thoughtSignature"] = json!("skip_thought_signature_validator");
                 }
 
                 parts.push(json!({ "functionCall": function_call }));

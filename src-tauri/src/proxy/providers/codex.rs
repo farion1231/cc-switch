@@ -200,10 +200,22 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
         .split_once('?')
         .map_or(endpoint, |(path, _query)| path);
 
+    let is_gemini_native = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+        })
+        == Some("gemini_native");
+
     matches!(
         path,
         "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    ) && codex_provider_uses_anthropic(provider)
+    ) && (codex_provider_uses_anthropic(provider) || is_gemini_native)
 }
 
 /// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
