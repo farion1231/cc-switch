@@ -181,11 +181,19 @@ async fn handle_messages_for_app(
         .await
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+
+    // Subagent 改道的模型名覆盖：识别已用原始模型名完成，此处改写转发体（spec §5.4）。
+    // as_object_mut 守卫：非 object 的异常请求体直接忽略覆盖，避免索引 panic。
+    if let Some(model) = ctx.take_model_override() {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("model".to_string(), serde_json::json!(model));
+        }
+    }
 
     let raw_endpoint = uri
         .path_and_query()
