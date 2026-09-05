@@ -513,6 +513,19 @@ fn default_show_profile_switcher() -> bool {
     true
 }
 
+/// Shared dashboard refresh / session scan cadence. Zero or manual mode disables scanning.
+/// Keep the accepted values and fallback aligned with UsageDashboard's selector.
+pub(crate) fn session_sync_interval_ms(settings: &AppSettings) -> Option<u64> {
+    if !settings.session_auto_sync_enabled {
+        return None;
+    }
+    match settings.usage_dashboard_refresh_interval_ms {
+        Some(0) => None,
+        Some(ms @ (5_000 | 10_000 | 30_000 | 60_000)) => Some(u64::from(ms)),
+        _ => Some(30_000),
+    }
+}
+
 fn default_session_auto_sync_enabled() -> bool {
     true
 }
@@ -1188,6 +1201,25 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn session_scan_cadence_follows_dashboard_selection_and_manual_mode() {
+        let mut settings = AppSettings::default();
+        assert_eq!(session_sync_interval_ms(&settings), Some(30_000));
+        for ms in [5_000, 10_000, 30_000, 60_000] {
+            settings.usage_dashboard_refresh_interval_ms = Some(ms);
+            assert_eq!(session_sync_interval_ms(&settings), Some(u64::from(ms)));
+            settings.session_auto_sync_enabled = false;
+            assert_eq!(session_sync_interval_ms(&settings), None);
+            settings.session_auto_sync_enabled = true;
+        }
+        settings.usage_dashboard_refresh_interval_ms = Some(0);
+        assert_eq!(session_sync_interval_ms(&settings), None);
+        for invalid in [1, 4999, u32::MAX] {
+            settings.usage_dashboard_refresh_interval_ms = Some(invalid);
+            assert_eq!(session_sync_interval_ms(&settings), Some(30_000));
+        }
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

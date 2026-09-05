@@ -44,11 +44,13 @@ pub fn claude_stream_usage_event_filter(data: &str) -> bool {
 }
 
 fn openai_stream_usage_event_filter(data: &str) -> bool {
-    data.contains("\"usage\"")
+    data.contains("\"usage\"") || data.contains("\"service_tier\"")
 }
 
 pub fn codex_stream_usage_event_filter(data: &str) -> bool {
-    data.contains("\"response.completed\"") || data.contains("\"usage\"")
+    data.contains("\"response.completed\"")
+        || data.contains("\"usage\"")
+        || data.contains("\"service_tier\"")
 }
 
 fn gemini_stream_usage_event_filter(data: &str) -> bool {

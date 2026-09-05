@@ -91,6 +91,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "codex_otel_ingest",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +103,7 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "codex_otel_ingest",
 ];
 
 /// A database backup entry for the UI
@@ -2191,7 +2193,8 @@ mod tests {
                  ) VALUES ('remote-provider', 'claude', 0, 9, '2099-01-01');
                  INSERT INTO session_log_sync (
                      file_path, last_modified, last_line_offset, last_synced_at
-                 ) VALUES ('/remote/sessions/one.jsonl', 9, 99, 999);",
+                 ) VALUES ('/remote/sessions/one.jsonl', 9, 99, 999);
+                 INSERT INTO codex_otel_ingest VALUES ('remote-otel', '{}', 999);",
             )?;
         }
         let remote_sql = remote_db.export_sql_string_for_sync()?;
@@ -2218,6 +2221,11 @@ mod tests {
             },
         )?;
         assert_eq!(skipped_counts, (0, 0, 0, 0, 0, 0));
+        assert_eq!(
+            exported.query_row("SELECT count(*) FROM codex_otel_ingest", [], |r| r
+                .get::<_, i64>(0))?,
+            0
+        );
 
         let local_db = Database::memory()?;
         {
@@ -2246,13 +2254,25 @@ mod tests {
                  ) VALUES ('local-provider', 'claude', 1, 0, '2026-03-01');
                  INSERT INTO session_log_sync (
                      file_path, last_modified, last_line_offset, last_synced_at
-                 ) VALUES ('/local/sessions/one.jsonl', 10, 123, 456);",
+                 ) VALUES ('/local/sessions/one.jsonl', 10, 123, 456);
+                 INSERT INTO codex_otel_ingest VALUES ('local-pending-otel', '{}', 456), ('local-seen-otel', NULL, 456);",
             )?;
         }
 
         local_db.import_sql_string_for_sync(&remote_sql)?;
 
         let conn = crate::database::lock_conn!(local_db.conn);
+        let otel_rows: Vec<(String, Option<String>)> = conn
+            .prepare("SELECT event_id,event_json FROM codex_otel_ingest ORDER BY event_id")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            otel_rows,
+            vec![
+                ("local-pending-otel".to_string(), Some("{}".to_string())),
+                ("local-seen-otel".to_string(), None)
+            ]
+        );
         let providers = conn
             .prepare("SELECT id FROM providers ORDER BY id")?
             .query_map([], |row| row.get::<_, String>(0))?

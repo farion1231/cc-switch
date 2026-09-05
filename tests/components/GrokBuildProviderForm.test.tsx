@@ -8,12 +8,14 @@ vi.mock("@/components/JsonEditor", () => ({
   default: ({
     value,
     onChange,
+    language,
   }: {
     value: string;
     onChange: (value: string) => void;
+    language?: string;
   }) => (
     <textarea
-      aria-label="raw-config"
+      aria-label={language === "json" ? "auth-json" : "raw-config"}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     />
@@ -298,5 +300,44 @@ context_window = 500000
     expect(
       screen.queryByText(/Codex 不会把 model_max_output_tokens/),
     ).toBeNull();
+  });
+
+  it("submits official Grok cards with a per-account auth.json snapshot", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Grok Official/ }));
+    expect(screen.queryByLabelText("API Key")).toBeNull();
+    expect(screen.getByLabelText("auth-json")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("auth-json"), {
+      target: {
+        value: JSON.stringify({
+          "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+            key: "account-token",
+            email: "a@example.com",
+          },
+        }),
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.presetCategory).toBe("official");
+    expect(submitted.presetId).toBe("grokbuild-official");
+    const settings = JSON.parse(submitted.settingsConfig);
+    expect(settings.config).toBe("");
+    expect(
+      settings.auth["https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"]
+        .key,
+    ).toBe("account-token");
   });
 });

@@ -124,6 +124,47 @@ describe("UsageDashboard", () => {
     expect(screen.getByTestId("select-5000")).toBeInTheDocument();
   });
 
+  it.each([
+    [true, 0, true],
+    [false, 5000, true],
+    [true, 5000, false],
+  ])(
+    "manual sync availability: auto=%s interval=%s",
+    (auto, interval, visible) => {
+      renderDashboard({
+        sessionAutoSyncEnabled: auto,
+        refreshIntervalMs: interval,
+      });
+      expect(
+        screen.queryByRole("button", { name: "usage.sessionSync.syncNow" }) !==
+          null,
+      ).toBe(visible);
+    },
+  );
+
+  it("resumes scheduled mode when an interval is selected from Off", async () => {
+    const onRefreshIntervalChange = vi.fn().mockResolvedValue(true);
+    renderDashboard({
+      refreshIntervalMs: 0,
+      sessionAutoSyncEnabled: true,
+      onRefreshIntervalChange,
+    });
+    expect(
+      screen.getByRole("button", { name: "usage.sessionSync.syncNow" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByTestId("select-0")).getByRole("button", {
+        name: "choose-5000",
+      }),
+    );
+    await waitFor(() =>
+      expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
+    );
+    expect(
+      screen.queryByRole("button", { name: "usage.sessionSync.syncNow" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("filters usage queries to Pi", async () => {
     renderDashboard();
 

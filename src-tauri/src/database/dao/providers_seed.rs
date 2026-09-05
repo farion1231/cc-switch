@@ -78,8 +78,9 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         website_url: "https://x.ai/grok",
         icon: "grok",
         icon_color: "currentColor",
-        // 空 config = 不写自定义模型表，Grok CLI 回落到自带的 xAI OAuth 登录
-        settings_config_json: r#"{"config":""}"#,
+        // 空 config = 不写自定义模型表；空 auth 在首次 grok login 后由
+        // 切换回填写入 ~/.grok/auth.json 快照，支持多官方账号切换。
+        settings_config_json: r#"{"auth":{},"config":""}"#,
     },
 ];
 
@@ -114,7 +115,8 @@ mod tests {
 
         assert_eq!(seed.app_type, AppType::GrokBuild);
         assert!(is_official_seed_id(GROKBUILD_OFFICIAL_PROVIDER_ID));
-        // 空 config = 官方登录态：切换时不注入自定义模型表
-        assert_eq!(seed.settings_config_json, r#"{"config":""}"#);
+        // 空 config + 空 auth = 官方登录态：切换时不注入自定义模型表，
+        // 凭据按 Codex 同样方式存在 auth 字段里。
+        assert_eq!(seed.settings_config_json, r#"{"auth":{},"config":""}"#);
     }
 }

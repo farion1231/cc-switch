@@ -4901,6 +4901,10 @@ impl ProviderService {
 
         drop(codex_update_switch_guard);
 
+        if matches!(app_type, AppType::GrokBuild) && is_current {
+            live::adopt_live_grok_oauth_on_current_official(&mut provider);
+        }
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
@@ -5364,6 +5368,24 @@ impl ProviderService {
                 ),
                 Ok(false) => {}
                 Err(e) => log::warn!("Failed to clean stale Codex auth.json: {e}"),
+            }
+        }
+        if matches!(app_type, AppType::GrokBuild)
+            && backfill_completed
+            && provider.category.as_deref() == Some("official")
+        {
+            let db_auth = provider
+                .settings_config
+                .get("auth")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+            match crate::grok_config::clear_grok_oauth_live_auth_after_official_switch(&db_auth) {
+                Ok(true) => log::info!(
+                    "Removed live Grok OAuth session after switching to official provider '{}' without stored credentials",
+                    provider.id
+                ),
+                Ok(false) => {}
+                Err(e) => log::warn!("Failed to clean live Grok auth.json: {e}"),
             }
         }
         // Third-party dual of the block above: with preservation off, the
@@ -6425,9 +6447,19 @@ impl ProviderService {
                             "Grok Build configuration is missing the config field",
                         )
                     })?;
+                if let Some(auth) = settings.get("auth") {
+                    if !auth.is_object() {
+                        return Err(AppError::localized(
+                            "provider.grokbuild.auth.not_object",
+                            "Grok Build auth 配置必须是 JSON 对象",
+                            "Grok Build auth configuration must be a JSON object",
+                        ));
+                    }
+                }
                 if provider.category.as_deref() == Some("official") {
                     // 官方条目走 Grok CLI 自带 OAuth：空 config 合法，
-                    // 回填快照只要求 TOML 语法合法。
+                    // 回填快照只要求 TOML 语法合法。auth.json 按账号存在
+                    // settings_config.auth，切换时写回 ~/.grok/auth.json。
                     crate::grok_config::validate_config_toml_syntax(config)?;
                 } else {
                     crate::grok_config::validate_config_toml(config)?;

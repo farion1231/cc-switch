@@ -50,7 +50,7 @@ pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
 pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
-pub use grok_config::get_grok_config_path;
+pub use grok_config::{get_grok_auth_path, get_grok_config_path, write_grok_live_atomic};
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
@@ -1081,6 +1081,12 @@ pub fn run() {
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::DoubleClick {
+                        button: tauri::tray::MouseButton::Left,
+                        ..
+                    } => {
+                        tray::handle_tray_menu_event(tray.app_handle(), "show_main");
+                    }
                     // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
                     // refresh_all_usage_in_tray 内部有 10 秒防抖。
@@ -1239,6 +1245,11 @@ pub fn run() {
 
                 initialize_common_config_snippets(&state);
 
+                // Opt-in loopback receiver for Codex ephemeral-session usage.
+                tauri::async_runtime::spawn(crate::services::codex_otel::serve_if_configured(
+                    state.db.clone(),
+                ));
+
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
 
@@ -1263,15 +1274,13 @@ pub fn run() {
                     }
                 });
 
-                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                // Session scans follow the dashboard's saved refresh interval and auto-scan switch.
                 let db_for_session_sync = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
-
                     async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
                         // 手动扫描模式下跳过定时扫描；backfill 轮（启动首轮）仍进入，
                         // 费用回填只修补数据库既有行（含代理记账行），不读会话文件
-                        if !backfill && !crate::settings::get_settings().session_auto_sync_enabled {
+                        if !backfill && crate::settings::session_sync_interval_ms(&crate::settings::get_settings()).is_none() {
                             return;
                         }
                         let _guard = crate::services::session_usage::session_sync_mutex()
@@ -1283,7 +1292,7 @@ pub fn run() {
                                     log::warn!("Usage cost startup backfill failed: {error}");
                                 }
                             }
-                            if !crate::settings::get_settings().session_auto_sync_enabled {
+                            if crate::settings::session_sync_interval_ms(&crate::settings::get_settings()).is_none() {
                                 return crate::services::session_usage::SessionSyncResult::default();
                             }
                             crate::services::session_usage::sync_all_unlocked(&db)
@@ -1303,15 +1312,17 @@ pub fn run() {
                     // 首次同步（含费用回填）
                     run_session_sync(db_for_session_sync.clone(), true).await;
 
-                    // 定期同步
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                        SESSION_SYNC_INTERVAL_SECS,
-                    ));
-                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                    interval.tick().await; // skip immediate first tick
+                    let mut last_scan = std::time::Instant::now();
                     loop {
-                        interval.tick().await;
-                        run_session_sync(db_for_session_sync.clone(), false).await;
+                        // Re-read settings so cadence changes and Off take effect without restart.
+                        // This checks settings only; it does not scan files every second.
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        if let Some(ms) = crate::settings::session_sync_interval_ms(&crate::settings::get_settings()) {
+                            if last_scan.elapsed() >= std::time::Duration::from_millis(ms) {
+                                last_scan = std::time::Instant::now();
+                                run_session_sync(db_for_session_sync.clone(), false).await;
+                            }
+                        }
                     }
                 });
             });
