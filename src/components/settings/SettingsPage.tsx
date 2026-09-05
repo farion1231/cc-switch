@@ -242,7 +242,7 @@ export function SettingsPage({
           <div className="flex-1 min-h-0 flex flex-col">
             <div
               ref={tabScrollContainerRef}
-              className="flex-1 overflow-y-auto overflow-x-hidden pr-2"
+              className="flex-1 overflow-y-auto overflow-x-hidden pr-2 visible-scrollbars"
             >
               <TabsContent value="general" className="space-y-6 mt-0">
                 {settings ? (

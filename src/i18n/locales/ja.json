@@ -56,6 +56,21 @@
     "hide": "API Key を隠す"
   },
   "jsonEditor": {
+    "search": {
+      "find": "検索",
+      "replaceWith": "置換後の文字列",
+      "next": "次へ",
+      "previous": "前へ",
+      "selectAll": "一致をすべて選択",
+      "matchCase": "大文字と小文字を区別",
+      "regexp": "正規表現",
+      "wholeWord": "単語単位",
+      "replace": "置換",
+      "replaceAll": "すべて置換",
+      "close": "検索を閉じる",
+      "currentMatch": "現在の一致",
+      "onLine": "行"
+    },
     "mustBeObject": "設定はオブジェクト形式の JSON で入力してください（配列や他の型は不可）",
     "invalidJson": "JSON 形式が正しくありません"
   },
@@ -1064,6 +1079,10 @@
     "profile": "クライアントモデルプロファイル",
     "rawConfig": "config.toml",
     "invalidToml": "config.toml の形式が不正です: {{error}}",
+    "authJson": "auth.json (JSON)",
+    "authJsonPlaceholder": "{\n  \"https://auth.x.ai::<client-id>\": {\n    \"key\": \"...\",\n    \"refresh_token\": \"...\",\n    \"email\": \"you@example.com\"\n  }\n}",
+    "authJsonError": "auth.json の形式が正しくありません。JSON を確認してください",
+    "authJsonRequired": "auth.json は JSON オブジェクトで入力してください",
     "defaultModelPlaceholder": "例: grok-4.5",
     "defaultModelHint": "Grok Build がデフォルトでリクエストするモデルです。プリセットの更新を待たずにいつでも変更できます。",
     "advancedSectionHint": "上流フォーマット、思考機能、カスタム User-Agent の設定を含みます。Chat Completions / Anthropic Messages プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
@@ -1666,6 +1685,13 @@
     "noSearchResults": "一致するプロバイダープリセットがありません。"
   },
   "usage": {
+    "serviceTier": "モード",
+    "reasoningEffort": "推論の強度",
+    "metadataUnknown": "不明",
+    "standardTier": "標準",
+    "autoTier": "自動",
+    "tierRequest": "リクエスト設定",
+    "tierResponse": "レスポンス",
     "title": "利用統計",
     "subtitle": "AI モデルの利用状況とコスト統計を表示",
     "today": "24時間",
@@ -1725,7 +1751,7 @@
     "rawInputLabel": "原始",
     "sessionSync": {
       "title": "セッションログの自動スキャン",
-      "description": "各クライアントのローカルセッションログを定期的にスキャンして使用量を集計します。オフにすると手動同期時のみスキャンします",
+      "description": "上部で選択した更新間隔に合わせてセッションログをスキャンします。自動スキャンまたは自動更新をオフにすると、手動同期時のみスキャンします",
       "syncNow": "今すぐ同期",
       "syncCompleted": "同期完了：{{imported}} 件追加、{{files}} ファイルをスキャン、エラー {{errors}} 件",
       "syncFailed": "セッション使用量の同期に失敗しました：{{error}}"
@@ -1803,12 +1829,16 @@
     "tokenUsage": "Token 使用量",
     "cacheCreationCost": "キャッシュ作成コスト",
     "costBreakdown": "コスト明細",
+    "costBreakdownUnavailable": "ログには合計費用のみがあり、内訳と単価は取得できません。",
+    "costBreakdownMismatch": "内訳と合計費用が一致しないため、記録された合計を表示します。",
+    "fastPricingUnavailable": "このモデルの Fast 料金は未確認です。設定済みの基本料金を表示しています。",
     "performance": "パフォーマンス",
     "latency": "レイテンシー",
     "errorMessage": "エラーメッセージ",
     "requests": "リクエスト数",
     "tokens": "トークン",
     "avgCost": "平均コスト",
+    "avgCostPerMillion": "100万トークンあたりの平均コスト（キャッシュを含む）",
     "avgLatency": "平均レイテンシ",
     "successRate": "成功率",
     "requestId": "リクエスト ID",

@@ -764,7 +764,111 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         return Ok(());
     }
 
+    if matches!(app_type, AppType::GrokBuild) {
+        return write_grok_live_with_db(db, &effective_provider);
+    }
+
     write_live_snapshot(app_type, &effective_provider)
+}
+
+/// Park a live Grok CLI session on an official card before stripping OAuth.
+///
+/// Returns true when it is safe to remove live OAuth scopes: either there was
+/// nothing to save, or a copy now exists on an official provider row.
+pub(crate) fn preserve_live_grok_oauth_in_db(db: &Database) -> Result<bool, AppError> {
+    let live = crate::grok_config::read_grok_auth()?;
+    if !crate::grok_config::grok_auth_has_login_material(&live) {
+        return Ok(true);
+    }
+
+    db.ensure_official_seed_by_id(
+        crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+        AppType::GrokBuild,
+    )?;
+
+    if let Some(mut official) = db.get_provider_by_id(
+        crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+        AppType::GrokBuild.as_str(),
+    )? {
+        if park_live_grok_oauth_on_official(db, &mut official, &live)? {
+            return Ok(true);
+        }
+    }
+
+    for mut provider in db
+        .get_all_providers(AppType::GrokBuild.as_str())?
+        .into_values()
+    {
+        if provider.category.as_deref() != Some("official") {
+            continue;
+        }
+        if park_live_grok_oauth_on_official(db, &mut provider, &live)? {
+            return Ok(true);
+        }
+    }
+
+    log::warn!(
+        "Live Grok OAuth session was not copied onto an official card; leaving ~/.grok/auth.json in place"
+    );
+    Ok(false)
+}
+
+fn park_live_grok_oauth_on_official(
+    db: &Database,
+    provider: &mut Provider,
+    live: &Value,
+) -> Result<bool, AppError> {
+    let result = crate::grok_config::merge_live_grok_oauth_into_settings(
+        &mut provider.settings_config,
+        live,
+        false,
+    );
+    if result.applied() {
+        db.save_provider(AppType::GrokBuild.as_str(), provider)?;
+    }
+    Ok(result.preserved())
+}
+
+fn write_grok_live_with_db(db: &Database, provider: &Provider) -> Result<(), AppError> {
+    if provider.category.as_deref() == Some("official") {
+        return crate::grok_config::write_grok_provider_live(provider);
+    }
+
+    let preserved = preserve_live_grok_oauth_in_db(db)?;
+    crate::grok_config::write_grok_provider_live(provider)?;
+    if preserved {
+        crate::grok_config::strip_grok_oauth_from_live_auth()?;
+    }
+    Ok(())
+}
+
+pub(crate) fn adopt_live_grok_oauth_on_current_official(provider: &mut Provider) -> bool {
+    if provider.category.as_deref() != Some("official") {
+        return false;
+    }
+    let Ok(live) = crate::grok_config::read_grok_auth() else {
+        return false;
+    };
+    crate::grok_config::merge_live_grok_oauth_into_settings(
+        &mut provider.settings_config,
+        &live,
+        true,
+    )
+    .applied()
+}
+
+fn grok_official_ready_for_current_sync(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<Provider, AppError> {
+    let mut next = provider.clone();
+    if matches!(app_type, AppType::GrokBuild)
+        && adopt_live_grok_oauth_on_current_official(&mut next)
+    {
+        state.db.save_provider(AppType::GrokBuild.as_str(), &next)?;
+    }
+    Ok(next)
 }
 
 pub(crate) fn build_effective_provider_for_live_with_codex_oauth_manager(
@@ -1063,6 +1167,14 @@ fn restore_live_settings_for_provider_backfill(
                 "Failed to strip Grok Build mcp_servers while backfilling '{}': {err}",
                 provider.id
             );
+        }
+        // Official cards own ~/.grok/auth.json. Third-party cards use api_key in
+        // config.toml; persisting a session token into them would leak one
+        // account into another provider and, on the next switch, resurrect it.
+        if provider.category.as_deref() != Some("official") {
+            if let Some(object) = settings.as_object_mut() {
+                object.remove("auth");
+            }
         }
         return settings;
     }
@@ -1487,7 +1599,8 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config_for_state(state, app_type, provider)?;
+            let provider = grok_official_ready_for_current_sync(state, app_type, provider)?;
+            write_live_with_common_config_for_state(state, app_type, &provider)?;
         }
     }
 
@@ -1645,7 +1758,8 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     };
 
-    sync_live_for_provider_respecting_takeover(state, app_type, provider).map(|_| ())
+    let provider = grok_official_ready_for_current_sync(state, app_type, provider)?;
+    sync_live_for_provider_respecting_takeover(state, app_type, &provider).map(|_| ())
 }
 
 /// Sync current provider to live configuration
@@ -1871,6 +1985,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             // （`import_default_config_internal`）。
             crate::grok_config::validate_config_toml(config)?;
             crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings)?;
+            // Custom import is a relay card. Drop live OAuth so the imported
+            // default does not carry a Grok Official session that would win
+            // over the relay api_key.
+            if let Some(object) = settings.as_object_mut() {
+                object.remove("auth");
+            }
             settings
         }
         AppType::Claude => {
@@ -2379,6 +2499,7 @@ mod tests {
     use super::*;
     use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
+    use serial_test::serial;
 
     #[test]
     fn proxy_oauth_codex_snapshot_neutralizes_official_auth_fallback() {
@@ -3382,5 +3503,134 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    #[test]
+    #[serial]
+    fn current_sync_does_not_adopt_grok_auth_for_other_apps() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let live = json!({
+            "https://auth.x.ai::test-client": {
+                "key": "grok-session-token",
+                "user_id": "grok-user"
+            }
+        });
+        crate::grok_config::write_grok_live_atomic(Some(&live), "").expect("seed Grok login");
+        let state = AppState::new(std::sync::Arc::new(
+            Database::memory().expect("memory database"),
+        ));
+        let mut grok = Provider::with_id(
+            "shared-id".to_string(),
+            "Grok account".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        grok.category = Some("official".to_string());
+        state
+            .db
+            .save_provider("grokbuild", &grok)
+            .expect("save Grok");
+
+        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+            let mut other = grok.clone();
+            other.name = "Other account".to_string();
+            other.settings_config = json!({ "auth": { "token": "other-token" } });
+            state
+                .db
+                .save_provider(app_type.as_str(), &other)
+                .expect("save other app");
+
+            let synced = grok_official_ready_for_current_sync(&state, &app_type, &other)
+                .expect("prepare current provider");
+            assert_eq!(synced.settings_config, other.settings_config);
+            let stored_grok = state
+                .db
+                .get_provider_by_id("shared-id", "grokbuild")
+                .expect("read Grok")
+                .expect("Grok still exists");
+            assert_eq!(stored_grok.name, grok.name);
+            assert_eq!(stored_grok.settings_config, grok.settings_config);
+        }
+
+        let synced = grok_official_ready_for_current_sync(&state, &AppType::GrokBuild, &grok)
+            .expect("prepare Grok provider");
+        assert_eq!(synced.settings_config["auth"], live);
+        assert_eq!(
+            crate::grok_config::read_grok_auth().expect("read live"),
+            live
+        );
+
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn identical_live_oauth_snapshot_is_preserved_and_relay_write_strips() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let live = json!({
+            "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+                "key": "session-token",
+                "auth_mode": "oidc",
+                "email": "a@example.com",
+                "user_id": "a@example.com",
+                "refresh_token": "session-token-refresh",
+                "oidc_issuer": "https://auth.x.ai",
+                "oidc_client_id": "b1a00492-073a-47ea-816f-4c329264a828"
+            }
+        });
+        crate::grok_config::write_grok_live_atomic(Some(&live), "")
+            .expect("seed live official session");
+
+        let db = Database::memory().expect("create memory db");
+        let mut official = Provider::with_id(
+            crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID.to_string(),
+            "Grok Official".to_string(),
+            json!({ "auth": live.clone(), "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider(AppType::GrokBuild.as_str(), &official)
+            .expect("store already-backfilled official card");
+
+        assert!(
+            preserve_live_grok_oauth_in_db(&db).expect("preserve"),
+            "stored==live is already preserved and safe to strip"
+        );
+
+        let relay = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n"
+            }),
+            None,
+        );
+        write_grok_live_with_db(&db, &relay).expect("switch to relay");
+
+        assert!(
+            !crate::grok_config::get_grok_auth_path().exists(),
+            "seeded-official-to-relay must strip OAuth so config.toml api_key wins"
+        );
+        assert_eq!(
+            std::fs::read_to_string(crate::grok_config::get_grok_config_path())
+                .expect("read config"),
+            relay.settings_config["config"]
+                .as_str()
+                .expect("relay config"),
+        );
+
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
     }
 }

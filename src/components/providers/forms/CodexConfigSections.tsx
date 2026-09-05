@@ -21,6 +21,11 @@ interface CodexAuthSectionProps {
   onBlur?: () => void;
   error?: string;
   isProxyTakeover?: boolean;
+  label?: string;
+  hint?: string;
+  showHint?: boolean;
+  placeholder?: string;
+  htmlFor?: string;
 }
 
 /**
@@ -32,6 +37,11 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
   onBlur,
   error,
   isProxyTakeover = false,
+  label,
+  hint,
+  showHint = true,
+  placeholder,
+  htmlFor = "codexAuth",
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -61,16 +71,16 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
   return (
     <div className="space-y-2">
       <label
-        htmlFor="codexAuth"
+        htmlFor={htmlFor}
         className="block text-sm font-medium text-foreground"
       >
-        {t("codexConfig.authJson")}
+        {label ?? t("codexConfig.authJson")}
       </label>
 
       <JsonEditor
         value={value}
         onChange={handleChange}
-        placeholder={t("codexConfig.authJsonPlaceholder")}
+        placeholder={placeholder ?? t("codexConfig.authJsonPlaceholder")}
         darkMode={isDarkMode}
         rows={3}
         showValidation={true}
@@ -81,13 +91,14 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
         <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
       )}
 
-      {!error && (
+      {!error && showHint && (
         <p className="text-xs text-muted-foreground">
-          {t(
-            isProxyTakeover
-              ? "codexConfig.authJsonStorageHint"
-              : "codexConfig.authJsonHint",
-          )}
+          {hint ??
+            t(
+              isProxyTakeover
+                ? "codexConfig.authJsonStorageHint"
+                : "codexConfig.authJsonHint",
+            )}
         </p>
       )}
     </div>
@@ -324,6 +335,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       </div>
 
       <JsonEditor
+        height="clamp(180px, 45vh, 480px)"
         value={localValue}
         onChange={handleLocalChange}
         placeholder=""

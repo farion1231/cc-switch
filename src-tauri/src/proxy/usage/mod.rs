@@ -3,7 +3,9 @@
 //! 提供 API 请求的使用量跟踪、成本计算和日志记录功能
 
 pub mod calculator;
+pub mod fast_pricing;
 pub mod logger;
+pub mod metadata;
 pub mod parser;
 
 // 仅导出内部使用的类型,避免未使用警告

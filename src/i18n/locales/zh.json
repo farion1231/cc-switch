@@ -56,6 +56,21 @@
     "hide": "隐藏API Key"
   },
   "jsonEditor": {
+    "search": {
+      "find": "查找",
+      "replaceWith": "替换为",
+      "next": "下一个",
+      "previous": "上一个",
+      "selectAll": "选中全部匹配",
+      "matchCase": "区分大小写",
+      "regexp": "正则表达式",
+      "wholeWord": "全字匹配",
+      "replace": "替换",
+      "replaceAll": "全部替换",
+      "close": "关闭查找",
+      "currentMatch": "当前匹配",
+      "onLine": "所在行"
+    },
     "mustBeObject": "配置必须是JSON对象，不能是数组或其他类型",
     "invalidJson": "JSON格式错误"
   },
@@ -1064,6 +1079,10 @@
     "profile": "客户端模型档位",
     "rawConfig": "config.toml",
     "invalidToml": "config.toml 格式错误：{{error}}",
+    "authJson": "auth.json (JSON)",
+    "authJsonPlaceholder": "{\n  \"https://auth.x.ai::<client-id>\": {\n    \"key\": \"...\",\n    \"refresh_token\": \"...\",\n    \"email\": \"you@example.com\"\n  }\n}",
+    "authJsonError": "auth.json 格式错误，请检查 JSON 语法",
+    "authJsonRequired": "auth.json 必须是 JSON 对象",
     "defaultModelPlaceholder": "例如: grok-4.5",
     "defaultModelHint": "Grok Build 默认请求的模型，随时可改，无需等待预设更新。",
     "advancedSectionHint": "包含上游格式、思考能力与自定义 User-Agent。使用 Chat Completions / Anthropic Messages 协议的供应商需开启路由接管才能使用。",
@@ -1666,6 +1685,13 @@
     "noSearchResults": "没有匹配的预设供应商。"
   },
   "usage": {
+    "serviceTier": "模式",
+    "reasoningEffort": "推理强度",
+    "metadataUnknown": "未知",
+    "standardTier": "标准",
+    "autoTier": "自动",
+    "tierRequest": "请求设置",
+    "tierResponse": "响应返回",
     "title": "使用统计",
     "subtitle": "查看 AI 模型的使用情况和成本统计",
     "today": "24小时",
@@ -1725,7 +1751,7 @@
     "rawInputLabel": "原始",
     "sessionSync": {
       "title": "自动扫描会话记录",
-      "description": "定期扫描各客户端的本地会话记录以统计用量；关闭后仅在手动同步时扫描",
+      "description": "按顶部选择的刷新间隔扫描会话记录；关闭自动扫描或刷新间隔后，仅在手动同步时扫描",
       "syncNow": "立即同步",
       "syncCompleted": "同步完成：新增 {{imported}} 条，扫描 {{files}} 个文件，错误 {{errors}}",
       "syncFailed": "会话用量同步失败：{{error}}"
@@ -1803,12 +1829,16 @@
     "tokenUsage": "Token 使用量",
     "cacheCreationCost": "缓存写入成本",
     "costBreakdown": "成本明细",
+    "costBreakdownUnavailable": "日志仅提供总费用，分项费用和单价不可用。",
+    "costBreakdownMismatch": "分项费用与总费用不一致，以下保留记录中的总费用。",
+    "fastPricingUnavailable": "该模型暂无已核实的 Fast 价格，当前使用配置的基础价格。",
     "performance": "性能信息",
     "latency": "延迟",
     "errorMessage": "错误信息",
     "requests": "请求数",
     "tokens": "Tokens",
     "avgCost": "平均成本",
+    "avgCostPerMillion": "每百万 Tokens 平均成本（含缓存）",
     "avgLatency": "平均延迟",
     "successRate": "成功率",
     "requestId": "请求 ID",

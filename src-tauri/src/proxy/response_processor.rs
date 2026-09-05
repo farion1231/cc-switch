@@ -2,6 +2,7 @@
 //!
 //! 统一处理流式和非流式 API 响应
 
+use super::usage::metadata::UsageMetadata;
 use super::{
     content_encoding::{decompress_body_with_limit, get_content_encoding, DecompressError},
     forwarder::ActiveConnectionGuard,
@@ -259,6 +260,7 @@ pub async fn handle_non_streaming(
                 spawn_log_usage(
                     state,
                     ctx,
+                    ctx.usage_metadata.clone().with_response(&json_value),
                     usage,
                     &model,
                     &ctx.request_model,
@@ -276,6 +278,7 @@ pub async fn handle_non_streaming(
                 spawn_log_usage(
                     state,
                     ctx,
+                    ctx.usage_metadata.clone().with_response(&json_value),
                     TokenUsage::default(),
                     &model,
                     &ctx.request_model,
@@ -296,6 +299,7 @@ pub async fn handle_non_streaming(
             spawn_log_usage(
                 state,
                 ctx,
+                ctx.usage_metadata.clone(),
                 TokenUsage::default(),
                 ctx.outbound_model.as_deref().unwrap_or(&ctx.request_model),
                 &ctx.request_model,
@@ -479,6 +483,7 @@ pub(crate) fn create_usage_collector(
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
     let request_model = ctx.request_model.clone();
+    let request_metadata = ctx.usage_metadata.clone();
     // 流式事件缺失模型名时的归因兜底：映射后的出站模型（路由接管真值）优先，
     // 其次才是客户端请求别名
     let fallback_model = ctx
@@ -499,6 +504,7 @@ pub(crate) fn create_usage_collector(
         start_time,
         parser_config.stream_event_filter,
         move |events, first_token_ms| {
+            let metadata = request_metadata.clone().with_stream_events(&events);
             if let Some(usage) = stream_parser(&events) {
                 let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
@@ -517,6 +523,7 @@ pub(crate) fn create_usage_collector(
                         &model,
                         &request_model,
                         &outbound_model,
+                        metadata,
                         usage,
                         latency_ms,
                         first_token_ms,
@@ -543,6 +550,7 @@ pub(crate) fn create_usage_collector(
                         &model,
                         &request_model,
                         &outbound_model,
+                        metadata,
                         TokenUsage::default(),
                         latency_ms,
                         first_token_ms,
@@ -562,6 +570,7 @@ pub(crate) fn create_usage_collector(
 fn spawn_log_usage(
     state: &ProxyState,
     ctx: &RequestContext,
+    metadata: UsageMetadata,
     usage: TokenUsage,
     model: &str,
     request_model: &str,
@@ -596,6 +605,7 @@ fn spawn_log_usage(
             &model,
             &request_model,
             &outbound_model,
+            metadata,
             usage,
             latency_ms,
             None,
@@ -629,6 +639,7 @@ async fn log_usage_internal(
     model: &str,
     request_model: &str,
     outbound_model: &str,
+    metadata: UsageMetadata,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -638,7 +649,7 @@ async fn log_usage_internal(
 ) {
     use super::usage::logger::UsageLogger;
 
-    let logger = UsageLogger::new(&state.db);
+    let logger = UsageLogger::new(&state.db).with_metadata(metadata);
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
     let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
@@ -1101,6 +1112,7 @@ mod tests {
             "resp-model",
             "req-model",
             "req-model",
+            UsageMetadata::default(),
             usage,
             10,
             None,
@@ -1171,6 +1183,7 @@ mod tests {
             "resp-model",
             "req-model",
             "outbound-model",
+            UsageMetadata::default(),
             usage,
             10,
             None,
@@ -1251,6 +1264,7 @@ mod tests {
             "resp-model",
             "req-model",
             "req-model",
+            UsageMetadata::default(),
             usage,
             10,
             None,
