@@ -2,13 +2,15 @@ import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
   setCurrentProviderId,
   setLiveProviderIds,
   setProviders,
+  setSettings,
+  getSettings,
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
@@ -305,6 +307,116 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
+  });
+
+  it("restores and persists the last active app through settings", async () => {
+    localStorage.setItem("cc-switch-last-app", "claude");
+    setSettings({ lastActiveApp: "codex" });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("app-switcher")).toHaveTextContent("codex"),
+    );
+
+    fireEvent.click(screen.getByText("switch-openclaw"));
+
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
+    expect(localStorage.getItem("cc-switch-last-app")).toBe("openclaw");
+  });
+
+  it("does not overwrite a visible backend app when the initial app is hidden", async () => {
+    setSettings({
+      lastActiveApp: "codex",
+      visibleApps: {
+        claude: false,
+        "claude-desktop": true,
+        codex: true,
+        gemini: false,
+        grokbuild: false,
+        opencode: true,
+        openclaw: false,
+        hermes: false,
+        pi: false,
+      },
+    });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("app-switcher")).toHaveTextContent("codex"),
+    );
+    await delay(100);
+    expect(getSettings().lastActiveApp).toBe("codex");
+    expect(localStorage.getItem("cc-switch-last-app")).toBe("codex");
+  });
+
+  it("keeps a user selection made before settings finish loading", async () => {
+    const staleSettings = getSettings();
+    server.use(
+      http.post("http://tauri.local/get_settings", async () => {
+        await delay(75);
+        return HttpResponse.json(staleSettings);
+      }),
+    );
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(await screen.findByText("switch-openclaw"));
+
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
+    await delay(100);
+    expect(screen.getByTestId("app-switcher")).toHaveTextContent("openclaw");
+    expect(getSettings().lastActiveApp).toBe("openclaw");
+    expect(localStorage.getItem("cc-switch-last-app")).toBe("openclaw");
+  });
+
+  it("falls back and persists when the last active app is hidden", async () => {
+    setSettings({
+      lastActiveApp: "codex",
+      visibleApps: {
+        claude: true,
+        "claude-desktop": false,
+        codex: false,
+        gemini: false,
+        grokbuild: false,
+        opencode: true,
+        openclaw: false,
+        hermes: false,
+        pi: false,
+      },
+    });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("claude"));
+    expect(screen.getByTestId("app-switcher")).toHaveTextContent("claude");
+  });
+
+  it("serializes rapid switches so the latest selection wins", async () => {
+    server.use(
+      http.post(
+        "http://tauri.local/set_last_active_app",
+        async ({ request }) => {
+          const { app } = (await request.json()) as {
+            app: "claude" | "codex" | "openclaw";
+          };
+          if (app === "codex") await delay(75);
+          setSettings({ lastActiveApp: app });
+          return HttpResponse.json(true);
+        },
+      ),
+    );
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await screen.findByTestId("app-switcher");
+
+    fireEvent.click(screen.getByText("switch-codex"));
+    fireEvent.click(screen.getByText("switch-openclaw"));
+
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
+    await delay(100);
+    expect(getSettings().lastActiveApp).toBe("openclaw");
   });
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {

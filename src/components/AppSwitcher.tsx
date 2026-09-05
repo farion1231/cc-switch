@@ -25,8 +25,6 @@ interface AppSwitcherProps {
   visibleApps?: VisibleApps;
 }
 
-const STORAGE_KEY = "cc-switch-last-app";
-
 const APP_ICON_NAME: Record<AppId, string> = {
   claude: "claude",
   "claude-desktop": "claude",
@@ -98,7 +96,6 @@ export function AppSwitcher({
 
   const handleSwitch = (app: AppId) => {
     if (app === activeApp) return;
-    localStorage.setItem(STORAGE_KEY, app);
     onSwitch(app);
   };
 

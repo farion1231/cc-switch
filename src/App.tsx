@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -29,7 +29,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, Settings as AppSettings, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
@@ -139,13 +139,25 @@ const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 
 const STORAGE_KEY = "cc-switch-last-app";
-const getInitialApp = (): AppId => {
-  const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
-  if (saved && APP_IDS.includes(saved)) {
-    return saved;
-  }
-  return "claude";
+let activeAppPersistence: Promise<unknown> = Promise.resolve();
+
+const persistLastActiveApp = (app: AppId) => {
+  activeAppPersistence = activeAppPersistence
+    .then(() => settingsApi.setLastActiveApp(app))
+    .catch((error) => {
+      console.warn("Failed to persist active app in settings", error);
+    });
 };
+
+const getStoredApp = (): AppId | null => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
+    return saved && APP_IDS.includes(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+};
+const getInitialApp = (): AppId => getStoredApp() ?? "claude";
 
 const VIEW_STORAGE_KEY = "cc-switch-last-view";
 const VALID_VIEWS: View[] = [
@@ -178,6 +190,7 @@ function App() {
   const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
+  const [hasRestoredActiveApp, setHasRestoredActiveApp] = useState(false);
   const sharedFeatureApp: AppId =
     activeApp === "claude-desktop" ? "claude" : activeApp;
   const [currentView, setCurrentView] = useState<View>(getInitialView);
@@ -214,15 +227,77 @@ function App() {
     [settingsData?.visibleApps],
   );
 
-  const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
-  };
+  const firstVisibleApp = useMemo<AppId>(
+    () => APP_IDS.find((app) => visibleApps[app]) ?? "claude",
+    [visibleApps],
+  );
+
+  const setActiveAppLocally = useCallback((app: AppId) => {
+    setActiveApp(app);
+    try {
+      localStorage.setItem(STORAGE_KEY, app);
+    } catch (error) {
+      console.warn("Failed to persist active app in localStorage", error);
+    }
+  }, []);
+
+  const userSelectedApp = useRef(false);
+  const handleAppSwitch = useCallback(
+    (app: AppId) => {
+      userSelectedApp.current = true;
+      setActiveAppLocally(app);
+      queryClient.setQueryData<AppSettings>(["settings"], (current) =>
+        current ? { ...current, lastActiveApp: app } : current,
+      );
+      persistLastActiveApp(app);
+    },
+    [queryClient, setActiveAppLocally],
+  );
+
+  const restoredPersistedApp = useRef(false);
+  useEffect(() => {
+    if (!settingsData || restoredPersistedApp.current) return;
+    restoredPersistedApp.current = true;
+
+    if (userSelectedApp.current) {
+      queryClient.setQueryData<AppSettings>(["settings"], (current) =>
+        current ? { ...current, lastActiveApp: activeApp } : current,
+      );
+      setHasRestoredActiveApp(true);
+      return;
+    }
+
+    const persistedApp = settingsData.lastActiveApp ?? getStoredApp();
+    const resolvedApp =
+      persistedApp && visibleApps[persistedApp]
+        ? persistedApp
+        : firstVisibleApp;
+    setActiveAppLocally(resolvedApp);
+    if (persistedApp && settingsData.lastActiveApp !== resolvedApp) {
+      persistLastActiveApp(resolvedApp);
+    }
+    setHasRestoredActiveApp(true);
+  }, [
+    activeApp,
+    firstVisibleApp,
+    queryClient,
+    setActiveAppLocally,
+    settingsData,
+    visibleApps,
+  ]);
 
   useEffect(() => {
+    if (!hasRestoredActiveApp) return;
     if (!visibleApps[activeApp]) {
-      setActiveApp(getFirstVisibleApp());
+      handleAppSwitch(firstVisibleApp);
     }
-  }, [visibleApps, activeApp]);
+  }, [
+    visibleApps,
+    activeApp,
+    firstVisibleApp,
+    handleAppSwitch,
+    hasRestoredActiveApp,
+  ]);
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
@@ -1404,7 +1479,7 @@ function App() {
               {currentView === "providers" && (
                 <AppSwitcher
                   activeApp={activeApp}
-                  onSwitch={setActiveApp}
+                  onSwitch={handleAppSwitch}
                   visibleApps={visibleApps}
                 />
               )}
