@@ -1,4 +1,9 @@
 import { getVersion } from "@tauri-apps/api/app";
+import appConfig from "../../src-tauri/tauri.conf.json";
+
+// Custom builds without an update feed must never check or install upstream releases.
+export const APP_UPDATES_ENABLED =
+  appConfig.plugins.updater.endpoints.length > 0;
 
 export type UpdateChannel = "stable" | "beta";
 
@@ -25,8 +30,12 @@ export async function getCurrentVersion(): Promise<string> {
 export async function checkForUpdate(
   opts: CheckOptions = {},
 ): Promise<
-  { status: "up-to-date" } | { status: "available"; info: UpdateInfo }
+  | { status: "disabled" }
+  | { status: "up-to-date" }
+  | { status: "available"; info: UpdateInfo }
 > {
+  if (!APP_UPDATES_ENABLED) return { status: "disabled" };
+
   // 动态引入，避免在未安装插件时导致打包期问题
   const { check } = await import("@tauri-apps/plugin-updater");
 

@@ -32,6 +32,7 @@ import type {
   ToolInstallationReport,
 } from "@/lib/api/settings";
 import { useUpdate } from "@/contexts/UpdateContext";
+import { APP_UPDATES_ENABLED } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
@@ -462,6 +463,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, [t, updateInfo?.availableVersion, version]);
 
   const handleCheckUpdate = useCallback(async () => {
+    if (!APP_UPDATES_ENABLED) return;
     if (hasUpdate) {
       if (isPortable) {
         try {
@@ -937,10 +939,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               type="button"
               size="sm"
               onClick={handleCheckUpdate}
-              disabled={isChecking || isDownloading}
+              disabled={!APP_UPDATES_ENABLED || isChecking || isDownloading}
               className="h-8 gap-1.5 text-xs"
             >
-              {isDownloading ? (
+              {!APP_UPDATES_ENABLED ? (
+                t("settings.appUpdatesDisabled")
+              ) : isDownloading ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   {t("settings.updating")}

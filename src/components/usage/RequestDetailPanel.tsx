@@ -1,3 +1,4 @@
+import { UsageMetadataDisplay } from "./UsageMetadataDisplay";
 import { useTranslation } from "react-i18next";
 import {
   Dialog,
@@ -150,6 +151,14 @@ export function RequestDetailPanel({
                   </span>
                 </dd>
               </div>
+              <div className="col-span-2">
+                <dt className="text-muted-foreground">
+                  {t("usage.serviceTier")} / {t("usage.reasoningEffort")}
+                </dt>
+                <dd>
+                  <UsageMetadataDisplay request={request} showSource />
+                </dd>
+              </div>
             </dl>
           </div>
 
@@ -293,6 +302,11 @@ export function RequestDetailPanel({
             </dl>
           </div>
 
+          {request.fastPricingUnavailable && (
+            <p className="text-sm text-amber-600">
+              {t("usage.fastPricingUnavailable")}
+            </p>
+          )}
           {/* 性能信息 */}
           <div className="rounded-lg border p-4">
             <h3 className="mb-3 font-semibold">

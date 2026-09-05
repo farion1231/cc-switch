@@ -31,6 +31,13 @@ export function fmtUsd(
   return `$${num.toFixed(digits)}`;
 }
 
+export function fmtUsdPerMillion(cost: unknown, tokens: unknown): string {
+  const amount = parseFiniteNumber(cost);
+  const count = parseFiniteNumber(tokens);
+  if (amount == null || amount < 0 || count == null || count <= 0) return "--";
+  return fmtUsd((amount / count) * 1_000_000, 4);
+}
+
 function normalizeLanguageTag(language: string): string {
   return language.toLowerCase().replace(/_/g, "-");
 }

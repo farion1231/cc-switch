@@ -8,6 +8,10 @@ export interface TokenUsage {
 }
 
 export interface RequestLog {
+  fastPricingUnavailable?: boolean;
+  serviceTier?: string | null;
+  serviceTierSource?: string | null;
+  reasoningEffort?: string | null;
   requestId: string;
   providerId: string;
   providerName?: string;
@@ -130,6 +134,8 @@ export interface ModelStats {
 }
 
 export interface LogFilters {
+  serviceTier?: string;
+  reasoningEffort?: string;
   appType?: string;
   providerName?: string;
   model?: string;

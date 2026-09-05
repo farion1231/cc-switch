@@ -30,6 +30,7 @@ import type {
 } from "@/types";
 import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import { BasicFormFields } from "./BasicFormFields";
+import { CodexAuthSection } from "./CodexConfigSections";
 import { CodexFormFields } from "./CodexFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import {
@@ -54,6 +55,18 @@ import { resolveProviderIcon } from "@/utils/providerIcon";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
+
+function stringifyGrokAuth(auth: unknown): string {
+  try {
+    return JSON.stringify(
+      auth && typeof auth === "object" ? auth : {},
+      null,
+      2,
+    );
+  } catch {
+    return "{}";
+  }
+}
 
 // 预设列表见 grokBuildProviderPresets.ts：独立维护（与 Codex 预设无联动），
 // 不含官方 / OAuth / 国产官方直连 / 纯开源托管站，默认模型为 Grok 系。
@@ -110,6 +123,10 @@ export function GrokBuildProviderForm({
   const [rawConfig, setRawConfig] = useState(
     initialConfigText ?? buildGrokBuildConfig(initialConfig),
   );
+  const [authJson, setAuthJson] = useState(() =>
+    stringifyGrokAuth(initialData?.settingsConfig?.auth),
+  );
+  const [authJsonError, setAuthJsonError] = useState<string>();
   const [apiFormat, setApiFormat] = useState<CodexApiFormat>(
     (initialData?.meta?.apiFormat as CodexApiFormat | undefined) ??
       "openai_responses",
@@ -234,7 +251,8 @@ export function GrokBuildProviderForm({
     }
 
     if (presetId === GROKBUILD_OFFICIAL_PROVIDER_ID) {
-      // 官方登录：无 API Key / 地址 / 模型表可填，提交走 ensure seed 流程
+      // 官方登录：无 API Key / 地址 / 模型表可填。空 auth 表示尚未登录，
+      // 切到这张卡片后 grok login，再切走时会把 ~/.grok/auth.json 回填进来。
       form.setValue("name", grokBuildOfficialPreset.name);
       form.setValue("websiteUrl", grokBuildOfficialPreset.websiteUrl);
       form.setValue("icon", grokBuildOfficialPreset.icon ?? "");
@@ -244,6 +262,8 @@ export function GrokBuildProviderForm({
       setPartnerPromotionKey(undefined);
       setPresetEndpoints([]);
       setRawConfig("");
+      setAuthJson(stringifyGrokAuth(grokBuildOfficialPreset.auth));
+      setAuthJsonError(undefined);
       return;
     }
 
@@ -303,15 +323,43 @@ export function GrokBuildProviderForm({
   const handleSubmit = async (values: ProviderFormData) => {
     const name = values.name.trim();
 
-    // 官方条目：config 快照原样透传（新增时为空），不做自定义模型字段校验，
-    // 也不重建 config —— 新增走 ensure seed，编辑只允许改名称/图标等元信息。
+    // 官方条目：config 快照原样透传（新增时为空），不做自定义模型字段校验。
+    // auth.json 按 Codex 同样方式跟卡片走，用于多账号切换。
     if (category === "official") {
+      let parsedAuth: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(authJson.trim() || "{}");
+        if (
+          parsed === null ||
+          typeof parsed !== "object" ||
+          Array.isArray(parsed)
+        ) {
+          toast.error(
+            t("grokBuild.authJsonRequired", {
+              defaultValue: "auth.json 必须是 JSON 对象",
+            }),
+          );
+          return;
+        }
+        parsedAuth = parsed as Record<string, unknown>;
+      } catch {
+        toast.error(
+          t("grokBuild.authJsonError", {
+            defaultValue: "auth.json 格式错误，请检查 JSON 语法",
+          }),
+        );
+        return;
+      }
+
       await onSubmit({
         ...values,
         name,
         websiteUrl: values.websiteUrl?.trim() ?? "",
         notes: values.notes?.trim() ?? "",
-        settingsConfig: JSON.stringify({ config: rawConfig }),
+        settingsConfig: JSON.stringify({
+          auth: parsedAuth,
+          config: rawConfig,
+        }),
         presetId: selectedPresetId ?? undefined,
         presetCategory: "official",
         isPartner: false,
@@ -438,6 +486,44 @@ export function GrokBuildProviderForm({
         )}
 
         <BasicFormFields form={form} />
+
+        {category === "official" && (
+          <CodexAuthSection
+            htmlFor="grokbuildAuth"
+            value={authJson}
+            onChange={(value) => {
+              setAuthJson(value);
+              try {
+                const parsed: unknown = JSON.parse(value.trim() || "{}");
+                if (
+                  parsed === null ||
+                  typeof parsed !== "object" ||
+                  Array.isArray(parsed)
+                ) {
+                  setAuthJsonError(
+                    t("grokBuild.authJsonRequired", {
+                      defaultValue: "auth.json 必须是 JSON 对象",
+                    }),
+                  );
+                  return;
+                }
+                setAuthJsonError(undefined);
+              } catch {
+                setAuthJsonError(
+                  t("grokBuild.authJsonError", {
+                    defaultValue: "auth.json 格式错误，请检查 JSON 语法",
+                  }),
+                );
+              }
+            }}
+            error={authJsonError}
+            label={t("grokBuild.authJson", {
+              defaultValue: "auth.json (JSON)",
+            })}
+            showHint={false}
+            placeholder={t("grokBuild.authJsonPlaceholder")}
+          />
+        )}
 
         {category !== "official" && (
           <>

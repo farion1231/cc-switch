@@ -4,11 +4,23 @@ use crate::error::AppError;
 use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
 use crate::services::usage_stats::*;
 use crate::store::AppState;
+use std::sync::Arc;
 use tauri::State;
+
+// Synchronous Tauri commands run on the window thread. Both SQLite execution
+// and waiting for the shared connection must stay on the blocking pool.
+async fn run_usage_query<T: Send + 'static>(
+    db: Arc<crate::database::Database>,
+    query: impl FnOnce(&crate::database::Database) -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError> {
+    tauri::async_runtime::spawn_blocking(move || query(&db))
+        .await
+        .map_err(|error| AppError::Message(format!("用量查询任务失败: {error}")))?
+}
 
 /// 获取使用量汇总
 #[tauri::command]
-pub fn get_usage_summary(
+pub async fn get_usage_summary(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -16,35 +28,41 @@ pub fn get_usage_summary(
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<UsageSummary, AppError> {
-    state.db.get_usage_summary(
-        start_date,
-        end_date,
-        app_type.as_deref(),
-        provider_name.as_deref(),
-        model.as_deref(),
-    )
+    run_usage_query(state.db.clone(), move |db| {
+        db.get_usage_summary(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取按 app_type 拆分的使用量汇总
 #[tauri::command]
-pub fn get_usage_summary_by_app(
+pub async fn get_usage_summary_by_app(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<UsageSummaryByApp>, AppError> {
-    state.db.get_usage_summary_by_app(
-        start_date,
-        end_date,
-        provider_name.as_deref(),
-        model.as_deref(),
-    )
+    run_usage_query(state.db.clone(), move |db| {
+        db.get_usage_summary_by_app(
+            start_date,
+            end_date,
+            provider_name.as_deref(),
+            model.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取每日趋势
 #[tauri::command]
-pub fn get_usage_trends(
+pub async fn get_usage_trends(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -52,18 +70,21 @@ pub fn get_usage_trends(
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<DailyStats>, AppError> {
-    state.db.get_daily_trends(
-        start_date,
-        end_date,
-        app_type.as_deref(),
-        provider_name.as_deref(),
-        model.as_deref(),
-    )
+    run_usage_query(state.db.clone(), move |db| {
+        db.get_daily_trends(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取 Provider 统计
 #[tauri::command]
-pub fn get_provider_stats(
+pub async fn get_provider_stats(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -71,18 +92,21 @@ pub fn get_provider_stats(
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<ProviderStats>, AppError> {
-    state.db.get_provider_stats(
-        start_date,
-        end_date,
-        app_type.as_deref(),
-        provider_name.as_deref(),
-        model.as_deref(),
-    )
+    run_usage_query(state.db.clone(), move |db| {
+        db.get_provider_stats(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取模型统计
 #[tauri::command]
-pub fn get_model_stats(
+pub async fn get_model_stats(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -90,33 +114,42 @@ pub fn get_model_stats(
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<ModelStats>, AppError> {
-    state.db.get_model_stats(
-        start_date,
-        end_date,
-        app_type.as_deref(),
-        provider_name.as_deref(),
-        model.as_deref(),
-    )
+    run_usage_query(state.db.clone(), move |db| {
+        db.get_model_stats(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取请求日志列表
 #[tauri::command]
-pub fn get_request_logs(
+pub async fn get_request_logs(
     state: State<'_, AppState>,
     filters: LogFilters,
     page: u32,
     page_size: u32,
 ) -> Result<PaginatedLogs, AppError> {
-    state.db.get_request_logs(&filters, page, page_size)
+    run_usage_query(state.db.clone(), move |db| {
+        db.get_request_logs(&filters, page, page_size)
+    })
+    .await
 }
 
 /// 获取单个请求详情
 #[tauri::command]
-pub fn get_request_detail(
+pub async fn get_request_detail(
     state: State<'_, AppState>,
     request_id: String,
 ) -> Result<Option<RequestLogDetail>, AppError> {
-    state.db.get_request_detail(&request_id)
+    run_usage_query(state.db.clone(), move |db| {
+        db.get_request_detail(&request_id)
+    })
+    .await
 }
 
 /// 获取模型定价列表
@@ -293,15 +326,36 @@ pub async fn rebuild_codex_usage(
 
 /// 获取数据来源分布
 #[tauri::command]
-pub fn get_usage_data_sources(
+pub async fn get_usage_data_sources(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
-    crate::services::session_usage::get_data_source_breakdown(&state.db)
+    run_usage_query(
+        state.db.clone(),
+        crate::services::session_usage::get_data_source_breakdown,
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn usage_queries_leave_caller_thread_and_preserve_results() {
+        let db = Arc::new(crate::database::Database::memory().unwrap());
+        let caller = std::thread::current().id();
+        let result = run_usage_query(db.clone(), move |db| {
+            assert_ne!(std::thread::current().id(), caller);
+            db.get_request_logs(&LogFilters::default(), 0, 10)
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.total, 0);
+        let error = run_usage_query::<()>(db, |_| Err(AppError::Message("query failed".into())))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("query failed"));
+    }
 
     #[test]
     fn codex_rebuild_notifies_when_reimport_is_empty() {

@@ -3,6 +3,25 @@
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
+/// An empty update feed disables application updates for custom builds.
+pub(crate) fn app_updates_enabled(app: &AppHandle) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|config| config.get("endpoints"))
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|endpoints| !endpoints.is_empty())
+}
+
+pub(crate) fn ensure_app_updates_enabled(app: &AppHandle) -> Result<(), String> {
+    if app_updates_enabled(app) {
+        Ok(())
+    } else {
+        Err("Application updates are disabled in this build. Install a compatible custom build manually.".into())
+    }
+}
+
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
 #[derive(Clone, serde::Serialize)]
 struct UpdateDownloadProgress {
@@ -196,6 +215,7 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
+    ensure_app_updates_enabled(&app)?;
     let updater = app
         .updater_builder()
         .build()
@@ -273,6 +293,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 /// 升级无法解决，而不是让其反复尝试。
 #[tauri::command]
 pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>, String> {
+    ensure_app_updates_enabled(&app)?;
     let updater = app
         .updater_builder()
         .build()

@@ -221,6 +221,40 @@ html[data-window-active="false"] .status-heartbeat {
   display: none;
 }
 
+/* Opt-in scrollbars for usage content and bounded configuration editors. */
+.visible-scrollbars,
+.visible-scrollbars * {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.5) transparent;
+}
+
+.visible-scrollbars::-webkit-scrollbar,
+.visible-scrollbars ::-webkit-scrollbar {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+
+.visible-scrollbars::-webkit-scrollbar-thumb,
+.visible-scrollbars ::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.5);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.visible-scrollbars::-webkit-scrollbar-thumb:hover,
+.visible-scrollbars ::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.75);
+}
+
+@media (forced-colors: active) {
+  .visible-scrollbars,
+  .visible-scrollbars * {
+    scrollbar-color: auto;
+  }
+}
+
 *:focus-visible {
   @apply outline-2 outline-blue-500 outline-offset-2;
 }
@@ -294,5 +328,137 @@ input[type="password"]::-ms-clear {
   .usage-range-calendar {
     min-width: 0;
     flex: 1 1 0%;
+  }
+}
+
+/* Keep CodeMirror search controls consistent with configuration forms. */
+.visible-scrollbars .cm-editor .cm-panel.cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 44px 12px 12px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.visible-scrollbars .cm-editor .cm-search > br {
+  flex-basis: 100%;
+  height: 0;
+}
+
+.visible-scrollbars .cm-editor .cm-search input,
+.visible-scrollbars .cm-editor .cm-search button,
+.visible-scrollbars .cm-editor .cm-search label {
+  margin: 0;
+}
+
+.visible-scrollbars .cm-editor .cm-search .cm-textfield {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  padding: 6px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font: inherit;
+  box-shadow: none;
+}
+
+.visible-scrollbars .cm-editor .cm-search .cm-textfield::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.visible-scrollbars .cm-editor .cm-search .cm-button {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  font: inherit;
+  cursor: pointer;
+}
+
+.visible-scrollbars .cm-editor .cm-search .cm-button:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.visible-scrollbars .cm-editor .cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.visible-scrollbars .cm-editor .cm-search input[type="checkbox"] {
+  margin: 0;
+  accent-color: hsl(var(--primary));
+}
+
+.visible-scrollbars .cm-editor .cm-search button[name="close"] {
+  top: 12px;
+  right: 8px;
+  width: 28px;
+  height: 32px;
+  border-radius: 6px;
+  color: hsl(var(--muted-foreground));
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.visible-scrollbars .cm-editor .cm-search button[name="close"]:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.visible-scrollbars .cm-editor .cm-search :is(input, button):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Preserve a clear search destination while focus stays in the search panel. */
+.visible-scrollbars .cm-editor .cm-searchMatch {
+  background: hsl(45 95% 50% / 0.22);
+  outline: 1px solid hsl(38 90% 45% / 0.55);
+  outline-offset: -1px;
+  border-radius: 2px;
+}
+
+.visible-scrollbars .cm-editor .cm-searchMatch.cm-searchMatch-selected {
+  background: hsl(43 96% 56%);
+  color: hsl(24 30% 10%);
+  outline: 2px solid hsl(24 95% 45%);
+  outline-offset: 1px;
+  font-weight: 700;
+}
+
+.visible-scrollbars .cm-editor .cm-line:has(.cm-searchMatch-selected) {
+  background: hsl(43 96% 56% / 0.14);
+  box-shadow: inset 3px 0 hsl(24 95% 45%);
+}
+
+.dark .visible-scrollbars .cm-editor .cm-line:has(.cm-searchMatch-selected) {
+  background: hsl(43 96% 56% / 0.2);
+}
+
+@media (forced-colors: active) {
+  .visible-scrollbars .cm-editor .cm-searchMatch {
+    outline-color: CanvasText;
+  }
+
+  .visible-scrollbars .cm-editor .cm-searchMatch.cm-searchMatch-selected {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    outline-color: Highlight;
   }
 }

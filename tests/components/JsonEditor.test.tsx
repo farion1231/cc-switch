@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { describe, expect, it, vi } from "vitest";
 
@@ -89,5 +89,63 @@ describe("JsonEditor", () => {
     rerender(<JsonEditor value={normalized} onChange={vi.fn()} />);
 
     expect(view?.state.selection.main.head).toBe(normalized.indexOf('"b"') + 1);
+  });
+  it("opens search by keyboard and replaces a match without submitting the form", () => {
+    const onChange = vi.fn();
+    const onSubmit = vi.fn((event) => event.preventDefault());
+    const { container } = render(
+      <form onSubmit={onSubmit}>
+        <JsonEditor
+          value="alpha beta alpha"
+          onChange={onChange}
+          language="javascript"
+        />
+      </form>,
+    );
+    const content = container.querySelector(".cm-content") as HTMLElement;
+    fireEvent.keyDown(content, {
+      key: "f",
+      code: "KeyF",
+      keyCode: 70,
+      ctrlKey: true,
+    });
+    const panel = container.querySelector(".cm-search")!;
+    expect(panel).not.toBeNull();
+    const search = panel.querySelector('input[name="search"]')!;
+    const replacement = panel.querySelector('input[name="replace"]')!;
+    fireEvent.change(search, { target: { value: "alpha" } });
+    const view = EditorView.findFromDOM(content)!;
+    fireEvent.click(panel.querySelector('button[name="next"]')!);
+    expect(view.state.selection.main.from).toBe(0);
+    expect(view.state.selection.main.to).toBe(5);
+    fireEvent.click(panel.querySelector('button[name="next"]')!);
+    expect(view.state.selection.main.from).toBe(11);
+    expect(view.state.selection.main.to).toBe(16);
+    fireEvent.click(panel.querySelector('button[name="prev"]')!);
+    expect(view.state.selection.main.from).toBe(0);
+    expect(view.state.selection.main.to).toBe(5);
+    fireEvent.change(replacement, { target: { value: "gamma" } });
+    fireEvent.click(panel.querySelector('button[name="replaceAll"]')!);
+    expect(onChange).toHaveBeenLastCalledWith("gamma beta gamma");
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.click(panel.querySelector('button[name="close"]')!);
+    expect(container.querySelector(".cm-search")).toBeNull();
+  });
+
+  it("keeps replacement controls out of read-only search panels", () => {
+    const { container } = render(
+      <JsonEditor value="alpha" onChange={vi.fn()} readOnly />,
+    );
+    fireEvent.keyDown(container.querySelector(".cm-content")!, {
+      key: "f",
+      code: "KeyF",
+      keyCode: 70,
+      ctrlKey: true,
+    });
+    const panel = container.querySelector(".cm-search")!;
+    expect(panel).not.toBeNull();
+    expect(panel.querySelector('input[name="search"]')).not.toBeNull();
+    expect(panel.querySelector('input[name="replace"]')).toBeNull();
+    expect(panel.querySelector('button[name="replaceAll"]')).toBeNull();
   });
 });

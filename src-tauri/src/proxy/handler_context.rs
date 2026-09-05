@@ -33,6 +33,7 @@ pub struct StreamingTimeoutConfig {
 /// - 日志标签
 /// - Session ID（用于日志关联）
 pub struct RequestContext {
+    pub usage_metadata: super::usage::metadata::UsageMetadata,
     /// 请求开始时间
     pub start_time: Instant,
     /// 应用级代理配置（per-app，包含重试次数和超时配置）
@@ -158,6 +159,7 @@ impl RequestContext {
         );
 
         Ok(Self {
+            usage_metadata: super::usage::metadata::UsageMetadata::from_request(body),
             start_time,
             app_config,
             provider,

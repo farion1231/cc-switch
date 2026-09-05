@@ -1,6 +1,7 @@
 //! Usage Logger - 记录 API 请求使用情况
 
 use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
+use super::metadata::UsageMetadata;
 use super::parser::TokenUsage;
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
@@ -90,19 +91,55 @@ pub struct RequestLog {
 /// 使用量记录器
 pub struct UsageLogger<'a> {
     db: &'a Database,
+    metadata: UsageMetadata,
 }
 
 impl<'a> UsageLogger<'a> {
     pub fn new(db: &'a Database) -> Self {
-        Self { db }
+        Self {
+            db,
+            metadata: UsageMetadata::default(),
+        }
+    }
+
+    pub fn with_metadata(mut self, metadata: UsageMetadata) -> Self {
+        self.metadata = metadata;
+        self
     }
 
     /// 记录成功的请求
     pub fn log_request(&self, log: &RequestLog) -> Result<(), AppError> {
         let conn = crate::database::lock_conn!(self.db.conn);
 
+        let mut priced_cost = log.cost.clone();
+        let context_tokens = if crate::services::sql_helpers::is_cache_inclusive_app(&log.app_type)
+        {
+            u64::from(log.usage.input_tokens)
+        } else {
+            u64::from(log.usage.input_tokens)
+                + u64::from(log.usage.cache_read_tokens)
+                + u64::from(log.usage.cache_creation_tokens)
+        };
+        if let (Some(cost), Some(factors)) = (
+            priced_cost.as_mut(),
+            super::fast_pricing::factors(
+                if log.pricing_model.is_empty() {
+                    &log.model
+                } else {
+                    &log.pricing_model
+                },
+                self.metadata.service_tier.as_deref(),
+                context_tokens,
+            ),
+        ) {
+            super::fast_pricing::apply(
+                cost,
+                factors,
+                Decimal::from_str(&log.cost_multiplier).unwrap_or(Decimal::ONE),
+            );
+        }
         let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
-            if let Some(cost) = &log.cost {
+            if let Some(cost) = &priced_cost {
                 (
                     cost.input_cost.to_string(),
                     cost.output_cost.to_string(),
@@ -173,8 +210,8 @@ impl<'a> UsageLogger<'a> {
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
-                provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+                provider_type, is_streaming, cost_multiplier, created_at, service_tier, service_tier_source, reasoning_effort, service_tier_pricing_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, 2)"
         );
         let affected_rows = conn
             .execute(
@@ -205,6 +242,9 @@ impl<'a> UsageLogger<'a> {
                     log.is_streaming as i64,
                     log.cost_multiplier,
                     created_at,
+                    self.metadata.service_tier,
+                    self.metadata.service_tier_source,
+                    self.metadata.reasoning_effort,
                 ],
             )
             .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
@@ -504,6 +544,28 @@ impl<'a> UsageLogger<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_is_stored_with_usage_and_survives_duplicate_logging() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let metadata = UsageMetadata::from_request(&serde_json::json!({
+            "service_tier": "fast", "reasoning": {"effort": "ultra"}
+        }))
+        .with_response(&serde_json::json!({"service_tier": "default"}));
+        UsageLogger::new(&db)
+            .with_metadata(metadata)
+            .log_request(&request_log("metadata", 10))?;
+        UsageLogger::new(&db).log_request(&request_log("metadata", 10))?;
+        let conn = crate::database::lock_conn!(db.conn);
+        let row: (String, String, String, i64) = conn.query_row(
+            "SELECT service_tier, service_tier_source, reasoning_effort, input_tokens FROM proxy_request_logs WHERE request_id='metadata'", [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        assert_eq!(
+            row,
+            ("default".into(), "response".into(), "ultra".into(), 10)
+        );
+        Ok(())
+    }
 
     fn request_log(request_id: &str, input_tokens: u32) -> RequestLog {
         RequestLog {

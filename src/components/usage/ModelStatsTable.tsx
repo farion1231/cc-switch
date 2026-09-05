@@ -8,7 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useModelStats } from "@/lib/query/usage";
-import { fmtUsd } from "./format";
+import { fmtUsd, fmtUsdPerMillion } from "./format";
 import type { UsageRangeSelection } from "@/types/usage";
 
 interface ModelStatsTableProps {
@@ -85,7 +85,16 @@ export function ModelStatsTable({
                   {fmtUsd(stat.totalCost, 4)}
                 </TableCell>
                 <TableCell className="text-right">
-                  {fmtUsd(stat.avgCostPerRequest, 6)}
+                  <div>{fmtUsd(stat.avgCostPerRequest, 6)}</div>
+                  <div
+                    className="mt-1 whitespace-nowrap text-xs text-muted-foreground"
+                    title={t(
+                      "usage.avgCostPerMillion",
+                      "每百万 Tokens 平均成本（含缓存）",
+                    )}
+                  >
+                    {fmtUsdPerMillion(stat.totalCost, stat.totalTokens)} /M
+                  </div>
                 </TableCell>
               </TableRow>
             ))

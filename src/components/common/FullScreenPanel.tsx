@@ -179,7 +179,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto scroll-overlay">
+          <div className="flex-1 min-h-0 overflow-y-auto scroll-overlay visible-scrollbars">
             <div className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}>
               {children}
             </div>

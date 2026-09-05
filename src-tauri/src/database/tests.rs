@@ -832,6 +832,100 @@ fn schema_model_pricing_is_seeded_on_init() {
 }
 
 #[test]
+fn model_pricing_refresh_converges_from_old_defaults_and_preserves_overrides() {
+    let db = Database::memory().expect("create memory db");
+    // Include pre-cache-write Terra/Luna defaults: their historical repairs used
+    // to leave an intermediate price until the following application startup.
+    let cases = [
+        (
+            "gpt-5.6-sol",
+            ["5", "30", "0.50", "0"],
+            ["4", "20", "0.40", "5"],
+        ),
+        (
+            "gpt-5.6-high",
+            ["5", "30", "0.50", "6.25"],
+            ["4", "20", "0.40", "5"],
+        ),
+        (
+            "gpt-5.6-terra",
+            ["2.50", "15", "0.25", "0"],
+            ["2", "12", "0.20", "2.50"],
+        ),
+        (
+            "gpt-5.6-luna",
+            ["1", "6", "0.10", "0"],
+            ["0.20", "1.20", "0.02", "0.25"],
+        ),
+        (
+            "gemini-3.6-flash",
+            ["1.50", "7.50", "0.15", "0"],
+            ["0.75", "3.75", "0.075", "0"],
+        ),
+        (
+            "minimax-m2.5",
+            ["0.15", "0.95", "0.03", "0"],
+            ["0.30", "1.20", "0.03", "0.375"],
+        ),
+        (
+            "qwen3.6-plus",
+            ["0.325", "1.95", "0.065", "0"],
+            ["0.50", "3", "0.05", "0.625"],
+        ),
+        (
+            "mistral-small-4",
+            ["0.10", "0.30", "0.01", "0"],
+            ["0.15", "0.60", "0.015", "0"],
+        ),
+    ];
+    {
+        let conn = db.conn.lock().unwrap();
+        for (model, old, _) in cases {
+            conn.execute(
+                "UPDATE model_pricing SET input_cost_per_million=?2, output_cost_per_million=?3,
+                 cache_read_cost_per_million=?4, cache_creation_cost_per_million=?5 WHERE model_id=?1",
+                rusqlite::params![model, old[0], old[1], old[2], old[3]],
+            ).unwrap();
+        }
+        // Changing just one field must protect the entire custom price row.
+        conn.execute(
+            "UPDATE model_pricing SET input_cost_per_million='5', output_cost_per_million='31',
+             cache_read_cost_per_million='0.50', cache_creation_cost_per_million='6.25'
+             WHERE model_id='gpt-5.6'",
+            [],
+        )
+        .unwrap();
+    }
+    for _ in 0..2 {
+        db.ensure_model_pricing_seeded().unwrap();
+        let conn = db.conn.lock().unwrap();
+        for (model, _, expected) in cases.into_iter().chain([
+            ("gpt-5.6", [""; 4], ["5", "31", "0.50", "6.25"]),
+            ("gpt-6-astra", [""; 4], ["10", "50", "1", "12.50"]),
+            ("gemini-3.8-flash", [""; 4], ["0.75", "3.75", "0.075", "0"]),
+            ("glm-5.3", [""; 4], ["1.4", "4.4", "0.26", "0"]),
+            (
+                "deepseek-v4-pro-0813",
+                [""; 4],
+                ["1.32", "3.96", "0.044", "0"],
+            ),
+            ("codex-mini-latest", [""; 4], ["1.50", "6", "0.375", "0"]),
+        ]) {
+            let actual: [String; 4] = conn
+                .query_row(
+                    "SELECT input_cost_per_million, output_cost_per_million,
+                 cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id=?1",
+                    [model],
+                    |r| Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?]),
+                )
+                .unwrap();
+            assert_eq!(actual, expected, "{model}");
+        }
+    }
+}
+
+#[test]
 fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
     let db = Database::memory().expect("create memory db");
 

@@ -516,6 +516,7 @@ mod tests {
             "proxy_request_logs",
             "provider_health",
             "session_log_sync",
+            "codex_otel_ingest",
             "model_pricing",
         ] {
             assert!(

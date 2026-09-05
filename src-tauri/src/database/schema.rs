@@ -197,6 +197,8 @@ impl Database {
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_request_logs (
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
+            service_tier TEXT, service_tier_source TEXT, reasoning_effort TEXT,
+            service_tier_pricing_version INTEGER NOT NULL DEFAULT 0,
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
@@ -230,6 +232,20 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Self::create_request_logs_usage_indexes_if_supported(conn)?;
+
+        // Sanitized pending OTLP usage plus replay markers. Never store raw
+        // telemetry, prompts, tool output, account details, or credentials.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_otel_ingest (
+            event_id TEXT PRIMARY KEY, event_json TEXT, created_at INTEGER NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_otel_ingest_created_at ON codex_otel_ingest(created_at)", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_otel_ingest_pending ON codex_otel_ingest(created_at) WHERE event_json IS NOT NULL", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 11. Model Pricing 表
         conn.execute(
@@ -310,6 +326,7 @@ impl Database {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
+                codex_metadata_version INTEGER NOT NULL DEFAULT 0,
                 last_tail_fingerprint INTEGER
             )",
             [],
@@ -549,6 +566,21 @@ impl Database {
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
                     }
+                    18 => {
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        if Self::table_exists(conn, "proxy_request_logs")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "proxy_request_logs",
+                                "service_tier_pricing_version",
+                                "INTEGER NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 20)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -719,6 +751,7 @@ impl Database {
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_request_logs (
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
+            service_tier TEXT, service_tier_source TEXT, reasoning_effort TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
@@ -1599,11 +1632,125 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            for column in ["service_tier", "service_tier_source", "reasoning_effort"] {
+                Self::add_column_if_missing(conn, "proxy_request_logs", column, "TEXT")?;
+            }
+        }
+        if Self::table_exists(conn, "session_log_sync")? {
+            Self::add_column_if_missing(
+                conn,
+                "session_log_sync",
+                "codex_metadata_version",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
+        // USD per 1M standard text tokens, checked 2026-09-05.
+        // Sources, context/region policy and promotion deadlines: docs/model-pricing.md.
         let pricing_data = [
+            // New models and exact snapshot IDs. GLM-5.3-Flash is promotional through
+            // 2026-09-09 24:00 UTC+8; this seed is a dated snapshot, not a live tariff.
+            ("gpt-6-astra", "GPT-6 Astra", "10", "50", "1", "12.50"),
+            ("gpt-5.5-pro", "GPT-5.5 Pro", "30", "180", "0", "0"),
+            ("codex-mini-latest", "Codex Mini", "1.50", "6", "0.375", "0"),
+            (
+                "gemini-3.8-flash",
+                "Gemini 3.8 Flash",
+                "0.75",
+                "3.75",
+                "0.075",
+                "0",
+            ),
+            (
+                "deepseek-v4-pro-0813",
+                "DeepSeek V4 Pro 0813",
+                "1.32",
+                "3.96",
+                "0.044",
+                "0",
+            ),
+            (
+                "deepseek-v4-flash-vision-exp",
+                "DeepSeek V4 Flash Vision Exp",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+            ),
+            (
+                "minimax-m2.1-highspeed",
+                "MiniMax M2.1 Highspeed",
+                "0.60",
+                "2.40",
+                "0.03",
+                "0.375",
+            ),
+            (
+                "minimax-m2.5-highspeed",
+                "MiniMax M2.5 Highspeed",
+                "0.60",
+                "2.40",
+                "0.03",
+                "0.375",
+            ),
+            (
+                "mimo-v2.5-pro-ultraspeed",
+                "MiMo V2.5 Pro Ultraspeed",
+                "1.305",
+                "2.61",
+                "0.0108",
+                "0",
+            ),
+            ("glm-5.3", "GLM-5.3", "1.4", "4.4", "0.26", "0"),
+            (
+                "glm-5.3-flash",
+                "GLM-5.3 Flash",
+                "0.075",
+                "0.25",
+                "0.015",
+                "0",
+            ),
+            (
+                "glm-4.7-flashx",
+                "GLM-4.7 FlashX",
+                "0.07",
+                "0.40",
+                "0.01",
+                "0",
+            ),
+            ("glm-4.7-flash", "GLM-4.7 Flash", "0", "0", "0", "0"),
+            (
+                "grok-4.20-multi-agent-0309",
+                "Grok 4.20 Multi Agent",
+                "1.25",
+                "2.50",
+                "0.20",
+                "0",
+            ),
+            (
+                "qwen3.8-max-0902",
+                "Qwen3.8 Max 0902",
+                "2",
+                "6",
+                "0.25",
+                "2.50",
+            ),
+            (
+                "qwen3.8-max-2026-09-02",
+                "Qwen3.8 Max 2026-09-02",
+                "2",
+                "6",
+                "0.25",
+                "2.50",
+            ),
             // Claude Fable 5.1 / Mythos 5.1（2026-09-01 发布；同 Fable 5 价，
             // 但缓存读为 0.025x = $0.25，非 Fable 5 的 $1）
             (
@@ -1771,8 +1918,8 @@ impl Database {
             ),
             // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）
             // 5.6 家族起 cache write 收 1.25× 输入价（此前 GPT 模型写缓存免费，勿回填旧系列）
-            ("gpt-5.6-sol", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
-            // 2026-07-30 OpenAI 降价：luna -80%、terra -20%，sol 不变（Fast mode 2× 价不入表）
+            ("gpt-5.6-sol", "GPT-5.6 Sol", "4", "20", "0.40", "5"),
+            // Terra / Luna 使用现行标准价；Sol 促销价至少持续到 2026-11-21（Fast mode 2× 价不入表）
             ("gpt-5.6-terra", "GPT-5.6 Terra", "2", "12", "0.20", "2.50"),
             (
                 "gpt-5.6-luna",
@@ -1783,12 +1930,12 @@ impl Database {
                 "0.25",
             ),
             // 裸名 gpt-5.6 是 sol 的官方别名；effort 后缀对齐 gpt-5.5 系列的记账形态
-            ("gpt-5.6", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
-            ("gpt-5.6-low", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
-            ("gpt-5.6-medium", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
-            ("gpt-5.6-high", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
-            ("gpt-5.6-xhigh", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
-            ("gpt-5.6-minimal", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6", "GPT-5.6 Sol", "4", "20", "0.40", "5"),
+            ("gpt-5.6-low", "GPT-5.6 Sol", "4", "20", "0.40", "5"),
+            ("gpt-5.6-medium", "GPT-5.6 Sol", "4", "20", "0.40", "5"),
+            ("gpt-5.6-high", "GPT-5.6 Sol", "4", "20", "0.40", "5"),
+            ("gpt-5.6-xhigh", "GPT-5.6 Sol", "4", "20", "0.40", "5"),
+            ("gpt-5.6-minimal", "GPT-5.6 Sol", "4", "20", "0.40", "5"),
             // GPT-5.5 系列
             ("gpt-5.5", "GPT-5.5", "5", "30", "0.50", "0"),
             ("gpt-5.5-low", "GPT-5.5", "5", "30", "0.50", "0"),
@@ -1890,10 +2037,10 @@ impl Database {
             ("gpt-5.1-codex", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
             (
                 "gpt-5.1-codex-mini",
-                "GPT-5.1 Codex",
-                "1.25",
-                "10",
-                "0.125",
+                "GPT-5.1 Codex Mini",
+                "0.25",
+                "2",
+                "0.025",
                 "0",
             ),
             (
@@ -1993,9 +2140,9 @@ impl Database {
             (
                 "gemini-3.6-flash",
                 "Gemini 3.6 Flash",
-                "1.50",
-                "7.50",
-                "0.15",
+                "0.75",
+                "3.75",
+                "0.075",
                 "0",
             ),
             // Gemini 3.5 系列
@@ -2303,7 +2450,14 @@ impl Database {
             ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             // MiniMax 系列
-            ("minimax-m2.1", "MiniMax M2.1", "0.27", "0.95", "0.03", "0"),
+            (
+                "minimax-m2.1",
+                "MiniMax M2.1",
+                "0.30",
+                "1.20",
+                "0.03",
+                "0.375",
+            ),
             (
                 "minimax-m2.1-lightning",
                 "MiniMax M2.1 Lightning",
@@ -2312,8 +2466,15 @@ impl Database {
                 "0.03",
                 "0",
             ),
-            ("minimax-m2", "MiniMax M2", "0.27", "0.95", "0.03", "0"),
-            ("minimax-m2.5", "MiniMax M2.5", "0.15", "0.95", "0.03", "0"),
+            ("minimax-m2", "MiniMax M2", "0.30", "1.20", "0.03", "0.375"),
+            (
+                "minimax-m2.5",
+                "MiniMax M2.5",
+                "0.30",
+                "1.20",
+                "0.03",
+                "0.375",
+            ),
             (
                 "minimax-m2.5-lightning",
                 "MiniMax M2.5 Lightning",
@@ -2357,7 +2518,7 @@ impl Database {
                 "0",
             ),
             ("mimo-v2-pro", "MiMo V2 Pro", "0.435", "0.87", "0.0036", "0"),
-            ("mimo-v2.5", "MiMo V2.5", "0.14", "0.29", "0.0028", "0"),
+            ("mimo-v2.5", "MiMo V2.5", "0.14", "0.28", "0.0028", "0"),
             (
                 "mimo-v2.5-pro",
                 "MiMo V2.5 Pro",
@@ -2368,26 +2529,40 @@ impl Database {
             ),
             // Qwen 系列 (阿里巴巴)
             ("qwen3.8-max", "Qwen3.8 Max", "2", "6", "0.25", "2.50"),
-            ("qwen3.7-max", "Qwen3.7 Max", "2.50", "7.50", "0.25", "0"),
-            ("qwen3.7-plus", "Qwen3.7 Plus", "0.40", "1.60", "0.08", "0"),
             (
-                "qwen3.6-plus",
-                "Qwen3.6 Plus",
-                "0.325",
-                "1.95",
-                "0.065",
-                "0",
+                "qwen3.7-max",
+                "Qwen3.7 Max",
+                "2.50",
+                "7.50",
+                "0.50",
+                "3.125",
             ),
+            (
+                "qwen3.7-plus",
+                "Qwen3.7 Plus",
+                "0.40",
+                "1.60",
+                "0.08",
+                "0.50",
+            ),
+            ("qwen3.6-plus", "Qwen3.6 Plus", "0.50", "3", "0.05", "0.625"),
             (
                 "qwen3.6-flash",
                 "Qwen3.6 Flash",
-                "0.1875",
-                "1.125",
-                "0.0375",
-                "0",
+                "0.25",
+                "1.50",
+                "0.025",
+                "0.3125",
             ),
-            ("qwen3.5-plus", "Qwen3.5 Plus", "0.26", "1.56", "0.052", "0"),
-            ("qwen3-max", "Qwen3 Max", "0.78", "3.90", "0", "0"),
+            (
+                "qwen3.5-plus",
+                "Qwen3.5 Plus",
+                "0.40",
+                "2.40",
+                "0.04",
+                "0.50",
+            ),
+            ("qwen3-max", "Qwen3 Max", "1.20", "6", "0", "0"),
             (
                 "qwen3-235b-a22b",
                 "Qwen3 235B-A22B",
@@ -2399,10 +2574,10 @@ impl Database {
             (
                 "qwen3-coder-plus",
                 "Qwen3 Coder Plus",
-                "0.65",
-                "3.25",
-                "0.13",
-                "0",
+                "1",
+                "5",
+                "0.20",
+                "1.25",
             ),
             (
                 "qwen3-coder-480b",
@@ -2423,16 +2598,16 @@ impl Database {
             (
                 "qwen3-coder-flash",
                 "Qwen3 Coder Flash",
-                "0.195",
-                "0.975",
-                "0.039",
-                "0",
+                "0.30",
+                "1.50",
+                "0.06",
+                "0.375",
             ),
             (
                 "qwen3-coder-next",
                 "Qwen3 Coder Next",
-                "0.12",
-                "0.75",
+                "0.30",
+                "1.50",
                 "0",
                 "0",
             ),
@@ -2499,15 +2674,15 @@ impl Database {
                 "Mistral Medium 3.5",
                 "1.50",
                 "7.50",
-                "0",
+                "0.15",
                 "0",
             ),
             (
                 "mistral-small-4",
                 "Mistral Small 4",
-                "0.10",
-                "0.30",
-                "0.01",
+                "0.15",
+                "0.60",
+                "0.015",
                 "0",
             ),
             (
@@ -2582,10 +2757,10 @@ impl Database {
             ("command-r", "Cohere Command R", "0.15", "0.60", "0", "0"),
             // OpenAI 补充
             ("o3-pro", "OpenAI o3-pro", "20", "80", "0", "0"),
-            ("o3-mini", "OpenAI o3-mini", "0.55", "2.20", "0.55", "0"),
+            ("o3-mini", "OpenAI o3-mini", "1.10", "4.40", "0.55", "0"),
             ("o1", "OpenAI o1", "15", "60", "7.50", "0"),
-            ("o1-mini", "OpenAI o1-mini", "0.55", "2.20", "0.55", "0"),
-            ("codex-mini", "Codex Mini", "0.75", "3", "0.025", "0"),
+            ("o1-mini", "OpenAI o1-mini", "1.10", "4.40", "0.55", "0"),
+            ("codex-mini", "Codex Mini", "1.50", "6", "0.375", "0"),
             ("gpt-5-mini", "GPT-5 Mini", "0.25", "2", "0.025", "0"),
             ("gpt-5-nano", "GPT-5 Nano", "0.05", "0.40", "0.005", "0"),
         ];
@@ -3028,7 +3203,7 @@ impl Database {
             // 理由见 seed_model_pricing 里 DeepSeek V4 段的注释）。涨幅很大：
             // flash 0.14/0.28/0.0028 → 0.44/1.32/0.014；pro 0.435/0.87/0.003625 → 1.32/3.96/0.044。
             //
-            // 🔴 这五条必须留在数组末尾：上面 2026-07-31 的 chat/reasoner 条目与
+            // 这五条必须排在其历史修复之后：上面 2026-07-31 的 chat/reasoner 条目与
             // 2026-07 的 v4-flash(cache_read 0.028→0.0028) / v4-pro(1.68/3.36→0.435/0.87)
             // 条目会先把各种历史形态收敛到同一个旧值，这里才能单守卫命中。
             // 若把本组挪到它们之前，老库会停在中间价位不再前进。
@@ -3091,6 +3266,356 @@ impl Database {
                 "0.87",
                 "0.003625",
                 "0",
+            ),
+            // 2026-09-05 refresh: apply after historical repairs so upgrades converge
+            // in one startup. Match all four old prices to preserve custom entries.
+            (
+                "gpt-5.1-codex-mini",
+                "GPT-5.1 Codex Mini",
+                "0.25",
+                "2",
+                "0.025",
+                "0",
+                "1.25",
+                "10",
+                "0.125",
+                "0",
+            ),
+            (
+                "o3-mini",
+                "OpenAI o3-mini",
+                "1.10",
+                "4.40",
+                "0.55",
+                "0",
+                "0.55",
+                "2.20",
+                "0.55",
+                "0",
+            ),
+            (
+                "o1-mini",
+                "OpenAI o1-mini",
+                "1.10",
+                "4.40",
+                "0.55",
+                "0",
+                "0.55",
+                "2.20",
+                "0.55",
+                "0",
+            ),
+            (
+                "codex-mini",
+                "Codex Mini",
+                "1.50",
+                "6",
+                "0.375",
+                "0",
+                "0.75",
+                "3",
+                "0.025",
+                "0",
+            ),
+            (
+                "gemini-3.6-flash",
+                "Gemini 3.6 Flash",
+                "0.75",
+                "3.75",
+                "0.075",
+                "0",
+                "1.50",
+                "7.50",
+                "0.15",
+                "0",
+            ),
+            (
+                "minimax-m2",
+                "MiniMax M2",
+                "0.30",
+                "1.20",
+                "0.03",
+                "0.375",
+                "0.27",
+                "0.95",
+                "0.03",
+                "0",
+            ),
+            (
+                "minimax-m2.1",
+                "MiniMax M2.1",
+                "0.30",
+                "1.20",
+                "0.03",
+                "0.375",
+                "0.27",
+                "0.95",
+                "0.03",
+                "0",
+            ),
+            (
+                "minimax-m2.5",
+                "MiniMax M2.5",
+                "0.30",
+                "1.20",
+                "0.03",
+                "0.375",
+                "0.15",
+                "0.95",
+                "0.03",
+                "0",
+            ),
+            (
+                "mimo-v2.5",
+                "MiMo V2.5",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+                "0.14",
+                "0.29",
+                "0.0028",
+                "0",
+            ),
+            (
+                "mistral-medium-3.5",
+                "Mistral Medium 3.5",
+                "1.50",
+                "7.50",
+                "0.15",
+                "0",
+                "1.50",
+                "7.50",
+                "0",
+                "0",
+            ),
+            (
+                "mistral-small-4",
+                "Mistral Small 4",
+                "0.15",
+                "0.60",
+                "0.015",
+                "0",
+                "0.10",
+                "0.30",
+                "0.01",
+                "0",
+            ),
+            (
+                "qwen3.7-max",
+                "Qwen3.7 Max",
+                "2.50",
+                "7.50",
+                "0.50",
+                "3.125",
+                "2.50",
+                "7.50",
+                "0.25",
+                "0",
+            ),
+            (
+                "qwen3.7-plus",
+                "Qwen3.7 Plus",
+                "0.40",
+                "1.60",
+                "0.08",
+                "0.50",
+                "0.40",
+                "1.60",
+                "0.08",
+                "0",
+            ),
+            (
+                "qwen3.6-plus",
+                "Qwen3.6 Plus",
+                "0.50",
+                "3",
+                "0.05",
+                "0.625",
+                "0.325",
+                "1.95",
+                "0.065",
+                "0",
+            ),
+            (
+                "qwen3.6-flash",
+                "Qwen3.6 Flash",
+                "0.25",
+                "1.50",
+                "0.025",
+                "0.3125",
+                "0.1875",
+                "1.125",
+                "0.0375",
+                "0",
+            ),
+            (
+                "qwen3.5-plus",
+                "Qwen3.5 Plus",
+                "0.40",
+                "2.40",
+                "0.04",
+                "0.50",
+                "0.26",
+                "1.56",
+                "0.052",
+                "0",
+            ),
+            (
+                "qwen3-coder-plus",
+                "Qwen3 Coder Plus",
+                "1",
+                "5",
+                "0.20",
+                "1.25",
+                "0.65",
+                "3.25",
+                "0.13",
+                "0",
+            ),
+            (
+                "qwen3-coder-flash",
+                "Qwen3 Coder Flash",
+                "0.30",
+                "1.50",
+                "0.06",
+                "0.375",
+                "0.195",
+                "0.975",
+                "0.039",
+                "0",
+            ),
+            (
+                "qwen3-coder-next",
+                "Qwen3 Coder Next",
+                "0.30",
+                "1.50",
+                "0",
+                "0",
+                "0.12",
+                "0.75",
+                "0",
+                "0",
+            ),
+            (
+                "qwen3-max",
+                "Qwen3 Max",
+                "1.20",
+                "6",
+                "0",
+                "0",
+                "0.78",
+                "3.90",
+                "0",
+                "0",
+            ),
+            (
+                "gpt-5.6-sol",
+                "GPT-5.6 Sol",
+                "4",
+                "20",
+                "0.40",
+                "5",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "gpt-5.6",
+                "GPT-5.6 Sol",
+                "4",
+                "20",
+                "0.40",
+                "5",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "gpt-5.6-low",
+                "GPT-5.6 Sol",
+                "4",
+                "20",
+                "0.40",
+                "5",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "gpt-5.6-medium",
+                "GPT-5.6 Sol",
+                "4",
+                "20",
+                "0.40",
+                "5",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "gpt-5.6-high",
+                "GPT-5.6 Sol",
+                "4",
+                "20",
+                "0.40",
+                "5",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "gpt-5.6-xhigh",
+                "GPT-5.6 Sol",
+                "4",
+                "20",
+                "0.40",
+                "5",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "gpt-5.6-minimal",
+                "GPT-5.6 Sol",
+                "4",
+                "20",
+                "0.40",
+                "5",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6 Terra",
+                "2",
+                "12",
+                "0.20",
+                "2.50",
+                "2.50",
+                "15",
+                "0.25",
+                "3.125",
+            ),
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "0.20",
+                "1.20",
+                "0.02",
+                "0.25",
+                "1",
+                "6",
+                "0.10",
+                "1.25",
             ),
         ];
 
@@ -3181,6 +3706,22 @@ impl Database {
                 [],
             )
             .map_err(|e| AppError::Database(format!("创建使用量应用时间索引失败: {e}")))?;
+        }
+
+        // Temporary-session queries probe for a persisted thread for every OTel
+        // row. Without this partial index SQLite can choose the fingerprint
+        // index's app_type prefix and scan all Codex history for each probe.
+        if has_app_type
+            && Self::has_column(conn, "proxy_request_logs", "data_source")?
+            && Self::has_column(conn, "proxy_request_logs", "session_id")?
+        {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_request_logs_codex_persisted_session
+                 ON proxy_request_logs(session_id)
+                 WHERE app_type = 'codex' AND data_source = 'codex_session'",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建 Codex 持久会话索引失败: {e}")))?;
         }
 
         let required_columns = [
@@ -3302,6 +3843,28 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_migration_preserves_rows_and_is_idempotent() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE proxy_request_logs (request_id TEXT PRIMARY KEY, input_tokens INTEGER, total_cost_usd TEXT);
+            INSERT INTO proxy_request_logs VALUES ('old', 123, '4.56');
+            CREATE TABLE session_log_sync (file_path TEXT PRIMARY KEY, last_line_offset INTEGER);
+            INSERT INTO session_log_sync VALUES ('rollout', 42);")?;
+        Database::migrate_v18_to_v19(&conn)?;
+        Database::migrate_v18_to_v19(&conn)?;
+        let row: (i64, String, Option<String>, Option<String>, Option<String>) = conn.query_row(
+            "SELECT input_tokens, total_cost_usd, service_tier, service_tier_source, reasoning_effort FROM proxy_request_logs", [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
+        assert_eq!(row, (123, "4.56".into(), None, None, None));
+        let cursor: (i64, i64) = conn.query_row(
+            "SELECT last_line_offset, codex_metadata_version FROM session_log_sync",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!(cursor, (42, 0));
+        Ok(())
+    }
 
     #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {

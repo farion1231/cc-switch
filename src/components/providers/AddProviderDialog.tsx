@@ -21,7 +21,6 @@ import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
-import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { ManagedAuthProvider } from "@/lib/api";
@@ -185,11 +184,9 @@ export function AddProviderDialog({
           preset?.category === "official";
       }
 
-      if (appId === "grokbuild" && values.presetId) {
-        providerData.ensureGrokBuildOfficialSeed =
-          values.presetCategory === "official" &&
-          values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID;
-      }
+      // Grok Official is added as a new card (like Codex OpenAI Official) so
+      // each account can keep its own ~/.grok/auth.json snapshot. The
+      // grokbuild-official seed is created at startup and is not reused here.
 
       // Apps whose native catalog has a stable provider key use it as the
       // managed provider identity.

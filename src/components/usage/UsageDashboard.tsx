@@ -185,7 +185,7 @@ export function UsageDashboard({
   };
 
   // 手动触发一次会话日志同步：手动模式下是唯一的直连用量补录途径，
-  // 入口按钮仅在关闭自动扫描时展示（自动模式有后台定时扫描，无需手动触发）
+  // 关闭自动扫描或顶部刷新间隔时，保留手动同步入口。
   const runManualSessionSync = async () => {
     setSyncingSession(true);
     try {
@@ -495,7 +495,7 @@ export function UsageDashboard({
             </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {!sessionAutoSyncEnabled && (
+            {(!sessionAutoSyncEnabled || refreshIntervalMs === 0) && (
               <Button
                 variant="outline"
                 size="sm"

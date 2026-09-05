@@ -24,6 +24,20 @@ import {
   type LogFilters,
   type UsageRangeSelection,
 } from "@/types/usage";
+import {
+  UsageMetadataDisplay,
+  serviceTiers,
+  reasoningEfforts,
+  serviceTierLabel,
+} from "./UsageMetadataDisplay";
+import { RequestCostBreakdown } from "./RequestCostBreakdown";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
+import { Portal } from "@radix-ui/react-tooltip";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
@@ -55,8 +69,10 @@ export function RequestLogTable({
   const { t, i18n } = useTranslation();
 
   // 应用/Provider/模型筛选已上移到 Dashboard 顶栏（全局生效）；
-  // 这里只保留日志特有的状态码筛选。
+  // 状态码、模式和 effort 仅筛选请求日志。
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
+  const [serviceTier, setServiceTier] = useState<string | undefined>();
+  const [reasoningEffort, setReasoningEffort] = useState<string | undefined>();
   const [page, setPage] = useState(0);
   const [pageInput, setPageInput] = useState("");
   const pageSize = 20;
@@ -69,6 +85,8 @@ export function RequestLogTable({
     providerName,
     model,
     statusCode,
+    serviceTier,
+    reasoningEffort,
   };
 
   const { data: result, isLoading } = useRequestLogs({
@@ -109,296 +127,363 @@ export function RequestLogTable({
   const locale = getLocaleFromLanguage(language);
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-lg border bg-card/50 p-2 backdrop-blur-sm">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/* Status code */}
-          <Select
-            value={statusCode?.toString() || "all"}
-            onValueChange={(v) => {
-              const parsed = Number.parseInt(v, 10);
-              setStatusCode(
-                v === "all" || !Number.isFinite(parsed) ? undefined : parsed,
-              );
-              setPage(0);
-            }}
-          >
-            <SelectTrigger className="h-8 w-[100px] bg-background text-xs">
-              <SelectValue placeholder={t("usage.statusCode")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("common.all")}</SelectItem>
-              <SelectItem value="200">200 OK</SelectItem>
-              <SelectItem value="400">400</SelectItem>
-              <SelectItem value="401">401</SelectItem>
-              <SelectItem value="429">429</SelectItem>
-              <SelectItem value="500">500</SelectItem>
-            </SelectContent>
-          </Select>
+    <TooltipProvider>
+      <div className="space-y-4">
+        <div className="rounded-lg border bg-card/50 p-2 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* Status code */}
+            <Select
+              value={statusCode?.toString() || "all"}
+              onValueChange={(v) => {
+                const parsed = Number.parseInt(v, 10);
+                setStatusCode(
+                  v === "all" || !Number.isFinite(parsed) ? undefined : parsed,
+                );
+                setPage(0);
+              }}
+            >
+              <SelectTrigger className="h-8 w-[100px] bg-background text-xs">
+                <SelectValue placeholder={t("usage.statusCode")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t("common.all")}</SelectItem>
+                <SelectItem value="200">200 OK</SelectItem>
+                <SelectItem value="400">400</SelectItem>
+                <SelectItem value="401">401</SelectItem>
+                <SelectItem value="429">429</SelectItem>
+                <SelectItem value="500">500</SelectItem>
+              </SelectContent>
+            </Select>
 
-          {onRangeChange && (
-            <UsageDateRangePicker
-              selection={range}
-              triggerLabel={rangeLabel}
-              onApply={onRangeChange}
-            />
-          )}
+            {(
+              [
+                ["serviceTier", serviceTier, setServiceTier, serviceTiers],
+                [
+                  "reasoningEffort",
+                  reasoningEffort,
+                  setReasoningEffort,
+                  reasoningEfforts,
+                ],
+              ] as const
+            ).map(([key, value, setter, choices]) => (
+              <Select
+                key={key}
+                value={value ?? "all"}
+                onValueChange={(value) => {
+                  setter(value === "all" ? undefined : value);
+                  setPage(0);
+                }}
+              >
+                <SelectTrigger
+                  aria-label={t(`usage.${key}`)}
+                  className="h-8 w-[150px] bg-background text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    {t(`usage.${key}`)}: {t("common.all")}
+                  </SelectItem>
+                  {choices.map((choice) => (
+                    <SelectItem key={choice} value={choice}>
+                      {key === "serviceTier"
+                        ? serviceTierLabel(choice, t)
+                        : choice}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="unknown">
+                    {t("usage.metadataUnknown")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            ))}
+
+            {onRangeChange && (
+              <UsageDateRangePicker
+                selection={range}
+                triggerLabel={rangeLabel}
+                onApply={onRangeChange}
+              />
+            )}
+          </div>
         </div>
-      </div>
 
-      {isLoading ? (
-        <div className="h-[400px] animate-pulse rounded bg-gray-100" />
-      ) : (
-        <>
-          <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.time")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.provider")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.billingModel")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.inputTokens")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.outputTokens")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.totalCost")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.timingInfo")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.status")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.source", { defaultValue: "Source" })}
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {logs.length === 0 ? (
+        {isLoading ? (
+          <div className="h-[400px] animate-pulse rounded bg-gray-100" />
+        ) : (
+          <>
+            <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-x-auto">
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell
-                      colSpan={9}
-                      className="text-center text-muted-foreground"
-                    >
-                      {t("usage.noData")}
-                    </TableCell>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.time")}
+                    </TableHead>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.provider")}
+                    </TableHead>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.billingModel")}
+                    </TableHead>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.inputTokens")}
+                    </TableHead>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.outputTokens")}
+                    </TableHead>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.totalCost")}
+                    </TableHead>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.timingInfo")}
+                    </TableHead>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.status")}
+                    </TableHead>
+                    <TableHead className="text-center whitespace-nowrap">
+                      {t("usage.source", { defaultValue: "Source" })}
+                    </TableHead>
                   </TableRow>
-                ) : (
-                  logs.map((log) => {
-                    const unpriced = isUnpricedUsage(log);
-                    return (
-                      <TableRow key={log.requestId}>
-                        <TableCell className="text-center whitespace-nowrap text-xs px-1.5">
-                          {new Date(log.createdAt * 1000).toLocaleString(
-                            locale,
-                            {
-                              month: "2-digit",
-                              day: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            },
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {log.providerName || t("usage.unknownProvider")}
-                        </TableCell>
-                        <TableCell className="text-center font-mono text-xs max-w-[200px]">
-                          <div
-                            className="truncate"
-                            title={
-                              log.requestModel && log.requestModel !== log.model
-                                ? `${log.requestModel} → ${log.model}`
-                                : log.model
-                            }
-                          >
-                            {log.requestModel &&
-                            log.requestModel !== log.model ? (
-                              <span>
-                                {log.requestModel}
-                                <span className="text-muted-foreground">
-                                  {" → "}
-                                  {log.model}
-                                </span>
-                              </span>
-                            ) : (
-                              log.model
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center px-1.5">
-                          {(() => {
-                            const freshInput = getFreshInputTokens(log);
-                            const isCacheInclusive =
-                              log.inputTokens !== freshInput;
-                            return (
+                </TableHeader>
+                <TableBody>
+                  {logs.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={9}
+                        className="text-center text-muted-foreground"
+                      >
+                        {t("usage.noData")}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    logs.map((log) => {
+                      const unpriced = isUnpricedUsage(log);
+                      return (
+                        <Tooltip key={log.requestId} delayDuration={250}>
+                          <TableRow>
+                            <TableCell className="text-center whitespace-nowrap text-xs px-1.5">
+                              {new Date(log.createdAt * 1000).toLocaleString(
+                                locale,
+                                {
+                                  month: "2-digit",
+                                  day: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                },
+                              )}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {log.providerName || t("usage.unknownProvider")}
+                            </TableCell>
+                            <TableCell className="text-center font-mono text-xs max-w-[200px]">
                               <div
-                                className="tabular-nums"
+                                className="max-w-full truncate"
                                 title={
-                                  isCacheInclusive
-                                    ? `Raw: ${log.inputTokens.toLocaleString()}`
-                                    : undefined
+                                  log.requestModel &&
+                                  log.requestModel !== log.model
+                                    ? `${log.requestModel} → ${log.model}`
+                                    : log.model
                                 }
                               >
-                                {fmtInt(freshInput, locale)}
-                              </div>
-                            );
-                          })()}
-                          {(log.cacheReadTokens > 0 ||
-                            log.cacheCreationTokens > 0) && (
-                            <div className="text-[10px] text-muted-foreground whitespace-nowrap">
-                              {[
-                                log.cacheReadTokens > 0 &&
-                                  `R${fmtInt(log.cacheReadTokens, locale)}`,
-                                log.cacheCreationTokens > 0 &&
-                                  `W${fmtInt(log.cacheCreationTokens, locale)}`,
-                              ]
-                                .filter(Boolean)
-                                .join("·")}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {fmtInt(log.outputTokens, locale)}
-                        </TableCell>
-                        <TableCell className="text-center px-1.5">
-                          <div
-                            className={`font-medium tabular-nums ${
-                              unpriced ? "text-muted-foreground" : ""
-                            }`}
-                          >
-                            {unpriced
-                              ? t("usage.unpriced", "未定价")
-                              : fmtUsd(log.totalCostUsd, 4)}
-                          </div>
-                          {parseFiniteNumber(log.costMultiplier) != null &&
-                            parseFiniteNumber(log.costMultiplier) !== 1 && (
-                              <div className="text-[11px] text-muted-foreground">
-                                ×
-                                {parseFiniteNumber(log.costMultiplier)?.toFixed(
-                                  2,
+                                {log.requestModel &&
+                                log.requestModel !== log.model ? (
+                                  <span>
+                                    {log.requestModel}
+                                    <span className="text-muted-foreground">
+                                      {" → "}
+                                      {log.model}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  log.model
                                 )}
                               </div>
-                            )}
-                        </TableCell>
-                        <TableCell className="text-center whitespace-nowrap text-xs tabular-nums">
-                          {(log.latencyMs / 1000).toFixed(1)}s
-                          {log.firstTokenMs != null && (
-                            <span className="text-muted-foreground">
-                              /{(log.firstTokenMs / 1000).toFixed(1)}s
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span
-                            className={
-                              log.statusCode >= 200 && log.statusCode < 300
-                                ? "text-green-600"
-                                : "text-red-600"
-                            }
-                          >
-                            {log.statusCode}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-center text-xs text-muted-foreground">
-                          {log.dataSource || "proxy"}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
+                              <UsageMetadataDisplay request={log} />
+                            </TableCell>
+                            <TableCell className="text-center px-1.5">
+                              {(() => {
+                                const freshInput = getFreshInputTokens(log);
+                                const isCacheInclusive =
+                                  log.inputTokens !== freshInput;
+                                return (
+                                  <div
+                                    className="tabular-nums"
+                                    title={
+                                      isCacheInclusive
+                                        ? `Raw: ${log.inputTokens.toLocaleString()}`
+                                        : undefined
+                                    }
+                                  >
+                                    {fmtInt(freshInput, locale)}
+                                  </div>
+                                );
+                              })()}
+                              {(log.cacheReadTokens > 0 ||
+                                log.cacheCreationTokens > 0) && (
+                                <div className="text-[10px] text-muted-foreground whitespace-nowrap">
+                                  {[
+                                    log.cacheReadTokens > 0 &&
+                                      `R${fmtInt(log.cacheReadTokens, locale)}`,
+                                    log.cacheCreationTokens > 0 &&
+                                      `W${fmtInt(log.cacheCreationTokens, locale)}`,
+                                  ]
+                                    .filter(Boolean)
+                                    .join("·")}
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {fmtInt(log.outputTokens, locale)}
+                            </TableCell>
+                            <TooltipTrigger asChild>
+                              <TableCell
+                                tabIndex={0}
+                                className="text-center px-1.5"
+                              >
+                                <div
+                                  className={`font-medium tabular-nums ${
+                                    unpriced ? "text-muted-foreground" : ""
+                                  }`}
+                                >
+                                  {unpriced
+                                    ? t("usage.unpriced", "未定价")
+                                    : fmtUsd(log.totalCostUsd, 4)}
+                                </div>
+                                {parseFiniteNumber(log.costMultiplier) !=
+                                  null &&
+                                  parseFiniteNumber(log.costMultiplier) !==
+                                    1 && (
+                                    <div className="text-[11px] text-muted-foreground">
+                                      ×
+                                      {parseFiniteNumber(
+                                        log.costMultiplier,
+                                      )?.toFixed(2)}
+                                    </div>
+                                  )}
+                              </TableCell>
+                            </TooltipTrigger>
+                            <TableCell className="text-center whitespace-nowrap text-xs tabular-nums">
+                              {(log.latencyMs / 1000).toFixed(1)}s
+                              {log.firstTokenMs != null && (
+                                <span className="text-muted-foreground">
+                                  /{(log.firstTokenMs / 1000).toFixed(1)}s
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <span
+                                className={
+                                  log.statusCode >= 200 && log.statusCode < 300
+                                    ? "text-green-600"
+                                    : "text-red-600"
+                                }
+                              >
+                                {log.statusCode}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-center text-xs text-muted-foreground">
+                              {log.dataSource || "proxy"}
+                            </TableCell>
+                          </TableRow>
+                          <Portal>
+                            <TooltipContent
+                              className="bg-popover text-popover-foreground border p-3 shadow-lg"
+                              side="top"
+                            >
+                              <RequestCostBreakdown log={log} locale={locale} />
+                            </TooltipContent>
+                          </Portal>
+                        </Tooltip>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
 
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>{t("usage.totalRecords", { total })}</span>
-            <div className="flex items-center gap-1">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page === 0}
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              {(() => {
-                const pages: (number | string)[] = [];
-                if (totalPages <= 9) {
-                  for (let i = 0; i < totalPages; i++) pages.push(i);
-                } else {
-                  const pageSet = new Set<number>();
-                  for (let i = 0; i < 3; i++) pageSet.add(i);
-                  for (let i = totalPages - 3; i < totalPages; i++)
-                    pageSet.add(i);
-                  for (
-                    let i = Math.max(0, page - 1);
-                    i <= Math.min(totalPages - 1, page + 1);
-                    i++
-                  )
-                    pageSet.add(i);
-                  const sorted = Array.from(pageSet).sort((a, b) => a - b);
-                  for (let i = 0; i < sorted.length; i++) {
-                    if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
-                      pages.push(`ellipsis-${i}`);
-                    }
-                    pages.push(sorted[i]);
-                  }
-                }
-                return pages.map((p) =>
-                  typeof p === "string" ? (
-                    <span key={p} className="px-2 text-muted-foreground">
-                      ...
-                    </span>
-                  ) : (
-                    <Button
-                      key={p}
-                      variant={p === page ? "default" : "outline"}
-                      size="sm"
-                      className="h-8 w-8 p-0"
-                      onClick={() => setPage(p)}
-                    >
-                      {p + 1}
-                    </Button>
-                  ),
-                );
-              })()}
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <div className="flex items-center gap-1 ml-2">
-                <Input
-                  type="text"
-                  value={pageInput}
-                  onChange={(e) => setPageInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleGoToPage();
-                  }}
-                  placeholder={t("usage.pageInputPlaceholder")}
-                  className="h-8 w-16 text-center text-xs"
-                />
-                <Button variant="outline" size="sm" onClick={handleGoToPage}>
-                  {t("usage.goToPage")}
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>{t("usage.totalRecords", { total })}</span>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
                 </Button>
+                {(() => {
+                  const pages: (number | string)[] = [];
+                  if (totalPages <= 9) {
+                    for (let i = 0; i < totalPages; i++) pages.push(i);
+                  } else {
+                    const pageSet = new Set<number>();
+                    for (let i = 0; i < 3; i++) pageSet.add(i);
+                    for (let i = totalPages - 3; i < totalPages; i++)
+                      pageSet.add(i);
+                    for (
+                      let i = Math.max(0, page - 1);
+                      i <= Math.min(totalPages - 1, page + 1);
+                      i++
+                    )
+                      pageSet.add(i);
+                    const sorted = Array.from(pageSet).sort((a, b) => a - b);
+                    for (let i = 0; i < sorted.length; i++) {
+                      if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
+                        pages.push(`ellipsis-${i}`);
+                      }
+                      pages.push(sorted[i]);
+                    }
+                  }
+                  return pages.map((p) =>
+                    typeof p === "string" ? (
+                      <span key={p} className="px-2 text-muted-foreground">
+                        ...
+                      </span>
+                    ) : (
+                      <Button
+                        key={p}
+                        variant={p === page ? "default" : "outline"}
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => setPage(p)}
+                      >
+                        {p + 1}
+                      </Button>
+                    ),
+                  );
+                })()}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page >= totalPages - 1}
+                  onClick={() =>
+                    setPage((p) => Math.min(totalPages - 1, p + 1))
+                  }
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <div className="flex items-center gap-1 ml-2">
+                  <Input
+                    type="text"
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleGoToPage();
+                    }}
+                    placeholder={t("usage.pageInputPlaceholder")}
+                    className="h-8 w-16 text-center text-xs"
+                  />
+                  <Button variant="outline" size="sm" onClick={handleGoToPage}>
+                    {t("usage.goToPage")}
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
-        </>
-      )}
-    </div>
+          </>
+        )}
+      </div>
+    </TooltipProvider>
   );
 }

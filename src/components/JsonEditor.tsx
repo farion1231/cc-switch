@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { formatJSON } from "@/utils/formatters";
 
 interface JsonEditorProps {
+  className?: string;
   id?: string;
   ariaLabel?: string;
   value: string;
@@ -84,6 +85,7 @@ function mapPositionByContext(
 
 const JsonEditor: React.FC<JsonEditorProps> = ({
   id,
+  className = "",
   ariaLabel,
   value,
   onChange,
@@ -187,8 +189,13 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     const sizingTheme = EditorView.theme({
       "&": hasExplicitHeight
         ? { height: "100%" }
-        : { minHeight: `${minHeightPx}px` },
-      ".cm-scroller": { overflow: "auto" },
+        : { minHeight: `min(${minHeightPx}px, clamp(180px, 50vh, 560px))` },
+      ".cm-scroller": {
+        overflow: "auto",
+        ...(hasExplicitHeight
+          ? {}
+          : { maxHeight: "clamp(180px, 50vh, 560px)" }),
+      },
       ".cm-content": {
         fontFamily:
           "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
@@ -198,6 +205,35 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
 
     const extensions = [
       basicSetup,
+      EditorState.phrases.of({
+        Find: t("jsonEditor.search.find", { defaultValue: "Find" }),
+        Replace: t("jsonEditor.search.replaceWith", {
+          defaultValue: "Replace with",
+        }),
+        next: t("jsonEditor.search.next", { defaultValue: "Next" }),
+        previous: t("jsonEditor.search.previous", { defaultValue: "Previous" }),
+        all: t("jsonEditor.search.selectAll", {
+          defaultValue: "Select all matches",
+        }),
+        "match case": t("jsonEditor.search.matchCase", {
+          defaultValue: "Match case",
+        }),
+        regexp: t("jsonEditor.search.regexp", {
+          defaultValue: "Regular expression",
+        }),
+        "by word": t("jsonEditor.search.wholeWord", {
+          defaultValue: "Whole word",
+        }),
+        replace: t("jsonEditor.search.replace", { defaultValue: "Replace" }),
+        "replace all": t("jsonEditor.search.replaceAll", {
+          defaultValue: "Replace all",
+        }),
+        close: t("jsonEditor.search.close", { defaultValue: "Close search" }),
+        "current match": t("jsonEditor.search.currentMatch", {
+          defaultValue: "Current match",
+        }),
+        "on line": t("jsonEditor.search.onLine", { defaultValue: "on line" }),
+      }),
       language === "javascript" ? javascript() : json(),
       placeholder(placeholderText || ""),
       baseTheme,
@@ -351,7 +387,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   return (
     <div
       style={{ width: "100%", height: isFullHeight ? "100%" : "auto" }}
-      className={isFullHeight ? "flex flex-col" : ""}
+      className={`visible-scrollbars ${isFullHeight ? "flex flex-col" : ""} ${className}`}
     >
       <div
         id={id}

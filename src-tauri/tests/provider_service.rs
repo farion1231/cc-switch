@@ -1,8 +1,9 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, get_grok_auth_path, get_grok_config_path, read_json_file,
+    write_codex_live_atomic, write_grok_live_atomic, AppError, AppType, McpApps, McpServer,
+    MultiAppConfig, Provider, ProviderMeta, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -1909,6 +1910,329 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
             .and_then(|v| v.as_str()),
         Some("official-a-live-token"),
         "backfill should preserve account A's latest live token for later official switches"
+    );
+}
+
+fn grok_oidc_auth(token: &str, email: &str) -> serde_json::Value {
+    json!({
+        "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+            "key": token,
+            "auth_mode": "oidc",
+            "email": email,
+            "user_id": email,
+            "refresh_token": format!("{token}-refresh"),
+            "oidc_issuer": "https://auth.x.ai",
+            "oidc_client_id": "b1a00492-073a-47ea-816f-4c329264a828"
+        }
+    })
+}
+
+fn grok_oauth_token(auth: &serde_json::Value) -> Option<&str> {
+    auth.get("https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828")
+        .and_then(|entry| entry.get("key"))
+        .and_then(|value| value.as_str())
+}
+
+#[test]
+fn provider_service_switch_grokbuild_official_accounts_write_auth_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth_a = grok_oidc_auth("official-a-live-token", "a@example.com");
+    write_grok_live_atomic(Some(&live_auth_a), "").expect("seed official account A live auth");
+
+    let mut official_a = Provider::with_id(
+        "official-a".to_string(),
+        "Grok Official A".to_string(),
+        json!({
+            "auth": grok_oidc_auth("stale-a-token", "a@example.com"),
+            "config": ""
+        }),
+        None,
+    );
+    official_a.category = Some("official".to_string());
+
+    let mut official_b = Provider::with_id(
+        "official-b".to_string(),
+        "Grok Official B".to_string(),
+        json!({
+            "auth": grok_oidc_auth("official-b-token", "b@example.com"),
+            "config": ""
+        }),
+        None,
+    );
+    official_b.category = Some("official".to_string());
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::GrokBuild)
+            .expect("grokbuild manager");
+        manager.current = "official-a".to_string();
+        manager
+            .providers
+            .insert("official-a".to_string(), official_a);
+        manager
+            .providers
+            .insert("official-b".to_string(), official_b);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::GrokBuild, "official-b")
+        .expect("switch to official account B should write auth.json");
+    let auth_b: serde_json::Value = read_json_file(&get_grok_auth_path()).expect("read auth B");
+    assert_eq!(
+        grok_oauth_token(&auth_b),
+        Some("official-b-token"),
+        "switching official Grok accounts must replace auth.json with the selected account"
+    );
+
+    ProviderService::switch(&state, AppType::GrokBuild, "official-a")
+        .expect("switch back to official account A should use backfilled live auth");
+    let auth_a: serde_json::Value = read_json_file(&get_grok_auth_path()).expect("read auth A");
+    assert_eq!(
+        grok_oauth_token(&auth_a),
+        Some("official-a-live-token"),
+        "backfill should preserve account A's latest live Grok token for later official switches"
+    );
+}
+
+#[test]
+fn provider_service_switch_grokbuild_empty_official_clears_live_auth_after_backfill() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth_a = grok_oidc_auth("account-a-token", "a@example.com");
+    write_grok_live_atomic(Some(&live_auth_a), "").expect("seed account A live auth");
+
+    let mut official_a = Provider::with_id(
+        "official-a".to_string(),
+        "Grok Official A".to_string(),
+        json!({
+            "auth": grok_oidc_auth("stale-a-token", "a@example.com"),
+            "config": ""
+        }),
+        None,
+    );
+    official_a.category = Some("official".to_string());
+
+    let mut official_b = Provider::with_id(
+        "official-b".to_string(),
+        "Grok Official B".to_string(),
+        json!({ "auth": {}, "config": "" }),
+        None,
+    );
+    official_b.category = Some("official".to_string());
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::GrokBuild)
+            .expect("grokbuild manager");
+        manager.current = "official-a".to_string();
+        manager
+            .providers
+            .insert("official-a".to_string(), official_a);
+        manager
+            .providers
+            .insert("official-b".to_string(), official_b);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::GrokBuild, "official-b")
+        .expect("switch to empty official B");
+
+    assert!(
+        !get_grok_auth_path().exists(),
+        "empty official B must clear the live session after backfilling A so grok login can start a new account"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::GrokBuild.as_str())
+        .expect("read providers after switch");
+    assert_eq!(
+        grok_oauth_token(
+            providers
+                .get("official-a")
+                .expect("account A exists")
+                .settings_config
+                .get("auth")
+                .expect("account A auth backfilled")
+        ),
+        Some("account-a-token"),
+        "account A's live token must be backfilled before live auth is cleared"
+    );
+}
+
+#[test]
+fn provider_service_switch_grokbuild_third_party_strips_oauth() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    write_grok_live_atomic(Some(&grok_oidc_auth("session-token", "a@example.com")), "")
+        .expect("seed official session");
+
+    let mut official = Provider::with_id(
+        "official-a".to_string(),
+        "Grok Official".to_string(),
+        json!({
+            "auth": grok_oidc_auth("stale-token", "a@example.com"),
+            "config": ""
+        }),
+        None,
+    );
+    official.category = Some("official".to_string());
+
+    let relay_config = r#"[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://relay.example/v1"
+name = "Relay"
+api_key = "relay-key"
+api_backend = "responses"
+context_window = 500000
+"#;
+    let relay = Provider::with_id(
+        "relay".to_string(),
+        "Relay".to_string(),
+        json!({ "config": relay_config }),
+        None,
+    );
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::GrokBuild)
+            .expect("grokbuild manager");
+        manager.current = "official-a".to_string();
+        manager.providers.insert("official-a".to_string(), official);
+        manager.providers.insert("relay".to_string(), relay);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+    ProviderService::switch(&state, AppType::GrokBuild, "relay")
+        .expect("switch to third-party relay");
+
+    assert!(
+        !get_grok_auth_path().exists(),
+        "third-party switch must drop the official session or Grok CLI keeps using it instead of api_key"
+    );
+    assert_eq!(
+        std::fs::read_to_string(get_grok_config_path()).expect("read live config"),
+        relay_config
+    );
+}
+
+#[test]
+fn provider_service_add_first_grok_relay_snapshots_live_oauth_onto_official_seed() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth = grok_oidc_auth("live-only-token", "solo@example.com");
+    write_grok_live_atomic(Some(&live_auth), "").expect("seed live grok login");
+
+    let state = create_test_state().expect("create test state");
+    let relay_config = r#"[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://relay.example/v1"
+name = "Relay"
+api_key = "relay-key"
+api_backend = "responses"
+context_window = 500000
+"#;
+    let relay = Provider::with_id(
+        "relay".to_string(),
+        "Relay".to_string(),
+        json!({ "config": relay_config }),
+        None,
+    );
+    ProviderService::add(&state, AppType::GrokBuild, relay, false).expect("add first grok relay");
+
+    let official = state
+        .db
+        .get_provider_by_id("grokbuild-official", AppType::GrokBuild.as_str())
+        .expect("query seed")
+        .expect("official seed must exist after preserve");
+    assert_eq!(
+        grok_oauth_token(
+            official
+                .settings_config
+                .get("auth")
+                .expect("seed auth snapshot")
+        ),
+        Some("live-only-token"),
+        "live grok login must be copied onto the official seed before OAuth is stripped"
+    );
+    assert!(
+        !get_grok_auth_path().exists(),
+        "live oauth can be stripped only after it was snapshotted"
+    );
+}
+
+#[test]
+fn provider_service_update_current_grok_official_adopts_live_refresh() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    write_grok_live_atomic(
+        Some(&grok_oidc_auth("refreshed-token", "a@example.com")),
+        "",
+    )
+    .expect("seed refreshed live auth");
+
+    let mut official = Provider::with_id(
+        "official-a".to_string(),
+        "Grok Official A".to_string(),
+        json!({
+            "auth": grok_oidc_auth("stale-token", "a@example.com"),
+            "config": ""
+        }),
+        None,
+    );
+    official.category = Some("official".to_string());
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::GrokBuild)
+            .expect("grokbuild manager");
+        manager.current = "official-a".to_string();
+        manager
+            .providers
+            .insert("official-a".to_string(), official.clone());
+    }
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    official.name = "Renamed".to_string();
+    ProviderService::update(&state, AppType::GrokBuild, None, official)
+        .expect("update current official card");
+
+    assert_eq!(
+        grok_oauth_token(&cc_switch_lib::read_json_file(&get_grok_auth_path()).expect("live auth")),
+        Some("refreshed-token"),
+        "saving the current official card must not roll live auth back to the stale snapshot"
+    );
+    let stored = state
+        .db
+        .get_provider_by_id("official-a", AppType::GrokBuild.as_str())
+        .expect("query")
+        .expect("row");
+    assert_eq!(
+        grok_oauth_token(stored.settings_config.get("auth").expect("auth")),
+        Some("refreshed-token")
     );
 }
 

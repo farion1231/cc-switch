@@ -31,6 +31,8 @@ type RequestLogsKey = {
   providerName?: string;
   model?: string;
   statusCode?: number;
+  serviceTier?: string;
+  reasoningEffort?: string;
 };
 
 // Query keys
@@ -137,6 +139,8 @@ export const usageKeys = {
       key.providerName ?? "",
       key.model ?? "",
       key.statusCode ?? -1,
+      key.serviceTier ?? null,
+      key.reasoningEffort ?? null,
       page,
       pageSize,
     ] as const,
@@ -318,6 +322,8 @@ export function useRequestLogs({
     providerName: filters.providerName,
     model: filters.model,
     statusCode: filters.statusCode,
+    serviceTier: filters.serviceTier,
+    reasoningEffort: filters.reasoningEffort,
   };
 
   return useQuery({

@@ -4,9 +4,10 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_mcp_path, get_claude_mcp_status, get_claude_settings_path, get_grok_config_path,
-    import_default_config_test_hook, read_claude_mcp_config, update_settings, AppError,
-    AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig, ProviderService,
+    get_claude_mcp_path, get_claude_mcp_status, get_claude_settings_path, get_grok_auth_path,
+    get_grok_config_path, import_default_config_test_hook, read_claude_mcp_config, update_settings,
+    write_grok_live_atomic, AppError, AppSettings, AppType, McpApps, McpServer, McpService,
+    MultiAppConfig, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -170,6 +171,45 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
         Some("grokbuild-official"),
         "official entry should become current to mirror the live state"
     );
+}
+
+#[test]
+fn import_default_config_grokbuild_official_live_captures_auth_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let auth = json!({
+        "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+            "key": "imported-token",
+            "auth_mode": "oidc",
+            "email": "imported@example.com",
+            "refresh_token": "imported-refresh"
+        }
+    });
+    write_grok_live_atomic(Some(&auth), "").expect("seed official live with auth");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::GrokBuild);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::GrokBuild)
+        .expect("official-mode live with auth imports");
+
+    let official = state
+        .db
+        .get_provider_by_id("grokbuild-official", AppType::GrokBuild.as_str())
+        .expect("query official")
+        .expect("official exists");
+    assert_eq!(
+        official.settings_config.get("auth").and_then(|value| value
+            .get("https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828")
+            .and_then(|entry| entry.get("key"))
+            .and_then(|key| key.as_str())),
+        Some("imported-token"),
+        "manual official import must snapshot ~/.grok/auth.json onto the official card"
+    );
+    assert!(get_grok_auth_path().exists(), "live auth remains in place");
 }
 
 #[test]

@@ -53,7 +53,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 18;
+pub(crate) const SCHEMA_VERSION: i32 = 20;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -140,6 +140,12 @@ impl Database {
         }
 
         db.apply_schema_migrations()?;
+        {
+            let conn = lock_conn!(db.conn);
+            let tx = conn.unchecked_transaction()?;
+            crate::proxy::usage::fast_pricing::repair(&tx, None)?;
+            tx.commit()?;
+        }
         if let Err(e) = db.ensure_incremental_auto_vacuum() {
             log::warn!("Failed to ensure incremental auto-vacuum: {e}");
         }

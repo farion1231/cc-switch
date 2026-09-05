@@ -13,6 +13,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { APP_UPDATES_ENABLED } from "@/lib/updater";
 
 const RELEASES_URL = "https://github.com/farion1231/cc-switch/releases";
 
@@ -31,7 +32,13 @@ interface DatabaseUpgradeProps {
 // incompatible: 已是最新版本但数据库仍过新（可能来自第三方客户端），升级无法解决
 // updating: 正在下载/安装更新
 // error: 升级过程出错
-type Phase = "checking" | "upgradable" | "incompatible" | "updating" | "error";
+type Phase =
+  | "disabled"
+  | "checking"
+  | "upgradable"
+  | "incompatible"
+  | "updating"
+  | "error";
 
 interface DownloadProgress {
   downloaded: number;
@@ -48,7 +55,9 @@ interface DownloadProgress {
  */
 export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
   const { t } = useTranslation();
-  const [phase, setPhase] = useState<Phase>("checking");
+  const [phase, setPhase] = useState<Phase>(
+    APP_UPDATES_ENABLED ? "checking" : "disabled",
+  );
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -59,6 +68,7 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
 
   // 启动时检查可用更新，决定 upgradable / incompatible
   useEffect(() => {
+    if (!APP_UPDATES_ENABLED) return;
     let cancelled = false;
     (async () => {
       try {
@@ -89,6 +99,7 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
   }, []);
 
   const startUpgrade = useCallback(async () => {
+    if (!APP_UPDATES_ENABLED) return;
     setPhase("updating");
     setProgress(null);
     setErrorMsg(null);
@@ -147,10 +158,12 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
               {t("dbUpgrade.title", "数据库版本过新")}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {t(
-                "dbUpgrade.description",
-                "当前数据库由更新版本的 CC Switch 创建，需要升级应用后才能继续使用。升级不会删除你的数据。",
-              )}
+              {!APP_UPDATES_ENABLED
+                ? t("dbUpgrade.updatesDisabledDescription")
+                : t(
+                    "dbUpgrade.description",
+                    "当前数据库由更新版本的 CC Switch 创建，需要升级应用后才能继续使用。升级不会删除你的数据。",
+                  )}
             </p>
             {dbVersion != null && supportedVersion != null && (
               <p className="pt-0.5 text-xs text-muted-foreground tabular-nums">
