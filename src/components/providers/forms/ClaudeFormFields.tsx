@@ -135,6 +135,7 @@ interface ClaudeFormFieldsProps {
   defaultFableModel: string;
   defaultFableModelName: string;
   subagentModel: string;
+  advisorModel?: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
 
   // Speed Test Endpoints
@@ -211,6 +212,7 @@ export function ClaudeFormFields({
   defaultFableModel,
   defaultFableModelName,
   subagentModel,
+  advisorModel = "",
   onModelChange,
   speedTestEndpoints,
   apiFormat,
@@ -1094,6 +1096,33 @@ export function ClaudeFormFields({
                 })}
               </p>
             </div>
+
+            {(apiFormat !== "anthropic" ||
+              isCodexOauthPreset ||
+              isCopilotPreset ||
+              isXaiOauthPreset) && (
+              <div className="space-y-2 border-t border-border-default pt-4">
+                <FormLabel htmlFor="claudeAdvisorModel">
+                  {t("providerForm.advisorModel", {
+                    defaultValue: "Advisor model",
+                  })}
+                </FormLabel>
+                {renderModelInput(
+                  "claudeAdvisorModel",
+                  advisorModel,
+                  "CC_SWITCH_ADVISOR_MODEL",
+                  t("providerForm.advisorDisabled", {
+                    defaultValue: "Disabled (leave empty)",
+                  }),
+                )}
+                <p className="text-xs text-muted-foreground">
+                  {t("providerForm.advisorHint", {
+                    defaultValue:
+                      "Consults this model through the same provider and account, then continues the task. Uses additional tokens. Leave empty to disable.",
+                  })}
+                </p>
+              </div>
+            )}
 
             <CustomUserAgentField
               id="claude-custom-user-agent"

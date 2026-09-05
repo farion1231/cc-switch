@@ -15,7 +15,8 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"
-  | "CLAUDE_CODE_SUBAGENT_MODEL";
+  | "CLAUDE_CODE_SUBAGENT_MODEL"
+  | "CC_SWITCH_ADVISOR_MODEL";
 
 export const CLAUDE_ONE_M_MARKER = "[1M]";
 
@@ -98,6 +99,10 @@ function parseModelsFromConfig(settingsConfig: string) {
       fable,
       fableName,
       subagent,
+      advisor:
+        typeof env.CC_SWITCH_ADVISOR_MODEL === "string"
+          ? env.CC_SWITCH_ADVISOR_MODEL
+          : "",
     };
   } catch {
     return {
@@ -111,6 +116,7 @@ function parseModelsFromConfig(settingsConfig: string) {
       fable: "",
       fableName: "",
       subagent: "",
+      advisor: "",
     };
   }
 }
@@ -142,6 +148,7 @@ export function useModelState({
     initial.fableName,
   );
   const [subagentModel, setSubagentModel] = useState(initial.subagent);
+  const [advisorModel, setAdvisorModel] = useState(initial.advisor);
 
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
@@ -173,6 +180,7 @@ export function useModelState({
     setDefaultFableModel(parsed.fable);
     setDefaultFableModelName(parsed.fableName);
     setSubagentModel(parsed.subagent);
+    setAdvisorModel(parsed.advisor);
   }, [settingsConfig]);
 
   const handleModelChange = useCallback(
@@ -196,6 +204,7 @@ export function useModelState({
       if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
         setDefaultFableModelName(value);
       if (field === "CLAUDE_CODE_SUBAGENT_MODEL") setSubagentModel(value);
+      if (field === "CC_SWITCH_ADVISOR_MODEL") setAdvisorModel(value);
 
       try {
         const currentConfig = latestConfigRef.current
@@ -244,6 +253,7 @@ export function useModelState({
     defaultFableModelName,
     setDefaultFableModelName,
     subagentModel,
+    advisorModel,
     setSubagentModel,
     handleModelChange,
   };

@@ -8,6 +8,30 @@ import {
 } from "@/components/providers/forms/hooks/useModelState";
 
 describe("useModelState", () => {
+  it("keeps advisor disabled by default and persists selection independently of role mappings", () => {
+    let config = JSON.stringify({ env: { ANTHROPIC_MODEL: "working-model" } });
+    const { result, rerender } = renderHook(() =>
+      useModelState({
+        settingsConfig: config,
+        onConfigChange: (value) => {
+          config = value;
+        },
+      }),
+    );
+    expect(result.current.advisorModel).toBe("");
+    act(() =>
+      result.current.handleModelChange(
+        "CC_SWITCH_ADVISOR_MODEL",
+        "gpt-6-astra",
+      ),
+    );
+    expect(JSON.parse(config).env.CC_SWITCH_ADVISOR_MODEL).toBe("gpt-6-astra");
+    expect(JSON.parse(config).env.ANTHROPIC_MODEL).toBe("working-model");
+    rerender();
+    expect(result.current.advisorModel).toBe("gpt-6-astra");
+    act(() => result.current.handleModelChange("CC_SWITCH_ADVISOR_MODEL", ""));
+    expect(JSON.parse(config).env.CC_SWITCH_ADVISOR_MODEL).toBeUndefined();
+  });
   it("hydrates role models and display names from Claude Code env", () => {
     const settingsConfig = JSON.stringify({
       env: {

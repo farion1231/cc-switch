@@ -122,6 +122,26 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
   });
 
 describe("ClaudeFormFields", () => {
+  it("offers a separate optional advisor model on Codex OAuth without quick-set enabling it", () => {
+    const onModelChange = vi.fn();
+    renderCodexOauthForm({ onModelChange });
+    const input = screen.getByLabelText("Advisor model");
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "gpt-6-astra" } });
+    expect(onModelChange).toHaveBeenCalledWith(
+      "CC_SWITCH_ADVISOR_MODEL",
+      "gpt-6-astra",
+    );
+    onModelChange.mockClear();
+    fireEvent.click(
+      screen.getByRole("button", { name: /quick set|一键设置/i }),
+    );
+    expect(
+      onModelChange.mock.calls.some(
+        ([field]) => field === "CC_SWITCH_ADVISOR_MODEL",
+      ),
+    ).toBe(false);
+  });
   beforeEach(() => {
     copilotApiMock.copilotGetModels.mockResolvedValue([]);
     copilotApiMock.copilotGetModelsForAccount.mockResolvedValue([]);

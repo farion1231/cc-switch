@@ -1,0 +1,90 @@
+name: Advisor platform proof
+
+on:
+  push:
+    branches: [feat/same-provider-advisor]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, macos-15-intel]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Prepare locked dependencies
+        run: |
+          corepack enable
+          corepack install
+          pnpm install --frozen-lockfile
+          rustup show
+          mkdir -p verification dist
+          echo "CC_SWITCH_TEST_HOME=$RUNNER_TEMP/cc-switch-advisor-home" >> "$GITHUB_ENV"
+          git rev-parse HEAD | tee verification/revision.txt
+          printf '%s\n' '{"productName":"CC Switch Advisor Test","identifier":"com.ccswitch.advisortest","bundle":{"createUpdaterArtifacts":false}}' > testing-build.json
+      - name: Frontend checks
+        run: |
+          set -o pipefail
+          pnpm typecheck 2>&1 | tee verification/typecheck.log
+          pnpm test:unit tests/hooks/useModelState.test.tsx tests/components/ClaudeFormFields.test.tsx tests/components/ProviderForm.codexManagedAccount.test.tsx 2>&1 | tee verification/frontend-tests.log
+      - name: Rust regression and adapter tests
+        run: |
+          set -o pipefail
+          cargo fmt --check --manifest-path src-tauri/Cargo.toml
+          cargo test --locked -j 1 --lib --manifest-path src-tauri/Cargo.toml -- advisor proxy::providers::claude::tests services::codex_oauth_models::tests 2>&1 | tee verification/rust-tests.log
+      - name: Build Windows EXE
+        if: runner.os == 'Windows'
+        run: |
+          set -o pipefail
+          pnpm tauri build --no-bundle --config testing-build.json -- --locked 2>&1 | tee verification/build.log
+          cp src-tauri/target/release/cc-switch.exe verification/CC-Switch-Advisor-Test.exe
+          sha256sum verification/*.exe | tee verification/SHA256.txt
+      - name: Build macOS app
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: |
+          set -o pipefail
+          pnpm tauri build --bundles app --config testing-build.json -- --locked 2>&1 | tee verification/build.log
+          app='src-tauri/target/release/bundle/macos/CC Switch Advisor Test.app'
+          codesign --verify --deep --strict --verbose=4 "$app" 2>&1 | tee verification/signature.log
+          codesign -dv --verbose=4 "$app" 2>&1 | tee -a verification/signature.log
+          file "$app/Contents/MacOS/cc-switch" | tee verification/architecture.txt
+          "$app/Contents/MacOS/cc-switch" > verification/startup.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          sleep 10
+          kill -0 "$app_pid"
+          grep -F '主窗口已显示' verification/startup.log
+          echo 'Native macOS app remained running for 10 seconds.' | tee verification/startup-result.txt
+          kill "$app_pid"
+          wait "$app_pid" || true
+          trap - EXIT
+          ditto -c -k --sequesterRsrc --keepParent "$app" verification/CC-Switch-Advisor-${{ matrix.os }}.zip
+          ditto -x -k verification/CC-Switch-Advisor-${{ matrix.os }}.zip "$RUNNER_TEMP/roundtrip"
+          codesign --verify --deep --strict --verbose=4 "$RUNNER_TEMP/roundtrip/CC Switch Advisor Test.app" 2>&1 | tee verification/roundtrip-signature.log
+          shasum -a 256 verification/*.zip | tee verification/SHA256.txt
+      - name: Upload build and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: advisor-${{ matrix.os }}
+          path: verification/
+          if-no-files-found: error
+          retention-days: 30

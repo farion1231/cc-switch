@@ -200,6 +200,23 @@ async fn handle_messages_for_app(
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
+    let advisor_model = super::advisor::configured_model(&ctx.provider);
+    let transformed =
+        get_adapter(&app_type).is_some_and(|adapter| adapter.needs_transform(&ctx.provider));
+    if transformed && (advisor_model.is_some() || super::advisor::has_advisor(&body)) {
+        return handle_advisor_messages(
+            state,
+            ctx,
+            body,
+            headers,
+            extensions,
+            endpoint.to_string(),
+            advisor_model,
+            is_stream,
+        )
+        .await;
+    }
+
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -266,6 +283,179 @@ async fn handle_messages_for_app(
         connection_guard,
     )
     .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_advisor_messages(
+    state: ProxyState,
+    mut ctx: RequestContext,
+    body: Value,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
+    endpoint: String,
+    model: Option<String>,
+    streaming: bool,
+) -> Result<axum::response::Response, ProxyError> {
+    use tauri::Manager;
+    // Freeze account selection for the whole executor/advisor exchange.
+    let auth_provider = ctx
+        .provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.clone());
+    if let Some(kind) = auth_provider
+        .as_deref()
+        .filter(|kind| matches!(*kind, "codex_oauth" | "xai_oauth" | "github_copilot"))
+    {
+        if ctx
+            .provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for(kind))
+            .is_none()
+        {
+            let app = state.app_handle.as_ref().ok_or_else(|| {
+                ProxyError::AuthError("Advisor requires the provider's managed account".into())
+            })?;
+            let account_id = match kind {
+                "codex_oauth" => {
+                    app.state::<crate::commands::CodexOAuthState>()
+                        .0
+                        .default_account_id()
+                        .await
+                }
+                "xai_oauth" => {
+                    app.state::<crate::commands::XaiOAuthState>()
+                        .0
+                        .read()
+                        .await
+                        .default_account_id()
+                        .await
+                }
+                "github_copilot" => app
+                    .state::<crate::commands::CopilotAuthState>()
+                    .0
+                    .read()
+                    .await
+                    .list_accounts()
+                    .await
+                    .first()
+                    .map(|account| account.id.clone()),
+                _ => None,
+            }
+            .ok_or_else(|| {
+                ProxyError::AuthError(
+                    "Select an explicit provider account before enabling advisor".into(),
+                )
+            })?;
+            ctx.provider
+                .meta
+                .get_or_insert_with(Default::default)
+                .auth_binding = Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some(kind.into()),
+                account_id: Some(account_id),
+            });
+        }
+    }
+    // A consultation must never fail over to another provider or account.
+    ctx.app_config.auto_failover_enabled = false;
+    let events = super::advisor::run(body, model, move |mut request_body, advisor| {
+        let mut ctx = ctx.clone();
+        let state = state.clone();
+        let headers = headers.clone();
+        let extensions = extensions.clone();
+        let endpoint = endpoint.clone();
+        async move {
+            ctx.start_time = std::time::Instant::now();
+            ctx.request_model = request_body["model"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
+            if advisor {
+                ctx.provider = super::advisor::consultation_provider(&ctx.provider);
+            }
+            request_body["stream"] = json!(true);
+            let forwarder = ctx.create_forwarder(&state);
+            let mut result = forwarder
+                .forward_with_retry(
+                    &ctx.app_type,
+                    axum::http::Method::POST,
+                    &endpoint,
+                    request_body.clone(),
+                    headers,
+                    extensions,
+                    vec![ctx.provider.clone()],
+                )
+                .await
+                .map_err(|error| error.error)?;
+            ctx.outbound_model = result.outbound_model.take();
+            let format = result
+                .claude_api_format
+                .take()
+                .unwrap_or_else(|| get_claude_api_format(&ctx.provider).to_string());
+            let response = handle_claude_transform(
+                result.response,
+                &ctx,
+                &state,
+                &request_body,
+                true,
+                &format,
+                result.connection_guard.take(),
+            )
+            .await?;
+            let bytes = axum::body::to_bytes(
+                response.into_body(),
+                if advisor { 512 * 1024 } else { 8 * 1024 * 1024 },
+            )
+            .await
+            .map_err(|_| {
+                ProxyError::ForwardFailed(
+                    "Advisor exchange response exceeded its limit or was interrupted".into(),
+                )
+            })?;
+            let text = std::str::from_utf8(&bytes).map_err(|_| {
+                ProxyError::TransformError("Invalid UTF-8 in advisor exchange".into())
+            })?;
+            transform_codex_anthropic::anthropic_sse_to_message_value(text)
+        }
+    });
+    let stream = async_stream::stream! {
+        tokio::pin!(events);
+        loop {
+            // No detached task: dropping the HTTP body cancels the in-flight consultation.
+            let next = tokio::select! {
+                next = events.next() => next,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(15)) => Some(Ok(json!({"type":"ping"}))),
+            };
+            let Some(event) = next else { break };
+            let failed = event.is_err();
+            let event = match event {
+                Ok(event) => event,
+                Err(_) => json!({"type":"error","error":{"type":"api_error","message":"CC Switch advisor exchange failed; retry or disable the advisor."}}),
+            };
+            yield Ok::<Bytes, std::io::Error>(Bytes::from(format!("event: {}\ndata: {}\n\n", event["type"].as_str().unwrap_or("error"), event)));
+            if failed { break; }
+        }
+    };
+    if streaming {
+        Ok((
+            [
+                ("Content-Type", "text/event-stream"),
+                ("Cache-Control", "no-cache"),
+            ],
+            axum::body::Body::from_stream(stream),
+        )
+            .into_response())
+    } else {
+        let bytes = axum::body::to_bytes(axum::body::Body::from_stream(stream), 16 * 1024 * 1024)
+            .await
+            .map_err(|_| ProxyError::ForwardFailed("Advisor response exceeded its limit".into()))?;
+        let message = transform_codex_anthropic::anthropic_sse_to_message_value(
+            &String::from_utf8_lossy(&bytes),
+        )?;
+        Ok(Json(message).into_response())
+    }
 }
 
 fn validate_claude_desktop_gateway_auth(
