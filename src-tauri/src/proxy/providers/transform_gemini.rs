@@ -682,19 +682,19 @@ fn convert_message_content_to_parts(
                 }
 
                 // Re-attach the thought_signature that Gemini originally
-                // associated with this functionCall.  The Anthropic format
+                // associated with this functionCall. The Anthropic format
                 // strips it from the tool_use block, but Gemini requires it
                 // on every functionCall in a multi-turn tool-use exchange.
                 // Without replaying the stored signature the upstream may
                 // reject with "missing a `thought_signature`".
-                if let Some(sig) = thought_signature_by_id.get(id) {
-                    function_call["thoughtSignature"] = json!(sig);
-                } else {
-                    function_call["thoughtSignature"] =
-                        json!(super::transform_codex_chat::GEMINI_SENTINEL_SIGNATURE);
-                }
+                let sig = thought_signature_by_id
+                    .get(id)
+                    .map(|s| s.as_str())
+                    .unwrap_or(super::transform_codex_chat::GEMINI_SENTINEL_SIGNATURE);
 
-                parts.push(json!({ "functionCall": function_call }));
+                let mut part = json!({ "functionCall": function_call });
+                part["thoughtSignature"] = json!(sig);
+                parts.push(part);
             }
             "tool_result" => {
                 let tool_use_id = block
@@ -870,6 +870,20 @@ fn shadow_parts(content: &Value) -> Option<Vec<Value>> {
             .unwrap_or(true);
         if drop_id {
             function_call.remove("id");
+        }
+        function_call.remove("thoughtSignature");
+        function_call.remove("thought_signature");
+
+        // 兜底保障：若包含 functionCall 的 Part 缺少 thoughtSignature，自动注入官方跳过校验的哨兵值
+        let has_signature = part
+            .get("thoughtSignature")
+            .or_else(|| part.get("thought_signature"))
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty());
+
+        if !has_signature {
+            part["thoughtSignature"] =
+                json!(super::transform_codex_chat::GEMINI_SENTINEL_SIGNATURE);
         }
     }
     Some(parts)
@@ -1128,6 +1142,12 @@ fn extract_tool_call_meta(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
                 .filter(|s| !s.is_empty())
                 .map(ToString::to_string)
                 .unwrap_or_else(synthesize_tool_call_id);
+            let sig = part
+                .get("thoughtSignature")
+                .or_else(|| part.get("thought_signature"))
+                .or_else(|| function_call.get("thoughtSignature"))
+                .or_else(|| function_call.get("thought_signature"))
+                .and_then(|value| value.as_str());
             Some(GeminiToolCallMeta::new(
                 Some(id),
                 function_call
@@ -1138,9 +1158,7 @@ fn extract_tool_call_meta(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
                     .get("args")
                     .cloned()
                     .unwrap_or_else(|| json!({})),
-                part.get("thoughtSignature")
-                    .or_else(|| part.get("thought_signature"))
-                    .and_then(|value| value.as_str()),
+                sig,
             ))
         })
         .collect()
@@ -2691,6 +2709,120 @@ mod tests {
                 .get("id")
                 .is_none(),
             "functionResponse.id must also be omitted for synthesized ids"
+        );
+    }
+
+    #[test]
+    fn thought_signature_injected_at_part_level_when_replaying_tool_use() {
+        let store = GeminiShadowStore::new();
+        let tool_call = GeminiToolCallMeta::new(
+            Some("toolu_1"),
+            "Bash",
+            json!({"command": "ls"}),
+            Some("sig_test_123"),
+        );
+        store.record_assistant_turn(
+            "prov1",
+            "sess1",
+            json!({"parts": [{"functionCall": {"id": "toolu_1", "name": "Bash", "args": {"command": "ls"}}, "thoughtSignature": "sig_test_123"}]}),
+            vec![tool_call],
+        );
+
+        let request = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "ls"} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "toolu_1", "content": "file.txt" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(
+            request,
+            Some(&store),
+            Some("prov1"),
+            Some("sess1"),
+        ).unwrap();
+
+        let model_part = &result["contents"][0]["parts"][0];
+        assert_eq!(model_part["thoughtSignature"], "sig_test_123", "thoughtSignature must be present at Part top level");
+    }
+
+    #[test]
+    fn non_shadow_conversion_injects_thought_signature_at_part_level() {
+        let request = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "toolu_nosha", "name": "Bash", "input": {"command": "ls"} }
+                    ]
+                }
+            ]
+        });
+
+        // No shadow store provided
+        let result = anthropic_to_gemini(request).unwrap();
+        let model_part = &result["contents"][0]["parts"][0];
+        assert_eq!(
+            model_part["thoughtSignature"],
+            crate::proxy::providers::transform_codex_chat::GEMINI_SENTINEL_SIGNATURE,
+            "fallback sentinel must be placed at Part top level"
+        );
+        assert!(
+            model_part.get("functionCall").is_some(),
+            "functionCall must be preserved"
+        );
+    }
+
+    #[test]
+    fn shadow_parts_without_thought_signature_gets_sentinel_injected() {
+        let store = GeminiShadowStore::new();
+        // Record assistant turn where parts lacks thoughtSignature
+        store.record_assistant_turn(
+            "prov1",
+            "sess1",
+            json!({"parts": [{"functionCall": {"name": "Bash", "args": {"command": "pwd"}}}]}),
+            vec![],
+        );
+
+        let request = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "toolu_nosig", "name": "Bash", "input": {"command": "pwd"} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "toolu_nosig", "content": "/home" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(
+            request,
+            Some(&store),
+            Some("prov1"),
+            Some("sess1"),
+        ).unwrap();
+
+        let model_part = &result["contents"][0]["parts"][0];
+        assert_eq!(
+            model_part["thoughtSignature"],
+            crate::proxy::providers::transform_codex_chat::GEMINI_SENTINEL_SIGNATURE,
+            "shadow replay without signature must be auto-filled with sentinel"
         );
     }
 }
