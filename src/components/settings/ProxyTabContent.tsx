@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ProxyPanel } from "@/components/proxy";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
+import { SubagentRouteConfigPanel } from "@/components/proxy/SubagentRouteConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
@@ -214,6 +215,14 @@ export function ProxyTabContent({
                           disabled={failoverDisabled}
                         />
                       </div>
+                      {appType === "claude" && (
+                        <div className="border-t border-border/50 pt-6">
+                          <SubagentRouteConfigPanel
+                            appType="claude"
+                            disabled={failoverDisabled}
+                          />
+                        </div>
+                      )}
                     </TabsContent>
                   );
                 })}
