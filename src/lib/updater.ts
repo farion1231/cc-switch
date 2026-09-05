@@ -1,4 +1,5 @@
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 
 export type UpdateChannel = "stable" | "beta";
 
@@ -45,4 +46,13 @@ export async function checkForUpdate(
   };
 
   return { status: "available", info };
+}
+
+/**
+ * 让后端在后台预下载当前可用的更新安装包（写入应用缓存目录）。
+ * 检查到新版本后调用一次即可；后端自行去重（同版本只下一次）。
+ * 失败静默即可——安装命令在预下载不可用时回退为现场下载。
+ */
+export async function prestageUpdate(): Promise<void> {
+  await invoke("prestage_app_update");
 }

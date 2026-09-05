@@ -7,7 +7,7 @@ import React, {
   useRef,
 } from "react";
 import type { UpdateInfo } from "../lib/updater";
-import { checkForUpdate } from "../lib/updater";
+import { checkForUpdate, prestageUpdate } from "../lib/updater";
 
 interface UpdateContextValue {
   // 更新状态
@@ -70,6 +70,10 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       if (result.status === "available") {
         setHasUpdate(true);
         setUpdateInfo(result.info);
+
+        // 后台预下载安装包，让用户点「升级」时无需现场等待下载；
+        // 后端自行去重，失败静默（安装命令会回退为现场下载）。
+        prestageUpdate().catch(() => {});
 
         // 检查是否已经关闭过这个版本的提醒
         let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
