@@ -451,14 +451,10 @@ pub fn transform_claude_request_for_api_format(
             // 整笔 input/output/cache 漏记（与 Codex Responses→Chat 路径同源）。
             super::transform::inject_openai_stream_include_usage(&mut result);
 
-            let is_gemini = matches!(
-                provider.provider_type(),
-                Some("gemini") | Some("gemini_cli")
-            ) || result
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .contains("gemini");
+            let is_gemini = provider.is_gemini_upstream(
+                "",
+                result.get("model").and_then(|v| v.as_str()).unwrap_or(""),
+            );
 
             if is_gemini {
                 if let Some(store) = shadow_store {

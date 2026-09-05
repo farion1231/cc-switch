@@ -690,7 +690,8 @@ fn convert_message_content_to_parts(
                 if let Some(sig) = thought_signature_by_id.get(id) {
                     function_call["thoughtSignature"] = json!(sig);
                 } else {
-                    function_call["thoughtSignature"] = json!("skip_thought_signature_validator");
+                    function_call["thoughtSignature"] =
+                        json!(super::transform_codex_chat::GEMINI_SENTINEL_SIGNATURE);
                 }
 
                 parts.push(json!({ "functionCall": function_call }));

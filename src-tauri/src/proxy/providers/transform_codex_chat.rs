@@ -9,7 +9,7 @@ use super::codex_chat_common::{
     response_function_call_item, response_function_call_item_with_namespace,
     split_leading_think_block,
 };
-use super::gemini_shadow::{GeminiShadowStore, GeminiToolCallMeta};
+use super::gemini_shadow::{GeminiShadowSessionSnapshot, GeminiShadowStore, GeminiToolCallMeta};
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -1363,58 +1363,12 @@ fn responses_function_call_to_chat_tool_call(
     });
 
     if let Some((store, provider_id, session_id)) = shadow_ctx {
-        let mut injected = false;
-        if let Some(snapshot) = store.get_session(provider_id, session_id) {
-            for turn in snapshot.turns {
-                for meta in turn.tool_calls {
-                    if meta.id.as_deref() == Some(call_id) {
-                        if let Some(sig) = meta.thought_signature {
-                            chat_call["extra_content"] = json!({
-                                "google": {
-                                    "thought_signature": &sig
-                                }
-                            });
-                            if let Some(f) = chat_call
-                                .get_mut("function")
-                                .and_then(|f| f.as_object_mut())
-                            {
-                                f.insert("thought_signature".to_string(), json!(&sig));
-                            }
-                            if let Some(obj) = chat_call.as_object_mut() {
-                                obj.insert("thought_signature".to_string(), json!(&sig));
-                            }
-                            injected = true;
-                            break;
-                        }
-                    }
-                }
-                if injected {
-                    break;
-                }
-            }
-        }
-        if !injected {
-            chat_call["extra_content"] = json!({
-                "google": {
-                    "thought_signature": "skip_thought_signature_validator"
-                }
-            });
-            if let Some(f) = chat_call
-                .get_mut("function")
-                .and_then(|f| f.as_object_mut())
-            {
-                f.insert(
-                    "thought_signature".to_string(),
-                    json!("skip_thought_signature_validator"),
-                );
-            }
-            if let Some(obj) = chat_call.as_object_mut() {
-                obj.insert(
-                    "thought_signature".to_string(),
-                    json!("skip_thought_signature_validator"),
-                );
-            }
-        }
+        let sig = store
+            .get_session(provider_id, session_id)
+            .as_ref()
+            .and_then(|snapshot| lookup_thought_signature(snapshot, call_id, &chat_name))
+            .unwrap_or_else(|| GEMINI_SENTINEL_SIGNATURE.to_string());
+        inject_thought_signature_into_tool_call(&mut chat_call, &sig);
     }
 
     chat_call
@@ -2125,10 +2079,12 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
     body: &mut Value,
     shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) {
-    let mut store_snapshot = None;
-    if let Some((store, provider_id, session_id)) = shadow_ctx {
-        store_snapshot = store.get_session(provider_id, session_id);
-    }
+    // 无 shadow 上下文：完全不注入。调用方只在确认上游是 Gemini 时才传
+    // shadow_ctx；若误注入 `extra_content.google.*` 到严格 OpenAI 网关会 400。
+    let Some((store, provider_id, session_id)) = shadow_ctx else {
+        return;
+    };
+    let store_snapshot = store.get_session(provider_id, session_id);
 
     if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
         for msg in messages {
@@ -2142,47 +2098,11 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
 
-                    let mut injected_sig = None;
-                    if let Some(snapshot) = &store_snapshot {
-                        for turn in &snapshot.turns {
-                            for meta in &turn.tool_calls {
-                                if (!call_id.is_empty() && meta.id.as_deref() == Some(call_id))
-                                    || (!name.is_empty() && meta.name == name)
-                                {
-                                    injected_sig = meta.thought_signature.clone();
-                                }
-                            }
-                        }
-                    }
-
-                    let sig = injected_sig
-                        .unwrap_or_else(|| "skip_thought_signature_validator".to_string());
-
-                    let google = tool_call
-                        .as_object_mut()
-                        .unwrap()
-                        .entry("extra_content")
-                        .or_insert_with(|| serde_json::json!({}))
-                        .as_object_mut()
-                        .unwrap()
-                        .entry("google")
-                        .or_insert_with(|| serde_json::json!({}))
-                        .as_object_mut()
-                        .unwrap();
-
-                    if !google.contains_key("thought_signature") {
-                        google.insert("thought_signature".to_string(), serde_json::json!(&sig));
-                    }
-
-                    if let Some(function) = tool_call
-                        .get_mut("function")
-                        .and_then(|f| f.as_object_mut())
-                    {
-                        function.insert("thought_signature".to_string(), serde_json::json!(&sig));
-                    }
-                    if let Some(obj) = tool_call.as_object_mut() {
-                        obj.insert("thought_signature".to_string(), serde_json::json!(&sig));
-                    }
+                    let sig = store_snapshot
+                        .as_ref()
+                        .and_then(|snapshot| lookup_thought_signature(snapshot, call_id, name))
+                        .unwrap_or_else(|| GEMINI_SENTINEL_SIGNATURE.to_string());
+                    inject_thought_signature_into_tool_call(tool_call, &sig);
                 }
             }
 
@@ -2194,44 +2114,66 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
                     .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let mut injected_sig = None;
-                if let Some(snapshot) = &store_snapshot {
-                    for turn in &snapshot.turns {
-                        for meta in &turn.tool_calls {
-                            if !name.is_empty() && meta.name == name {
-                                injected_sig = meta.thought_signature.clone();
-                            }
-                        }
-                    }
-                }
-
-                let sig =
-                    injected_sig.unwrap_or_else(|| "skip_thought_signature_validator".to_string());
-
-                let google = msg
-                    .as_object_mut()
-                    .unwrap()
-                    .entry("extra_content")
-                    .or_insert_with(|| serde_json::json!({}))
-                    .as_object_mut()
-                    .unwrap()
-                    .entry("google")
-                    .or_insert_with(|| serde_json::json!({}))
-                    .as_object_mut()
-                    .unwrap();
-
-                if !google.contains_key("thought_signature") {
-                    google.insert("thought_signature".to_string(), serde_json::json!(&sig));
-                }
-
-                if let Some(obj) = msg.get_mut("function_call").and_then(|f| f.as_object_mut()) {
-                    obj.insert("thought_signature".to_string(), serde_json::json!(&sig));
-                }
-                if let Some(obj) = msg.as_object_mut() {
-                    obj.insert("thought_signature".to_string(), serde_json::json!(&sig));
-                }
+                let sig = store_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| lookup_thought_signature(snapshot, "", name))
+                    .unwrap_or_else(|| GEMINI_SENTINEL_SIGNATURE.to_string());
+                inject_thought_signature_into_tool_call(msg, &sig);
             }
         }
+    }
+}
+
+/// Gemini OpenAI 兼容层官方兜底签名（Google 文档：跳过签名校验的哨兵值）。
+pub const GEMINI_SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
+
+/// 从影子存储中查找与 `(call_id, name)` 匹配的 thought signature。
+///
+/// 优先按 tool_call id 精确匹配（维护者要求“按 id 回填真签名”）；仅当 id 缺失
+/// （旧式 `function_call` 消息没有 id）时才退化为按名称匹配。从最近的 turn 反向
+/// 查找并命中即返回，避免同名工具多次调用时回填到历史签名。
+fn lookup_thought_signature(
+    snapshot: &GeminiShadowSessionSnapshot,
+    call_id: &str,
+    name: &str,
+) -> Option<String> {
+    for turn in snapshot.turns.iter().rev() {
+        for meta in turn.tool_calls.iter().rev() {
+            let id_matches = !call_id.is_empty() && meta.id.as_deref() == Some(call_id);
+            let name_matches = call_id.is_empty() && !name.is_empty() && meta.name == name;
+            if id_matches || name_matches {
+                return meta.thought_signature.clone();
+            }
+        }
+    }
+    None
+}
+
+/// 在 OpenAI Chat 格式的 tool_call / function_call 对象中写入
+/// `extra_content.google.thought_signature`（Gemini OpenAI 兼容层的官方位置）。
+///
+/// 只写官方位置：顶层 / `function` 内的冗余 `thought_signature` 字段会被严格
+/// 的 OpenAI 网关拒绝（400），且 Gemini 官方端点不读取它们。
+fn inject_thought_signature_into_tool_call(tool_call: &mut Value, sig: &str) {
+    let Some(obj) = tool_call.as_object_mut() else {
+        return;
+    };
+    let Some(google) = obj
+        .entry("extra_content")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+    else {
+        return;
+    };
+    let Some(google) = google
+        .entry("google")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+    else {
+        return;
+    };
+    if !google.contains_key("thought_signature") {
+        google.insert("thought_signature".to_string(), json!(sig));
     }
 }
 
@@ -2959,7 +2901,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3001,7 +2943,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3030,7 +2972,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
         }
     }
@@ -3054,7 +2996,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "medium"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert!(result.get("reasoning_effort").is_none());
         assert!(result.get("thinking").is_none());
@@ -5085,5 +5028,311 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    // ===== Gemini thought_signature 注入 / 回填 / 兜底 =====
+
+    fn gemini_store_with_turns() -> (GeminiShadowStore, String, String) {
+        let store = GeminiShadowStore::with_limits(8, 8);
+        let provider_id = "provider-gemini".to_string();
+        let session_id = "session-1".to_string();
+        // 第一轮：read_file 调用（旧签名）
+        store.record_assistant_turn(
+            &provider_id,
+            &session_id,
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_old"),
+                "read_file",
+                json!({}),
+                Some("sig-old"),
+            )],
+        );
+        // 第二轮：read_file 再次调用（新签名）→ 按 id 匹配必须取 sig-new
+        store.record_assistant_turn(
+            &provider_id,
+            &session_id,
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_new"),
+                "read_file",
+                json!({}),
+                Some("sig-new"),
+            )],
+        );
+        (store, provider_id, session_id)
+    }
+
+    #[test]
+    fn lookup_thought_signature_matches_by_call_id_not_name() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let snapshot = store.get_session(&provider_id, &session_id).unwrap();
+
+        // 同名工具多次调用：按 call_id 精确匹配到各自签名
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "call_new", "read_file"),
+            Some("sig-new".to_string())
+        );
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "call_old", "read_file"),
+            Some("sig-old".to_string())
+        );
+        // 不存在的 call_id：不能因为 name 相同就回填错误签名
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "call_ghost", "read_file"),
+            None
+        );
+    }
+
+    #[test]
+    fn lookup_thought_signature_falls_back_to_name_only_when_id_missing() {
+        let store = GeminiShadowStore::with_limits(8, 8);
+        store.record_assistant_turn(
+            "p",
+            "s",
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call-1"),
+                "get_weather",
+                json!({}),
+                Some("sig-weather"),
+            )],
+        );
+        let snapshot = store.get_session("p", "s").unwrap();
+        // call_id 为空（旧式 function_call 消息）：按 name 兜底
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "", "get_weather"),
+            Some("sig-weather".to_string())
+        );
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "", "unknown_tool"),
+            None
+        );
+    }
+
+    #[test]
+    fn inject_uses_real_signature_when_available() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_new",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"}
+                }]
+            }]
+        });
+        inject_gemini_thought_signatures_for_openai_format(
+            &mut body,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        );
+        let call = &body["messages"][0]["tool_calls"][0];
+        assert_eq!(
+            call["extra_content"]["google"]["thought_signature"],
+            "sig-new"
+        );
+        // 只写官方位置：不写顶层 / function 冗余字段
+        assert!(call.get("thought_signature").is_none());
+        assert!(call["function"].get("thought_signature").is_none());
+    }
+
+    #[test]
+    fn inject_falls_back_to_sentinel_without_store_match() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_unknown",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"}
+                }]
+            }]
+        });
+        inject_gemini_thought_signatures_for_openai_format(
+            &mut body,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        );
+        assert_eq!(
+            body["messages"][0]["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+            GEMINI_SENTINEL_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn inject_noop_without_shadow_ctx() {
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_x",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"}
+                }]
+            }]
+        });
+        inject_gemini_thought_signatures_for_openai_format(&mut body, None);
+        // 无 shadow 上下文：不注入任何内容（保持原样）
+        assert!(body["messages"][0]["tool_calls"][0]
+            .get("extra_content")
+            .is_none());
+    }
+
+    #[test]
+    fn inject_does_not_overwrite_existing_signature() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_new",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                    "extra_content": {"google": {"thought_signature": "sig-exists"}}
+                }]
+            }]
+        });
+        inject_gemini_thought_signatures_for_openai_format(
+            &mut body,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        );
+        assert_eq!(
+            body["messages"][0]["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+            "sig-exists"
+        );
+    }
+
+    #[test]
+    fn inject_handles_function_call_message_and_malformed_tool_calls() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    // 旧式 function_call：无 id，按 name 兜底
+                    "function_call": {"name": "read_file", "arguments": "{}"}
+                },
+                {
+                    "role": "assistant",
+                    // 畸形 tool_calls：数组元素不是对象，不得 panic
+                    "tool_calls": ["not-an-object", 42]
+                }
+            ]
+        });
+        inject_gemini_thought_signatures_for_openai_format(
+            &mut body,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        );
+        // function_call 消息：extra_content 挂在消息对象上（官方位置）
+        assert_eq!(
+            body["messages"][0]["extra_content"]["google"]["thought_signature"],
+            "sig-new"
+        );
+        // 畸形 tool_calls：保持原样、不 panic
+        assert_eq!(body["messages"][1]["tool_calls"][0], "not-an-object");
+    }
+
+    #[test]
+    fn responses_to_chat_injects_signature_from_shadow() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        // Codex Responses 请求：assistant function_call 回放（call_new 已存真签名）
+        let body = json!({
+            "model": "gemini-3.6-flash",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call_new",
+                "name": "read_file",
+                "arguments": "{}"
+            }]
+        });
+        let result = responses_to_chat_completions_with_reasoning(
+            body,
+            None,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        )
+        .unwrap();
+        let tool_call = &result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m.get("tool_calls").is_some())
+            .unwrap()["tool_calls"][0];
+        assert_eq!(
+            tool_call["extra_content"]["google"]["thought_signature"],
+            "sig-new"
+        );
+    }
+
+    #[test]
+    fn responses_to_chat_injects_sentinel_when_no_signature() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let body = json!({
+            "model": "gemini-3.6-flash",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call_ghost",
+                "name": "read_file",
+                "arguments": "{}"
+            }]
+        });
+        let result = responses_to_chat_completions_with_reasoning(
+            body,
+            None,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        )
+        .unwrap();
+        let tool_call = &result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m.get("tool_calls").is_some())
+            .unwrap()["tool_calls"][0];
+        assert_eq!(
+            tool_call["extra_content"]["google"]["thought_signature"],
+            GEMINI_SENTINEL_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn chat_to_response_captures_signature_into_shadow() {
+        let store = GeminiShadowStore::with_limits(8, 8);
+        let provider_id = "provider-gemini";
+        let session_id = "session-1";
+        // 上游 Chat 响应：assistant tool_calls 带真签名
+        let chat = json!({
+            "id": "chatcmpl-1",
+            "model": "gemini-3.6-flash",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_upstream",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                        "extra_content": {"google": {"thought_signature": "sig-upstream"}}
+                    }]
+                }
+            }]
+        });
+        let result = chat_completion_to_response_with_context(
+            chat,
+            &CodexToolContext::default(),
+            Some((&store, provider_id, session_id)),
+        )
+        .unwrap();
+        assert_eq!(result["output"][0]["type"], "function_call");
+
+        // 签名已存入影子存储 → 后续请求可按 call_upstream 回填
+        let snapshot = store.get_session(provider_id, session_id).unwrap();
+        assert_eq!(
+            snapshot.turns[0].tool_calls[0].id.as_deref(),
+            Some("call_upstream")
+        );
+        assert_eq!(
+            snapshot.turns[0].tool_calls[0].thought_signature.as_deref(),
+            Some("sig-upstream")
+        );
     }
 }

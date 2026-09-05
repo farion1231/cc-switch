@@ -1533,16 +1533,11 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            let is_gemini_upstream = matches!(
-                provider.provider_type(),
-                Some("gemini") | Some("gemini_cli")
-            ) || effective_endpoint
-                .contains("generativelanguage.googleapis.com")
-                || mapped_body
-                    .get("model")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .contains("gemini");
+            let gemini_model = mapped_body
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let is_gemini_upstream = provider.is_gemini_upstream(&effective_endpoint, gemini_model);
             let shadow_ctx = if is_gemini_upstream {
                 Some((
                     self.gemini_shadow.as_ref(),
@@ -1598,13 +1593,7 @@ impl RequestForwarder {
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
                 )?;
 
-            let is_gemini_native = provider
-                .settings_config
-                .get("api_format")
-                .and_then(|v| v.as_str())
-                == Some("gemini_native")
-                || provider.meta.as_ref().and_then(|m| m.api_format.as_deref())
-                    == Some("gemini_native");
+            let is_gemini_native = provider.is_gemini_native();
 
             if is_gemini_native {
                 anthropic_body =
@@ -1659,12 +1648,11 @@ impl RequestForwarder {
                 adapter.transform_request(mapped_body, provider)?
             }
         } else {
-            let is_gemini_chat = effective_endpoint.contains("generativelanguage.googleapis.com")
-                || mapped_body
-                    .get("model")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .contains("gemini");
+            let gemini_model = mapped_body
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let is_gemini_chat = provider.is_gemini_upstream(&effective_endpoint, gemini_model);
 
             if is_gemini_chat {
                 super::providers::transform_codex_chat::inject_gemini_thought_signatures_for_openai_format(

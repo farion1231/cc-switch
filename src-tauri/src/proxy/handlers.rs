@@ -1316,10 +1316,7 @@ async fn handle_codex_chat_to_responses_transform(
         return handle_codex_chat_error_response(response, ctx, status).await;
     }
 
-    let provider_type_str = ctx.provider.provider_type().unwrap_or("codex");
-    let is_gemini_upstream = provider_type_str == "gemini"
-        || provider_type_str == "gemini_cli"
-        || (provider_type_str == "codex" && ctx.request_model.to_lowercase().contains("gemini"));
+    let is_gemini_upstream = ctx.provider.is_gemini_upstream("", &ctx.request_model);
     let shadow_ctx = if is_gemini_upstream {
         Some((
             state.gemini_shadow.clone(),

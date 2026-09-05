@@ -895,6 +895,31 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#4285F4",
   },
   {
+    name: "Gemini (OpenAI Chat)",
+    websiteUrl: "https://ai.google.dev/gemini-api",
+    apiKeyUrl: "https://aistudio.google.com/app/apikey",
+    settingsConfig: {
+      env: {
+        // Gemini 官方 OpenAI 兼容端点：/chat/completions 由代理转换层拼接，
+        // 与 PR #5298 的 thought_signature 回填修复配套使用
+        ANTHROPIC_BASE_URL: "https://generativelanguage.googleapis.com/v1beta/openai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "gemini-3.6-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-3.6-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gemini-3.6-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gemini-3.6-flash",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_chat",
+    endpointCandidates: [
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    ],
+    icon: "gemini",
+    iconColor: "#4285F4",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     settingsConfig: {
