@@ -6,9 +6,32 @@ use crate::proxy::error::ProxyError;
 use crate::proxy::tool_media::{
     strip_media_from_tool_value, tool_output_contains_media, ToolMediaScope,
 };
-use serde_json::{json, Value};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use image::{
+    codecs::jpeg::JpegEncoder, imageops::FilterType, metadata::Orientation, DynamicImage,
+    ImageDecoder, ImageReader, Limits, Rgb, RgbImage,
+};
+use serde_json::{json, Map, Value};
+use std::io::Cursor;
 
 pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
+const INLINE_IMAGE_RETRY_BASE64_BUDGET: usize = 640 * 1024;
+const INLINE_IMAGE_RETRY_MIN_BINARY_BUDGET: usize = 96 * 1024;
+const INLINE_IMAGE_MAX_DIMENSION: u32 = 16_384;
+const INLINE_IMAGE_MAX_ALLOC: u64 = 192 * 1024 * 1024;
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct InlineImageCompressionStats {
+    pub images_compressed: usize,
+    pub original_bytes: usize,
+    pub compressed_bytes: usize,
+}
+
+impl InlineImageCompressionStats {
+    pub fn saved_bytes(&self) -> usize {
+        self.original_bytes.saturating_sub(self.compressed_bytes)
+    }
+}
 
 /// Replace image blocks before sending when the routed model is text-only.
 ///
@@ -50,6 +73,21 @@ pub fn contains_image_blocks(body: &Value) -> bool {
 
 pub fn replace_image_blocks_with_marker(body: &mut Value) -> usize {
     replace_images_in_body(body)
+}
+
+/// Downsize inline data URLs and native Anthropic base64 image sources after an upstream gateway
+/// rejects the request with HTTP 413. Remote URLs and malformed/unsupported payloads are untouched.
+pub fn compress_inline_images_for_retry(body: &mut Value) -> InlineImageCompressionStats {
+    let image_count = count_inline_image_data_urls(body);
+    if image_count == 0 {
+        return InlineImageCompressionStats::default();
+    }
+
+    let binary_budget = (INLINE_IMAGE_RETRY_BASE64_BUDGET / image_count).saturating_mul(3) / 4;
+    let binary_budget = binary_budget.max(INLINE_IMAGE_RETRY_MIN_BINARY_BUDGET);
+    let mut stats = InlineImageCompressionStats::default();
+    compress_inline_image_values(body, binary_budget, &mut stats);
+    stats
 }
 
 pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
@@ -145,6 +183,184 @@ fn replace_images_in_body(body: &mut Value) -> usize {
             .map(replace_images_in_responses_input)
             .unwrap_or(0)
         + replace_images_in_gemini_contents(body)
+}
+
+fn count_inline_image_data_urls(value: &Value) -> usize {
+    match value {
+        Value::String(text) => parse_inline_image_data_url(text).is_some() as usize,
+        Value::Array(items) => items.iter().map(count_inline_image_data_urls).sum(),
+        Value::Object(object) => {
+            if native_anthropic_image_data(object).is_some() {
+                1
+            } else {
+                object.values().map(count_inline_image_data_urls).sum()
+            }
+        }
+        _ => 0,
+    }
+}
+
+fn compress_inline_image_values(
+    value: &mut Value,
+    binary_budget: usize,
+    stats: &mut InlineImageCompressionStats,
+) {
+    match value {
+        Value::String(text) => {
+            let Some(compressed) = compress_inline_image_data_url(text, binary_budget) else {
+                return;
+            };
+            stats.images_compressed += 1;
+            stats.original_bytes += text.len();
+            stats.compressed_bytes += compressed.len();
+            *text = compressed;
+        }
+        Value::Array(items) => {
+            for item in items {
+                compress_inline_image_values(item, binary_budget, stats);
+            }
+        }
+        Value::Object(object) => compress_inline_image_object(object, binary_budget, stats),
+        _ => {}
+    }
+}
+
+fn compress_inline_image_object(
+    object: &mut Map<String, Value>,
+    binary_budget: usize,
+    stats: &mut InlineImageCompressionStats,
+) {
+    if compress_native_anthropic_image_source(object, binary_budget, stats) {
+        return;
+    }
+    for item in object.values_mut() {
+        compress_inline_image_values(item, binary_budget, stats);
+    }
+}
+
+fn parse_inline_image_data_url(value: &str) -> Option<&str> {
+    let (header, payload) = value.split_once(',')?;
+    let header = header.to_ascii_lowercase();
+    (header.starts_with("data:image/") && header.ends_with(";base64") && !payload.is_empty())
+        .then_some(payload)
+}
+
+fn compress_inline_image_data_url(value: &str, binary_budget: usize) -> Option<String> {
+    let payload = parse_inline_image_data_url(value)?;
+    let bytes = STANDARD.decode(payload).ok()?;
+    let encoded = compress_image_bytes(&bytes, binary_budget)?;
+    let compressed = format!("data:image/jpeg;base64,{}", STANDARD.encode(encoded));
+    (compressed.len() < value.len()).then_some(compressed)
+}
+
+fn native_anthropic_image_data(source: &Map<String, Value>) -> Option<&str> {
+    let is_base64 = source.get("type").and_then(Value::as_str) == Some("base64");
+    let is_image = source
+        .get("media_type")
+        .and_then(Value::as_str)
+        .is_some_and(|media_type| {
+            media_type
+                .get(..6)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+        });
+    (is_base64 && is_image)
+        .then(|| source.get("data").and_then(Value::as_str))
+        .flatten()
+}
+
+fn compress_native_anthropic_image_source(
+    source: &mut Map<String, Value>,
+    binary_budget: usize,
+    stats: &mut InlineImageCompressionStats,
+) -> bool {
+    let Some(original) = native_anthropic_image_data(source).map(str::to_owned) else {
+        return false;
+    };
+    let Some(encoded) = STANDARD
+        .decode(&original)
+        .ok()
+        .and_then(|bytes| compress_image_bytes(&bytes, binary_budget))
+    else {
+        return false;
+    };
+    let compressed = STANDARD.encode(encoded);
+    if compressed.len() >= original.len() {
+        return false;
+    }
+
+    stats.images_compressed += 1;
+    stats.original_bytes += original.len();
+    stats.compressed_bytes += compressed.len();
+    source.insert("media_type".to_string(), json!("image/jpeg"));
+    source.insert("data".to_string(), Value::String(compressed));
+    true
+}
+
+fn compress_image_bytes(bytes: &[u8], binary_budget: usize) -> Option<Vec<u8>> {
+    if bytes.len() <= binary_budget {
+        return None;
+    }
+
+    let mut reader = ImageReader::new(Cursor::new(&bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(INLINE_IMAGE_MAX_DIMENSION);
+    limits.max_image_height = Some(INLINE_IMAGE_MAX_DIMENSION);
+    limits.max_alloc = Some(INLINE_IMAGE_MAX_ALLOC);
+    reader.limits(limits);
+    let mut decoder = reader.into_decoder().ok()?;
+    if decoder.total_bytes() > INLINE_IMAGE_MAX_ALLOC {
+        return None;
+    }
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut image = DynamicImage::from_decoder(decoder).ok()?;
+    image.apply_orientation(orientation);
+
+    let attempts = [
+        (1_600, 82),
+        (1_400, 76),
+        (1_200, 70),
+        (1_024, 64),
+        (896, 58),
+        (768, 52),
+    ];
+    let mut best: Option<Vec<u8>> = None;
+    for (max_dimension, quality) in attempts {
+        let target_dimension = max_dimension.min(image.width().max(image.height()));
+        let resized = image.resize(target_dimension, target_dimension, FilterType::Lanczos3);
+        let rgb = flatten_image_onto_white(&resized);
+        let mut encoded = Vec::new();
+        JpegEncoder::new_with_quality(&mut encoded, quality)
+            .encode_image(&rgb)
+            .ok()?;
+
+        if best
+            .as_ref()
+            .is_none_or(|current| encoded.len() < current.len())
+        {
+            best = Some(encoded);
+        }
+        if best
+            .as_ref()
+            .is_some_and(|encoded| encoded.len() <= binary_budget)
+        {
+            break;
+        }
+    }
+
+    best
+}
+
+fn flatten_image_onto_white(image: &DynamicImage) -> RgbImage {
+    let rgba = image.to_rgba8();
+    RgbImage::from_fn(rgba.width(), rgba.height(), |x, y| {
+        let pixel = rgba.get_pixel(x, y).0;
+        let alpha = u32::from(pixel[3]);
+        let blend =
+            |channel: u8| ((u32::from(channel) * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+        Rgb([blend(pixel[0]), blend(pixel[1]), blend(pixel[2])])
+    })
 }
 
 fn replace_images_in_message(message: &mut Value) -> usize {
@@ -437,6 +653,10 @@ fn extract_error_text(body: &str) -> String {
 mod tests {
     use super::*;
     use crate::provider::Provider;
+    use image::{
+        codecs::{jpeg::JpegEncoder, png::PngEncoder},
+        ColorType, ImageEncoder,
+    };
     use serde_json::json;
 
     fn provider(settings_config: Value) -> Provider {
@@ -461,6 +681,168 @@ mod tests {
             "data:image/png;base64,{}",
             "SANITIZER_TOOL_MEDIA_SENTINEL".repeat(400)
         )
+    }
+
+    fn png_data_url(width: u32, height: u32) -> String {
+        let mut state = 0x1234_5678_u32;
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for _ in 0..width * height {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            pixels.extend_from_slice(&[
+                (state >> 24) as u8,
+                (state >> 16) as u8,
+                (state >> 8) as u8,
+                255,
+            ]);
+        }
+
+        let mut encoded = Vec::new();
+        PngEncoder::new(&mut encoded)
+            .write_image(&pixels, width, height, ColorType::Rgba8.into())
+            .unwrap();
+        format!("data:image/png;base64,{}", STANDARD.encode(encoded))
+    }
+
+    fn oriented_jpeg_data_url(width: u32, height: u32, orientation: u16) -> String {
+        let mut state = 0x8765_4321_u32;
+        let mut pixels = Vec::with_capacity((width * height * 3) as usize);
+        for _ in 0..width * height {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            pixels.extend_from_slice(&[
+                (state >> 24) as u8,
+                (state >> 16) as u8,
+                (state >> 8) as u8,
+            ]);
+        }
+
+        let mut jpeg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpeg, 95)
+            .encode(&pixels, width, height, ColorType::Rgb8.into())
+            .unwrap();
+
+        let mut exif = vec![
+            0xff, 0xe1, 0x00, 0x22, b'E', b'x', b'i', b'f', 0x00, 0x00, b'M', b'M', 0x00, 0x2a,
+            0x00, 0x00, 0x00, 0x08, 0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        exif[28..30].copy_from_slice(&orientation.to_be_bytes());
+        jpeg.splice(2..2, exif);
+
+        format!("data:image/jpeg;base64,{}", STANDARD.encode(jpeg))
+    }
+
+    #[test]
+    fn compresses_large_inline_image_to_decodable_jpeg_for_retry() {
+        let original = png_data_url(1_024, 1_024);
+        let mut body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_image", "image_url": original.clone()}]
+            }]
+        });
+
+        let stats = compress_inline_images_for_retry(&mut body);
+        let compressed = body["input"][0]["content"][0]["image_url"]
+            .as_str()
+            .unwrap();
+        let payload = compressed
+            .strip_prefix("data:image/jpeg;base64,")
+            .expect("retry image should be encoded as JPEG");
+        let decoded = STANDARD.decode(payload).unwrap();
+        let image = image::load_from_memory(&decoded).unwrap();
+
+        assert_eq!(stats.images_compressed, 1);
+        assert_eq!(stats.original_bytes, original.len());
+        assert_eq!(stats.compressed_bytes, compressed.len());
+        assert!(stats.saved_bytes() > 0);
+        assert!(compressed.len() < original.len());
+        assert!(compressed.len() <= INLINE_IMAGE_RETRY_BASE64_BUDGET + 32);
+        assert!(image.width() <= 1_600);
+        assert!(image.height() <= 1_600);
+    }
+
+    #[test]
+    fn leaves_small_remote_and_invalid_images_unchanged() {
+        let small = png_data_url(8, 8);
+        let remote = "https://example.com/image.png";
+        let invalid = "data:image/png;base64,not-valid-base64";
+        let mut body = json!({
+            "small": small.clone(),
+            "remote": remote,
+            "invalid": invalid
+        });
+        let original = body.clone();
+
+        let stats = compress_inline_images_for_retry(&mut body);
+
+        assert_eq!(stats, InlineImageCompressionStats::default());
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn compresses_native_anthropic_base64_image_source() {
+        let data_url = png_data_url(1_024, 1_024);
+        let original = data_url.split_once(',').unwrap().1.to_string();
+        let mut body = json!({
+            "model": "claude-compatible",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": original.clone()
+                    }
+                }]
+            }]
+        });
+
+        let stats = compress_inline_images_for_retry(&mut body);
+        let source = &body["messages"][0]["content"][0]["source"];
+        let compressed = source["data"].as_str().unwrap();
+        let decoded = STANDARD.decode(compressed).unwrap();
+
+        assert_eq!(stats.images_compressed, 1);
+        assert_eq!(stats.original_bytes, original.len());
+        assert_eq!(stats.compressed_bytes, compressed.len());
+        assert_eq!(source["type"], "base64");
+        assert_eq!(source["media_type"], "image/jpeg");
+        assert!(compressed.len() < original.len());
+        assert!(image::load_from_memory(&decoded).is_ok());
+    }
+
+    #[test]
+    fn applies_exif_orientation_before_reencoding() {
+        let original = oriented_jpeg_data_url(1_200, 800, 6);
+        let original_bytes = STANDARD
+            .decode(original.split_once(',').unwrap().1)
+            .unwrap();
+        let mut decoder = ImageReader::new(Cursor::new(&original_bytes))
+            .with_guessed_format()
+            .unwrap()
+            .into_decoder()
+            .unwrap();
+        assert_eq!(decoder.orientation().unwrap(), Orientation::Rotate90);
+
+        let mut body = json!({
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_image", "image_url": original}]
+            }]
+        });
+
+        let stats = compress_inline_images_for_retry(&mut body);
+        let compressed = body["input"][0]["content"][0]["image_url"]
+            .as_str()
+            .unwrap();
+        let payload = compressed.strip_prefix("data:image/jpeg;base64,").unwrap();
+        let image = image::load_from_memory(&STANDARD.decode(payload).unwrap()).unwrap();
+
+        assert_eq!(stats.images_compressed, 1);
+        assert!(image.height() > image.width());
+        assert!((i64::from(image.height()) * 2 - i64::from(image.width()) * 3).abs() <= 3);
     }
 
     #[test]
