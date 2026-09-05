@@ -12,7 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, Settings as AppSettings, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import {
@@ -139,19 +139,33 @@ interface SyncStatusUpdatedPayload {
 
 type OpenClawConfigTab = "env" | "tools" | "agents";
 
-const getInitialApp = (): AppId => {
-  const saved = localStorage.getItem(APP_STORAGE_KEY) as AppId | null;
-  if (saved && APP_IDS.includes(saved)) {
-    return saved;
-  }
-  return "claude";
+const STORAGE_KEY = APP_STORAGE_KEY;
+let activeAppPersistence: Promise<unknown> = Promise.resolve();
+
+const persistLastActiveApp = (app: AppId) => {
+  activeAppPersistence = activeAppPersistence
+    .then(() => settingsApi.setLastActiveApp(app))
+    .catch((error) => {
+      console.warn("Failed to persist active app in settings", error);
+    });
 };
+
+const getStoredApp = (): AppId | null => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
+    return saved && APP_IDS.includes(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+};
+const getInitialApp = (): AppId => getStoredApp() ?? "claude";
 
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
+  const [hasRestoredActiveApp, setHasRestoredActiveApp] = useState(false);
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
   const [currentView, setCurrentView] = useState<View>(readStoredView);
   const [settingsSection, setSettingsSection] =
@@ -201,15 +215,77 @@ function App() {
     [settingsData?.visibleApps],
   );
 
-  const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
-  };
+  const firstVisibleApp = useMemo<AppId>(
+    () => APP_IDS.find((app) => visibleApps[app]) ?? "claude",
+    [visibleApps],
+  );
+
+  const setActiveAppLocally = useCallback((app: AppId) => {
+    setActiveApp(app);
+    try {
+      localStorage.setItem(STORAGE_KEY, app);
+    } catch (error) {
+      console.warn("Failed to persist active app in localStorage", error);
+    }
+  }, []);
+
+  const userSelectedApp = useRef(false);
+  const handleAppSwitch = useCallback(
+    (app: AppId) => {
+      userSelectedApp.current = true;
+      setActiveAppLocally(app);
+      queryClient.setQueryData<AppSettings>(["settings"], (current) =>
+        current ? { ...current, lastActiveApp: app } : current,
+      );
+      persistLastActiveApp(app);
+    },
+    [queryClient, setActiveAppLocally],
+  );
+
+  const restoredPersistedApp = useRef(false);
+  useEffect(() => {
+    if (!settingsData || restoredPersistedApp.current) return;
+    restoredPersistedApp.current = true;
+
+    if (userSelectedApp.current) {
+      queryClient.setQueryData<AppSettings>(["settings"], (current) =>
+        current ? { ...current, lastActiveApp: activeApp } : current,
+      );
+      setHasRestoredActiveApp(true);
+      return;
+    }
+
+    const persistedApp = settingsData.lastActiveApp ?? getStoredApp();
+    const resolvedApp =
+      persistedApp && visibleApps[persistedApp]
+        ? persistedApp
+        : firstVisibleApp;
+    setActiveAppLocally(resolvedApp);
+    if (persistedApp && settingsData.lastActiveApp !== resolvedApp) {
+      persistLastActiveApp(resolvedApp);
+    }
+    setHasRestoredActiveApp(true);
+  }, [
+    activeApp,
+    firstVisibleApp,
+    queryClient,
+    setActiveAppLocally,
+    settingsData,
+    visibleApps,
+  ]);
 
   useEffect(() => {
+    if (!hasRestoredActiveApp) return;
     if (!visibleApps[activeApp]) {
-      setActiveApp(getFirstVisibleApp());
+      handleAppSwitch(firstVisibleApp);
     }
-  }, [visibleApps, activeApp]);
+  }, [
+    visibleApps,
+    activeApp,
+    firstVisibleApp,
+    handleAppSwitch,
+    hasRestoredActiveApp,
+  ]);
 
   // 启动后把其他可见应用的供应商列表预取进缓存：第一次切过去直接有数据，不先画骨架
   const providersPrefetchedRef = useRef(false);
@@ -651,8 +727,7 @@ function App() {
     if (managementBusyRef.current) return;
     if (confirmLeave(() => selectApp(app))) return;
     closeProviderPanels();
-    setActiveApp(app);
-    localStorage.setItem(APP_STORAGE_KEY, app);
+    handleAppSwitch(app);
     setCurrentView("providers");
   };
 
