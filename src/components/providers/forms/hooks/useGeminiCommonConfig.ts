@@ -62,7 +62,7 @@ const SENSITIVE_CONTAINS = [
   "BEARER_TOKEN",
 ];
 
-function isForbiddenCommonEnvKey(name: string): boolean {
+export function isForbiddenCommonEnvKey(name: string): boolean {
   if (
     GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(
       name as (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number],
@@ -127,11 +127,9 @@ export function useGeminiCommonConfig({
   const syncGuard = useCommonConfigSyncGuard();
   // 用于跟踪新建模式是否已初始化默认勾选
   const hasInitializedNewMode = useRef(false);
-  // 用于识别 initialData 被 live 配置替换后的“env 重置窗口”
+  // 用于识别 initialData 被 live 配置替换后的 env 重置
   const lastInitialDataRef = useRef<typeof initialData | undefined>(undefined);
   const lastInitialEnabledRef = useRef<boolean | undefined>(undefined);
-  const preResetConfigRef = useRef<string | null>(null);
-  const pendingResetConfigRef = useRef<string | null>(null);
 
   // 当预设变化时，重置初始化标记，使新预设能够重新触发初始化逻辑
   useEffect(() => {
@@ -283,13 +281,17 @@ export function useGeminiCommonConfig({
     };
   }, [parseSnippetEnv]);
 
-  // 编辑态初始化 / live 配置刷新：勾选状态以 meta.commonConfigEnabled 为准，
-  // 记录 env 即将重置到的快照值，由下面的同步 effect 等待重置落地后补回预览。
+  // 编辑态初始化 / live 配置刷新：勾选状态以 meta.commonConfigEnabled 为准。
+  //
+  // 片段已由 useInitialDataCommonConfig 在数据层合并进 initialData，所以这里
+  // 只需同步勾选状态。env 随后会被重置到 expectedEnv，把这次重置登记给
+  // syncGuard，避免同步 effect 在重置落地前用旧值做一次无谓的推断。
   useEffect(() => {
-    if (!initialData?.settingsConfig || isLoading) return;
     if (
-      lastInitialDataRef.current === initialData &&
-      lastInitialEnabledRef.current === initialEnabled
+      !initialData?.settingsConfig ||
+      isLoading ||
+      (lastInitialDataRef.current === initialData &&
+        lastInitialEnabledRef.current === initialEnabled)
     ) {
       return;
     }
@@ -297,18 +299,17 @@ export function useGeminiCommonConfig({
     lastInitialDataRef.current = initialData;
     lastInitialEnabledRef.current = initialEnabled;
 
-    const env = isPlainObject(initialData.settingsConfig.env)
-      ? (initialData.settingsConfig.env as Record<string, string>)
-      : {};
-    const expectedEnv = envObjToString(env as Record<string, unknown>);
+    const env =
+      isPlainObject(initialData.settingsConfig.env) &&
+      Object.keys(initialData.settingsConfig.env).length > 0
+        ? (initialData.settingsConfig.env as Record<string, string>)
+        : {};
     const parsed = parseSnippetEnv(commonConfigSnippet);
     if (parsed.error) {
       if (commonConfigSnippet.trim()) {
         setCommonConfigError(parsed.error);
       }
       setUseCommonConfig(false);
-      pendingResetConfigRef.current = null;
-      preResetConfigRef.current = null;
       return;
     }
 
@@ -316,13 +317,17 @@ export function useGeminiCommonConfig({
       env,
       parsed.env as Record<string, string>,
     );
+
+    // 优先级：显式设置的 initialEnabled > 从配置推断的值
+    // 如果 initialEnabled 为 undefined，使用推断值
     const hasCommon =
       initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
 
     setCommonConfigError("");
     setUseCommonConfig(hasCommon);
-    preResetConfigRef.current = envValue;
-    pendingResetConfigRef.current = hasCommon ? expectedEnv : null;
+    // 无条件登记：即使 env 当前已经是 expectedEnv，也要让同步 effect 跳过这一轮
+    // 推断，否则片段为空/不匹配时会把刚设好的勾选状态又推断成 false。
+    syncGuard.schedule(envValue, envObjToString(env));
   }, [
     commonConfigSnippet,
     envObjToString,
@@ -371,7 +376,6 @@ export function useGeminiCommonConfig({
     applySnippetToEnv,
     onEnvChange,
     parseSnippetEnv,
-    syncGuard,
   ]);
 
   // 处理通用配置开关
@@ -411,7 +415,6 @@ export function useGeminiCommonConfig({
       parseSnippetEnv,
       removeSnippetFromEnv,
       t,
-      syncGuard,
     ],
   );
 
@@ -505,69 +508,19 @@ export function useGeminiCommonConfig({
       removeSnippetFromEnv,
       t,
       useCommonConfig,
-      syncGuard,
     ],
   );
 
-  // env 变化同步 effect：先处理程序性写入回显，再处理 env 重置窗口，
-  // 最后才进行用户编辑触发的内容推断（兼容没有 commonConfigEnabled 的旧供应商）。
+  // 当 env 变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）
   useEffect(() => {
-    if (isLoading) return;
-    if (syncGuard.skip(envValue)) return;
-
-    // initialData 被 live 配置替换后，useGeminiConfigState 会把 env 重置为
-    // DB/live 快照（快照按设计不含片段）。等到重置值落地后把片段补回编辑预览。
-    if (pendingResetConfigRef.current !== null) {
-      const expected = pendingResetConfigRef.current;
-      if (envValue === expected) {
-        pendingResetConfigRef.current = null;
-        preResetConfigRef.current = null;
-
-        const parsed = parseSnippetEnv(commonConfigSnippet);
-        if (parsed.error) {
-          if (commonConfigSnippet.trim()) {
-            setCommonConfigError(parsed.error);
-          }
-          return;
-        }
-        const envObj = envStringToObj(envValue);
-        const hasCommon =
-          initialEnabled !== undefined
-            ? initialEnabled
-            : hasEnvCommonConfigSnippet(
-                envObj,
-                parsed.env as Record<string, string>,
-              );
-        if (
-          hasCommon &&
-          !hasEnvCommonConfigSnippet(
-            envObj,
-            parsed.env as Record<string, string>,
-          ) &&
-          Object.keys(parsed.env).length > 0
-        ) {
-          const merged = applySnippetToEnv(envObj, parsed.env);
-          const nextEnvString = envObjToString(merged);
-          if (nextEnvString !== envValue) {
-            syncGuard.schedule(envValue, nextEnvString);
-            onEnvChange(nextEnvString);
-          }
-        }
-        return;
-      }
-
-      if (envValue === preResetConfigRef.current) {
-        // 还没等到 env 重置
-        return;
-      }
-
-      // 重置没有如期发生（或用户先编辑了），清除窗口并按当前值继续处理
-      pendingResetConfigRef.current = null;
-      preResetConfigRef.current = null;
+    if (isLoading || syncGuard.skip(envValue)) {
+      return;
     }
-
     const parsed = parseSnippetEnv(commonConfigSnippet);
     if (parsed.error) return;
+    // 没有片段可比对时，推断不出任何信息——保持当前勾选状态，
+    // 否则会把 meta.commonConfigEnabled 静默改写成 false。
+    if (Object.keys(parsed.env).length === 0) return;
     const envObj = envStringToObj(envValue);
     setUseCommonConfig(
       hasEnvCommonConfigSnippet(envObj, parsed.env as Record<string, string>),
@@ -576,15 +529,9 @@ export function useGeminiCommonConfig({
     envValue,
     commonConfigSnippet,
     envStringToObj,
-    envObjToString,
     hasEnvCommonConfigSnippet,
     isLoading,
     parseSnippetEnv,
-    applySnippetToEnv,
-    onEnvChange,
-    initialData,
-    initialEnabled,
-    syncGuard,
   ]);
 
   // 从编辑器当前内容提取通用配置片段

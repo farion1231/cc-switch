@@ -50,11 +50,9 @@ export function useCommonConfigSnippet({
   const syncGuard = useCommonConfigSyncGuard();
   // 用于跟踪新建模式是否已初始化默认勾选
   const hasInitializedNewMode = useRef(false);
-  // 用于识别 initialData 被 live 配置替换后的“表单重置窗口”
+  // 用于识别 initialData 被 live 配置替换后的表单重置
   const lastInitialDataRef = useRef<typeof initialData | undefined>(undefined);
   const lastInitialEnabledRef = useRef<boolean | undefined>(undefined);
-  const preResetConfigRef = useRef<string | null>(null);
-  const pendingResetConfigRef = useRef<string | null>(null);
 
   // 当预设变化时，重置初始化标记，使新预设能够重新触发初始化逻辑
   useEffect(() => {
@@ -120,13 +118,18 @@ export function useCommonConfigSnippet({
     };
   }, [enabled]);
 
-  // 编辑态初始化 / live 配置刷新：勾选状态以 meta.commonConfigEnabled 为准，
-  // 同时记录表单即将重置到的快照值，由下面的同步 effect 在重置落地后补回预览。
+  // 编辑态初始化 / live 配置刷新：勾选状态以 meta.commonConfigEnabled 为准。
+  //
+  // 片段已由 useInitialDataCommonConfig 在数据层合并进 initialData，所以这里
+  // 只需同步勾选状态。表单随后会被 reset 到 expectedConfig，把这次重置登记给
+  // syncGuard，避免下面的同步 effect 在重置落地前用旧值做一次无谓的推断。
   useEffect(() => {
-    if (!enabled || !initialData || isLoading) return;
+    if (!enabled) return;
     if (
-      lastInitialDataRef.current === initialData &&
-      lastInitialEnabledRef.current === initialEnabled
+      !initialData ||
+      isLoading ||
+      (lastInitialDataRef.current === initialData &&
+        lastInitialEnabledRef.current === initialEnabled)
     ) {
       return;
     }
@@ -139,13 +142,16 @@ export function useCommonConfigSnippet({
       expectedConfig,
       commonConfigSnippet,
     );
+    // 优先级：显式设置的 initialEnabled > 从配置推断的值
+    // 如果 initialEnabled 为 undefined，使用推断值
     const hasCommon =
       initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
 
     setCommonConfigError("");
     setUseCommonConfig(hasCommon);
-    preResetConfigRef.current = settingsConfig;
-    pendingResetConfigRef.current = hasCommon ? expectedConfig : null;
+    // 无条件登记：即使表单当前已经是 expectedConfig，也要让同步 effect 跳过
+    // 这一轮推断，否则片段为空/不匹配时会把刚设好的勾选状态又推断成 false。
+    syncGuard.schedule(settingsConfig, expectedConfig);
   }, [
     enabled,
     initialData,
@@ -212,7 +218,7 @@ export function useCommonConfigSnippet({
       syncGuard.schedule(settingsConfig, updatedConfig);
       onConfigChange(updatedConfig);
     },
-    [settingsConfig, commonConfigSnippet, onConfigChange, syncGuard],
+    [settingsConfig, commonConfigSnippet, onConfigChange],
   );
 
   // 处理通用配置片段变化
@@ -289,75 +295,26 @@ export function useCommonConfigSnippet({
         onConfigChange(addResult.updatedConfig);
       }
     },
-    [
-      commonConfigSnippet,
-      settingsConfig,
-      useCommonConfig,
-      onConfigChange,
-      syncGuard,
-    ],
+    [commonConfigSnippet, settingsConfig, useCommonConfig, onConfigChange],
   );
 
-  // 配置变化同步 effect：先处理程序性写入回显，再处理 initialData 重置窗口，
-  // 最后才进行用户编辑触发的内容推断（兼容没有 commonConfigEnabled 的旧供应商）。
+  // 配置变化同步 effect：跳过程序性写入的回显，其余按内容推断勾选状态，
+  // 让用户手动增删片段时勾选框跟着变。
   useEffect(() => {
-    if (!enabled || isLoading) return;
-    if (syncGuard.skip(settingsConfig)) return;
-
-    // initialData 被 live 配置替换后，表单会重置为 DB/live 快照（快照按设计
-    // 不含片段）。等到重置值落地后把片段补回编辑预览，期间不做内容推断。
-    if (pendingResetConfigRef.current !== null) {
-      const expected = pendingResetConfigRef.current;
-      if (settingsConfig === expected) {
-        pendingResetConfigRef.current = null;
-        preResetConfigRef.current = null;
-        const hasCommon =
-          initialEnabled !== undefined
-            ? initialEnabled
-            : hasCommonConfigSnippet(settingsConfig, commonConfigSnippet);
-        if (hasCommon) {
-          const { updatedConfig, error } = updateCommonConfigSnippet(
-            settingsConfig,
-            commonConfigSnippet,
-            true,
-          );
-          if (error) {
-            setCommonConfigError(error);
-            return;
-          }
-          if (updatedConfig !== settingsConfig) {
-            syncGuard.schedule(settingsConfig, updatedConfig);
-            onConfigChange(updatedConfig);
-          }
-        }
-        return;
-      }
-
-      if (settingsConfig === preResetConfigRef.current) {
-        // 还没等到表单重置
-        return;
-      }
-
-      // 重置没有如期发生（或用户先编辑了），清除窗口并按当前值继续处理
-      pendingResetConfigRef.current = null;
-      preResetConfigRef.current = null;
+    if (!enabled) return;
+    if (isLoading || syncGuard.skip(settingsConfig)) {
+      return;
     }
+    // 没有片段可比对时，推断不出任何信息——保持当前勾选状态，
+    // 否则会把 meta.commonConfigEnabled 静默改写成 false。
+    if (!commonConfigSnippet.trim()) return;
 
     const hasCommon = hasCommonConfigSnippet(
       settingsConfig,
       commonConfigSnippet,
     );
     setUseCommonConfig(hasCommon);
-  }, [
-    enabled,
-    settingsConfig,
-    commonConfigSnippet,
-    isLoading,
-    initialData,
-    initialEnabled,
-    onConfigChange,
-    syncGuard,
-  ]);
+  }, [enabled, settingsConfig, commonConfigSnippet, isLoading]);
 
   // 从编辑器当前内容提取通用配置片段
   const handleExtract = useCallback(async () => {
