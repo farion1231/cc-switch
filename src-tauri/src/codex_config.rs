@@ -3590,7 +3590,9 @@ fn merge_preserve_unmanaged_model_providers(new_config: String) -> String {
         return new_config;
     };
     // Ensure the target has a model_providers table to merge into.
-    let new_providers_entry = new_doc.entry("model_providers").or_insert(toml_edit::table());
+    let new_providers_entry = new_doc
+        .entry("model_providers")
+        .or_insert(toml_edit::table());
     let Some(new_providers) = new_providers_entry.as_table_like_mut() else {
         return new_config;
     };
@@ -3654,7 +3656,8 @@ fn plan_codex_live_write(
         // in full, a material-less card follows the live login and only
         // writes config. Official auth never travels through config.toml.
         // Also preserve unmanaged aliases for official writes (same #6860).
-        let config_text = config_text.map(|t| merge_preserve_unmanaged_model_providers(t.to_string()));
+        let config_text =
+            config_text.map(|t| merge_preserve_unmanaged_model_providers(t.to_string()));
         return Ok(CodexLiveWritePlan {
             write_full_auth: codex_auth_has_login_material(auth),
             config_text,
