@@ -410,7 +410,9 @@
         "mediaFallback": "不支持图片降级",
         "mediaFallbackDescription": "当供应商不支持图片输入时（已声明纯文本能力，或上游返回不支持图片的错误），自动将图片块替换为 [Unsupported Image] 标记，使对话不中断",
         "mediaHeuristic": "纯文本模型预判",
-        "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明"
+        "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明",
+        "steerUserRole": "Claude Code steer 缓存兼容",
+        "steerUserRoleDescription": "仅用于 Claude → Chat Completions 路由，将识别出的运行中用户补充指令转换为 user 消息，保留正文和位置。建议会话开始前启用；中途切换可能重建一次缓存。"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",

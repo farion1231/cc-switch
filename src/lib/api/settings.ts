@@ -322,6 +322,7 @@ export interface ToolInstallationReport {
 }
 
 export interface RectifierConfig {
+  requestSteerUserRole: boolean;
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;
