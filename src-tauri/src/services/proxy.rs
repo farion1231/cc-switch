@@ -498,7 +498,14 @@ impl ProxyService {
         Some(injected)
     }
 
-    /// 把 subagent 注入合并进接管模型字段（用户显式配置优先，spec §6）
+    /// 把 subagent 注入合并进接管模型字段（用户显式配置优先，spec §6）。
+    ///
+    /// 为什么同时注入 CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1：Claude Code
+    /// ≥ v2.1.251 起，主模型派发 Task 时的 per-invocation `model` 参数会覆盖
+    /// `CLAUDE_CODE_SUBAGENT_MODEL`，路由会静默失效；FORCE（官方开关，
+    /// ≥ v2.1.257）强制所有 subagent 跑在 `CLAUDE_CODE_SUBAGENT_MODEL` 上，
+    /// 恢复"子代理固定走目标模型"的路由语义。供应商显式设置了非空 FORCE
+    /// （任意取值，包括用 "0" 显式退出强制）时不注入 FORCE，用户配置永远优先。
     fn apply_subagent_route_injection(
         mut fields: Vec<(&'static str, String)>,
         provider: &Provider,
@@ -518,6 +525,16 @@ impl ProxyService {
             return fields;
         }
         fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", injected.to_string()));
+        let explicit_force = provider
+            .settings_config
+            .get("env")
+            .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL_FORCE"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if explicit_force.is_none() {
+            fields.push(("CLAUDE_CODE_SUBAGENT_MODEL_FORCE", "1".to_string()));
+        }
         fields
     }
 
@@ -10058,6 +10075,7 @@ experimental_bearer_token = "PROXY_MANAGED"
             vec![
                 ("ANTHROPIC_MODEL", "claude-sonnet-4-5".to_string()),
                 ("CLAUDE_CODE_SUBAGENT_MODEL", "glm-5.5-flash".to_string()),
+                ("CLAUDE_CODE_SUBAGENT_MODEL_FORCE", "1".to_string()),
             ]
         );
     }
@@ -10074,6 +10092,24 @@ experimental_bearer_token = "PROXY_MANAGED"
         let merged =
             ProxyService::apply_subagent_route_injection(fields, &provider, Some("glm-5.5-flash"));
         assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn subagent_injection_skips_force_when_provider_sets_it_explicitly() {
+        // 用户显式设置 FORCE=0 表示退出强制：只注入模型名，不覆盖用户的 FORCE。
+        let provider = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({"env": {"CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "0"}}),
+            None,
+        );
+        let fields: Vec<(&'static str, String)> = Vec::new();
+        let merged =
+            ProxyService::apply_subagent_route_injection(fields, &provider, Some("glm-5.5-flash"));
+        assert_eq!(
+            merged,
+            vec![("CLAUDE_CODE_SUBAGENT_MODEL", "glm-5.5-flash".to_string())]
+        );
     }
 
     #[test]
