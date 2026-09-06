@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
@@ -137,6 +143,9 @@ describe("ClaudeFormFields SubAgent 路由行", () => {
     const user = userEvent.setup();
     renderFields(routeProps());
 
+    // 行标签与模型映射区其他行同源（modelRoleSubagent），而非独立路由标签
+    expect(screen.getByText("providerForm.modelRoleSubagent")).toBeDefined();
+
     await user.click(
       screen.getByTestId("subagent-route-provider-trigger"),
     );
@@ -201,10 +210,38 @@ describe("ClaudeFormFields SubAgent 路由行", () => {
     expect(onSubagentRouteModelChange).not.toHaveBeenCalled();
   });
 
-  it("target=B 时拉取模型使用 B 的 baseUrl/apiKey", async () => {
+  it("target=B 时拉取模型透传 B 的 baseUrl/apiKey/isFullUrl/modelsUrl/customUserAgent", async () => {
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValue([
       { id: "glm-5.5-flash", ownedBy: null },
     ]);
+    const user = userEvent.setup();
+    renderFields(
+      routeProps({
+        subagentRouteTarget: "b",
+        subagentRouteTargetEndpoint: {
+          baseUrl: "https://b.example.com",
+          apiKey: "sk-b",
+          isFullUrl: false,
+          modelsUrl: "https://b.example.com/models",
+          customUserAgent: "b-custom-ua",
+        },
+      }),
+    );
+
+    await user.click(screen.getByTitle("providerForm.fetchModels"));
+
+    await waitFor(() => {
+      expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
+        "https://b.example.com",
+        "sk-b",
+        false,
+        "https://b.example.com/models",
+        "b-custom-ua",
+      );
+    });
+  });
+
+  it("target=B 端点未命中预设时 modelsUrl/customUserAgent 传 undefined", async () => {
     const user = userEvent.setup();
     renderFields(routeProps({ subagentRouteTarget: "b" }));
 
@@ -215,8 +252,84 @@ describe("ClaudeFormFields SubAgent 路由行", () => {
         "https://b.example.com",
         "sk-b",
         false,
+        undefined,
+        undefined,
       );
     });
+  });
+
+  it("target=B 时 [1M] 开关切换路由模型草稿的 [1M] 标记", async () => {
+    const onSubagentRouteModelChange = vi.fn();
+    const onModelChange = vi.fn();
+    const user = userEvent.setup();
+    renderFields(
+      routeProps({
+        subagentRouteTarget: "b",
+        subagentRouteModel: "glm-5.5-flash",
+        onSubagentRouteModelChange,
+        onModelChange,
+      }),
+    );
+
+    const routeRow = document.getElementById(
+      "claudeCodeSubagentRouteModel",
+    )!.closest("div.grid") as HTMLElement;
+    const oneMCheckbox = within(routeRow).getByRole("checkbox");
+    expect(oneMCheckbox).not.toBeChecked();
+
+    await user.click(oneMCheckbox);
+    expect(onSubagentRouteModelChange).toHaveBeenCalledWith(
+      "glm-5.5-flash[1M]",
+    );
+    expect(onModelChange).not.toHaveBeenCalled();
+  });
+
+  it("target=B 时 [1M] 已标记的模型开关为选中态，取消后去掉标记", async () => {
+    const onSubagentRouteModelChange = vi.fn();
+    const user = userEvent.setup();
+    renderFields(
+      routeProps({
+        subagentRouteTarget: "b",
+        subagentRouteModel: "glm-5.5-flash[1M]",
+        onSubagentRouteModelChange,
+      }),
+    );
+
+    const routeRow = document.getElementById(
+      "claudeCodeSubagentRouteModel",
+    )!.closest("div.grid") as HTMLElement;
+    const oneMCheckbox = within(routeRow).getByRole("checkbox");
+    expect(oneMCheckbox).toBeChecked();
+
+    await user.click(oneMCheckbox);
+    expect(onSubagentRouteModelChange).toHaveBeenCalledWith("glm-5.5-flash");
+  });
+
+  it("target=本供应商 时 [1M] 开关作用于 env 字段", async () => {
+    const onSubagentRouteModelChange = vi.fn();
+    const onModelChange = vi.fn();
+    const user = userEvent.setup();
+    renderFields(
+      routeProps({
+        subagentRouteTarget: "",
+        subagentModel: "glm-5.5-flash",
+        onSubagentRouteModelChange,
+        onModelChange,
+      }),
+    );
+
+    const routeRow = document.getElementById(
+      "claudeCodeSubagentModel",
+    )!.closest("div.grid") as HTMLElement;
+    const oneMCheckbox = within(routeRow).getByRole("checkbox");
+    expect(oneMCheckbox).not.toBeChecked();
+
+    await user.click(oneMCheckbox);
+    expect(onModelChange).toHaveBeenCalledWith(
+      "CLAUDE_CODE_SUBAGENT_MODEL",
+      "glm-5.5-flash[1M]",
+    );
+    expect(onSubagentRouteModelChange).not.toHaveBeenCalled();
   });
 
   it("规则目标已不存在时渲染失效警告", () => {
@@ -275,7 +388,8 @@ const providersData: ProvidersQueryData = {
       name: "Provider B",
       settingsConfig: {
         env: {
-          ANTHROPIC_BASE_URL: "https://b.example.com",
+          // 命中 DeepSeek 预设的 baseUrl（预设带 modelsUrl 覆写），用于拉取匹配断言
+          ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
           ANTHROPIC_AUTH_TOKEN: "sk-b",
         },
       },
@@ -451,6 +565,29 @@ describe("ProviderForm SubAgent 路由保存", () => {
     expect(submittedSettings.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe(
       "glm-5.5-flash",
     );
+  });
+
+  it("target=B 拉取模型按预设匹配 modelsUrl 并透传 B 的自定义 UA（缺省为空串）", async () => {
+    modelFetchApiMock.fetchModelsForConfig.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderProviderForm();
+    await expandAdvanced(user);
+
+    await selectRouteTarget(user, "Provider B");
+    // 路由行的获取按钮（ModelInputWithFetch 的 title），非表单头部的文字按钮
+    await user.click(screen.getByTitle("providerForm.fetchModels"));
+
+    await waitFor(() => {
+      expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
+        "https://api.deepseek.com/anthropic",
+        "sk-b",
+        false,
+        // DeepSeek 预设的 modelsUrl 覆写
+        "https://api.deepseek.com/models",
+        // B 无 meta.customUserAgent 时为空串
+        "",
+      );
+    });
   });
 
   it("路由草稿未变化时保存不提交代理配置", async () => {

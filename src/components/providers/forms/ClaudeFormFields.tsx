@@ -79,6 +79,10 @@ export interface SubagentRouteTargetEndpoint {
   baseUrl: string;
   apiKey: string;
   isFullUrl: boolean;
+  /** B 的 baseUrl 命中预设时该预设的 modelsUrl 覆写（ProviderForm 按预设匹配填入） */
+  modelsUrl?: string;
+  /** B 的自定义 User-Agent（meta.customUserAgent），与表单自身拉取保持一致 */
+  customUserAgent?: string;
 }
 
 interface ClaudeFormFieldsProps {
@@ -181,7 +185,7 @@ interface ClaudeFormFieldsProps {
   onSubagentRouteModelChange?: (model: string) => void;
   /** 目标供应商候选（已排除正在编辑的供应商） */
   subagentRouteOptions?: Array<{ id: string; name: string }>;
-  /** 目标供应商 B 的端点（用于拉取 B 的模型列表；B 的自定义 UA/请求头不参与） */
+  /** 目标供应商 B 的端点（用于拉取 B 的模型列表；customUserAgent 参与拉取，请求头覆写不参与） */
   subagentRouteTargetEndpoint?: SubagentRouteTargetEndpoint | null;
   /** 规则目标供应商是否仍存在（false 时渲染失效警告） */
   subagentRouteTargetExists?: boolean;
@@ -375,7 +379,14 @@ export function ClaudeFormFields({
       return;
     }
     setIsFetchingRouteModels(true);
-    fetchModelsForConfig(endpoint.baseUrl, endpoint.apiKey, endpoint.isFullUrl)
+    // 与表单自身拉取一致：带上预设 modelsUrl 覆写与 B 的自定义 User-Agent
+    fetchModelsForConfig(
+      endpoint.baseUrl,
+      endpoint.apiKey,
+      endpoint.isFullUrl,
+      endpoint.modelsUrl,
+      endpoint.customUserAgent,
+    )
       .then((models) => {
         setRouteFetchedModels(models);
         showModelFetchResult(models.length);
@@ -1063,13 +1074,14 @@ export function ClaudeFormFields({
 
                 // SubAgent 路由行：目标供应商下拉 + 模型名输入（其余四行保持原样）
                 if (row.role === "subagent" && isSubagentRoutingEnabled) {
+                  const routeUsesOneM = hasClaudeOneMMarker(
+                    subagentRouteModel ?? "",
+                  );
                   return (
                     <div key={row.role} className="space-y-2">
                       <div className="grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_minmax(0,1fr)_104px]">
                         <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
-                          {t("providerForm.subagentRouteRowLabel", {
-                            defaultValue: "SubAgent 路由",
-                          })}
+                          {row.label}
                         </div>
                         <Select
                           value={
@@ -1129,7 +1141,22 @@ export function ClaudeFormFields({
                           )
                         )}
                         {isRoutingOtherProvider ? (
-                          <div aria-hidden className="hidden md:block" />
+                          <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                            <Checkbox
+                              checked={routeUsesOneM}
+                              onCheckedChange={(checked) =>
+                                onSubagentRouteModelChange?.(
+                                  setClaudeOneMMarker(
+                                    subagentRouteModel ?? "",
+                                    checked === true,
+                                  ),
+                                )
+                              }
+                            />
+                            {t("providerForm.modelOneMLabel", {
+                              defaultValue: "1M",
+                            })}
+                          </label>
                         ) : (
                           <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
                             <Checkbox

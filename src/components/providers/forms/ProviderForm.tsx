@@ -600,10 +600,20 @@ function ProviderFormFull({
     if (!target) return null;
     const env = (target.settingsConfig as { env?: Record<string, string> })
       ?.env;
+    const baseUrl = env?.ANTHROPIC_BASE_URL ?? "";
+    // 与 ClaudeFormFields.handleFetchModels 相同的预设匹配：
+    // baseUrl 仍是某预设的默认值时，用该预设的 modelsUrl 覆写拉取地址
+    const matchedPreset = providerPresets.find((p) => {
+      const presetEnv = (p.settingsConfig as { env?: Record<string, string> })
+        ?.env;
+      return presetEnv?.ANTHROPIC_BASE_URL === baseUrl;
+    });
     return {
-      baseUrl: env?.ANTHROPIC_BASE_URL ?? "",
+      baseUrl,
       apiKey: env?.ANTHROPIC_AUTH_TOKEN ?? env?.ANTHROPIC_API_KEY ?? "",
       isFullUrl: target.meta?.isFullUrl ?? false,
+      modelsUrl: matchedPreset?.modelsUrl,
+      customUserAgent: target.meta?.customUserAgent ?? "",
     };
   }, [appId, claudeProvidersData, subagentRouteDraft.target]);
 

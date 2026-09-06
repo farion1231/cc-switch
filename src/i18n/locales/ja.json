@@ -1322,7 +1322,6 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
-    "subagentRouteRowLabel": "サブエージェントルーティング",
     "subagentRouteSelfTarget": "このプロバイダー",
     "subagentRouteTakeoverRequiredHint": "プロキシテイクオーバーが有効な場合にのみ反映されます",
     "modelDisplayNameLabel": "表示名",

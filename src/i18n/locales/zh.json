@@ -1322,7 +1322,6 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
-    "subagentRouteRowLabel": "SubAgent 路由",
     "subagentRouteSelfTarget": "本供应商",
     "subagentRouteTakeoverRequiredHint": "需开启代理接管才会生效",
     "modelDisplayNameLabel": "显示名称",

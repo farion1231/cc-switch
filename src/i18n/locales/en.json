@@ -1322,7 +1322,6 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
-    "subagentRouteRowLabel": "SubAgent Routing",
     "subagentRouteSelfTarget": "This provider",
     "subagentRouteTakeoverRequiredHint": "Takes effect only when proxy takeover is enabled.",
     "modelDisplayNameLabel": "Display name",
