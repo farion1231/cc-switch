@@ -364,6 +364,12 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// 记住的轻量模式偏好：勾选过托盘"轻量模式"后，关闭主窗口或重启应用
+    /// 都会自动回到轻量模式（销毁主窗口、仅托盘运行），直到用户在托盘取消
+    /// 勾选。纯后端状态（仅托盘可改），前端保存设置时不透传，见
+    /// `commands::settings::merge_settings_for_save`。
+    #[serde(default)]
+    pub lightweight_mode: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -527,6 +533,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            lightweight_mode: false,
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
@@ -786,6 +793,12 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     });
     *guard = new_settings;
     Ok(())
+}
+
+/// 更新"记住轻量模式"偏好（托盘勾选/取消勾选时调用）。
+/// 仅持久化偏好，不改变当前运行时状态——运行时切换见 `lightweight` 模块。
+pub fn set_lightweight_mode_preference(enabled: bool) -> Result<(), AppError> {
+    mutate_settings(|settings| settings.lightweight_mode = enabled)
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
