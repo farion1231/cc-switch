@@ -1,6 +1,9 @@
-use std::fs::File;
+use std::collections::HashMap;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use serde_json::Value;
 
@@ -184,10 +187,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
     }
 
-    // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
+    // Extract last_active_at and summary from tail lines (reverse order)
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
-    let mut custom_title: Option<String> = None;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
@@ -196,16 +198,6 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         };
         if last_active_at.is_none() {
             last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
-        }
-        // Look for custom-title entry (take the last one, i.e. first in reverse)
-        if custom_title.is_none()
-            && value.get("type").and_then(Value::as_str) == Some("custom-title")
-        {
-            custom_title = value
-                .get("customTitle")
-                .and_then(Value::as_str)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
         }
         if summary.is_none() {
             if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
@@ -218,10 +210,14 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 }
             }
         }
-        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
+        if last_active_at.is_some() && summary.is_some() {
             break;
         }
     }
+
+    // Claude Code appends custom-title entries inline at rename time, so they
+    // can sit far above the tail window sampled above; scan the whole file.
+    let custom_title = scan_last_custom_title(path);
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
@@ -257,6 +253,81 @@ fn is_agent_session(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| name.starts_with("agent-"))
         .unwrap_or(false)
+}
+
+/// Return the last non-empty `custom-title` entry anywhere in the session file.
+///
+/// Title events are appended inline wherever the rename happened, so unlike
+/// head/tail metadata they have no guaranteed position; only a full scan can
+/// find the latest one. The substring prefilter keeps JSON parsing limited to
+/// candidate title lines. Results are cached per file keyed on mtime + size —
+/// Claude Code only appends to these transcripts, so unchanged metadata means
+/// the last scanned title is still current and the full read can be skipped.
+/// Cache entry: (mtime, size, last seen title) — see [`CUSTOM_TITLE_CACHE`].
+type CustomTitleCacheEntry = (SystemTime, u64, Option<String>);
+
+static CUSTOM_TITLE_CACHE: OnceLock<Mutex<HashMap<PathBuf, CustomTitleCacheEntry>>> =
+    OnceLock::new();
+
+fn scan_last_custom_title(path: &Path) -> Option<String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        // Stat failed: still answer from a full read, just don't cache it.
+        Err(_) => return scan_last_custom_title_full(path),
+    };
+    let modified = match metadata.modified() {
+        Ok(modified) => modified,
+        Err(_) => return scan_last_custom_title_full(path),
+    };
+    let size = metadata.len();
+
+    let cache = CUSTOM_TITLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(entries) = cache.lock() {
+        if let Some((cached_mtime, cached_size, cached_title)) = entries.get(path) {
+            if *cached_mtime == modified && *cached_size == size {
+                return cached_title.clone();
+            }
+        }
+    }
+
+    let title = scan_last_custom_title_full(path);
+    if let Ok(mut entries) = cache.lock() {
+        entries.insert(path.to_path_buf(), (modified, size, title.clone()));
+    }
+    title
+}
+
+fn scan_last_custom_title_full(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut last_title: Option<String> = None;
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(value) => value,
+            Err(_) => break,
+        };
+        if !line.contains("\"custom-title\"") {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        if value.get("type").and_then(Value::as_str) != Some("custom-title") {
+            continue;
+        }
+        if let Some(title) = value
+            .get("customTitle")
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            last_title = Some(title);
+        }
+    }
+
+    last_title
 }
 
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
@@ -420,6 +491,86 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("fix-login-bug"));
+    }
+
+    #[test]
+    fn parse_session_prefers_the_latest_custom_title_above_the_tail_window() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-multi-title.jsonl");
+        let mut lines = String::new();
+        lines.push_str("{\"sessionId\":\"session-multi-title\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n");
+        lines.push_str("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"first message\"},\"sessionId\":\"session-multi-title\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n");
+        lines.push_str("{\"type\":\"custom-title\",\"customTitle\":\"old name\",\"sessionId\":\"session-multi-title\"}\n");
+        lines.push_str("{\"type\":\"custom-title\",\"customTitle\":\"latest name\",\"sessionId\":\"session-multi-title\"}\n");
+        for i in 0..40 {
+            lines.push_str(&format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":\"filler {i}\"}},\"timestamp\":\"2026-03-06T11:{:02}:{i:02}Z\"}}\n",
+                i / 60
+            ));
+        }
+        std::fs::write(&path, lines).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("latest name"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn custom_title_cache_hits_skip_the_full_file_read() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-cache-hit.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-cache-hit\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"custom-title\",\"customTitle\":\"cached name\",\"sessionId\":\"session-cache-hit\"}\n",
+            ),
+        )
+        .expect("write");
+
+        assert_eq!(
+            scan_last_custom_title(&path).as_deref(),
+            Some("cached name")
+        );
+
+        // chmod 000 keeps stat (mtime/size) readable but makes a full read fail,
+        // so a title coming back afterwards can only have come from the cache.
+        // chmod changes neither mtime nor size, so the entry stays fresh.
+        let perms = std::fs::metadata(&path).unwrap().permissions();
+        let mut no_read = perms.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut no_read, 0o000);
+        std::fs::set_permissions(&path, no_read).expect("chmod");
+        assert_eq!(
+            scan_last_custom_title(&path).as_deref(),
+            Some("cached name")
+        );
+        std::fs::set_permissions(&path, perms).expect("restore");
+    }
+
+    #[test]
+    fn custom_title_cache_invalidates_when_the_file_grows() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-cache-invalidate.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-cache-invalidate\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"custom-title\",\"customTitle\":\"old name\",\"sessionId\":\"session-cache-invalidate\"}\n",
+            ),
+        )
+        .expect("write");
+
+        assert_eq!(scan_last_custom_title(&path).as_deref(), Some("old name"));
+
+        // Appending changes the size, so the entry is invalidated even if the
+        // two writes land within the same mtime granularity window.
+        let mut existing = std::fs::read_to_string(&path).expect("read");
+        existing.push_str(
+            "{\"type\":\"custom-title\",\"customTitle\":\"new name\",\"sessionId\":\"session-cache-invalidate\"}\n",
+        );
+        std::fs::write(&path, existing).expect("append");
+
+        assert_eq!(scan_last_custom_title(&path).as_deref(), Some("new name"));
     }
 
     #[test]
