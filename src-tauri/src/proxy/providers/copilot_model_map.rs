@@ -251,8 +251,7 @@ fn family_fallback(target: &str, models: &[CopilotModel]) -> Option<String> {
             .iter()
             .filter(|m| {
                 let lower = m.id.to_ascii_lowercase();
-                let is_1m = lower.contains("-1m")
-                    || m.context_window.is_some_and(|tokens| tokens >= 1_000_000);
+                let is_1m = lower.ends_with("-1m");
                 lower.contains(family) && is_1m == require_1m
             })
             .filter_map(|m| extract_major_minor(&m.id).map(|v| (m, v)))
@@ -430,6 +429,32 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_family_fallback_keeps_naturally_large_context_models() {
+        let mut natural = model("claude-opus-4.7");
+        natural.context_window = Some(1_048_576);
+        let mut explicit = model("claude-opus-4.8-1m");
+        explicit.context_window = Some(1_048_576);
+        let models = [natural, explicit];
+
+        assert_eq!(
+            resolve_against_models("claude-opus-4-5", &models),
+            Some("claude-opus-4.7".to_string())
+        );
+        assert_eq!(
+            resolve_model("claude-opus-4-5", &models).unwrap().id,
+            "claude-opus-4.7"
+        );
+        assert_eq!(
+            resolve_model("claude-opus-4.7", &models).unwrap().id,
+            "claude-opus-4.7"
+        );
+        assert_eq!(
+            resolve_model("claude-opus-4-5[1m]", &models).unwrap().id,
+            "claude-opus-4.8-1m"
+        );
+    }
+
+    #[test]
     fn resolve_prefers_1m_when_requested() {
         let models = vec![
             model("claude-sonnet-4.6"),
@@ -600,11 +625,47 @@ mod tests {
     }
 
     #[test]
-    fn one_m_family_fallback_uses_reported_context_window() {
-        let mut one_m = model("claude-opus-4.7-1m-internal");
+    fn one_m_family_fallback_accepts_natural_context_without_explicit_variant() {
+        let mut one_m = model("claude-opus-4.7");
         one_m.context_window = Some(1_000_000);
         let resolved = resolve_model("claude-opus-4-5[1M]", &[one_m]).unwrap();
 
-        assert_eq!(resolved.id, "claude-opus-4.7-1m-internal");
+        assert_eq!(resolved.id, "claude-opus-4.7");
+    }
+
+    #[test]
+    fn copilot_endpoint_contract_matches_frontend_cases() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            endpoints: Vec<String>,
+            formats: Vec<CodexCopilotApiFormat>,
+        }
+        let cases: Vec<Case> = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/copilot-endpoint-cases.json"
+        ))
+        .unwrap();
+        for case in cases {
+            let mut candidate = model("gpt-contract");
+            candidate.supported_endpoints = case.endpoints;
+            for format in [
+                CodexCopilotApiFormat::Auto,
+                CodexCopilotApiFormat::OpenaiResponses,
+                CodexCopilotApiFormat::OpenaiChat,
+            ] {
+                let resolved = resolve_model_with_format(
+                    "gpt-contract",
+                    std::slice::from_ref(&candidate),
+                    format,
+                )
+                .unwrap();
+                assert_eq!(
+                    resolved.transport.is_some(),
+                    case.formats.contains(&format),
+                    "{}: {format:?}",
+                    case.name
+                );
+            }
+        }
     }
 }

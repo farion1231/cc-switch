@@ -179,6 +179,17 @@ describe("Codex Copilot provider form", () => {
     expect(screen.getByText("模型映射")).toBeVisible();
   });
 
+  it("does not offer preset switching while editing an existing Copilot card", () => {
+    renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });
+    expect(
+      screen.queryByRole("button", { name: /DeepSeek/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /providerPreset.custom/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("providerPreset.label")).not.toBeInTheDocument();
+  });
+
   it("loads a saved explicit protocol and can return it to automatic", async () => {
     const onSubmit = renderForm({
       providerType: "github_copilot",

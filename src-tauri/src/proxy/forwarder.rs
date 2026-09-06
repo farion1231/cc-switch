@@ -23,7 +23,7 @@ use super::{
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
-use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::copilot_auth::{CopilotAuthError, CopilotAuthManager};
 use crate::proxy::providers::copilot_model_map::{
     CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
 };
@@ -1454,7 +1454,7 @@ impl RequestForwarder {
                 .unwrap_or_default();
             let resolved = self
                 .resolve_codex_copilot_model(provider, &mapped_body, api_format)
-                .await;
+                .await?;
             let transport = apply_codex_copilot_model(&mut mapped_body, resolved, api_format)?;
             copilot_endpoint_override = Some(transport.endpoint);
             codex_responses_to_chat = matches!(transport.protocol, CopilotProtocol::Chat);
@@ -2831,15 +2831,22 @@ impl RequestForwarder {
         provider: &Provider,
         body: &Value,
         api_format: CodexCopilotApiFormat,
-    ) -> Option<ResolvedCopilotModel> {
-        let model_id = body.get("model")?.as_str()?.trim();
-        if model_id.is_empty() {
-            return None;
-        }
-        let Some(app_handle) = &self.app_handle else {
-            log::debug!("[Copilot] AppHandle unavailable, fallback to chat/completions");
-            return None;
-        };
+    ) -> Result<Option<ResolvedCopilotModel>, ProxyError> {
+        let model_id = body
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .ok_or_else(|| {
+                ProxyError::InvalidRequest(
+                    "Codex Copilot requests require a non-empty string model".to_string(),
+                )
+            })?;
+        let app_handle = self.app_handle.as_ref().ok_or_else(|| {
+            ProxyError::ConfigError(format!(
+                "GitHub Copilot capabilities for model {model_id} cannot be resolved: AppHandle unavailable"
+            ))
+        })?;
 
         let copilot_state = app_handle.state::<CopilotAuthState>();
         let copilot_auth = copilot_state.0.read().await;
@@ -2856,15 +2863,7 @@ impl RequestForwarder {
             None => copilot_auth.resolve_model(model_id, api_format).await,
         };
 
-        match resolved {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                log::warn!(
-                    "[Copilot] Failed to resolve Codex model capabilities for {model_id}; fallback to chat/completions: {error}"
-                );
-                None
-            }
-        }
+        resolved.map_err(|error| codex_copilot_lookup_error(model_id, error))
     }
 
     async fn copilot_model_vendor(&self, provider: &Provider, model_id: &str) -> Option<String> {
@@ -3352,31 +3351,51 @@ fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Opt
     (rewritten, passthrough_query)
 }
 
+fn codex_copilot_lookup_error(model_id: &str, error: CopilotAuthError) -> ProxyError {
+    let message =
+        format!("Failed to resolve GitHub Copilot capabilities for model {model_id}: {error}");
+    match error {
+        CopilotAuthError::DeviceFlowNotStarted
+        | CopilotAuthError::AuthorizationPending
+        | CopilotAuthError::AccessDenied
+        | CopilotAuthError::ExpiredToken
+        | CopilotAuthError::GitHubTokenInvalid
+        | CopilotAuthError::NoCopilotSubscription
+        | CopilotAuthError::AccountNotFound(_) => ProxyError::AuthError(message),
+        CopilotAuthError::NetworkError(_) | CopilotAuthError::CopilotTokenFetchFailed(_) => {
+            ProxyError::ForwardFailed(message)
+        }
+        CopilotAuthError::ParseError(_)
+        | CopilotAuthError::IoError(_)
+        | CopilotAuthError::InvalidDomain(_) => ProxyError::ConfigError(message),
+    }
+}
+
 fn apply_codex_copilot_model(
     body: &mut Value,
     resolved: Option<ResolvedCopilotModel>,
     api_format: CodexCopilotApiFormat,
 ) -> Result<CopilotTransport, ProxyError> {
+    let requested = match api_format {
+        CodexCopilotApiFormat::Auto => "a Responses or Chat Completions endpoint",
+        CodexCopilotApiFormat::OpenaiResponses => {
+            "the requested Responses endpoint (codexCopilotApiFormat=openai_responses)"
+        }
+        CodexCopilotApiFormat::OpenaiChat => {
+            "the requested Chat Completions endpoint (codexCopilotApiFormat=openai_chat)"
+        }
+    };
     let Some(resolved) = resolved else {
         let model = body
             .get("model")
             .and_then(Value::as_str)
             .unwrap_or("<missing>");
-        return Err(ProxyError::InvalidRequest(format!(
-            "GitHub Copilot model {model} is unavailable or has no advertised Responses/Chat endpoint"
+        return Err(ProxyError::ConfigError(format!(
+            "GitHub Copilot model {model} is unavailable for {requested} in this provider's catalogue"
         )));
     };
     let Some(transport) = resolved.transport else {
-        let requested = match api_format {
-            CodexCopilotApiFormat::Auto => "a Responses or Chat Completions endpoint",
-            CodexCopilotApiFormat::OpenaiResponses => {
-                "the requested Responses endpoint (codexCopilotApiFormat=openai_responses)"
-            }
-            CodexCopilotApiFormat::OpenaiChat => {
-                "the requested Chat Completions endpoint (codexCopilotApiFormat=openai_chat)"
-            }
-        };
-        return Err(ProxyError::InvalidRequest(format!(
+        return Err(ProxyError::ConfigError(format!(
             "GitHub Copilot model {} does not advertise {requested}",
             resolved.id
         )));
@@ -5133,11 +5152,201 @@ mod tests {
     }
 
     #[test]
+    fn codex_copilot_lookup_errors_preserve_cause_and_allow_failover() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        for (cause, expected_kind) in [
+            (CopilotAuthError::DeviceFlowNotStarted, "auth"),
+            (CopilotAuthError::AuthorizationPending, "auth"),
+            (CopilotAuthError::AccessDenied, "auth"),
+            (CopilotAuthError::ExpiredToken, "auth"),
+            (CopilotAuthError::GitHubTokenInvalid, "auth"),
+            (CopilotAuthError::NoCopilotSubscription, "auth"),
+            (CopilotAuthError::AccountNotFound("missing".into()), "auth"),
+            (
+                CopilotAuthError::NetworkError("connection reset".into()),
+                "upstream",
+            ),
+            (
+                CopilotAuthError::CopilotTokenFetchFailed("models HTTP 503".into()),
+                "upstream",
+            ),
+            (
+                CopilotAuthError::ParseError("invalid models JSON".into()),
+                "config",
+            ),
+            (
+                CopilotAuthError::IoError("permission denied".into()),
+                "config",
+            ),
+            (
+                CopilotAuthError::InvalidDomain("invalid.example/path".into()),
+                "config",
+            ),
+        ] {
+            let cause_text = cause.to_string();
+            let error = codex_copilot_lookup_error("gpt-5.5", cause);
+            let (kind, message) = match &error {
+                ProxyError::AuthError(message) => ("auth", message),
+                ProxyError::ForwardFailed(message) => ("upstream", message),
+                ProxyError::ConfigError(message) => ("config", message),
+                _ => panic!("unexpected capability error: {error}"),
+            };
+            assert_eq!(kind, expected_kind, "{error}");
+            assert!(message.contains(&cause_text), "{message}");
+            assert!(message.contains("gpt-5.5"), "{message}");
+            assert!(!message.contains("unavailable"), "{message}");
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &copilot),
+                ErrorCategory::Retryable
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_copilot_validates_client_model_before_runtime_lookup() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        let adapter = get_adapter(&AppType::Codex).unwrap();
+        for body in [
+            json!({}),
+            json!({"model": null}),
+            json!({"model": 42}),
+            json!({"model": ""}),
+            json!({"model": " \t "}),
+            json!({"model": "gpt-5.5"}),
+        ] {
+            let error = match forwarder
+                .forward(
+                    &AppType::Codex,
+                    &http::Method::POST,
+                    &copilot,
+                    "/v1/responses",
+                    &body,
+                    &HeaderMap::new(),
+                    &Extensions::new(),
+                    adapter.as_ref(),
+                )
+                .await
+            {
+                Err(error) => error,
+                Ok(_) => panic!("expected local validation failure: {body}"),
+            };
+            if body["model"] == "gpt-5.5" {
+                assert!(matches!(&error, ProxyError::ConfigError(message)
+                    if message.contains("AppHandle") && message.contains("gpt-5.5")));
+                assert_eq!(
+                    forwarder.categorize_proxy_error(&error, &copilot),
+                    ErrorCategory::Retryable
+                );
+            } else {
+                assert!(matches!(&error, ProxyError::InvalidRequest(message)
+                    if message.contains("model")));
+                assert_eq!(
+                    forwarder.categorize_proxy_error(&error, &copilot),
+                    ErrorCategory::NonRetryable
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn codex_copilot_unavailable_model_is_provider_scoped() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        for api_format in [
+            CodexCopilotApiFormat::Auto,
+            CodexCopilotApiFormat::OpenaiResponses,
+            CodexCopilotApiFormat::OpenaiChat,
+        ] {
+            let mut body = json!({"model": "gpt-6-astra"});
+            let error = apply_codex_copilot_model(&mut body, None, api_format).unwrap_err();
+            assert!(matches!(&error, ProxyError::ConfigError(message)
+                if message.contains("gpt-6-astra") && message.contains("unavailable")));
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &copilot),
+                ErrorCategory::Retryable
+            );
+            assert_eq!(body["model"], "gpt-6-astra");
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_copilot_capability_failure_tries_healthy_later_provider() {
+        let captured = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+        let app = axum::Router::new().route(
+            "/v1/responses",
+            axum::routing::post({
+                let captured = captured.clone();
+                move |axum::Json(body): axum::Json<Value>| {
+                    let captured = captured.clone();
+                    async move {
+                        captured.lock().await.push(body);
+                        axum::Json(json!({"status": "completed", "output": []}))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .unwrap();
+        });
+        let mut forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+        forwarder.max_attempts = 2;
+        // Avoid persisting a provider switch outside this in-memory test.
+        forwarder.current_provider_id_at_start = "healthy".to_string();
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        let mut healthy = test_provider_with_type(None);
+        healthy.id = "healthy".to_string();
+        healthy.settings_config = json!({
+            "base_url": format!("http://{addr}/v1"),
+            "auth": {"OPENAI_API_KEY": "test-key"}
+        });
+        let body = json!({"model": "gpt-5.5", "input": "Hello", "stream": false});
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/v1/responses",
+                body.clone(),
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![copilot, healthy],
+            )
+            .await;
+
+        shutdown_tx.send(()).unwrap();
+        server.await.unwrap();
+        let result = result.unwrap_or_else(|failure| {
+            panic!(
+                "Copilot capability failure blocked failover: {}",
+                failure.error
+            )
+        });
+        assert_eq!(result.provider.id, "healthy");
+        assert_eq!(result.response.status(), StatusCode::OK);
+        assert_eq!(*captured.lock().await, vec![body]);
+        assert_eq!(forwarder.status.read().await.success_requests, 1);
+    }
+
+    #[test]
     fn codex_copilot_metadata_selects_advertised_transport_at_forwarding_seam() {
         use super::super::providers::copilot_auth::CopilotModel;
         use super::super::providers::copilot_model_map::resolve_model_with_format;
         use crate::provider::ProviderMeta;
 
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let copilot = test_provider_with_type(Some("github_copilot"));
         for (metadata, endpoints, expected) in [
             (
                 json!({}),
@@ -5246,8 +5455,14 @@ mod tests {
                     "{metadata}"
                 );
             } else {
-                let ProxyError::InvalidRequest(message) = result.unwrap_err() else {
-                    panic!("expected InvalidRequest for {metadata}");
+                let error = result.unwrap_err();
+                assert_eq!(
+                    forwarder.categorize_proxy_error(&error, &copilot),
+                    ErrorCategory::Retryable,
+                    "{metadata}: {error}"
+                );
+                let ProxyError::ConfigError(message) = error else {
+                    panic!("expected provider ConfigError for {metadata}");
                 };
                 assert!(message.contains("gpt-5.6"), "{message}");
                 assert!(message.contains("does not advertise"), "{message}");
