@@ -41,22 +41,6 @@ CC Switch 的代理功能是一个本地 HTTP 代理服务器，可以统一管�
 2. 自动恢复所有应用的原始配置
 3. 清除代理状态
 
-## Codex 使用 GitHub Copilot
-
-在 Codex 中添加 GitHub Copilot 预设后，选择已授权的 GitHub 账号，无需填写 API Key。新建预设的默认模型为 `gpt-6-astra`；已有供应商的模型配置不会因此自动改写。获取模型时，如果当前模型不可用，会优先选择列表中可用的 GPT 模型。
-
-高级选项中的**上游格式**支持：
-
-| 选项 | 行为 |
-|------|------|
-| 自动 | 根据模型声明的 `supported_endpoints` 优先使用 Responses，否则使用 Chat Completions |
-| Responses | 仅使用模型明确支持的 Responses 端点，不支持时返回错误 |
-| Chat Completions | 仅使用模型明确支持的 Chat 端点，不支持时返回错误 |
-
-三种模式都保留可编辑的**模型映射**，并且都需要启动本地代理、开启 **Codex 接管**，以注入 Copilot 账号凭据。Codex 客户端自身仍使用 Responses 协议；选择 Chat 只改变代理到上游的协议。Copilot 不提供 Anthropic Messages 选项。
-
-旧供应商未保存 `meta.codexCopilotApiFormat` 时继续使用自动模式，不会把旧的 `meta.apiFormat = "openai_chat"` 误认为手动指定 Chat。
-
 ## 自动故障转移
 
 ### 工作原理

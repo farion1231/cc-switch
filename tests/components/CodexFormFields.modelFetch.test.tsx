@@ -196,7 +196,7 @@ describe("Codex model-fetch lifecycle", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it.each(["gpt-6-astra", "claude-model"])(
+  it.each(["gpt-5.6-astra", "claude-model"])(
     "prefers an available GPT model without replacing a valid selection (%s)",
     async (currentModel) => {
       vi.mocked(copilotGetModelsForAccount).mockResolvedValue([

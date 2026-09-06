@@ -42,9 +42,22 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
     );
     expect(preset?.config).toContain('wire_api = "responses"');
     expect(preset?.config).toContain("requires_openai_auth = false");
-    expect(preset?.config).toContain('model = "gpt-6-astra"');
-    expect(preset?.modelCatalog).toMatchObject([
-      { model: "gpt-6-astra", displayName: "GPT-6 Astra" },
-    ]);
+    expect(preset?.config).toContain('model = "gpt-5.6-astra"');
+    expect(preset?.config).toContain('model_reasoning_effort = "high"');
+    expect(preset?.modelCatalog).toMatchObject(
+      [
+        { model: "gpt-5.6-astra", displayName: "GPT-5.6 Astra" },
+        { model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol" },
+        { model: "gpt-5.6-terra", displayName: "GPT-5.6 Terra" },
+        { model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna" },
+        { model: "gpt-5.5", displayName: "GPT-5.5" },
+      ].map((model) => ({
+        ...model,
+        contextWindow: 1048576,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: false,
+        inputModalities: ["text"],
+      })),
+    );
   });
 });
