@@ -62,6 +62,7 @@ import { cn } from "@/lib/utils";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
+  CodexCopilotApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
   PromptCacheRoutingMode,
@@ -74,14 +75,25 @@ interface EndpointCandidate {
   url: string;
 }
 
-export function isCopilotModelSupportedByCodex(model: CopilotModel): boolean {
+export function isCopilotModelSupportedByCodex(
+  model: CopilotModel,
+  format: CodexCopilotApiFormat = "auto",
+): boolean {
+  const endpoints =
+    format === "openai_responses"
+      ? ["/responses", "/v1/responses"]
+      : format === "openai_chat"
+        ? ["/chat/completions", "/v1/chat/completions"]
+        : [
+            "/responses",
+            "/v1/responses",
+            "/chat/completions",
+            "/v1/chat/completions",
+          ];
   return (model.supported_endpoints ?? []).some((endpoint) =>
-    [
-      "/responses",
-      "/v1/responses",
-      "/chat/completions",
-      "/v1/chat/completions",
-    ].includes(endpoint.split("?")[0].replace(/\/+$/, "")),
+    endpoints.includes(
+      endpoint.split("?")[0].replace(/\/+$/, "").toLowerCase(),
+    ),
   );
 }
 
@@ -146,6 +158,8 @@ interface CodexFormFieldsProps {
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
+  copilotApiFormat?: CodexCopilotApiFormat;
+  onCopilotApiFormatChange?: (format: CodexCopilotApiFormat) => void;
   // Auth field for the Anthropic Messages upstream (only used when apiFormat === "anthropic")
   anthropicAuthField: ClaudeApiKeyField;
   onAnthropicAuthFieldChange: (value: ClaudeApiKeyField) => void;
@@ -437,6 +451,8 @@ export function CodexFormFields({
   onModelChange,
   apiFormat,
   onApiFormatChange,
+  copilotApiFormat = "auto",
+  onCopilotApiFormatChange,
   anthropicAuthField,
   onAnthropicAuthFieldChange,
   impersonateClaudeCode,
@@ -475,6 +491,7 @@ export function CodexFormFields({
     codexApiKey,
     customUserAgent,
     isCopilotPreset,
+    copilotApiFormat,
     isCopilotAuthenticated,
     selectedGitHubAccountId,
     isXaiOauthPreset,
@@ -483,8 +500,13 @@ export function CodexFormFields({
   ]);
   // 思考能力随 Chat 格式显示（仅 Chat Completions 转换路径用得上）；模型映射常驻
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
-  const isChatFormat = apiFormat === "openai_chat";
-  const isAnthropicFormat = apiFormat === "anthropic";
+  const effectiveApiFormat = isCopilotPreset
+    ? copilotApiFormat === "auto"
+      ? "openai_chat"
+      : copilotApiFormat
+    : apiFormat;
+  const isChatFormat = effectiveApiFormat === "openai_chat";
+  const isAnthropicFormat = effectiveApiFormat === "anthropic";
   // Grok Build 复用本表单，但语义与 Codex 有差异（无模型映射、协议由 TOML 的
   // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
   // 对应词条在 grokBuild.* 下。
@@ -502,10 +524,11 @@ export function CodexFormFields({
     localProxyHeadersOverride.trim() || localProxyBodyOverride.trim(),
   );
   const hasAnyAdvancedValue =
+    isCopilotPreset ||
     !!customUserAgent ||
     hasRequestOverrides ||
     catalogModels.length > 0 ||
-    apiFormat === "openai_responses" ||
+    effectiveApiFormat === "openai_responses" ||
     isAnthropicFormat ||
     supportsThinking ||
     supportsEffort ||
@@ -633,7 +656,9 @@ export function CodexFormFields({
             ? copilotGetModelsForAccount(selectedGitHubAccountId)
             : copilotGetModels(),
         (models) => {
-          const usableModels = models.filter(isCopilotModelSupportedByCodex);
+          const usableModels = models.filter((model) =>
+            isCopilotModelSupportedByCodex(model, copilotApiFormat),
+          );
           const fetched = usableModels.map((model) => ({
             id: model.id,
             ownedBy: model.vendor || null,
@@ -666,7 +691,11 @@ export function CodexFormFields({
             onModelChange &&
             !usableModels.some((model) => model.id === codexModel)
           ) {
-            onModelChange(usableModels[0].id);
+            const defaultModel =
+              usableModels.find((model) =>
+                model.id.toLowerCase().startsWith("gpt-"),
+              ) ?? usableModels[0];
+            onModelChange(defaultModel.id);
           }
           return usableModels.length;
         },
@@ -723,6 +752,7 @@ export function CodexFormFields({
     isFullUrl,
     customUserAgent,
     isCopilotPreset,
+    copilotApiFormat,
     isCopilotAuthenticated,
     selectedGitHubAccountId,
     onCatalogModelsChange,
@@ -1025,10 +1055,9 @@ export function CodexFormFields({
             </p>
           )}
           <CollapsibleContent className="space-y-3 pt-3">
-            {/* 上游格式 —— Chat 需开启路由接管（走代理转换），Responses 原生直连。
-                沿用 shouldShowSpeedTest 门控，cloud_provider 保持不可切换；
-                xAI OAuth 托管预设格式钉死 Responses，不可切换。 */}
-            {shouldShowSpeedTest && !isCopilotPreset && !isXaiOauthPreset && (
+            {/* Copilot supports automatic capability routing or an explicit protocol;
+                other providers retain their existing format controls. */}
+            {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <FormLabel htmlFor="codex-upstream-format">
@@ -1037,10 +1066,24 @@ export function CodexFormFields({
                     })}
                   </FormLabel>
                   <Select
-                    value={apiFormat}
-                    onValueChange={(value) =>
-                      onApiFormatChange(value as CodexApiFormat)
-                    }
+                    value={isCopilotPreset ? copilotApiFormat : apiFormat}
+                    onValueChange={(value) => {
+                      if (isCopilotPreset) {
+                        if (
+                          value === "auto" ||
+                          value === "openai_chat" ||
+                          value === "openai_responses"
+                        ) {
+                          onCopilotApiFormatChange?.(value);
+                        }
+                      } else if (
+                        value === "openai_chat" ||
+                        value === "openai_responses" ||
+                        value === "anthropic"
+                      ) {
+                        onApiFormatChange(value);
+                      }
+                    }}
                   >
                     <SelectTrigger
                       id="codex-upstream-format"
@@ -1049,28 +1092,39 @@ export function CodexFormFields({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      {isCopilotPreset && (
+                        <SelectItem value="auto">
+                          {t("codexConfig.upstreamFormatAuto")}
+                        </SelectItem>
+                      )}
                       <SelectItem value="openai_chat">
                         {t("codexConfig.upstreamFormatChat", {
                           defaultValue: "Chat Completions（需开启路由）",
                         })}
                       </SelectItem>
                       <SelectItem value="openai_responses">
-                        {t("codexConfig.upstreamFormatResponses", {
-                          defaultValue: "Responses（原生）",
-                        })}
+                        {isCopilotPreset
+                          ? t("codexConfig.upstreamFormatCopilotResponses")
+                          : t("codexConfig.upstreamFormatResponses", {
+                              defaultValue: "Responses（原生）",
+                            })}
                       </SelectItem>
-                      <SelectItem value="anthropic">
-                        {t("codexConfig.upstreamFormatAnthropic", {
-                          defaultValue: "Anthropic Messages（需开启路由）",
-                        })}
-                      </SelectItem>
+                      {!isCopilotPreset && (
+                        <SelectItem value="anthropic">
+                          {t("codexConfig.upstreamFormatAnthropic", {
+                            defaultValue: "Anthropic Messages（需开启路由）",
+                          })}
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t("codexConfig.upstreamFormatHint", {
-                      defaultValue:
-                        "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
-                    })}
+                    {isCopilotPreset
+                      ? t("codexConfig.upstreamFormatCopilotHint")
+                      : t("codexConfig.upstreamFormatHint", {
+                          defaultValue:
+                            "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
+                        })}
                   </p>
                 </div>
 

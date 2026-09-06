@@ -983,9 +983,12 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
         model_id: &str,
+        api_format: crate::provider::CodexCopilotApiFormat,
     ) -> Result<Option<super::copilot_model_map::ResolvedCopilotModel>, CopilotAuthError> {
         let models = self.fetch_all_models_for_account(account_id).await?;
-        Ok(super::copilot_model_map::resolve_model(model_id, &models))
+        Ok(super::copilot_model_map::resolve_model_with_format(
+            model_id, &models, api_format,
+        ))
     }
 
     /// 获取 Copilot 可用模型列表（向后兼容：使用第一个账号）
@@ -1009,9 +1012,13 @@ impl CopilotAuthManager {
     pub async fn resolve_model(
         &self,
         model_id: &str,
+        api_format: crate::provider::CodexCopilotApiFormat,
     ) -> Result<Option<super::copilot_model_map::ResolvedCopilotModel>, CopilotAuthError> {
         match self.resolve_default_account_id().await {
-            Some(id) => self.resolve_model_for_account(&id, model_id).await,
+            Some(id) => {
+                self.resolve_model_for_account(&id, model_id, api_format)
+                    .await
+            }
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
     }
@@ -1628,6 +1635,7 @@ impl CopilotAuthManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::CodexCopilotApiFormat;
     use tempfile::tempdir;
 
     #[test]
@@ -1914,7 +1922,10 @@ mod tests {
                         vendor: "OpenAI".to_string(),
                         model_picker_enabled: false,
                         context_window: Some(128_000),
-                        supported_endpoints: vec!["/responses".to_string()],
+                        supported_endpoints: vec![
+                            "/v1/chat/completions".to_string(),
+                            "/responses".to_string(),
+                        ],
                     },
                 ],
             );
@@ -1930,7 +1941,7 @@ mod tests {
         assert_eq!(default_vendor.as_deref(), Some("Anthropic"));
 
         let hidden = manager
-            .resolve_model_for_account("12345", "gpt-hidden")
+            .resolve_model_for_account("12345", "gpt-hidden", CodexCopilotApiFormat::Auto)
             .await
             .unwrap()
             .unwrap();
@@ -1941,6 +1952,39 @@ mod tests {
                 endpoint: "/responses".to_string(),
             })
         );
+        for (api_format, protocol, endpoint) in [
+            (
+                CodexCopilotApiFormat::OpenaiChat,
+                super::super::copilot_model_map::CopilotProtocol::Chat,
+                "/v1/chat/completions",
+            ),
+            (
+                CodexCopilotApiFormat::OpenaiResponses,
+                super::super::copilot_model_map::CopilotProtocol::Responses,
+                "/responses",
+            ),
+        ] {
+            let account_model = manager
+                .resolve_model_for_account("12345", "GPT-HIDDEN", api_format)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(account_model.id, "gpt-hidden");
+            assert_eq!(
+                account_model.transport,
+                Some(super::super::copilot_model_map::CopilotTransport {
+                    protocol,
+                    endpoint: endpoint.to_string(),
+                })
+            );
+            assert_eq!(
+                manager
+                    .resolve_model("GPT-HIDDEN", api_format)
+                    .await
+                    .unwrap(),
+                Some(account_model)
+            );
+        }
         assert!(manager
             .fetch_models_for_account("12345")
             .await

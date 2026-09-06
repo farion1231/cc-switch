@@ -9,6 +9,7 @@
 //! 按 family（haiku/sonnet/opus）+ 最高版本号 fallback。
 
 use super::copilot_auth::CopilotModel;
+use crate::provider::CodexCopilotApiFormat;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,11 +135,19 @@ pub fn resolve_against_models(client_id: &str, models: &[CopilotModel]) -> Optio
 }
 
 pub fn resolve_model(client_id: &str, models: &[CopilotModel]) -> Option<ResolvedCopilotModel> {
+    resolve_model_with_format(client_id, models, CodexCopilotApiFormat::Auto)
+}
+
+pub fn resolve_model_with_format(
+    client_id: &str,
+    models: &[CopilotModel],
+    api_format: CodexCopilotApiFormat,
+) -> Option<ResolvedCopilotModel> {
     let model = match_copilot_model(client_id, models)?.model;
     Some(ResolvedCopilotModel {
         id: model.id.clone(),
         vendor: model.vendor.clone(),
-        transport: transport_for(model),
+        transport: transport_for(model, api_format),
     })
 }
 
@@ -175,7 +184,10 @@ fn match_copilot_model<'a>(
     })
 }
 
-fn transport_for(model: &CopilotModel) -> Option<CopilotTransport> {
+fn transport_for(
+    model: &CopilotModel,
+    api_format: CodexCopilotApiFormat,
+) -> Option<CopilotTransport> {
     let supported = |expected: &[&str]| {
         model.supported_endpoints.iter().find_map(|endpoint| {
             let path = endpoint
@@ -189,17 +201,18 @@ fn transport_for(model: &CopilotModel) -> Option<CopilotTransport> {
         })
     };
 
-    if let Some(endpoint) = supported(&["/responses", "/v1/responses"]) {
-        Some(CopilotTransport {
-            protocol: CopilotProtocol::Responses,
-            endpoint,
-        })
-    } else {
-        supported(&["/chat/completions", "/v1/chat/completions"]).map(|endpoint| CopilotTransport {
-            protocol: CopilotProtocol::Chat,
-            endpoint,
-        })
-    }
+    let protocols: &[CopilotProtocol] = match api_format {
+        CodexCopilotApiFormat::Auto => &[CopilotProtocol::Responses, CopilotProtocol::Chat],
+        CodexCopilotApiFormat::OpenaiResponses => &[CopilotProtocol::Responses],
+        CodexCopilotApiFormat::OpenaiChat => &[CopilotProtocol::Chat],
+    };
+    protocols.iter().find_map(|&protocol| {
+        let paths: &[&str] = match protocol {
+            CopilotProtocol::Responses => &["/responses", "/v1/responses"],
+            CopilotProtocol::Chat => &["/chat/completions", "/v1/chat/completions"],
+        };
+        supported(paths).map(|endpoint| CopilotTransport { protocol, endpoint })
+    })
 }
 
 fn detect_family(id: &str) -> Option<&'static str> {

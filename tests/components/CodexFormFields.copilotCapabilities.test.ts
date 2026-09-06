@@ -32,4 +32,25 @@ describe("Codex Copilot capabilities", () => {
     );
     expect(resolveCopilotCatalogContextWindow(200_000, 400_000)).toBe(200_000);
   });
+
+  it("filters models by an explicitly selected Copilot protocol", () => {
+    const responsesOnly = model(["/v1/responses"]);
+    const chatOnly = model(["/chat/completions"]);
+    const both = model(["/responses", "/v1/chat/completions"]);
+    expect(isCopilotModelSupportedByCodex(responsesOnly, "openai_chat")).toBe(
+      false,
+    );
+    expect(isCopilotModelSupportedByCodex(chatOnly, "openai_responses")).toBe(
+      false,
+    );
+    expect(
+      isCopilotModelSupportedByCodex(responsesOnly, "openai_responses"),
+    ).toBe(true);
+    expect(isCopilotModelSupportedByCodex(chatOnly, "openai_chat")).toBe(true);
+    expect(isCopilotModelSupportedByCodex(both, "openai_chat")).toBe(true);
+    expect(isCopilotModelSupportedByCodex(both, "openai_responses")).toBe(true);
+    expect(
+      isCopilotModelSupportedByCodex(model(["/V1/RESPONSES/"]), "auto"),
+    ).toBe(true);
+  });
 });

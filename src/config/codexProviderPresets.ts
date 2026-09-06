@@ -146,11 +146,11 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     websiteUrl: "https://github.com/features/copilot",
     auth: {},
     // Codex talks Responses to the local proxy. The proxy selects Copilot's
-    // native Responses or Chat Completions transport per model vendor.
+    // native Responses or Chat Completions transport from model capabilities.
     config: generateThirdPartyConfig(
       "github-copilot",
       "https://api.githubcopilot.com",
-      "claude-sonnet-5",
+      "gpt-6-astra",
       { requiresOpenAiAuth: false },
     ),
     endpointCandidates: ["https://api.githubcopilot.com"],
@@ -159,8 +159,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     requiresOAuth: true,
     modelCatalog: modelCatalog([
       {
-        model: "claude-sonnet-5",
-        displayName: "Claude Sonnet 5",
+        model: "gpt-6-astra",
+        displayName: "GPT-6 Astra",
         supportsParallelToolCalls: false,
         inputModalities: ["text"],
       },

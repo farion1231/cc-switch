@@ -42,5 +42,9 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
     );
     expect(preset?.config).toContain('wire_api = "responses"');
     expect(preset?.config).toContain("requires_openai_auth = false");
+    expect(preset?.config).toContain('model = "gpt-6-astra"');
+    expect(preset?.modelCatalog).toMatchObject([
+      { model: "gpt-6-astra", displayName: "GPT-6 Astra" },
+    ]);
   });
 });

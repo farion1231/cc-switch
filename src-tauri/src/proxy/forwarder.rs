@@ -24,10 +24,13 @@ use super::{
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::copilot_model_map::{
+    CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
+};
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
     app_config::AppType,
-    provider::{LocalProxyRequestOverrides, Provider},
+    provider::{CodexCopilotApiFormat, LocalProxyRequestOverrides, Provider},
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -1442,33 +1445,19 @@ impl RequestForwarder {
         // Codex always speaks Responses to the local proxy. Resolve the final
         // Copilot model after every model rewrite, then select only a protocol
         // that the model advertises. Messages is intentionally not supported
-        // on the Codex bridge: models without Responses support fall back to Chat.
+        // on the Codex bridge. Only auto mode may fall back from Responses to Chat.
         if is_copilot_codex_responses {
+            let api_format = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.codex_copilot_api_format)
+                .unwrap_or_default();
             let resolved = self
-                .resolve_codex_copilot_model(provider, &mapped_body)
+                .resolve_codex_copilot_model(provider, &mapped_body, api_format)
                 .await;
-            if let Some(resolved) = resolved {
-                let resolved_id = resolved.id;
-                let Some(transport) = resolved.transport else {
-                    return Err(ProxyError::InvalidRequest(format!(
-                        "GitHub Copilot model {resolved_id} does not advertise a Responses or Chat Completions endpoint"
-                    )));
-                };
-                mapped_body["model"] = Value::String(resolved_id);
-                copilot_endpoint_override = Some(transport.endpoint);
-                codex_responses_to_chat = matches!(
-                    transport.protocol,
-                    super::providers::copilot_model_map::CopilotProtocol::Chat
-                );
-            } else {
-                let model = mapped_body
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or("<missing>");
-                return Err(ProxyError::InvalidRequest(format!(
-                    "GitHub Copilot model {model} is unavailable or has no advertised Responses/Chat endpoint"
-                )));
-            }
+            let transport = apply_codex_copilot_model(&mut mapped_body, resolved, api_format)?;
+            copilot_endpoint_override = Some(transport.endpoint);
+            codex_responses_to_chat = matches!(transport.protocol, CopilotProtocol::Chat);
             codex_responses_to_anthropic = false;
         }
 
@@ -2841,7 +2830,8 @@ impl RequestForwarder {
         &self,
         provider: &Provider,
         body: &Value,
-    ) -> Option<super::providers::copilot_model_map::ResolvedCopilotModel> {
+        api_format: CodexCopilotApiFormat,
+    ) -> Option<ResolvedCopilotModel> {
         let model_id = body.get("model")?.as_str()?.trim();
         if model_id.is_empty() {
             return None;
@@ -2858,8 +2848,12 @@ impl RequestForwarder {
             .as_ref()
             .and_then(|meta| meta.managed_account_id_for("github_copilot"));
         let resolved = match account_id.as_deref() {
-            Some(id) => copilot_auth.resolve_model_for_account(id, model_id).await,
-            None => copilot_auth.resolve_model(model_id).await,
+            Some(id) => {
+                copilot_auth
+                    .resolve_model_for_account(id, model_id, api_format)
+                    .await
+            }
+            None => copilot_auth.resolve_model(model_id, api_format).await,
         };
 
         match resolved {
@@ -3356,6 +3350,39 @@ fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Opt
     };
 
     (rewritten, passthrough_query)
+}
+
+fn apply_codex_copilot_model(
+    body: &mut Value,
+    resolved: Option<ResolvedCopilotModel>,
+    api_format: CodexCopilotApiFormat,
+) -> Result<CopilotTransport, ProxyError> {
+    let Some(resolved) = resolved else {
+        let model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>");
+        return Err(ProxyError::InvalidRequest(format!(
+            "GitHub Copilot model {model} is unavailable or has no advertised Responses/Chat endpoint"
+        )));
+    };
+    let Some(transport) = resolved.transport else {
+        let requested = match api_format {
+            CodexCopilotApiFormat::Auto => "a Responses or Chat Completions endpoint",
+            CodexCopilotApiFormat::OpenaiResponses => {
+                "the requested Responses endpoint (codexCopilotApiFormat=openai_responses)"
+            }
+            CodexCopilotApiFormat::OpenaiChat => {
+                "the requested Chat Completions endpoint (codexCopilotApiFormat=openai_chat)"
+            }
+        };
+        return Err(ProxyError::InvalidRequest(format!(
+            "GitHub Copilot model {} does not advertise {requested}",
+            resolved.id
+        )));
+    };
+    body["model"] = Value::String(resolved.id);
+    Ok(transport)
 }
 
 fn rewrite_codex_endpoint_for_copilot(
@@ -5103,6 +5130,136 @@ mod tests {
             ),
             "https://api.githubcopilot.com/responses?client_version=0.149"
         );
+    }
+
+    #[test]
+    fn codex_copilot_metadata_selects_advertised_transport_at_forwarding_seam() {
+        use super::super::providers::copilot_auth::CopilotModel;
+        use super::super::providers::copilot_model_map::resolve_model_with_format;
+        use crate::provider::ProviderMeta;
+
+        for (metadata, endpoints, expected) in [
+            (
+                json!({}),
+                vec!["/responses", "/chat/completions"],
+                Some((CopilotProtocol::Responses, "/responses")),
+            ),
+            (
+                json!({"apiFormat": "openai_chat"}),
+                vec!["/v1/chat/completions", "/v1/responses"],
+                Some((CopilotProtocol::Responses, "/v1/responses")),
+            ),
+            (
+                json!({"apiFormat": "openai_responses"}),
+                vec!["/chat/completions"],
+                Some((CopilotProtocol::Chat, "/chat/completions")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "auto"}),
+                vec!["/chat/completions", "/responses"],
+                Some((CopilotProtocol::Responses, "/responses")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "auto"}),
+                vec!["/v1/messages", "/v1/chat/completions"],
+                Some((CopilotProtocol::Chat, "/v1/chat/completions")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_chat"}),
+                vec!["/responses", "/chat/completions"],
+                Some((CopilotProtocol::Chat, "/chat/completions")),
+            ),
+            (
+                json!({"apiFormat": "openai_responses", "codexCopilotApiFormat": "openai_chat"}),
+                vec!["/v1/responses", "/v1/chat/completions"],
+                Some((CopilotProtocol::Chat, "/v1/chat/completions")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_responses"}),
+                vec!["/chat/completions", "/responses"],
+                Some((CopilotProtocol::Responses, "/responses")),
+            ),
+            (
+                json!({"apiFormat": "openai_chat", "codexCopilotApiFormat": "openai_responses"}),
+                vec!["/v1/chat/completions", "/v1/responses/"],
+                Some((CopilotProtocol::Responses, "/v1/responses")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_chat"}),
+                vec!["/responses"],
+                None,
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_responses"}),
+                vec!["/v1/chat/completions"],
+                None,
+            ),
+            (
+                json!({"codexCopilotApiFormat": "auto"}),
+                vec!["/v1/messages"],
+                None,
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_chat"}),
+                vec!["/v1/messages"],
+                None,
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_responses"}),
+                vec![],
+                None,
+            ),
+        ] {
+            let meta: ProviderMeta = serde_json::from_value(metadata.clone()).unwrap();
+            let api_format = meta.codex_copilot_api_format.unwrap_or_default();
+            let models = [CopilotModel {
+                id: "gpt-5.6".to_string(),
+                name: "GPT-5.6".to_string(),
+                vendor: "OpenAI".to_string(),
+                model_picker_enabled: false,
+                context_window: Some(400_000),
+                supported_endpoints: endpoints.into_iter().map(str::to_string).collect(),
+            }];
+            let mut body = json!({"model": "GPT-5.6", "input": "Hello"});
+            let resolved = resolve_model_with_format("GPT-5.6", &models, api_format);
+            let result = apply_codex_copilot_model(&mut body, resolved, api_format);
+            if let Some((protocol, endpoint)) = expected {
+                let transport = result.unwrap();
+                assert_eq!(transport.protocol, protocol, "{metadata}");
+                assert_eq!(transport.endpoint, endpoint, "{metadata}");
+                assert_eq!(body["model"], "gpt-5.6");
+                assert_eq!(body["input"], "Hello");
+                let expected_compact = if protocol == CopilotProtocol::Responses {
+                    "/compact"
+                } else {
+                    ""
+                };
+                assert_eq!(
+                    rewrite_codex_endpoint_for_copilot(
+                        "/v1/responses/compact?x=1",
+                        &transport.endpoint
+                    ),
+                    (
+                        format!("{endpoint}{expected_compact}?x=1"),
+                        Some("x=1".to_string())
+                    ),
+                    "{metadata}"
+                );
+            } else {
+                let ProxyError::InvalidRequest(message) = result.unwrap_err() else {
+                    panic!("expected InvalidRequest for {metadata}");
+                };
+                assert!(message.contains("gpt-5.6"), "{message}");
+                assert!(message.contains("does not advertise"), "{message}");
+                if api_format != CodexCopilotApiFormat::Auto {
+                    assert!(
+                        message.contains(metadata["codexCopilotApiFormat"].as_str().unwrap()),
+                        "{message}"
+                    );
+                }
+                assert_eq!(body["model"], "GPT-5.6");
+            }
+        }
     }
 
     #[test]

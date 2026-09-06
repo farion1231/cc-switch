@@ -156,6 +156,65 @@ describe("Codex model-fetch lifecycle", () => {
     vi.restoreAllMocks();
   });
 
+  it("fetches only models supporting the selected Copilot protocol", async () => {
+    const responsesModel = advertisedModel("responses-model");
+    const chatModel = {
+      ...advertisedModel("chat-model"),
+      supported_endpoints: ["/chat/completions"],
+    };
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
+      responsesModel,
+      chatModel,
+    ]);
+    const props = {
+      ...makeProps("copilot"),
+      copilotApiFormat: "openai_chat" as const,
+    };
+    render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+    await waitFor(() => expect(fetchButton()).toBeEnabled());
+    expect(screen.getByTestId("model-options")).toHaveTextContent("chat-model");
+    expect(screen.getByTestId("model-options")).not.toHaveTextContent(
+      "responses-model",
+    );
+    expect(props.onModelChange).toHaveBeenCalledWith("chat-model");
+    expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
+      expect.objectContaining({ model: "chat-model" }),
+    ]);
+  });
+
+  it("discards a pending model list after the Copilot protocol changes", async () => {
+    const pending = pendingModels();
+    vi.mocked(copilotGetModelsForAccount).mockReturnValue(pending.promise);
+    const props = makeProps("copilot");
+    const { rerender } = render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+    rerender(<Harness {...props} copilotApiFormat="openai_chat" />);
+    await act(async () => pending.resolve([advertisedModel()]));
+    expect(props.onCatalogModelsChange).not.toHaveBeenCalled();
+    expect(props.onModelChange).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it.each(["gpt-6-astra", "claude-model"])(
+    "prefers an available GPT model without replacing a valid selection (%s)",
+    async (currentModel) => {
+      vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
+        advertisedModel("claude-model"),
+        advertisedModel("gpt-available"),
+      ]);
+      const props = { ...makeProps("copilot"), codexModel: currentModel };
+      render(<Harness {...props} />);
+      fireEvent.click(fetchButton());
+      await waitFor(() => expect(fetchButton()).toBeEnabled());
+      if (currentModel === "claude-model") {
+        expect(props.onModelChange).not.toHaveBeenCalled();
+      } else {
+        expect(props.onModelChange).toHaveBeenCalledWith("gpt-available");
+      }
+    },
+  );
+
   it.each(providerKinds)(
     "loads %s models through the existing provider route",
     async (kind) => {

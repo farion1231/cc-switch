@@ -24,6 +24,7 @@ import type {
   ProviderMeta,
   ClaudeApiFormat,
   CodexApiFormat,
+  CodexCopilotApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
   PromptCacheRoutingMode,
@@ -667,8 +668,18 @@ function ProviderFormFull({
               ),
             ) ?? "openai_responses");
 
+  const initialCodexCopilotApiFormat =
+    initialData?.meta?.codexCopilotApiFormat ?? "auto";
   const [localCodexApiFormat, setLocalCodexApiFormat] =
-    useState<CodexApiFormat>(initialCodexApiFormat);
+    useState<CodexApiFormat>(
+      initialData?.meta?.providerType === "github_copilot"
+        ? initialCodexCopilotApiFormat === "auto"
+          ? "openai_chat"
+          : initialCodexCopilotApiFormat
+        : initialCodexApiFormat,
+    );
+  const [codexCopilotApiFormat, setCodexCopilotApiFormat] =
+    useState<CodexCopilotApiFormat>(initialCodexCopilotApiFormat);
 
   // Auth-field choice for the Anthropic Messages upstream (defaults to the Bearer form)
   const initialCodexAnthropicAuthField: ClaudeApiKeyField =
@@ -714,6 +725,14 @@ function ProviderFormFull({
       });
     },
     [setCodexConfig, debouncedValidate],
+  );
+
+  const handleCodexCopilotApiFormatChange = useCallback(
+    (format: CodexCopilotApiFormat) => {
+      setCodexCopilotApiFormat(format);
+      handleCodexApiFormatChange(format === "auto" ? "openai_chat" : format);
+    },
+    [handleCodexApiFormatChange],
   );
 
   useEffect(() => {
@@ -1792,11 +1811,19 @@ function ProviderFormFull({
             : localApiFormat
           : appId === "codex" && category !== "official"
             ? isCopilotProvider
-              ? "openai_chat"
+              ? codexCopilotApiFormat === "auto"
+                ? "openai_chat"
+                : codexCopilotApiFormat
               : isXaiOauthProvider
                 ? "openai_responses"
                 : localCodexApiFormat
             : undefined,
+      codexCopilotApiFormat:
+        appId === "codex" &&
+        isCopilotProvider &&
+        codexCopilotApiFormat !== "auto"
+          ? codexCopilotApiFormat
+          : undefined,
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
@@ -1957,6 +1984,7 @@ function ProviderFormFull({
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
         setPromptCacheRouting("auto");
+        setCodexCopilotApiFormat("auto");
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -1999,6 +2027,7 @@ function ProviderFormFull({
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
       setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
+      setCodexCopilotApiFormat("auto");
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2499,6 +2528,8 @@ function ProviderFormFull({
               onModelChange={handleCodexModelChange}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              copilotApiFormat={codexCopilotApiFormat}
+              onCopilotApiFormatChange={handleCodexCopilotApiFormatChange}
               anthropicAuthField={localCodexAnthropicAuthField}
               onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
               impersonateClaudeCode={localCodexImpersonateClaudeCode}
