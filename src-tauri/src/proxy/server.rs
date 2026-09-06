@@ -1089,7 +1089,7 @@ mod tests {
             "Advisor test".into(),
             json!({"env":{
             "ANTHROPIC_BASE_URL":format!("http://{address}/v1"),"ANTHROPIC_AUTH_TOKEN":"synthetic-provider-secret",
-            "ANTHROPIC_MODEL":"working-model","ANTHROPIC_DEFAULT_OPUS_MODEL":"wrong-for-advisor","CC_SWITCH_ADVISOR_MODEL":"gpt-6-astra"}}),
+            "ANTHROPIC_MODEL":"working-model","ANTHROPIC_DEFAULT_OPUS_MODEL":"wrong-for-advisor","CC_SWITCH_ADVISOR_MODEL":"gpt-6-astra[1M]"}}),
             None,
         );
         provider.meta = Some(ProviderMeta {
@@ -1131,6 +1131,7 @@ mod tests {
             );
             assert_eq!(message["content"][1]["content"]["text"], "ADVISOR_ADVICE");
             assert_eq!(message["content"][2]["text"], "EXECUTOR_CONTINUED");
+            assert_eq!(message["usage"]["iterations"][1]["model"], "gpt-6-astra");
             messages.push(message);
         }
         let captured = captured.lock().await;

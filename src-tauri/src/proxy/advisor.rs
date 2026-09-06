@@ -1,4 +1,5 @@
 //! Same-provider execution of Claude's advisor server tool.
+use super::model_mapper::strip_one_m_suffix_for_upstream;
 use super::ProxyError;
 use futures::Stream;
 use serde_json::{json, Value};
@@ -7,6 +8,7 @@ use std::future::Future;
 pub(crate) const MODEL_ENV: &str = "CC_SWITCH_ADVISOR_MODEL";
 const MAX_USES: u64 = 2;
 const MAX_CONTEXT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ONE_M_CONTEXT_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) fn consultation_provider(
     provider: &crate::provider::Provider,
@@ -165,9 +167,12 @@ where
     Fut: Future<Output = Result<Value, ProxyError>> + Send,
 {
     async_stream::try_stream! {
-        if model.as_ref().is_some_and(|model| model.len() > 200 || model.chars().any(char::is_control)) {
+        let usage_model = model.as_deref().map(strip_one_m_suffix_for_upstream);
+        if model.as_ref().is_some_and(|model| model.len() > 200 || model.chars().any(char::is_control)) || usage_model.is_some_and(str::is_empty) {
             Err(ProxyError::InvalidRequest("Invalid advisor model".into()))?;
         }
+        // A byte guard, not a token limit; the provider enforces its context window.
+        let max_context_bytes = if model.as_deref() != usage_model { MAX_ONE_M_CONTEXT_BYTES } else { MAX_CONTEXT_BYTES };
         let native_tool = body.get("tools").and_then(Value::as_array).and_then(|tools| tools.iter().find(|tool| is_advisor(tool))).cloned();
         let max_uses = if model.is_some() { native_tool.as_ref().and_then(|tool| tool["max_uses"].as_u64()).unwrap_or(1).min(MAX_USES) } else { 0 };
         let max_tokens = native_tool.as_ref().and_then(|tool| tool["max_tokens"].as_u64()).unwrap_or(2048).clamp(1024, 4096);
@@ -225,7 +230,7 @@ where
                     uses += 1;
                     let transcript = json!({"system":body.get("system"),"tools":transcript_tools,"messages":body["messages"],"current_assistant_content":blocks});
                     let quoted = serde_json::to_string(&transcript).map_err(|_| ProxyError::TransformError("Cannot serialize advisor context".into()))?;
-                    if quoted.len() > MAX_CONTEXT_BYTES {
+                    if quoted.len() > max_context_bytes {
                         json!({"type":"advisor_tool_result_error","error_code":"prompt_too_long"})
                     } else {
                         let advisor_body = json!({"model":model,"stream":true,"max_tokens":max_tokens,
@@ -234,7 +239,7 @@ where
                         attempted = true;
                         match tokio::time::timeout(std::time::Duration::from_secs(120), send(advisor_body, true)).await {
                             Ok(Ok(advice)) => {
-                                add_usage(&mut usage, &advice, model.as_deref());
+                                add_usage(&mut usage, &advice, usage_model);
                                 let text = advice["content"].as_array().into_iter().flatten()
                                     .filter(|block| block["type"] == "text").filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n");
                                 if text.is_empty() || text.len() > 32768 {
@@ -249,7 +254,7 @@ where
                     }
                 };
                 if advice["type"] == "advisor_tool_result_error" && attempted && usage["iterations"].as_array().unwrap().len() == iteration_count {
-                    usage["iterations"].as_array_mut().unwrap().push(json!({"type":"advisor_message","model":model,"cc_switch_usage_unavailable":true}));
+                    usage["iterations"].as_array_mut().unwrap().push(json!({"type":"advisor_message","model":usage_model,"cc_switch_usage_unavailable":true}));
                 }
                 let result = json!({"type":"advisor_tool_result","tool_use_id":id,"content":advice});
                 for event in block_events(result.clone(), index) { yield event; }
@@ -379,6 +384,46 @@ mod tests {
             "prompt_too_long"
         );
         assert_eq!(result["usage"]["iterations"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn advisor_one_m_allows_larger_context_but_remains_bounded() {
+        for (context_bytes, expected_calls) in [(2 * 1024 * 1024, 1), (8 * 1024 * 1024, 0)] {
+            let mut body = request();
+            body["system"] = json!("x".repeat(context_bytes));
+            let calls = Arc::new(Mutex::new(0));
+            let seen = calls.clone();
+            let mut executor_calls = 0;
+            let result = collect(run(
+                body,
+                Some("gpt-6-astra[1m]".into()),
+                move |body, advisor| {
+                    let response = if advisor {
+                        *seen.lock().unwrap() += 1;
+                        assert_eq!(body["model"], "gpt-6-astra[1m]");
+                        reply(json!([{"type":"text","text":"Advice"}]))
+                    } else {
+                        executor_calls += 1;
+                        if executor_calls == 1 {
+                            consultation()
+                        } else {
+                            reply(json!([{"type":"text","text":"Done"}]))
+                        }
+                    };
+                    async move { Ok(response) }
+                },
+            ))
+            .await;
+            assert_eq!(*calls.lock().unwrap(), expected_calls);
+            if expected_calls == 1 {
+                assert_eq!(result["usage"]["iterations"][1]["model"], "gpt-6-astra");
+            } else {
+                assert_eq!(
+                    result["content"][1]["content"]["error_code"],
+                    "prompt_too_long"
+                );
+            }
+        }
     }
 
     #[tokio::test]

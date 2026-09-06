@@ -22,13 +22,15 @@ describe("useModelState", () => {
     act(() =>
       result.current.handleModelChange(
         "CC_SWITCH_ADVISOR_MODEL",
-        "gpt-6-astra",
+        "gpt-6-astra[1M]",
       ),
     );
-    expect(JSON.parse(config).env.CC_SWITCH_ADVISOR_MODEL).toBe("gpt-6-astra");
+    expect(JSON.parse(config).env.CC_SWITCH_ADVISOR_MODEL).toBe(
+      "gpt-6-astra[1M]",
+    );
     expect(JSON.parse(config).env.ANTHROPIC_MODEL).toBe("working-model");
     rerender();
-    expect(result.current.advisorModel).toBe("gpt-6-astra");
+    expect(result.current.advisorModel).toBe("gpt-6-astra[1M]");
     act(() => result.current.handleModelChange("CC_SWITCH_ADVISOR_MODEL", ""));
     expect(JSON.parse(config).env.CC_SWITCH_ADVISOR_MODEL).toBeUndefined();
   });

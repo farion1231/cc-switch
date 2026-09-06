@@ -271,6 +271,7 @@ export function ClaudeFormFields({
   const [xaiOauthModelsLoading, setXaiOauthModelsLoading] = useState(false);
   const xaiOauthModelsRequestRef = useRef(0);
   const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
+  const advisorUsesOneM = hasClaudeOneMMarker(advisorModel);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -1107,14 +1108,35 @@ export function ClaudeFormFields({
                     defaultValue: "Advisor model",
                   })}
                 </FormLabel>
-                {renderModelInput(
-                  "claudeAdvisorModel",
-                  advisorModel,
-                  "CC_SWITCH_ADVISOR_MODEL",
-                  t("providerForm.advisorDisabled", {
-                    defaultValue: "Disabled (leave empty)",
-                  }),
-                )}
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]">
+                  {renderModelInput(
+                    "claudeAdvisorModel",
+                    stripClaudeOneMMarker(advisorModel),
+                    "CC_SWITCH_ADVISOR_MODEL",
+                    t("providerForm.advisorDisabled", {
+                      defaultValue: "Disabled (leave empty)",
+                    }),
+                    (value) =>
+                      onModelChange(
+                        "CC_SWITCH_ADVISOR_MODEL",
+                        setClaudeOneMMarker(value, advisorUsesOneM),
+                      ),
+                  )}
+                  <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                    <Checkbox
+                      aria-label={`${t("providerForm.advisorModel", { defaultValue: "Advisor model" })} ${t("providerForm.modelOneMLabel", { defaultValue: "1M" })}`}
+                      checked={advisorUsesOneM}
+                      disabled={!stripClaudeOneMMarker(advisorModel).trim()}
+                      onCheckedChange={(checked) =>
+                        onModelChange(
+                          "CC_SWITCH_ADVISOR_MODEL",
+                          setClaudeOneMMarker(advisorModel, checked === true),
+                        )
+                      }
+                    />
+                    {t("providerForm.modelOneMLabel", { defaultValue: "1M" })}
+                  </label>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   {t("providerForm.advisorHint", {
                     defaultValue:

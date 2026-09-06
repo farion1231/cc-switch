@@ -122,11 +122,51 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
   });
 
 describe("ClaudeFormFields", () => {
+  it("toggles advisor 1M, preserves it while editing, and clears it with the model", () => {
+    const onModelChange = vi.fn();
+    renderCodexOauthForm({ advisorModel: "gpt-6-astra[1m]", onModelChange });
+    const input = screen.getByLabelText("Advisor model");
+
+    const checkbox = screen.getByRole("checkbox", { name: "Advisor model 1M" });
+    expect(input).toHaveValue("gpt-6-astra");
+    expect(checkbox).toBeChecked();
+    fireEvent.change(input, { target: { value: "gpt-5.6-sol" } });
+    expect(onModelChange).toHaveBeenLastCalledWith(
+      "CC_SWITCH_ADVISOR_MODEL",
+      "gpt-5.6-sol[1M]",
+    );
+    fireEvent.click(checkbox);
+    expect(onModelChange).toHaveBeenLastCalledWith(
+      "CC_SWITCH_ADVISOR_MODEL",
+      "gpt-6-astra",
+    );
+    fireEvent.change(input, { target: { value: "" } });
+    expect(onModelChange).toHaveBeenLastCalledWith(
+      "CC_SWITCH_ADVISOR_MODEL",
+      "",
+    );
+  });
+
+  it("adds the advisor 1M marker", () => {
+    const onModelChange = vi.fn();
+    renderCodexOauthForm({ advisorModel: "gpt-6-astra", onModelChange });
+    const checkbox = screen.getByRole("checkbox", { name: "Advisor model 1M" });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    expect(onModelChange).toHaveBeenLastCalledWith(
+      "CC_SWITCH_ADVISOR_MODEL",
+      "gpt-6-astra[1M]",
+    );
+  });
+
   it("offers a separate optional advisor model on Codex OAuth without quick-set enabling it", () => {
     const onModelChange = vi.fn();
     renderCodexOauthForm({ onModelChange });
     const input = screen.getByLabelText("Advisor model");
     expect(input).toHaveValue("");
+    expect(
+      screen.getByRole("checkbox", { name: "Advisor model 1M" }),
+    ).toBeDisabled();
     fireEvent.change(input, { target: { value: "gpt-6-astra" } });
     expect(onModelChange).toHaveBeenCalledWith(
       "CC_SWITCH_ADVISOR_MODEL",
