@@ -70,10 +70,12 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 const APP_FILTER_ICON: Record<AppType, string> = {
   claude: "claude",
   codex: "openai",
+  dsh: "deepseek",
   gemini: "gemini",
   grokbuild: "grok",
   opencode: "opencode",
   pi: "pi",
+  zcode: "zhipu",
 };
 
 // Select 的 "all" 哨兵和用户自定义名称同处一个值域——真有来源/模型叫 "all"

@@ -913,7 +913,9 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "dsh": "DSH",
+    "zcode": "ZCode"
   },
   "pi": {
     "empty": {
@@ -1721,7 +1723,9 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "dsh": "DSH",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "原始",
     "sessionSync": {

@@ -192,20 +192,24 @@ export interface UsageRangeSelection {
 export type AppType =
   | "claude"
   | "codex"
+  | "dsh"
   | "gemini"
   | "grokbuild"
   | "opencode"
-  | "pi";
+  | "pi"
+  | "zcode";
 
 export type AppTypeFilter = "all" | AppType;
 
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
   "codex",
+  "dsh",
   "gemini",
   "grokbuild",
   "opencode",
   "pi",
+  "zcode",
 ];
 
 /**
@@ -224,12 +228,16 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
   "grokbuild",
+  "zcode",
 ]);
 
 // Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates
 // only by app type. Treat cache-write coverage as partial without changing
-// Pi's fresh-input token semantics.
-const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set(["pi"]);
+// Pi's fresh-input token semantics. DSH logs never report cache writes.
+const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
+  "pi",
+  "dsh",
+]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";
 
