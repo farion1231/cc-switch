@@ -25,4 +25,22 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
       generateThirdPartyConfig("acme", "https://api.acme.dev/v1", "m1"),
     ).toContain("requires_openai_auth = true");
   });
+
+  it("exposes GitHub Copilot as a keyless Codex provider", () => {
+    const preset = codexProviderPresets.find(
+      (item) => item.providerType === "github_copilot",
+    );
+
+    expect(preset).toMatchObject({
+      name: "GitHub Copilot",
+      apiFormat: "openai_chat",
+      requiresOAuth: true,
+      auth: {},
+    });
+    expect(preset?.config).toContain(
+      'base_url = "https://api.githubcopilot.com"',
+    );
+    expect(preset?.config).toContain('wire_api = "responses"');
+    expect(preset?.config).toContain("requires_openai_auth = false");
+  });
 });

@@ -793,10 +793,12 @@ function ProviderFormFull({
   const presetProviderType = getPresetProviderType(selectedPresetEntry?.preset);
   const initialProviderType = initialData?.meta?.providerType;
   const isCopilotProvider =
-    appId === "claude" &&
+    (appId === "claude" || appId === "codex") &&
     (presetProviderType === "github_copilot" ||
       initialProviderType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com"));
+      baseUrl.includes("githubcopilot.com") ||
+      codexBaseUrl.includes("githubcopilot.com") ||
+      codexBaseUrl.includes("copilot-api."));
   const isClaudeCodexOauthProvider =
     appId === "claude" &&
     (presetProviderType === "codex_oauth" ||
@@ -1438,16 +1440,16 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "codex") {
-        // 托管 OAuth 预设（xAI）：端点由 adapter 硬定向、token 由代理注入，
+        // 托管 OAuth 预设（Copilot/xAI）：端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
-        if (!isXaiOauthProvider && !codexBaseUrl.trim()) {
+        if (!isCopilotProvider && !isXaiOauthProvider && !codexBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isXaiOauthProvider && !codexApiKey.trim()) {
+        if (!isCopilotProvider && !isXaiOauthProvider && !codexApiKey.trim()) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1789,9 +1791,11 @@ function ProviderFormFull({
             ? "openai_responses"
             : localApiFormat
           : appId === "codex" && category !== "official"
-            ? isXaiOauthProvider
-              ? "openai_responses"
-              : localCodexApiFormat
+            ? isCopilotProvider
+              ? "openai_chat"
+              : isXaiOauthProvider
+                ? "openai_responses"
+                : localCodexApiFormat
             : undefined,
       apiKeyField:
         appId === "claude" &&
@@ -1824,6 +1828,7 @@ function ProviderFormFull({
       isFullUrl:
         supportsFullUrl &&
         category !== "official" &&
+        !isCopilotProvider &&
         !isXaiOauthProvider &&
         localIsFullUrl
           ? true
@@ -2440,6 +2445,10 @@ function ProviderFormFull({
           {appId === "codex" && (
             <CodexFormFields
               providerId={providerId}
+              isCopilotPreset={isCopilotProvider}
+              isCopilotAuthenticated={isCopilotAuthenticated}
+              selectedGitHubAccountId={selectedGitHubAccountId}
+              onGitHubAccountSelect={setSelectedGitHubAccountId}
               isXaiOauthPreset={
                 presetProviderType === "xai_oauth" ||
                 initialData?.meta?.providerType === "xai_oauth"

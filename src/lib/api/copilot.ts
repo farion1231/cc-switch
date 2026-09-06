@@ -108,6 +108,8 @@ export interface CopilotModel {
   name: string;
   vendor: string;
   model_picker_enabled: boolean;
+  context_window?: number;
+  supported_endpoints?: string[];
 }
 
 /**

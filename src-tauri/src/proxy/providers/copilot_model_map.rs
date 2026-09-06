@@ -11,6 +11,25 @@
 use super::copilot_auth::CopilotModel;
 use serde_json::Value;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopilotProtocol {
+    Responses,
+    Chat,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopilotTransport {
+    pub protocol: CopilotProtocol,
+    pub endpoint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCopilotModel {
+    pub id: String,
+    pub vendor: String,
+    pub transport: Option<CopilotTransport>,
+}
+
 /// 归一化客户端 model ID 为 Copilot upstream 接受的形式。
 /// 返回 `None` 表示无需变换（已归一化、非 Claude 4.x 系列、或空输入）。
 pub(super) fn normalize_to_copilot_id(client_id: &str) -> Option<String> {
@@ -111,18 +130,75 @@ fn dashes_to_dot_in_last_version(id: &str) -> Option<String> {
 /// 返回 `None` 表示无需变换或无可降级的 family 候选（保留原 ID 让上游决定，
 /// 让用户拿到明确的 `model_not_supported` 而非被静默替换）。
 pub fn resolve_against_models(client_id: &str, models: &[CopilotModel]) -> Option<String> {
+    match_copilot_model(client_id, models).and_then(|matched| matched.replacement_id)
+}
+
+pub fn resolve_model(client_id: &str, models: &[CopilotModel]) -> Option<ResolvedCopilotModel> {
+    let model = match_copilot_model(client_id, models)?.model;
+    Some(ResolvedCopilotModel {
+        id: model.id.clone(),
+        vendor: model.vendor.clone(),
+        transport: transport_for(model),
+    })
+}
+
+struct CopilotModelMatch<'a> {
+    model: &'a CopilotModel,
+    // Exact matches retain the caller's spelling; a resolved model uses the
+    // catalog's ID. Keep that distinction separate from selecting the model.
+    replacement_id: Option<String>,
+}
+
+fn match_copilot_model<'a>(
+    client_id: &str,
+    models: &'a [CopilotModel],
+) -> Option<CopilotModelMatch<'a>> {
     let normalized = normalize_to_copilot_id(client_id);
     let target = normalized.as_deref().unwrap_or(client_id);
-
-    if models.iter().any(|m| m.id.eq_ignore_ascii_case(target)) {
-        return normalized.filter(|s| s != client_id);
+    if let Some(model) = models
+        .iter()
+        .find(|model| model.id.eq_ignore_ascii_case(target))
+    {
+        return Some(CopilotModelMatch {
+            model,
+            replacement_id: normalized.filter(|id| id != client_id),
+        });
     }
 
     let fallback = family_fallback(target, models)?;
-    if fallback.eq_ignore_ascii_case(client_id) {
-        None
+    let model = models
+        .iter()
+        .find(|model| model.id.eq_ignore_ascii_case(&fallback))?;
+    Some(CopilotModelMatch {
+        model,
+        replacement_id: (!fallback.eq_ignore_ascii_case(client_id)).then_some(fallback),
+    })
+}
+
+fn transport_for(model: &CopilotModel) -> Option<CopilotTransport> {
+    let supported = |expected: &[&str]| {
+        model.supported_endpoints.iter().find_map(|endpoint| {
+            let path = endpoint
+                .split_once('?')
+                .map_or(endpoint.as_str(), |(path, _)| path)
+                .trim_end_matches('/');
+            expected
+                .iter()
+                .any(|candidate| path.eq_ignore_ascii_case(candidate))
+                .then(|| path.to_string())
+        })
+    };
+
+    if let Some(endpoint) = supported(&["/responses", "/v1/responses"]) {
+        Some(CopilotTransport {
+            protocol: CopilotProtocol::Responses,
+            endpoint,
+        })
     } else {
-        Some(fallback)
+        supported(&["/chat/completions", "/v1/chat/completions"]).map(|endpoint| CopilotTransport {
+            protocol: CopilotProtocol::Chat,
+            endpoint,
+        })
     }
 }
 
@@ -162,7 +238,9 @@ fn family_fallback(target: &str, models: &[CopilotModel]) -> Option<String> {
             .iter()
             .filter(|m| {
                 let lower = m.id.to_ascii_lowercase();
-                lower.contains(family) && lower.ends_with("-1m") == require_1m
+                let is_1m = lower.contains("-1m")
+                    || m.context_window.is_some_and(|tokens| tokens >= 1_000_000);
+                lower.contains(family) && is_1m == require_1m
             })
             .filter_map(|m| extract_major_minor(&m.id).map(|v| (m, v)))
             .max_by_key(|(_, v)| *v)
@@ -300,6 +378,8 @@ mod tests {
             name: id.to_string(),
             vendor: "anthropic".to_string(),
             model_picker_enabled: true,
+            context_window: None,
+            supported_endpoints: Vec::new(),
         }
     }
 
@@ -370,5 +450,148 @@ mod tests {
     fn resolve_handles_non_claude_target() {
         let models = vec![model("claude-sonnet-4.6")];
         assert_eq!(resolve_against_models("gpt-5", &models), None);
+    }
+
+    #[test]
+    fn shared_model_match_preserves_rewrite_and_catalog_id_semantics() {
+        let models = vec![
+            model("claude-sonnet-4.5"),
+            model("claude-sonnet-4.6"),
+            model("claude-sonnet-4.6-1m"),
+            model("gpt-5.6"),
+        ];
+        let cases = [
+            ("claude-sonnet-4.6", None, Some("claude-sonnet-4.6")),
+            ("CLAUDE-SONNET-4.6", None, Some("claude-sonnet-4.6")),
+            (
+                "CLAUDE-SONNET-4-6",
+                Some("CLAUDE-SONNET-4.6"),
+                Some("claude-sonnet-4.6"),
+            ),
+            (
+                "claude-sonnet-4.8",
+                Some("claude-sonnet-4.6"),
+                Some("claude-sonnet-4.6"),
+            ),
+            (
+                "claude-sonnet-4-6[1M]",
+                Some("claude-sonnet-4.6-1m"),
+                Some("claude-sonnet-4.6-1m"),
+            ),
+            ("gpt-5.6", None, Some("gpt-5.6")),
+            ("unknown", None, None),
+        ];
+        for (requested, replacement, catalog_id) in cases {
+            assert_eq!(
+                resolve_against_models(requested, &models).as_deref(),
+                replacement,
+                "{requested}"
+            );
+            assert_eq!(
+                resolve_model(requested, &models)
+                    .as_ref()
+                    .map(|resolved| resolved.id.as_str()),
+                catalog_id,
+                "{requested}"
+            );
+        }
+    }
+
+    #[test]
+    fn shared_model_match_preserves_first_duplicate_metadata() {
+        let first = model("claude-sonnet-4.6");
+        let mut second = model("CLAUDE-SONNET-4.6");
+        second.vendor = "second".to_string();
+        let models = [first, second];
+
+        assert_eq!(
+            resolve_against_models("claude-sonnet-4.8", &models).as_deref(),
+            Some("CLAUDE-SONNET-4.6")
+        );
+        let resolved = resolve_model("claude-sonnet-4.8", &models).unwrap();
+        assert_eq!(resolved.id, "claude-sonnet-4.6");
+        assert_eq!(resolved.vendor, "anthropic");
+    }
+
+    #[test]
+    fn transport_keeps_protocol_and_endpoint_together() {
+        for (endpoint, protocol) in [
+            ("/responses", CopilotProtocol::Responses),
+            ("/v1/responses", CopilotProtocol::Responses),
+            ("/chat/completions", CopilotProtocol::Chat),
+            ("/v1/chat/completions", CopilotProtocol::Chat),
+        ] {
+            let mut advertised = model("gpt-5.6");
+            advertised.supported_endpoints = vec![endpoint.to_string()];
+            assert_eq!(
+                resolve_model("gpt-5.6", &[advertised]).unwrap().transport,
+                Some(CopilotTransport {
+                    protocol,
+                    endpoint: endpoint.to_string(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_protocol_prefers_responses_then_chat() {
+        let mut both = model("gpt-5.6");
+        both.vendor = "OpenAI".to_string();
+        both.supported_endpoints = vec!["/chat/completions".to_string(), "/responses".to_string()];
+        assert_eq!(
+            resolve_model("gpt-5.6", &[both]).unwrap().transport,
+            Some(CopilotTransport {
+                protocol: CopilotProtocol::Responses,
+                endpoint: "/responses".to_string(),
+            })
+        );
+
+        let mut chat = model("claude-sonnet-4.6");
+        chat.supported_endpoints = vec!["/chat/completions".to_string()];
+        assert_eq!(
+            resolve_model("claude-sonnet-4.6", &[chat])
+                .unwrap()
+                .transport,
+            Some(CopilotTransport {
+                protocol: CopilotProtocol::Chat,
+                endpoint: "/chat/completions".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn messages_only_model_is_not_supported_by_codex_bridge() {
+        let mut model = model("claude-opus-4.6");
+        model.supported_endpoints = vec!["/v1/messages".to_string()];
+
+        assert_eq!(
+            resolve_model("claude-opus-4.6", &[model])
+                .unwrap()
+                .transport,
+            None
+        );
+    }
+
+    #[test]
+    fn model_without_endpoint_metadata_is_not_supported_by_codex_bridge() {
+        let mut openai = model("o3");
+        openai.vendor = "OpenAI".to_string();
+        assert_eq!(resolve_model("o3", &[openai]).unwrap().transport, None);
+
+        assert_eq!(
+            resolve_model("claude-sonnet-4.6", &[model("claude-sonnet-4.6")])
+                .unwrap()
+                .transport,
+            None
+        );
+    }
+
+    #[test]
+    fn one_m_family_fallback_uses_reported_context_window() {
+        let mut one_m = model("claude-opus-4.7-1m-internal");
+        one_m.context_window = Some(1_000_000);
+        let resolved = resolve_model("claude-opus-4-5[1M]", &[one_m]).unwrap();
+
+        assert_eq!(resolved.id, "claude-opus-4.7-1m-internal");
     }
 }

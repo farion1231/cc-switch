@@ -42,8 +42,14 @@ import {
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { CodexOAuthSection } from "./CodexOAuthSection";
+import { CopilotAuthSection } from "./CopilotAuthSection";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+  type CopilotModel,
+} from "@/lib/api/copilot";
 import {
   fetchModelsForConfig,
   fetchXaiOauthModels,
@@ -68,9 +74,31 @@ interface EndpointCandidate {
   url: string;
 }
 
+export function isCopilotModelSupportedByCodex(model: CopilotModel): boolean {
+  return (model.supported_endpoints ?? []).some((endpoint) =>
+    [
+      "/responses",
+      "/v1/responses",
+      "/chat/completions",
+      "/v1/chat/completions",
+    ].includes(endpoint.split("?")[0].replace(/\/+$/, "")),
+  );
+}
+
+export function resolveCopilotCatalogContextWindow(
+  current: CodexCatalogModel["contextWindow"],
+  reported: number | undefined,
+): CodexCatalogModel["contextWindow"] {
+  return String(current ?? "").trim() ? current : reported;
+}
+
 interface CodexFormFieldsProps {
   appId?: AppId;
   providerId?: string;
+  isCopilotPreset?: boolean;
+  isCopilotAuthenticated?: boolean;
+  selectedGitHubAccountId?: string | null;
+  onGitHubAccountSelect?: (accountId: string | null) => void;
   // xAI OAuth 托管预设（Grok 订阅）：隐藏 API Key / 端点输入，挂账号选择区块
   isXaiOauthPreset?: boolean;
   isXaiOauthAuthenticated?: boolean;
@@ -367,6 +395,10 @@ function ReasoningLevelsEditor({
 export function CodexFormFields({
   appId = "codex",
   providerId,
+  isCopilotPreset,
+  isCopilotAuthenticated,
+  selectedGitHubAccountId,
+  onGitHubAccountSelect,
   isXaiOauthPreset,
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
@@ -442,6 +474,9 @@ export function CodexFormFields({
     isFullUrl,
     codexApiKey,
     customUserAgent,
+    isCopilotPreset,
+    isCopilotAuthenticated,
+    selectedGitHubAccountId,
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
@@ -549,7 +584,97 @@ export function CodexFormFields({
     [codexChatReasoning, onCodexChatReasoningChange],
   );
 
+  const receiveFetchedModels = useCallback((models: FetchedModel[]) => {
+    setFetchedModels(models);
+    return models.length;
+  }, []);
+
+  const runModelFetch = useCallback(
+    <T,>(
+      fetchModels: () => Promise<T>,
+      receiveModels: (models: T) => number,
+      errorLogMessage: string,
+    ) => {
+      const seq = ++fetchModelsSeqRef.current;
+      setIsFetchingModels(true);
+      fetchModels()
+        .then((models) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          const count = receiveModels(models);
+          if (count === 0) {
+            toast.info(t("providerForm.fetchModelsEmpty"));
+          } else {
+            toast.success(t("providerForm.fetchModelsSuccess", { count }));
+          }
+        })
+        .catch((err) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          console.warn(errorLogMessage, err);
+          showFetchModelsError(err, t);
+        })
+        .finally(() => setIsFetchingModels(false));
+    },
+    [t],
+  );
+
   const handleFetchModels = useCallback(() => {
+    if (isCopilotPreset) {
+      if (!isCopilotAuthenticated) {
+        toast.error(
+          t("copilot.loginRequired", {
+            defaultValue: "请先登录 GitHub Copilot",
+          }),
+        );
+        return;
+      }
+      runModelFetch(
+        () =>
+          selectedGitHubAccountId
+            ? copilotGetModelsForAccount(selectedGitHubAccountId)
+            : copilotGetModels(),
+        (models) => {
+          const usableModels = models.filter(isCopilotModelSupportedByCodex);
+          const fetched = usableModels.map((model) => ({
+            id: model.id,
+            ownedBy: model.vendor || null,
+          }));
+          setFetchedModels(fetched);
+
+          if (onCatalogModelsChange) {
+            const existing = new Map(
+              catalogModels.map((model) => [model.model, model]),
+            );
+            onCatalogModelsChange(
+              usableModels.map((model) => ({
+                ...(existing.get(model.id) ?? {}),
+                model: model.id,
+                displayName: model.name || model.id,
+                contextWindow: resolveCopilotCatalogContextWindow(
+                  existing.get(model.id)?.contextWindow,
+                  model.context_window,
+                ),
+                supportsParallelToolCalls:
+                  existing.get(model.id)?.supportsParallelToolCalls ?? false,
+                inputModalities: existing.get(model.id)?.inputModalities ?? [
+                  "text",
+                ],
+              })),
+            );
+          }
+          if (
+            usableModels.length > 0 &&
+            onModelChange &&
+            !usableModels.some((model) => model.id === codexModel)
+          ) {
+            onModelChange(usableModels[0].id);
+          }
+          return usableModels.length;
+        },
+        "[Copilot] Failed to fetch models:",
+      );
+      return;
+    }
+
     // xAI OAuth 托管预设：不走 base_url + key 的 /models 探测，
     // 直接用托管账号 token 拉取（与 Claude 表单同一后端命令）
     if (isXaiOauthPreset) {
@@ -561,26 +686,11 @@ export function CodexFormFields({
         );
         return;
       }
-      const seq = ++fetchModelsSeqRef.current;
-      setIsFetchingModels(true);
-      fetchXaiOauthModels(selectedXaiAccountId ?? null)
-        .then((models) => {
-          if (seq !== fetchModelsSeqRef.current) return;
-          setFetchedModels(models);
-          if (models.length === 0) {
-            toast.info(t("providerForm.fetchModelsEmpty"));
-          } else {
-            toast.success(
-              t("providerForm.fetchModelsSuccess", { count: models.length }),
-            );
-          }
-        })
-        .catch((err) => {
-          if (seq !== fetchModelsSeqRef.current) return;
-          console.warn("[XaiOAuth] Failed to fetch models:", err);
-          showFetchModelsError(err, t);
-        })
-        .finally(() => setIsFetchingModels(false));
+      runModelFetch(
+        () => fetchXaiOauthModels(selectedXaiAccountId ?? null),
+        receiveFetchedModels,
+        "[XaiOAuth] Failed to fetch models:",
+      );
       return;
     }
 
@@ -591,37 +701,32 @@ export function CodexFormFields({
       });
       return;
     }
-    const seq = ++fetchModelsSeqRef.current;
-    setIsFetchingModels(true);
-    fetchModelsForConfig(
-      codexBaseUrl,
-      codexApiKey,
-      isFullUrl,
-      undefined,
-      customUserAgent,
-    )
-      .then((models) => {
-        if (seq !== fetchModelsSeqRef.current) return;
-        setFetchedModels(models);
-        if (models.length === 0) {
-          toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
-        }
-      })
-      .catch((err) => {
-        if (seq !== fetchModelsSeqRef.current) return;
-        console.warn("[ModelFetch] Failed:", err);
-        showFetchModelsError(err, t);
-      })
-      .finally(() => setIsFetchingModels(false));
+    runModelFetch(
+      () =>
+        fetchModelsForConfig(
+          codexBaseUrl,
+          codexApiKey,
+          isFullUrl,
+          undefined,
+          customUserAgent,
+        ),
+      receiveFetchedModels,
+      "[ModelFetch] Failed:",
+    );
   }, [
+    runModelFetch,
+    receiveFetchedModels,
     codexBaseUrl,
     codexApiKey,
+    codexModel,
+    catalogModels,
     isFullUrl,
     customUserAgent,
+    isCopilotPreset,
+    isCopilotAuthenticated,
+    selectedGitHubAccountId,
+    onCatalogModelsChange,
+    onModelChange,
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
@@ -719,6 +824,19 @@ export function CodexFormFields({
 
   return (
     <>
+      {isCopilotPreset && (
+        <CopilotAuthSection
+          mode="select"
+          selectedAccountId={selectedGitHubAccountId}
+          onAccountSelect={onGitHubAccountSelect}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("github_copilot")
+              : undefined
+          }
+        />
+      )}
+
       {/* Codex OAuth 账号选择 */}
       {isCodexOauthPreset && (
         <CodexOAuthSection
@@ -753,7 +871,7 @@ export function CodexFormFields({
       )}
 
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isCodexOauthPreset && !isXaiOauthPreset && (
+      {!isCopilotPreset && !isCodexOauthPreset && !isXaiOauthPreset && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"
@@ -776,7 +894,7 @@ export function CodexFormFields({
       )}
 
       {/* Codex Base URL 输入框（托管 OAuth 端点由 adapter 硬定向，不展示） */}
-      {shouldShowSpeedTest && !isXaiOauthPreset && (
+      {shouldShowSpeedTest && !isCopilotPreset && !isXaiOauthPreset && (
         <EndpointField
           id="codexBaseUrl"
           label={t("codexConfig.apiUrlLabel")}
@@ -910,7 +1028,7 @@ export function CodexFormFields({
             {/* 上游格式 —— Chat 需开启路由接管（走代理转换），Responses 原生直连。
                 沿用 shouldShowSpeedTest 门控，cloud_provider 保持不可切换；
                 xAI OAuth 托管预设格式钉死 Responses，不可切换。 */}
-            {shouldShowSpeedTest && !isXaiOauthPreset && (
+            {shouldShowSpeedTest && !isCopilotPreset && !isXaiOauthPreset && (
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <FormLabel htmlFor="codex-upstream-format">
