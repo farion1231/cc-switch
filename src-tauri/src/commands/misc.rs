@@ -2979,7 +2979,22 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return package_command;
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
-        let update = anchored_official_update_command(tool, bin_path)?;
+        let mut update = anchored_official_update_command(tool, bin_path)?;
+        // npm-installed Claude invokes npm from its own updater. npm 12 can skip
+        // postinstall and still exit 0, so the fallback alone cannot protect it.
+        // Match the sibling-npm sources above; native/formula installs have
+        // already returned, and other package managers keep their own policy.
+        if tool == "claude"
+            && matches!(
+                infer_install_source(Path::new(bin_path)),
+                "nvm" | "fnm" | "mise" | "homebrew"
+            )
+        {
+            update = format!(
+                "npm_config_allow_scripts={} {update}",
+                npm_package_for(tool)?
+            );
+        }
         return Some(match package_command {
             Some(fallback) => chain_update_commands(update, fallback, LifecycleCommandShell::Posix),
             None => update,
@@ -6405,19 +6420,116 @@ mod tests {
 
         #[test]
         fn claude_runnable_keeps_official_update_chain() {
-            // 正常（runnable=true）的 claude 升级不走重装：仍是官方 self-update 优先、
-            // 带脚本白名单的锚定 npm 兜底。
-            let healthy = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/claude", true);
-            let cmd = installs_anchored_command("claude", &[healthy]).unwrap();
-            assert!(
-                cmd.starts_with("/Users/me/.nvm/versions/node/v22.14.0/bin/claude update || "),
-                "official update should stay primary: {cmd}"
-            );
-            assert!(
-                cmd.contains("npm_config_allow_scripts=@anthropic-ai/claude-code"),
-                "npm fallback should carry allow-scripts env: {cmd}"
-            );
-            assert!(!cmd.contains("uninstall"));
+            for path in [
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/claude",
+                "/Users/me/.local/share/fnm_multishells/12345_abc/bin/claude",
+                "/Users/me/.local/share/mise/installs/node/22/bin/claude",
+                "/opt/homebrew/bin/claude",
+            ] {
+                let cmd = installs_anchored_command("claude", &[inst(path, true)]).unwrap();
+                let (primary, fallback) = cmd.split_once(" || ").unwrap();
+                assert_eq!(
+                    primary,
+                    format!("npm_config_allow_scripts=@anthropic-ai/claude-code {path} update")
+                );
+                assert!(fallback.starts_with("npm_config_allow_scripts=@anthropic-ai/claude-code "));
+                assert!(!cmd.contains("uninstall"));
+            }
+        }
+
+        #[test]
+        fn claude_other_install_sources_keep_their_update_policy() {
+            for (path, real, expected) in [
+                (
+                    "/Users/me/.nvm/versions/node/v22/bin/claude",
+                    "/Users/me/.local/share/claude/versions/2.1.146",
+                    "/Users/me/.nvm/versions/node/v22/bin/claude update",
+                ),
+                (
+                    "/opt/homebrew/bin/claude",
+                    "/opt/homebrew/Cellar/claude-code/2.1.146/bin/claude",
+                    "/opt/homebrew/bin/brew upgrade claude-code",
+                ),
+                (
+                    "/Users/me/.volta/bin/claude",
+                    "/Users/me/.volta/bin/claude",
+                    "/Users/me/.volta/bin/claude update || /Users/me/.volta/bin/volta install @anthropic-ai/claude-code",
+                ),
+                (
+                    "/Users/me/.bun/bin/claude",
+                    "/Users/me/.bun/bin/claude",
+                    "/Users/me/.bun/bin/claude update || /Users/me/.bun/bin/bun add -g @anthropic-ai/claude-code@latest",
+                ),
+                (
+                    "/usr/local/bin/claude",
+                    "/usr/local/bin/claude",
+                    "/usr/local/bin/claude update",
+                ),
+            ] {
+                assert_eq!(
+                    anchored_command_from_paths("claude", path, real).as_deref(),
+                    Some(expected)
+                );
+            }
+        }
+
+        #[test]
+        fn claude_updater_child_and_fallback_receive_scoped_script_permission() {
+            use std::os::unix::fs::PermissionsExt;
+            use std::process::Command;
+
+            let temp = tempfile::tempdir().expect("temp dir should be created");
+            let bin = temp.path().join("home dir/.nvm/versions/node/v22/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let claude = bin.join("claude");
+            let npm = bin.join("npm");
+            std::fs::write(
+                &claude,
+                "#!/bin/sh\n[ \"$1\" = update ] || exit 99\nnpm install -g @anthropic-ai/claude-code@latest\nexit \"$TEST_CLAUDE_EXIT\"\n",
+            )
+            .unwrap();
+            std::fs::write(
+                &npm,
+                "#!/bin/sh\nprintf '%s|%s\\n' \"${npm_config_allow_scripts-unset}\" \"$*\"\n[ \"$1\" != i ] || exit \"$TEST_FALLBACK_EXIT\"\n",
+            )
+            .unwrap();
+            for executable in [&claude, &npm] {
+                std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+            let command =
+                installs_anchored_command("claude", &[inst(&claude.to_string_lossy(), true)])
+                    .unwrap();
+            let script =
+                format!("set -e\n{command}\nprintf 'after|%s\\n' \"$npm_config_allow_scripts\"");
+            let primary = "@anthropic-ai/claude-code|install -g @anthropic-ai/claude-code@latest\n";
+            let fallback = "@anthropic-ai/claude-code|i -g @anthropic-ai/claude-code@latest\n";
+            for (primary_exit, fallback_exit, expected_code, expected_output) in [
+                ("0", "0", 0, format!("{primary}after|previous-package\n")),
+                (
+                    "1",
+                    "0",
+                    0,
+                    format!("{primary}{fallback}after|previous-package\n"),
+                ),
+                ("1", "42", 42, format!("{primary}{fallback}")),
+            ] {
+                let output = Command::new("/bin/bash")
+                    .args(["-c", &script])
+                    .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+                    .env("npm_config_allow_scripts", "previous-package")
+                    .env("TEST_CLAUDE_EXIT", primary_exit)
+                    .env("TEST_FALLBACK_EXIT", fallback_exit)
+                    .output()
+                    .expect("Claude update chain should start");
+                assert_eq!(
+                    output.status.code(),
+                    Some(expected_code),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(String::from_utf8_lossy(&output.stdout), expected_output);
+            }
         }
 
         #[test]
