@@ -1428,6 +1428,16 @@ impl RequestForwarder {
         };
         if adapter.name() == "Claude" {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
+                if matches!(app_type, AppType::Claude) {
+                    let changed = super::steer_rectifier::rectify_steer_messages(
+                        &mut mapped_body,
+                        &self.rectifier_config,
+                        api_format,
+                    );
+                    if changed > 0 {
+                        log::debug!("[SteerRectifier] Converted {changed} human steer message(s) to user for Chat Completions");
+                    }
+                }
                 super::providers::normalize_anthropic_messages_for_provider(
                     &mut mapped_body,
                     provider,
