@@ -362,6 +362,9 @@ struct GrokBillingSnapshot {
     used_percent: f64,
     /// Unix 秒
     resets_at: Option<i64>,
+    /// 计费周期开始时间（Unix 秒）。有它才能得到真实窗口长度，
+    /// 而不是靠"距重置还有几天"反推。
+    period_start: Option<i64>,
 }
 
 /// 从响应体提取已用百分比与重置时间（CodexBar `parseGRPCWebResponse` 的移植）。
@@ -411,6 +414,25 @@ fn parse_billing_payload(data: &[u8], now_secs: i64) -> Result<GrokBillingSnapsh
         .min()
         .or_else(|| reset_candidates.iter().map(|(_, ts)| *ts).min());
 
+    // 计费周期开始时间：与 reset 成对出现的过去时间戳。实测响应形态
+    // （grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig）：
+    //   [1,4,1] = billingPeriodStart，[1,5,1] = billingPeriodEnd
+    //   [1,8,2,1] / [1,8,3,1] 是同一对值在 usage period 子消息里的镜像
+    // 只认过去的时间戳，优先精确路径，其次取最晚的一个（最接近本周期）。
+    let start_candidates: Vec<(&[u64], i64)> = scan
+        .varint_fields
+        .iter()
+        .filter(|(_, value)| (1_700_000_000..=2_100_000_000).contains(value))
+        .map(|(path, value)| (path.as_slice(), *value as i64))
+        .filter(|(_, ts)| *ts <= now_secs)
+        .collect();
+    let period_start = start_candidates
+        .iter()
+        .filter(|(path, _)| *path == [1, 4, 1] || *path == [1, 8, 2, 1])
+        .map(|(_, ts)| *ts)
+        .max()
+        .or_else(|| start_candidates.iter().map(|(_, ts)| *ts).max());
+
     let has_usage_period = scan.varint_fields.iter().any(|(path, value)| {
         path.starts_with(&[1, 6]) || (path.as_slice() == [1, 8, 1] && (*value == 1 || *value == 2))
     });
@@ -427,6 +449,7 @@ fn parse_billing_payload(data: &[u8], now_secs: i64) -> Result<GrokBillingSnapsh
     Ok(GrokBillingSnapshot {
         used_percent,
         resets_at: reset,
+        period_start,
     })
 }
 
@@ -523,17 +546,35 @@ fn grpc_status_error(
     )
 }
 
-/// 按重置时间距今的天数推断窗口 tier 名（CodexBar `primaryLabel` 的阈值）：
-/// 4–12 天 → 周窗口，20–45 天 → 月窗口，其余 → 通用 credit 额度
-fn tier_name_for_reset(resets_at: Option<i64>, now_secs: i64) -> &'static str {
+/// 按计费周期的真实长度定窗口 tier 名。
+///
+/// 有 `period_start` 时用 `end - start` —— 这是周期本身的长度，与查询时刻无关。
+/// 只有缺 start 时才退回"按距重置天数反推"的启发式（CodexBar `primaryLabel`
+/// 的阈值），那种猜法在窗口快走完时必然偏小：还剩 17 小时重置的周窗口会被
+/// 认成 credits，托盘于是丢掉时间%。
+fn tier_name_for_window(
+    period_start: Option<i64>,
+    resets_at: Option<i64>,
+    now_secs: i64,
+) -> &'static str {
+    if let (Some(start), Some(end)) = (period_start, resets_at) {
+        if end > start {
+            return tier_name_for_span_days((end - start) as f64 / 86400.0);
+        }
+    }
     if let Some(ts) = resets_at {
-        let days = ((ts - now_secs) as f64 / 86400.0).round() as i64;
-        if (4..=12).contains(&days) {
-            return TIER_WEEKLY_LIMIT;
-        }
-        if (20..=45).contains(&days) {
-            return TIER_MONTHLY;
-        }
+        return tier_name_for_span_days((ts - now_secs) as f64 / 86400.0);
+    }
+    TIER_CREDITS
+}
+
+fn tier_name_for_span_days(days: f64) -> &'static str {
+    let rounded = days.round() as i64;
+    if (4..=12).contains(&rounded) {
+        return TIER_WEEKLY_LIMIT;
+    }
+    if (20..=45).contains(&rounded) {
+        return TIER_MONTHLY;
     }
     TIER_CREDITS
 }
@@ -656,7 +697,7 @@ pub(crate) async fn query_grok_quota(
     };
 
     let tier = QuotaTier {
-        name: tier_name_for_reset(snapshot.resets_at, now_secs).to_string(),
+        name: tier_name_for_window(snapshot.period_start, snapshot.resets_at, now_secs).to_string(),
         utilization: snapshot.used_percent.clamp(0.0, 100.0),
         resets_at: snapshot
             .resets_at
@@ -911,17 +952,93 @@ mod tests {
     }
 
     #[test]
-    fn tier_name_follows_reset_distance() {
+    fn tier_name_falls_back_to_reset_distance_without_period_start() {
         assert_eq!(
-            tier_name_for_reset(Some(NOW + 7 * 86400), NOW),
+            tier_name_for_window(None, Some(NOW + 7 * 86400), NOW),
             TIER_WEEKLY_LIMIT
         );
         assert_eq!(
-            tier_name_for_reset(Some(NOW + 30 * 86400), NOW),
+            tier_name_for_window(None, Some(NOW + 30 * 86400), NOW),
             TIER_MONTHLY
         );
-        assert_eq!(tier_name_for_reset(Some(NOW + 86400), NOW), TIER_CREDITS);
-        assert_eq!(tier_name_for_reset(None, NOW), TIER_CREDITS);
+        assert_eq!(
+            tier_name_for_window(None, Some(NOW + 86400), NOW),
+            TIER_CREDITS
+        );
+        assert_eq!(tier_name_for_window(None, None, NOW), TIER_CREDITS);
+    }
+
+    #[test]
+    fn tier_name_uses_real_period_length_when_start_is_known() {
+        // 周窗口只剩 17 小时就重置：按"距重置天数"会猜成 credits，
+        // 有 period_start 时应当仍判定为周窗口。
+        let start = NOW - 6 * 86400 - 61200;
+        let end = NOW + 61200;
+        assert_eq!(
+            tier_name_for_window(Some(start), Some(end), NOW),
+            TIER_WEEKLY_LIMIT
+        );
+        // 月窗口同理
+        let m_start = NOW - 29 * 86400;
+        let m_end = NOW + 86400;
+        assert_eq!(
+            tier_name_for_window(Some(m_start), Some(m_end), NOW),
+            TIER_MONTHLY
+        );
+    }
+
+    #[test]
+    fn parses_period_start_and_keeps_weekly_window_near_reset() {
+        // 实测响应形态：[1,4,1] = 周期开始，[1,5,1] = 周期结束
+        let start = (NOW - 6 * 86400 - 61200) as u64;
+        let end = (NOW + 61200) as u64;
+        let mut inner = field_float(1, 3.0);
+        inner.extend(field_message(4, &field_varint(1, start)));
+        inner.extend(field_message(5, &field_varint(1, end)));
+        let payload = field_message(1, &inner);
+        let data = grpc_web_frame(0, &payload);
+
+        let snapshot = parse_billing_payload(&data, NOW).expect("parse ok");
+        assert_eq!(snapshot.resets_at, Some(end as i64));
+        assert_eq!(snapshot.period_start, Some(start as i64));
+        assert_eq!(
+            tier_name_for_window(snapshot.period_start, snapshot.resets_at, NOW),
+            TIER_WEEKLY_LIMIT
+        );
+    }
+
+    #[test]
+    fn period_start_falls_back_to_usage_period_mirror() {
+        // 同一对值也会镜像在 [1,8,2,1] / [1,8,3,1]
+        let start = (NOW - 6 * 86400) as u64;
+        let end = (NOW + 86400) as u64;
+        let mut usage_period = field_varint(1, 2);
+        usage_period.extend(field_message(2, &field_varint(1, start)));
+        usage_period.extend(field_message(3, &field_varint(1, end)));
+        let mut inner = field_float(1, 7.5);
+        inner.extend(field_message(8, &usage_period));
+        let payload = field_message(1, &inner);
+        let data = grpc_web_frame(0, &payload);
+
+        let snapshot = parse_billing_payload(&data, NOW).expect("parse ok");
+        assert_eq!(snapshot.period_start, Some(start as i64));
+        assert_eq!(
+            tier_name_for_window(snapshot.period_start, snapshot.resets_at, NOW),
+            TIER_WEEKLY_LIMIT
+        );
+    }
+
+    #[test]
+    fn period_start_absent_when_only_future_timestamps_exist() {
+        let end = (NOW + 3 * 86400) as u64;
+        let mut inner = field_float(1, 11.0);
+        inner.extend(field_message(5, &field_varint(1, end)));
+        let payload = field_message(1, &inner);
+        let data = grpc_web_frame(0, &payload);
+
+        let snapshot = parse_billing_payload(&data, NOW).expect("parse ok");
+        assert_eq!(snapshot.period_start, None);
+        assert_eq!(snapshot.resets_at, Some(end as i64));
     }
 
     #[test]
