@@ -251,8 +251,7 @@ fn family_fallback(target: &str, models: &[CopilotModel]) -> Option<String> {
             .iter()
             .filter(|m| {
                 let lower = m.id.to_ascii_lowercase();
-                let is_1m = lower.ends_with("-1m");
-                lower.contains(family) && is_1m == require_1m
+                lower.contains(family) && lower.ends_with("-1m") == require_1m
             })
             .filter_map(|m| extract_major_minor(&m.id).map(|v| (m, v)))
             .max_by_key(|(_, v)| *v)
