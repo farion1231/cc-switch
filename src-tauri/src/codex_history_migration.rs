@@ -1143,8 +1143,8 @@ fn rewrite_codex_session_provider_line(
 ) -> Option<String> {
     // Leave large message/image/reasoning records byte-for-byte intact without
     // parsing their potentially expensive payloads.
-    if !line.contains("\"session_meta\"")
-        && !(line.contains("\"event_msg\"") && line.contains("\"thread_settings_applied\""))
+    if !(line.contains("\"session_meta\"")
+        || line.contains("\"event_msg\"") && line.contains("\"thread_settings_applied\""))
     {
         return None;
     }
