@@ -6,7 +6,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentProps, PropsWithChildren } from "react";
+import { useState, type ComponentProps, type PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,8 +56,10 @@ const FormShell = ({ children }: PropsWithChildren) => {
   return <Form {...form}>{children}</Form>;
 };
 
-const renderFields = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
-  const props: ClaudeFormFieldsProps = {
+const buildFieldsProps = (
+  overrides: Partial<ClaudeFormFieldsProps> = {},
+): ClaudeFormFieldsProps => {
+  return {
     shouldShowApiKey: false,
     apiKey: "",
     onApiKeyChange: vi.fn(),
@@ -102,6 +104,10 @@ const renderFields = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     onLocalProxyBodyOverrideChange: vi.fn(),
     ...overrides,
   };
+};
+
+const renderFields = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
+  const props = buildFieldsProps(overrides);
 
   return render(
     <FormShell>
@@ -131,6 +137,23 @@ const routeProps = (
   subagentRouteTakeoverActive: true,
   ...overrides,
 });
+
+/** 受控草稿挂载壳：勾选/输入都真实更新草稿并回灌 props，模拟真实受控流 */
+const StatefulRouteFields = ({ initialModel }: { initialModel: string }) => {
+  const [routeModel, setRouteModel] = useState(initialModel);
+  const props = buildFieldsProps(
+    routeProps({
+      subagentRouteTarget: "b",
+      subagentRouteModel: routeModel,
+      onSubagentRouteModelChange: setRouteModel,
+    }),
+  );
+  return (
+    <FormShell>
+      <ClaudeFormFields {...props} />
+    </FormShell>
+  );
+};
 
 describe("ClaudeFormFields SubAgent 路由行", () => {
   beforeEach(() => {
@@ -303,6 +326,35 @@ describe("ClaudeFormFields SubAgent 路由行", () => {
 
     await user.click(oneMCheckbox);
     expect(onSubagentRouteModelChange).toHaveBeenCalledWith("glm-5.5-flash");
+  });
+
+  it("target=B 勾选 [1M] 后在输入框输入新模型名，标记按路由草稿保留", async () => {
+    const user = userEvent.setup();
+    render(<StatefulRouteFields initialModel="glm-5.5-flash" />);
+
+    const routeRow = document.getElementById(
+      "claudeCodeSubagentRouteModel",
+    )!.closest("div.grid") as HTMLElement;
+    const oneMCheckbox = within(routeRow).getByRole("checkbox");
+
+    // 先勾选 [1M]：草稿带上标记
+    await user.click(oneMCheckbox);
+    await waitFor(() => {
+      expect(
+        document.getElementById("claudeCodeSubagentRouteModel"),
+      ).toHaveValue("glm-5.5-flash[1M]");
+    });
+
+    // 再输入新模型名：标记不得丢失
+    fireEvent.change(
+      document.getElementById("claudeCodeSubagentRouteModel")!,
+      { target: { value: "glm-5.5-air" } },
+    );
+    await waitFor(() => {
+      expect(
+        document.getElementById("claudeCodeSubagentRouteModel"),
+      ).toHaveValue("glm-5.5-air[1M]");
+    });
   });
 
   it("target=本供应商 时 [1M] 开关作用于 env 字段", async () => {

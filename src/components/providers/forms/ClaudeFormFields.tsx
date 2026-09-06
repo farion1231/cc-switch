@@ -1116,7 +1116,11 @@ export function ClaudeFormFields({
                             id="claudeCodeSubagentRouteModel"
                             value={subagentRouteModel ?? ""}
                             onChange={(value) =>
-                              onSubagentRouteModelChange?.(value)
+                              // 与其他行输入一致的 [1M] 保留语义：
+                              // 按路由草稿的标记态重包，勾选后打字不丢标记
+                              onSubagentRouteModelChange?.(
+                                setClaudeOneMMarker(value, routeUsesOneM),
+                              )
                             }
                             placeholder={t(
                               "proxy.subagentRoute.modelPlaceholder",
