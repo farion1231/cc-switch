@@ -132,7 +132,6 @@ impl TokenUsage {
         let mut usage = Self::default();
         let mut model: Option<String> = None;
         let mut message_id: Option<String> = None;
-        let mut input_from_delta = false;
 
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
@@ -191,19 +190,15 @@ impl TokenUsage {
                                 .and_then(|v| v.as_u64())
                                 .map(|v| v as u32);
 
-                            // 部分 Anthropic-compatible SSE provider 会在 message_start 上报完整上下文，
-                            // 但在 message_delta 上报修正后的 fresh input。遇到更小的正数 delta input
-                            // 时采用 delta；若同一 usage 块带有缓存计数，也同步采用以避免重复计数。
-                            // 若 delta 缺少缓存字段，则保留 start 中已有的缓存值作为 best-effort fallback。
+                            // Anthropic 官方协议：`message_delta` 事件的 `usage` 是**累计**值
+                            // （见官方文档 warning：token counts in message_delta usage are cumulative）。
+                            // 因此 message_delta 提供的 input_tokens 是整次请求的最终输入数，
+                            // 直接采用（覆盖 message_start 的初始估算）。缓存计数同理同步采用。
+                            // 部分中转在 delta 只给 output_tokens 时不提供 input_tokens（None），
+                            // 此时保留 start 已有值即可。
                             if let Some(input) = delta_input {
-                                let should_use_delta_input = input > 0
-                                    && (usage.input_tokens == 0
-                                        || input < usage.input_tokens
-                                        || (input_from_delta && input <= usage.input_tokens));
-
-                                if should_use_delta_input {
+                                if input > 0 {
                                     usage.input_tokens = input;
-                                    input_from_delta = true;
                                     if let Some(cache_read) = delta_cache_read {
                                         usage.cache_read_tokens = cache_read;
                                     }
@@ -709,6 +704,41 @@ mod tests {
     }
 
     #[test]
+    fn test_claude_stream_delta_without_input_keeps_start() {
+        // 官方 Claude 响应：message_delta 只带 output_tokens（无 input_tokens）时，
+        // 保留 message_start 的 input_tokens（start 已是完整值）。
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_no_delta_input",
+                    "model": "claude-opus-5",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 2,
+                        "cache_read_input_tokens": 20,
+                        "cache_creation_input_tokens": 10
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "delta": { "stop_reason": "end_turn" },
+                "usage": { "output_tokens": 50 }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(
+            usage.input_tokens, 100,
+            "delta 无 input_tokens 时保留 start 值"
+        );
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.cache_read_tokens, 20);
+        assert_eq!(usage.cache_creation_tokens, 10);
+    }
+
+    #[test]
     fn test_gemini_response_parsing() {
         let response = json!({
             "modelVersion": "gemini-3-pro-high",
@@ -940,9 +970,10 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_stream_keeps_start_when_delta_input_is_larger() {
-        // 正常 Anthropic 语义下，message_start 的 input_tokens 已经可信；
-        // 如果 delta input 变大，不应覆盖 start input/cache。
+    fn test_claude_stream_delta_larger_input_is_cumulative() {
+        // Anthropic 官方协议：message_delta 的 usage 是累计值，input_tokens 是整次请求的
+        // 最终输入（官方示例中 delta 的 input_tokens 10682 > start 2679）。
+        // 因此 delta input 变大时必须采用 delta（覆盖 start 的初始估算），缓存计数同理。
         let events = vec![
             json!({
                 "type": "message_start",
@@ -964,9 +995,9 @@ mod tests {
         ];
 
         let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
-        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.input_tokens, 150);
         assert_eq!(usage.output_tokens, 75);
-        assert_eq!(usage.cache_read_tokens, 20);
+        assert_eq!(usage.cache_read_tokens, 30);
     }
 
     #[test]
