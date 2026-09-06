@@ -29,7 +29,7 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 /// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
 /// 再由本地代理映射到当前供应商真实模型；`*_MODEL_NAME` 也需要同步接管，
 /// 否则 Claude Code 模型菜单会残留上一个供应商的显示名称。
-const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 12] = [
+const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 13] = [
     "ANTHROPIC_MODEL",
     "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -42,6 +42,9 @@ const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 12] = [
     "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
     "ANTHROPIC_SMALL_FAST_MODEL", // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
     "CLAUDE_CODE_SUBAGENT_MODEL",
+    // 接管写入的 FORCE 需要在先删后插中清理：路由关闭后残留的 FORCE=1 会把
+    // subagent 强制到供应商显式设置的（或陈旧的）CLAUDE_CODE_SUBAGENT_MODEL 上。
+    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
 ];
 
 const CLAUDE_TAKEOVER_HAIKU_MODEL: &str = "claude-haiku-4-5";
@@ -657,6 +660,7 @@ impl ProxyService {
         let fable_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_FABLE_MODEL");
 
         let subagent_model = Self::claude_env_string(env, "CLAUDE_CODE_SUBAGENT_MODEL");
+        let subagent_force = Self::claude_env_string(env, "CLAUDE_CODE_SUBAGENT_MODEL_FORCE");
 
         let mut fields = Vec::with_capacity(9);
         Self::push_claude_takeover_role_fields(
@@ -697,6 +701,14 @@ impl ProxyService {
         );
         if let Some(subagent_model) = subagent_model {
             fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", subagent_model.to_string()));
+        }
+        // 供应商显式设置的 FORCE 原样保留（含 "0" 退出强制）：先删后插会清掉
+        // live 里的 FORCE，用户配置必须在这里重新带回，接管不改变其语义。
+        if let Some(subagent_force) = subagent_force {
+            fields.push((
+                "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+                subagent_force.to_string(),
+            ));
         }
         fields
     }
@@ -4243,7 +4255,8 @@ mod tests {
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4.5",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4.6",
                     "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4.6",
-                    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4.6[1M]"
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4.6[1M]",
+                    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
                 }
             }),
             None,
@@ -4310,12 +4323,15 @@ mod tests {
             "CLAUDE_CODE_SUBAGENT_MODEL",
             Some("claude-sonnet-4.6[1M]"),
         );
+        // 供应商显式设置的 FORCE 必须穿过先删后插原样保留（用户配置优先）。
+        assert_env_str(env, "CLAUDE_CODE_SUBAGENT_MODEL_FORCE", Some("1"));
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_API_KEY", None);
     }
 
     #[test]
-    fn managed_account_claude_takeover_removes_stale_subagent_model_when_provider_omits_it() {
+    fn managed_account_claude_takeover_removes_stale_subagent_model_and_force_when_provider_omits_them(
+    ) {
         let mut provider = Provider::with_id(
             "codex".to_string(),
             "Codex".to_string(),
@@ -4336,7 +4352,8 @@ mod tests {
             "env": {
                 "ANTHROPIC_BASE_URL": "https://stale.example.com",
                 "ANTHROPIC_API_KEY": "stale-key",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent"
+                "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent",
+                "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
             }
         });
         ProxyService::apply_claude_takeover_fields_for_provider(
@@ -4351,6 +4368,9 @@ mod tests {
             .and_then(|value| value.as_object())
             .expect("env should exist");
         assert_env_str(env, "CLAUDE_CODE_SUBAGENT_MODEL", None);
+        // 路由关闭（injection None）后 FORCE 不得残留：否则 subagent 会被强制到
+        // 供应商显式设置或陈旧的 CLAUDE_CODE_SUBAGENT_MODEL 上。
+        assert_env_str(env, "CLAUDE_CODE_SUBAGENT_MODEL_FORCE", None);
     }
 
     #[test]
