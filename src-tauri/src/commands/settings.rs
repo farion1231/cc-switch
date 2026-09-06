@@ -51,6 +51,10 @@ fn merge_settings_for_save(
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
+    // lightweight_mode（记住轻量模式）同样是纯后端状态：只有托盘勾选/取消
+    // 勾选会改它。前端的全量保存若按 incoming 透传，会把托盘刚勾选的偏好
+    // 冲回旧值。
+    incoming.lightweight_mode = existing.lightweight_mode;
     incoming
 }
 
@@ -710,6 +714,23 @@ mod tests {
         let merged = merge_settings_for_save(incoming, &existing);
 
         assert!(merged.local_migrations.is_none());
+    }
+
+    /// 记住的轻量模式偏好是托盘侧维护的后端状态；前端全量保存不能覆盖它，
+    /// 否则托盘刚勾选的偏好会被前端缓存的旧值冲掉。
+    #[test]
+    fn save_settings_should_preserve_lightweight_mode_preference() {
+        let mut existing = AppSettings::default();
+        existing.lightweight_mode = true;
+
+        // 前端缓存里偏好还是旧值（false），全量保存时不能覆盖后端的 true
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert!(
+            merged.lightweight_mode,
+            "backend-owned lightweight_mode preference must be preserved"
+        );
     }
 }
 
