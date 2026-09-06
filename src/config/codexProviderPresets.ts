@@ -258,6 +258,19 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     iconColor: "#6366F1",
   },
   {
+    name: "HopsAPI",
+    websiteUrl: "https://hopsapi.com",
+    apiKeyUrl: "https://hopsapi.com/keys?from=cc-switch",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "HopsAPI",
+      "https://hopsapi.com/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: ["https://hopsapi.com/v1"],
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
     apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
