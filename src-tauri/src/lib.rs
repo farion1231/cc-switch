@@ -1239,6 +1239,17 @@ pub fn run() {
 
                 initialize_common_config_snippets(&state);
 
+                match crate::codex_config::read_codex_live_settings() {
+                    Ok(settings) => {
+                        crate::codex_config::sync_codex_desktop_available_models_cache_after_live_restore(
+                            &settings,
+                        );
+                    }
+                    Err(e) => log::debug!(
+                        "Codex Desktop model whitelist cache startup reconciliation skipped: {e}"
+                    ),
+                }
+
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
 
