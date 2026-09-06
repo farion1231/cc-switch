@@ -302,6 +302,54 @@ describe("providerNeedsRouting", () => {
         ),
       ).toBe(true);
     });
+
+    it("声明 [1M] 能力标记的 Anthropic 格式供应商需要路由接管以剥离后缀", () => {
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({
+            category: "third_party",
+            meta: { apiFormat: "anthropic" },
+            settingsConfig: {
+              env: {
+                ANTHROPIC_DEFAULT_SONNET_MODEL:
+                  "claude-3-7-sonnet-20250219[1M]",
+              },
+            },
+          }),
+        ),
+      ).toBe(true);
+
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({
+            category: "third_party",
+            meta: { apiFormat: "anthropic" },
+            settingsConfig: {
+              env: {
+                ANTHROPIC_MODEL: "claude-3-7-sonnet-20250219 [1m]",
+              },
+            },
+          }),
+        ),
+      ).toBe(true);
+
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({
+            category: "third_party",
+            meta: { apiFormat: "anthropic" },
+            settingsConfig: {
+              env: {
+                ANTHROPIC_SMALL_FAST_MODEL: "claude-3-5-haiku-20241022[1M]",
+              },
+            },
+          }),
+        ),
+      ).toBe(true);
+    });
   });
 
   describe("Codex 非 OAuth 按格式判定（Responses 直连）", () => {

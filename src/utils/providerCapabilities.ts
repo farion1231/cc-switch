@@ -100,6 +100,46 @@ export function supportsOfficialProxyTakeover(
   return true;
 }
 
+export function hasAnyClaudeOneMMarker(settingsConfig: unknown): boolean {
+  if (!settingsConfig) return false;
+  let cfg: Record<string, unknown> | null = null;
+  if (typeof settingsConfig === "string") {
+    try {
+      cfg = JSON.parse(settingsConfig);
+    } catch {
+      return false;
+    }
+  } else if (typeof settingsConfig === "object" && settingsConfig !== null) {
+    cfg = settingsConfig as Record<string, unknown>;
+  }
+  if (!cfg) return false;
+
+  const env = (cfg.env ?? cfg) as Record<string, unknown> | undefined;
+  if (!env || typeof env !== "object") return false;
+
+  const modelFields = [
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+  ];
+
+  for (const field of modelFields) {
+    const val = env[field];
+    if (
+      typeof val === "string" &&
+      val.trimEnd().toLowerCase().endsWith("[1m]")
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * 供应商在指定应用下是否必须开启路由接管才能正常工作（badge 与切换警告共用的权威谓词）。
  *
@@ -140,7 +180,14 @@ export function providerNeedsRouting(
   if (appId === "claude") {
     const fmt = provider.meta?.apiFormat;
     // Claude 原生是 Anthropic 格式，任何非 anthropic 格式都需要代理转换。
-    return provider.meta?.isFullUrl === true || (!!fmt && fmt !== "anthropic");
+    // 若声明了 [1M] 能力标记，直连第三方中转通常因不识别 [1M] 后缀报错 400/404，
+    // 必须通过本地代理在转发时剥离 [1M] 并保留 1M 上下文。
+    const hasOneM = hasAnyClaudeOneMMarker(provider.settingsConfig);
+    return (
+      provider.meta?.isFullUrl === true ||
+      (!!fmt && fmt !== "anthropic") ||
+      hasOneM
+    );
   }
 
   if (appId === "codex" || appId === "grokbuild") {
