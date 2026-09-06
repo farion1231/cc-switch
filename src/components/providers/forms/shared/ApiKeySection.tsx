@@ -24,7 +24,7 @@ export function ApiKeySection({
   label,
   value,
   onChange,
-  category: _category,
+  category,
   shouldShowLink,
   websiteUrl,
   placeholder,
@@ -43,7 +43,7 @@ export function ApiKeySection({
   };
 
   const finalPlaceholder = placeholder || defaultPlaceholder;
-  const isInputDisabled = disabled ?? false;
+  const isInputDisabled = disabled ?? category === "official";
 
   return (
     <div className="space-y-1">

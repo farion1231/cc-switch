@@ -2745,15 +2745,15 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini_with_shadow(
-            request,
-            Some(&store),
-            Some("prov1"),
-            Some("sess1"),
-        ).unwrap();
+        let result =
+            anthropic_to_gemini_with_shadow(request, Some(&store), Some("prov1"), Some("sess1"))
+                .unwrap();
 
         let model_part = &result["contents"][0]["parts"][0];
-        assert_eq!(model_part["thoughtSignature"], "sig_test_123", "thoughtSignature must be present at Part top level");
+        assert_eq!(
+            model_part["thoughtSignature"], "sig_test_123",
+            "thoughtSignature must be present at Part top level"
+        );
     }
 
     #[test]
@@ -2811,12 +2811,9 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini_with_shadow(
-            request,
-            Some(&store),
-            Some("prov1"),
-            Some("sess1"),
-        ).unwrap();
+        let result =
+            anthropic_to_gemini_with_shadow(request, Some(&store), Some("prov1"), Some("sess1"))
+                .unwrap();
 
         let model_part = &result["contents"][0]["parts"][0];
         assert_eq!(
