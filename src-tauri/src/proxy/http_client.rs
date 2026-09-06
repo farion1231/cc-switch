@@ -589,7 +589,7 @@ fn format_proxy_entry(host: &str, port: i32) -> String {
 /// 的数据源一致），返回 (http, https, NO_PROXY 签名)。
 ///
 /// 语义逐条对齐 hyper-util v0.1.20 的 `win::with_system`：`ProxyEnable`
-/// 非 1 时注册表整体不贡献；`ProxyServer` 原样作为 http/https 槽的候选值
+/// 为 0 时注册表整体不贡献，任意非零值均启用；`ProxyServer` 原样作为 http/https 槽的候选值
 /// （裸 `host:port` 由 hyper-util 按 http 代理解析；`http=...;https=...`
 /// 分协议形式则解析失败、行为等价于无代理，签名照原样记录即可）；
 /// `ProxyOverride` 归一化后充当 NO_PROXY。PAC（`AutoConfigURL`）hyper-util
@@ -619,12 +619,12 @@ fn windows_system_proxy_state() -> (Option<String>, Option<String>, Option<Strin
 }
 
 /// `ProxyOverride` → NO_PROXY 风格的规范化签名。先对齐 hyper-util v0.1.20
-/// 的 normalize（分号分隔 → 逗号连接、剥 `*.` 前缀），再叠加与 macOS
+/// 的 normalize（分号分隔 → 逗号连接、移除所有 `*.`），再叠加与 macOS
 /// bypass 相同的规范化（小写 + 排序去重）：NoProxy 的域名匹配不区分大小写、
 /// 条目顺序无语义，这些差异不构成客户端行为变化，不该触发重建。
 /// `127.*` 这类通配符条目在 0.1.20 里原样保留（匹配不到任何主机），签名
 /// 同样原样记录。
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn canonical_windows_bypass(value: &str) -> Option<String> {
     let mut entries: Vec<String> = value
         .split(';')
@@ -1192,10 +1192,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "windows")]
     fn test_canonical_windows_bypass_normalizes_semantically_equal_lists() {
         // 大小写、空白、顺序、重复项都不构成语义变化（NoProxy 匹配不区分
-        // 大小写，条目顺序无语义）；`*.` 前缀按 hyper-util 的 normalize 剥掉
+        // 大小写，条目顺序无语义）；`*.` 按 hyper-util 的 normalize 全局移除
         assert_eq!(
             canonical_windows_bypass(" *.INTERNAL;internal.com;*.internal "),
             Some("internal,internal.com".to_string())
@@ -1217,5 +1216,20 @@ mod tests {
         // 空列表与"没有 bypass"同义
         assert_eq!(canonical_windows_bypass(""), None);
         assert_eq!(canonical_windows_bypass(" ; ; "), None);
+    }
+
+    #[test]
+    fn test_canonical_windows_bypass_matches_global_wildcard_removal() {
+        // 锁定的 hyper-util v0.1.20 使用 replace("*.", "")，不是 strip_prefix。
+        // 中间与重复出现的 `*.` 也被移除；这些写法烘焙进客户端后行为相同，
+        // 快照必须保持相同，避免仅改写规则时产生多余重建。
+        let expected = canonical_windows_bypass("foo.example.com");
+        for value in [
+            "foo.*.example.com",
+            "*.*.foo.example.com",
+            "*.foo.*.example.com",
+        ] {
+            assert_eq!(canonical_windows_bypass(value), expected, "{value}");
+        }
     }
 }
