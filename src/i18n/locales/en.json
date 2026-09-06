@@ -339,6 +339,11 @@
     }
   },
   "settings": {
+    "unifyCodexHistoryMigrationHint": "Quit Codex/ChatGPT and Codex CLI sessions before migrating or restoring existing history. If migration was deferred, retry here after quitting.",
+    "unifyCodexHistoryMigrationRetry": "Retry history migration",
+    "unifyCodexHistoryMigrationCompleted": "History migrated ({{files}} session files, {{rows}} index rows)",
+    "unifyCodexHistoryMigrationSkipped": "Migration skipped: already completed, not requested, or the active route is not unified.",
+    "unifyCodexHistoryMigrationFailed": "History migration failed",
     "title": "Settings",
     "general": "General",
     "tabGeneral": "General",

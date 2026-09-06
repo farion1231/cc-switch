@@ -5,6 +5,7 @@
 
 use crate::codex_config::{
     get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
 };
 use crate::codex_state_db::codex_state_db_paths;
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
@@ -40,6 +41,58 @@ fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
     CODEX_OFFICIAL_HISTORY_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Replacing an open rollout can strand the writer on the old inode even if
+/// its size/mtime did not change during our read. Require an offline migration.
+fn ensure_codex_history_writers_stopped() -> Result<(), AppError> {
+    #[cfg(windows)]
+    let output = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("tasklist")
+            .args(["/FO", "CSV", "/NH"])
+            .creation_flags(0x08000000)
+            .output()
+    };
+    #[cfg(not(windows))]
+    let output = std::process::Command::new("ps")
+        .args(["-axo", "comm="])
+        .output();
+    let output =
+        output.map_err(|e| AppError::Message(format!("Cannot check Codex writers: {e}")))?;
+    if !output.status.success() {
+        return Err(AppError::Message(
+            "Cannot check Codex writers; history was not migrated".into(),
+        ));
+    }
+    if String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(is_codex_writer_process)
+    {
+        return Err(AppError::Message(
+            "Quit Codex/ChatGPT and Codex CLI sessions, then retry history migration in Settings"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_codex_writer_process(line: &str) -> bool {
+    let executable = line
+        .trim()
+        .trim_start_matches('"')
+        .split("\",\"")
+        .next()
+        .unwrap_or("");
+    let name = executable
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "codex" | "chatgpt" | "codex.exe" | "chatgpt.exe"
+    )
 }
 /// Codex 内建默认 provider id：config.toml 没有 `model_provider` 键时会话归入此桶。
 /// 官方订阅（ChatGPT OAuth / OpenAI API key）的历史会话都记录这个 id。
@@ -98,11 +151,13 @@ const CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS: &[&str] = &[
     "zhipu_glm_en",
 ];
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexHistoryProviderBucketMigrationOutcome {
     pub source_provider_ids: Vec<String>,
     pub migrated_jsonl_files: usize,
     pub migrated_state_rows: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_reason: Option<String>,
 }
 
@@ -222,8 +277,8 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     }
     // live 必须已实际路由到共享 custom 桶才允许迁移：官方配置的注入可能被拒
     // （已有显式 model_provider / 形态冲突的 custom 表，见
-    // `inject_codex_unified_session_bucket`），代理接管期间的 live 也不带统一
-    // 路由（注入只进备份）。这些状态下新会话仍落 "openai" 桶，迁移只会把
+    // `inject_codex_unified_session_bucket`）。旧版本的官方接管配置也可能仍
+    // 使用独立桶；必须先重新投影 live，否则迁移只会把
     // 历史搬进当前 live 看不见的桶里。开关与迁移意愿保持不动，待 live 真正
     // 统一后（下次切换 / 接管释放后的启动重试）再迁。
     if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
@@ -233,16 +288,22 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
         });
     }
 
-    let source_provider_ids: BTreeSet<String> =
-        std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
+    ensure_codex_history_writers_stopped()?;
+    let source_provider_ids: BTreeSet<String> = [
+        OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string(),
+        CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID.to_string(),
+    ]
+    .into_iter()
+    .collect();
     let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
+    // Record the directory before the first fallible mutation, including when
+    // a later SQLite write fails and only a partial generation can be restored.
+    fs::create_dir_all(&backup_root).map_err(|e| AppError::io(&backup_root, e))?;
+    write_backup_generation_meta(&backup_root, &codex_dir_key)?;
     let migrated_jsonl_files =
         migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
     let migrated_state_rows =
         migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
-    // 备份代际记录来源目录，restore 据此只取当前目录的账本。
-    write_backup_generation_meta(&backup_root, &codex_dir_key)?;
-
     let outcome = CodexHistoryProviderBucketMigrationOutcome {
         source_provider_ids: source_provider_ids.into_iter().collect(),
         migrated_jsonl_files,
@@ -255,6 +316,7 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     // 与关闭路径（update_settings + 清标记）共用同一把锁，无检查-写入窗口。
     let marker_written = crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
         CodexOfficialHistoryUnifyMigration {
+            version: 2,
             completed_at: Utc::now().to_rfc3339(),
             target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
             migrated_jsonl_files,
@@ -345,8 +407,9 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
 /// 关闭统一会话开关时的可选还原：按迁移备份账本，把当时迁入共享 custom 桶的
 /// 官方会话精确翻回 "openai" 桶。
 ///
-/// 备份是唯一可信的归属证据：备份里 model_provider=="openai" 的会话必定源自
-/// 官方桶。开启期间新产生的会话不在任何备份里，**永不触碰**——它们可能来自
+/// 备份是唯一可信的归属证据：备份里 openai / cc-switch-official 的会话
+/// 源自官方桶。后者恢复到可用的内建 openai，而非已移除的临时代理路由。
+/// 开启期间新产生的会话不在任何备份里，**永不触碰**——它们可能来自
 /// 第三方，方向无法判定（产品决策：宁可留在第三方历史）。
 /// 扫描全部备份代际取并集，多次开关循环后仍能还原早期迁入的会话；
 /// 还原前改动目标先备份到独立的 restore 目录（保持迁移账本目录纯净），
@@ -364,6 +427,7 @@ pub fn restore_codex_official_history_from_backups(
         });
     }
     let config_text = read_codex_config_text().unwrap_or_default();
+    ensure_codex_history_writers_stopped()?;
     restore_codex_official_history_inner(
         &get_codex_config_dir(),
         &official_history_unify_backup_parent(),
@@ -392,9 +456,17 @@ fn restore_codex_official_history_inner(
     collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
     collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
     let mut restored_jsonl_files = 0;
+    let source_ids = HashSet::from([CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()]);
     for file_path in files {
+        let mut active_thread = None;
         if rewrite_codex_session_file_lines(&file_path, codex_dir, restore_backup_root, |line| {
-            rewrite_codex_session_meta_line_for_restore(line, &official_session_ids)
+            rewrite_codex_session_provider_line(
+                line,
+                &source_ids,
+                OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
+                Some(&official_session_ids),
+                &mut active_thread,
+            )
         })? {
             restored_jsonl_files += 1;
         }
@@ -500,8 +572,10 @@ fn collect_official_session_ids_from_backup(path: &Path, session_ids: &mut HashS
         let Some(payload) = value.get("payload") else {
             continue;
         };
-        if payload.get("model_provider").and_then(Value::as_str)
-            != Some(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID)
+        if !payload
+            .get("model_provider")
+            .and_then(Value::as_str)
+            .is_some_and(is_official_history_provider)
         {
             continue;
         }
@@ -528,12 +602,17 @@ fn collect_official_thread_ids_from_backup(db_path: &Path, thread_ids: &mut BTre
     if !has_threads {
         return;
     }
-    let Ok(mut stmt) = conn.prepare("SELECT id FROM threads WHERE model_provider = ?1") else {
+    let Ok(mut stmt) = conn.prepare("SELECT id FROM threads WHERE model_provider IN (?1, ?2)")
+    else {
         return;
     };
-    let Ok(rows) = stmt.query_map([OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID], |row| {
-        row.get::<_, String>(0)
-    }) else {
+    let Ok(rows) = stmt.query_map(
+        [
+            OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
+            CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
+        ],
+        |row| row.get::<_, String>(0),
+    ) else {
         return;
     };
     for thread_id in rows.flatten() {
@@ -562,32 +641,6 @@ fn collect_files_with_extension(
             files.push(path);
         }
     }
-}
-
-fn rewrite_codex_session_meta_line_for_restore(
-    line: &str,
-    official_session_ids: &HashSet<String>,
-) -> Option<String> {
-    if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
-        return None;
-    }
-    let mut value: Value = serde_json::from_str(line).ok()?;
-    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
-        return None;
-    }
-    let payload = value.get_mut("payload")?.as_object_mut()?;
-    if payload.get("model_provider")?.as_str()? != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
-        return None;
-    }
-    let session_id = payload.get("id")?.as_str()?;
-    if !official_session_ids.contains(session_id) {
-        return None;
-    }
-    payload.insert(
-        "model_provider".to_string(),
-        Value::String(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()),
-    );
-    serde_json::to_string(&value).ok()
 }
 
 fn restore_codex_state_db_official_threads(
@@ -1014,8 +1067,15 @@ fn rewrite_codex_session_file_for_provider_bucket(
     source_provider_ids: &HashSet<String>,
     backup_root: &Path,
 ) -> Result<bool, AppError> {
+    let mut active_thread = None;
     rewrite_codex_session_file_lines(path, codex_dir, backup_root, |line| {
-        rewrite_codex_session_meta_line(line, source_provider_ids)
+        rewrite_codex_session_provider_line(
+            line,
+            source_provider_ids,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+            None,
+            &mut active_thread,
+        )
     })
 }
 
@@ -1023,7 +1083,7 @@ fn rewrite_codex_session_file_lines(
     path: &Path,
     codex_dir: &Path,
     backup_root: &Path,
-    rewrite_line: impl Fn(&str) -> Option<String>,
+    mut rewrite_line: impl FnMut(&str) -> Option<String>,
 ) -> Result<bool, AppError> {
     let metadata_before = fs::metadata(path).map_err(|e| AppError::io(path, e))?;
     let modified_before = metadata_before.modified().ok();
@@ -1054,7 +1114,88 @@ fn rewrite_codex_session_file_lines(
     backup_codex_jsonl_file(path, codex_dir, backup_root)?;
     ensure_codex_session_file_unchanged(path, modified_before, len_before)?;
     atomic_write(path, rewritten.as_bytes())?;
+    if let Some(modified) = modified_before {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_modified(modified))
+            .map_err(|e| AppError::io(path, e))?;
+    }
     Ok(true)
+}
+
+fn is_official_history_provider(id: &str) -> bool {
+    matches!(
+        id,
+        OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID | CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID
+    )
+}
+
+/// Replay settings must agree with the history bucket. Explicit thread IDs
+/// take precedence over the surrounding segment; embedded foreign segments
+/// never inherit a previous thread's migration/restore authorization.
+fn rewrite_codex_session_provider_line(
+    line: &str,
+    sources: &HashSet<String>,
+    target: &str,
+    ledger: Option<&HashSet<String>>,
+    active_thread: &mut Option<String>,
+) -> Option<String> {
+    // Leave large message/image/reasoning records byte-for-byte intact without
+    // parsing their potentially expensive payloads.
+    if !line.contains("\"session_meta\"")
+        && !(line.contains("\"event_msg\"") && line.contains("\"thread_settings_applied\""))
+    {
+        return None;
+    }
+    let mut value: Value = match serde_json::from_str(line) {
+        Ok(value) => value,
+        Err(_) => {
+            if line.contains("\"session_meta\"") {
+                *active_thread = None;
+            }
+            return None;
+        }
+    };
+    let is_meta = value.get("type").and_then(Value::as_str) == Some("session_meta");
+    let is_event = value.get("type").and_then(Value::as_str) == Some("event_msg");
+    if is_meta {
+        *active_thread = None;
+    }
+    let payload = value.get_mut("payload")?.as_object_mut()?;
+    if is_meta {
+        let id = payload.get("id").and_then(Value::as_str);
+        if ledger.is_some_and(|ids| !id.is_some_and(|id| ids.contains(id))) {
+            return None;
+        }
+        let provider = payload.get("model_provider")?.as_str()?;
+        if !sources.contains(provider) && provider != target {
+            return None;
+        }
+        *active_thread = id.map(str::to_string);
+        if !sources.contains(provider) {
+            return None;
+        }
+        payload.insert("model_provider".into(), Value::String(target.into()));
+    } else if is_event
+        && payload.get("type").and_then(Value::as_str) == Some("thread_settings_applied")
+    {
+        let active = active_thread.as_deref()?;
+        if payload
+            .get("thread_id")
+            .is_some_and(|id| id.as_str() != Some(active))
+        {
+            return None;
+        }
+        let settings = payload.get_mut("thread_settings")?.as_object_mut()?;
+        if !sources.contains(settings.get("model_provider_id")?.as_str()?) {
+            return None;
+        }
+        settings.insert("model_provider_id".into(), Value::String(target.into()));
+    } else {
+        return None;
+    }
+    serde_json::to_string(&value).ok()
 }
 
 fn ensure_codex_session_file_unchanged(
@@ -1070,32 +1211,6 @@ fn ensure_codex_session_file_unchanged(
         )));
     }
     Ok(())
-}
-
-fn rewrite_codex_session_meta_line(
-    line: &str,
-    source_provider_ids: &HashSet<String>,
-) -> Option<String> {
-    if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
-        return None;
-    }
-
-    let mut value: Value = serde_json::from_str(line).ok()?;
-    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
-        return None;
-    }
-
-    let payload = value.get_mut("payload")?.as_object_mut()?;
-    let current_provider = payload.get("model_provider")?.as_str()?;
-    if !source_provider_ids.contains(current_provider) {
-        return None;
-    }
-
-    payload.insert(
-        "model_provider".to_string(),
-        Value::String(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
-    );
-    serde_json::to_string(&value).ok()
 }
 
 fn migrate_codex_state_dbs(
@@ -1311,6 +1426,166 @@ mod tests {
 
     fn source_ids(values: &[&str]) -> BTreeSet<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn identifies_desktop_and_cli_writers_without_matching_other_tools() {
+        for name in [
+            "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+            "/opt/homebrew/bin/codex",
+            "\"Codex.exe\",\"123\",\"Console\"",
+        ] {
+            assert!(is_codex_writer_process(name));
+        }
+        for name in [
+            "/opt/homebrew/bin/cc-switch",
+            "codex-history-sync",
+            "ps",
+            "node",
+        ] {
+            assert!(!is_codex_writer_process(name));
+        }
+    }
+
+    #[test]
+    fn repairs_runtime_after_metadata_only_migration_without_leaking_segment_scope() {
+        let sources = HashSet::from(["cc-switch-official".to_string()]);
+        let mut active = None;
+        let meta = r#"{"type":"session_meta","payload":{"id":"a","model_provider":"custom"}}"#;
+        let event = r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model_provider_id":"cc-switch-official"}}}"#;
+        assert!(
+            rewrite_codex_session_provider_line(event, &sources, "custom", None, &mut active)
+                .is_none()
+        );
+        assert!(
+            rewrite_codex_session_provider_line(meta, &sources, "custom", None, &mut active)
+                .is_none()
+        );
+        let updated =
+            rewrite_codex_session_provider_line(event, &sources, "custom", None, &mut active)
+                .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&updated).unwrap()["payload"]["thread_settings"]
+                ["model_provider_id"],
+            "custom"
+        );
+        for boundary in [
+            r#"{"type":"session_meta","payload":{"id":"b","model_provider":"other"}}"#,
+            r#"{"type":"session_meta","payload":null}"#,
+            r#"{"type":"session_meta","payload":BROKEN"#,
+        ] {
+            active = Some("a".into());
+            assert!(rewrite_codex_session_provider_line(
+                boundary,
+                &sources,
+                "custom",
+                None,
+                &mut active
+            )
+            .is_none());
+            assert!(active.is_none());
+            assert!(rewrite_codex_session_provider_line(
+                event,
+                &sources,
+                "custom",
+                None,
+                &mut active
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn legacy_takeover_migration_updates_runtime_and_restores_only_ledger_threads() {
+        let dir = tempdir().unwrap();
+        let codex_dir = dir.path().join("codex");
+        let sessions = codex_dir.join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let path = sessions.join("rollout-main_resumed.jsonl");
+        let original = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"official\",\"model_provider\":\"cc-switch-official\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_id\":\"official\",\"thread_settings\":{\"model_provider_id\":\"cc-switch-official\"}}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_id\":\"foreign\",\"thread_settings\":{\"model_provider_id\":\"cc-switch-official\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"encrypted_content\":\"opaque-preserve-exactly\",\"text\":\"cc-switch-official\"}}\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"third-party\",\"model_provider\":\"custom\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_id\":\"third-party\",\"thread_settings\":{\"model_provider_id\":\"custom\"}}}\n",
+        );
+        fs::write(&path, original).unwrap();
+        let mtime = fs::metadata(&path).unwrap().modified().unwrap();
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let db = Connection::open(&db_path).unwrap();
+        db.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT); INSERT INTO threads VALUES ('official','cc-switch-official'),('third-party','custom')").unwrap();
+        drop(db);
+        let ledger = dir.path().join("ledger");
+        let backup = ledger.join("generation");
+        fs::create_dir_all(&backup).unwrap();
+        write_backup_generation_meta(&backup, &canonical_dir_string(&codex_dir)).unwrap();
+        let sources = source_ids(&["openai", "cc-switch-official"]);
+        assert_eq!(
+            migrate_codex_jsonl_files(&codex_dir, &sources, &backup).unwrap(),
+            1
+        );
+        assert_eq!(
+            migrate_codex_state_db_provider_bucket(&db_path, &codex_dir, &sources, &backup)
+                .unwrap(),
+            1
+        );
+        let migrated = fs::read_to_string(&path).unwrap();
+        let rows: Vec<Value> = migrated
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        assert_eq!(rows[0]["payload"]["model_provider"], "custom");
+        assert_eq!(
+            rows[1]["payload"]["thread_settings"]["model_provider_id"],
+            "custom"
+        );
+        assert_eq!(
+            rows[2]["payload"]["thread_settings"]["model_provider_id"],
+            "cc-switch-official"
+        );
+        assert_eq!(migrated.lines().nth(3), original.lines().nth(3));
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+        assert_eq!(
+            migrate_codex_jsonl_files(&codex_dir, &sources, &backup).unwrap(),
+            0
+        );
+        let restored = restore_codex_official_history_inner(
+            &codex_dir,
+            &ledger,
+            &dir.path().join("restore"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(restored.restored_jsonl_files, 1);
+        assert_eq!(restored.restored_state_rows, 1);
+        let text = fs::read_to_string(&path).unwrap();
+        let rows: Vec<Value> = text
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        // Return legacy official sessions to the usable built-in official id,
+        // not a removed transport-specific provider with a stale proxy URL.
+        assert_eq!(rows[0]["payload"]["model_provider"], "openai");
+        assert_eq!(
+            rows[1]["payload"]["thread_settings"]["model_provider_id"],
+            "openai"
+        );
+        assert_eq!(rows[4]["payload"]["model_provider"], "custom");
+        assert_eq!(
+            rows[5]["payload"]["thread_settings"]["model_provider_id"],
+            "custom"
+        );
+        assert_eq!(text.lines().nth(3), original.lines().nth(3));
+        let db = Connection::open(&db_path).unwrap();
+        let provider: String = db
+            .query_row(
+                "SELECT model_provider FROM threads WHERE id='official'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(provider, "openai");
     }
 
     #[test]

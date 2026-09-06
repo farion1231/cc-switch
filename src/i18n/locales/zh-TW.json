@@ -339,6 +339,11 @@
     }
   },
   "settings": {
+    "unifyCodexHistoryMigrationHint": "遷移或還原既有歷史前，請完全退出 Codex/ChatGPT 和 Codex CLI 工作階段。若遷移尚未執行，退出後可在此重試。",
+    "unifyCodexHistoryMigrationRetry": "重試歷史遷移",
+    "unifyCodexHistoryMigrationCompleted": "歷史遷移完成（{{files}} 個會話檔案、{{rows}} 條索引記錄）",
+    "unifyCodexHistoryMigrationSkipped": "已略過遷移：可能已完成、未選擇遷移，或目前路由尚未統一。",
+    "unifyCodexHistoryMigrationFailed": "歷史遷移失敗",
     "title": "設定",
     "general": "通用",
     "tabGeneral": "通用",

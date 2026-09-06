@@ -339,6 +339,11 @@
     }
   },
   "settings": {
+    "unifyCodexHistoryMigrationHint": "既存の履歴を移行・復元する前に Codex/ChatGPT と Codex CLI を終了してください。移行が保留された場合は、終了後ここから再試行できます。",
+    "unifyCodexHistoryMigrationRetry": "履歴の移行を再試行",
+    "unifyCodexHistoryMigrationCompleted": "履歴を移行しました（会話ファイル {{files}} 件、インデックス {{rows}} 件）",
+    "unifyCodexHistoryMigrationSkipped": "移行をスキップしました。完了済み、移行未選択、または現在のルートが未統一です。",
+    "unifyCodexHistoryMigrationFailed": "履歴の移行に失敗しました",
     "title": "設定",
     "general": "一般",
     "tabGeneral": "一般",

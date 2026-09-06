@@ -6,6 +6,7 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
+import { Button } from "@/components/ui/button";
 
 interface CodexAuthSettingsProps {
   settings: SettingsFormState;
@@ -23,6 +24,30 @@ export function CodexAuthSettings({
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+
+  const retryMigration = async () => {
+    setMigrating(true);
+    try {
+      const result = await settingsApi.migrateCodexUnifiedHistory();
+      if (result.skippedReason) {
+        toast.info(t("settings.unifyCodexHistoryMigrationSkipped"));
+      } else {
+        toast.success(
+          t("settings.unifyCodexHistoryMigrationCompleted", {
+            files: result.migratedJsonlFiles,
+            rows: result.migratedStateRows,
+          }),
+        );
+      }
+    } catch (error) {
+      toast.error(t("settings.unifyCodexHistoryMigrationFailed"), {
+        description: String(error),
+      });
+    } finally {
+      setMigrating(false);
+    }
+  };
 
   const handleUnifyHistoryChange = (checked: boolean) => {
     if (checked) {
@@ -84,7 +109,9 @@ export function CodexAuthSettings({
       );
     } catch (error) {
       console.error("Failed to restore codex unified history:", error);
-      toast.error(t("settings.unifyCodexHistoryRestoreFailed"));
+      toast.error(t("settings.unifyCodexHistoryRestoreFailed"), {
+        description: String(error),
+      });
     }
   };
 
@@ -122,6 +149,22 @@ export function CodexAuthSettings({
         onConfirm={handleEnableConfirm}
         onCancel={() => setShowEnableConfirm(false)}
       />
+
+      {settings.unifyCodexSessionHistory &&
+        settings.unifyCodexMigrateExisting && (
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              {t("settings.unifyCodexHistoryMigrationHint")}
+            </p>
+            <Button
+              variant="outline"
+              disabled={migrating}
+              onClick={() => void retryMigration()}
+            >
+              {t("settings.unifyCodexHistoryMigrationRetry")}
+            </Button>
+          </div>
+        )}
 
       <ConfirmDialog
         isOpen={showDisableConfirm}
