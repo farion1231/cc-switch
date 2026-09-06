@@ -22,6 +22,7 @@ const HERMES_DEFAULT_CONFIG_OBJ = {
   name: "",
   base_url: "",
   api_key: "",
+  api_mode: "chat_completions",
 } as const;
 
 export const HERMES_DEFAULT_CONFIG = JSON.stringify(
