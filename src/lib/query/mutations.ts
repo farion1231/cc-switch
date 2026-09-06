@@ -39,23 +39,26 @@ export const useAddProviderMutation = (appId: AppId) => {
       } = providerInput;
 
       if (appId === "claude-desktop" && ensureClaudeDesktopOfficialSeed) {
-        await providersApi.ensureClaudeDesktopOfficialProvider();
+        // ensure* returns true only when a new seed row was inserted;
+        // false means the official provider already existed (a no-op).
+        const inserted =
+          await providersApi.ensureClaudeDesktopOfficialProvider();
         const providers = await providersApi.getAll(appId);
         const officialProvider = providers["claude-desktop-official"];
         if (!officialProvider) {
           throw new Error("Claude Desktop official provider was not created");
         }
-        return officialProvider;
+        return { provider: officialProvider, alreadyExisted: !inserted };
       }
 
       if (appId === "grokbuild" && ensureGrokBuildOfficialSeed) {
-        await providersApi.ensureGrokBuildOfficialProvider();
+        const inserted = await providersApi.ensureGrokBuildOfficialProvider();
         const providers = await providersApi.getAll(appId);
         const officialProvider = providers[GROKBUILD_OFFICIAL_PROVIDER_ID];
         if (!officialProvider) {
           throw new Error("Grok Build official provider was not created");
         }
-        return officialProvider;
+        return { provider: officialProvider, alreadyExisted: !inserted };
       }
 
       let id: string;
@@ -90,9 +93,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       delete (newProvider as any).providerKey;
 
       await providersApi.add(newProvider, appId, addToLive);
-      return newProvider;
+      return { provider: newProvider, alreadyExisted: false };
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
       if (appId === "opencode") {
@@ -128,14 +131,29 @@ export const useAddProviderMutation = (appId: AppId) => {
         );
       }
 
-      toast.success(
-        t("notifications.providerAdded", {
-          defaultValue: "供应商已添加",
-        }),
-        {
-          closeButton: true,
-        },
-      );
+      // Official presets are seeded once per database, so "adding" an official
+      // provider (Claude Desktop / Grok Build) that already exists is a no-op.
+      // Don't claim it was added — otherwise the toast lies, the same class of
+      // bug reported for Codex in #6280.
+      if (result.alreadyExisted) {
+        toast.info(
+          t("notifications.officialProviderExists", {
+            defaultValue: "该官方供应商已存在，无需重复添加",
+          }),
+          {
+            closeButton: true,
+          },
+        );
+      } else {
+        toast.success(
+          t("notifications.providerAdded", {
+            defaultValue: "供应商已添加",
+          }),
+          {
+            closeButton: true,
+          },
+        );
+      }
     },
     onError: (error: Error) => {
       const rawDetail = extractErrorMessage(error);

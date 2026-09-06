@@ -244,6 +244,7 @@
   },
   "notifications": {
     "providerAdded": "供應商已新增",
+    "officialProviderExists": "該官方供應商已存在，無需重複新增",
     "providerSaved": "供應商設定已儲存",
     "providerDeleted": "供應商刪除成功",
     "switchSuccess": "切換成功！",
