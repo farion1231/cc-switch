@@ -1322,6 +1322,9 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
+    "subagentRouteRowLabel": "SubAgent Routing",
+    "subagentRouteSelfTarget": "This provider",
+    "subagentRouteTakeoverRequiredHint": "Takes effect only when proxy takeover is enabled.",
     "modelDisplayNameLabel": "Display name",
     "modelDisplayNamePlaceholder": "e.g. DeepSeek V4 Pro",
     "modelNoDisplayName": "Not shown in /model",
@@ -2920,10 +2923,6 @@
       "toggleFailed": "Failed to update status"
     },
     "subagentRoute": {
-      "title": "Subagent routing",
-      "description": "Forward subagent requests to another provider while the main conversation keeps using the current one. Requires proxy takeover. Model name is required unless the current provider sets CLAUDE_CODE_SUBAGENT_MODEL explicitly.",
-      "targetProvider": "Target provider",
-      "model": "Model",
       "modelPlaceholder": "Model name sent to the target provider (e.g. glm-5.5-flash)",
       "targetMissingWarning": "The routed provider no longer exists. Pick another one or disable the switch.",
       "modelRequiredHint": "Fill in a model name so the proxy can tell subagent requests apart.",

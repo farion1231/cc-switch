@@ -1323,6 +1323,9 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
+    "subagentRouteRowLabel": "SubAgent 路由",
+    "subagentRouteSelfTarget": "本供應商",
+    "subagentRouteTakeoverRequiredHint": "需開啟代理接管才會生效",
     "modelDisplayNameLabel": "顯示名稱",
     "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
     "modelNoDisplayName": "不顯示於 /model 選單",
@@ -2921,10 +2924,6 @@
       "toggleFailed": "狀態更新失敗"
     },
     "subagentRoute": {
-      "title": "Subagent 路由",
-      "description": "主對話繼續使用目前供應商，subagent 請求轉送到另一家供應商。需開啟代理接管。除非目前供應商已明確設定 CLAUDE_CODE_SUBAGENT_MODEL，否則必須填寫模型名稱。",
-      "targetProvider": "目標供應商",
-      "model": "模型",
       "modelPlaceholder": "傳送給目標供應商的模型名稱（如 glm-5.5-flash）",
       "targetMissingWarning": "路由目標供應商已不存在，請重新選擇或關閉開關。",
       "modelRequiredHint": "請填寫模型名稱，代理據此區分 subagent 請求。",
