@@ -136,9 +136,9 @@ describe("Codex Copilot provider form", () => {
     }
   });
 
-  it("defaults to GPT-5.6 Astra and shows all five preset model mappings", () => {
+  it("defaults to GPT-6 Astra and shows all five preset model mappings", () => {
     renderForm();
-    expect(screen.getAllByDisplayValue("gpt-5.6-astra")).toHaveLength(2);
+    expect(screen.getAllByDisplayValue("gpt-6-astra")).toHaveLength(2);
     for (const model of [
       "gpt-5.6-sol",
       "gpt-5.6-terra",

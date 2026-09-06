@@ -150,7 +150,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     config: generateThirdPartyConfig(
       "github-copilot",
       "https://api.githubcopilot.com",
-      "gpt-5.6-astra",
+      "gpt-6-astra",
       { requiresOpenAiAuth: false },
     ),
     endpointCandidates: ["https://api.githubcopilot.com"],
@@ -159,7 +159,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     requiresOAuth: true,
     modelCatalog: modelCatalog(
       [
-        { model: "gpt-5.6-astra", displayName: "GPT-5.6 Astra" },
+        { model: "gpt-6-astra", displayName: "GPT-6 Astra" },
         { model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol" },
         { model: "gpt-5.6-terra", displayName: "GPT-5.6 Terra" },
         { model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna" },
