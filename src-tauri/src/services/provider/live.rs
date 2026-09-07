@@ -189,6 +189,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::Omp => crate::omp_config::omp_provider_exists(provider_id),
         _ => Ok(false),
     }
 }
@@ -531,6 +532,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Omp
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -606,6 +608,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Omp
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -666,6 +669,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Omp
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1435,6 +1439,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Pi providers use the Pi provider service".to_string(),
             ));
         }
+        AppType::Omp => {
+            return Err(AppError::InvalidInput(
+                "OMP providers use the OMP provider service".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1660,7 +1669,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi) {
+        if matches!(app_type, AppType::Pi | AppType::Omp) {
             continue;
         }
         let result = if app_type.is_additive_mode() {
@@ -1818,6 +1827,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
+        AppType::Omp => Err(AppError::InvalidInput(
+            "OMP providers are read from OMP's native models file".to_string(),
+        )),
     }
 }
 
@@ -1927,7 +1939,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Omp => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

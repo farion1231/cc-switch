@@ -912,7 +912,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "omp": "OMP"
   },
   "pi": {
     "empty": {
@@ -1720,7 +1721,8 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "omp": "OMP"
     },
     "rawInputLabel": "Raw",
     "sessionSync": {

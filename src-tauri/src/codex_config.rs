@@ -7854,7 +7854,16 @@ model_catalog_json = "cc-switch-model-catalog.json"
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside_dir, base_dir.join("link")).expect("symlink");
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")).expect("symlink");
+        if let Err(error) = std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")) {
+            // Creating directory symlinks requires SeCreateSymbolicLinkPrivilege
+            // (or Developer Mode) on Windows. Keep the security test meaningful
+            // where symlinks are available, but don't fail the whole suite merely
+            // because the test process lacks that privilege.
+            if error.raw_os_error() == Some(1314) {
+                return;
+            }
+            panic!("symlink: {error}");
+        }
 
         let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
 "#;
