@@ -252,13 +252,25 @@ fn classify_zhipu_window(item: &serde_json::Value) -> Option<ZhipuWindow> {
 ///
 /// 老套餐（2026-02-12 前订阅）只回 1 条
 /// `TOKENS_LIMIT`，自然降级为仅展示 `five_hour`；新套餐回 2 条。
+/// 定位配额条目数组。
+///
+/// 该端点的外层结构不止一种：历史上是 `{ "data": { "limits": [...] } }`，
+/// 线上也出现过直接返回顶层数组、完全没有外层包裹的情况（issue #6402）。
+/// 与其钉死一种形状，不如按已知的几种位置依次查找。
+fn zhipu_limit_entries(value: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
+    if let Some(entries) = value.as_array() {
+        return Some(entries);
+    }
+    value.get("limits").and_then(|v| v.as_array())
+}
+
 fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
     type Entry = (Option<i64>, f64, Option<String>);
     let mut five_hour: Option<Entry> = None;
     let mut weekly: Option<Entry> = None;
     let mut unclassified: Vec<Entry> = Vec::new();
 
-    if let Some(limits) = data.get("limits").and_then(|v| v.as_array()) {
+    if let Some(limits) = zhipu_limit_entries(data) {
         for limit_item in limits {
             let limit_type = limit_item
                 .get("type")
@@ -395,6 +407,9 @@ fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
 
     let data = match body.get("data") {
         Some(d) => d,
+        // 没有 `data` 外层时，配额数组可能就在顶层（issue #6402）。
+        // 只有连条目都找不到才算响应异常。
+        None if zhipu_limit_entries(body).is_some() => body,
         None => return make_error("Missing 'data' field in response".to_string()),
     };
 
@@ -1474,10 +1489,54 @@ mod tests {
         detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers,
         parse_opencode_go_tiers, parse_zhipu_token_tiers, query_zhipu_team_at,
         volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
-        volcengine_response_error, volcengine_sign, zhipu_quota_base, CodingPlanProvider,
-        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        volcengine_response_error, volcengine_sign, zhipu_quota_base, zhipu_quota_from_body,
+        CodingPlanProvider, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
+
+    // #6402: 线上返回的是顶层数组，没有 `data` / `limits` 外层。
+    // 数值取自 issue 里 dump 的真实响应。
+    #[test]
+    fn zhipu_quota_reads_a_top_level_limit_array() {
+        let body = json!([
+            { "type": "CREDIT_LIMIT", "unit": 3, "percentage": 9.0,
+              "nextResetTime": 1_786_592_963_348_i64 },
+            { "type": "CREDIT_LIMIT", "unit": 6, "percentage": 41.0,
+              "nextResetTime": 1_786_692_650_981_i64 },
+        ]);
+
+        let quota = zhipu_quota_from_body(&body);
+
+        assert!(quota.error.is_none(), "quota: {quota:?}");
+        assert_eq!(quota.tiers.len(), 2, "quota: {quota:?}");
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 9.0);
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 41.0);
+    }
+
+    #[test]
+    fn zhipu_quota_reads_limits_without_a_data_envelope() {
+        let body = json!({
+            "limits": [
+                { "type": "CREDIT_LIMIT", "unit": 3, "percentage": 12.0 },
+            ]
+        });
+
+        let quota = zhipu_quota_from_body(&body);
+
+        assert!(quota.error.is_none(), "quota: {quota:?}");
+        assert_eq!(quota.tiers.len(), 1);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 12.0);
+    }
+
+    #[test]
+    fn zhipu_quota_still_reports_a_body_with_no_limits_anywhere() {
+        let quota = zhipu_quota_from_body(&json!({ "unexpected": true }));
+        assert!(!quota.success);
+        assert!(quota.error.is_some());
+    }
 
     #[test]
     fn opencode_go_detects_both_base_variants_but_not_zen() {
