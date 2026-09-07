@@ -139,25 +139,53 @@ const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 
 const STORAGE_KEY = "cc-switch-last-app";
-let activeAppPersistence: Promise<unknown> = Promise.resolve();
+// 后端写入失败时在此记下待同步的选择。settings 里的值此时已知是旧的，
+// 下次启动必须以本地值为准，否则一次写入失败就会永久丢掉用户的选择。
+const PENDING_STORAGE_KEY = "cc-switch-last-app-pending";
 
-const persistLastActiveApp = (app: AppId) => {
-  activeAppPersistence = activeAppPersistence
-    .then(() => settingsApi.setLastActiveApp(app))
-    .catch((error) => {
-      console.warn("Failed to persist active app in settings", error);
-    });
-};
-
-const getStoredApp = (): AppId | null => {
+const readStoredApp = (key: string): AppId | null => {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
+    const saved = localStorage.getItem(key) as AppId | null;
     return saved && APP_IDS.includes(saved) ? saved : null;
   } catch {
     return null;
   }
 };
-const getInitialApp = (): AppId => getStoredApp() ?? "claude";
+
+const getStoredApp = (): AppId | null => readStoredApp(STORAGE_KEY);
+const getPendingApp = (): AppId | null => readStoredApp(PENDING_STORAGE_KEY);
+
+const setPendingApp = (app: AppId | null) => {
+  try {
+    if (app) {
+      localStorage.setItem(PENDING_STORAGE_KEY, app);
+    } else {
+      localStorage.removeItem(PENDING_STORAGE_KEY);
+    }
+  } catch (error) {
+    console.warn("Failed to record pending active app", error);
+  }
+};
+
+let activeAppPersistence: Promise<unknown> = Promise.resolve();
+let lastRequestedActiveApp: AppId | null = null;
+
+const persistLastActiveApp = (app: AppId) => {
+  lastRequestedActiveApp = app;
+  activeAppPersistence = activeAppPersistence
+    .then(() => settingsApi.setLastActiveApp(app))
+    .then(() => {
+      // 只有在没有更晚的选择时才清标记，避免旧请求清掉新请求留下的待同步值。
+      if (lastRequestedActiveApp === app) setPendingApp(null);
+    })
+    .catch((error) => {
+      if (lastRequestedActiveApp === app) setPendingApp(app);
+      console.warn("Failed to persist active app in settings", error);
+    });
+};
+
+const getInitialApp = (): AppId =>
+  getPendingApp() ?? getStoredApp() ?? "claude";
 
 const VIEW_STORAGE_KEY = "cc-switch-last-view";
 const VALID_VIEWS: View[] = [
@@ -267,14 +295,21 @@ function App() {
       return;
     }
 
-    const persistedApp = settingsData.lastActiveApp ?? getStoredApp();
+    // 上次写入失败时后端存的是旧值，此处不能把它当权威。
+    const pendingApp = getPendingApp();
+    const persistedApp =
+      pendingApp ?? settingsData.lastActiveApp ?? getStoredApp();
     const resolvedApp =
       persistedApp && visibleApps[persistedApp]
         ? persistedApp
         : firstVisibleApp;
     setActiveAppLocally(resolvedApp);
     if (persistedApp && settingsData.lastActiveApp !== resolvedApp) {
+      // 顺带重试上次失败的写入。
       persistLastActiveApp(resolvedApp);
+    } else if (pendingApp) {
+      // 后端其实已是该值（只是上次回包失败），清掉标记即可。
+      setPendingApp(null);
     }
     setHasRestoredActiveApp(true);
   }, [

@@ -208,6 +208,7 @@ describe("App integration with MSW", () => {
     skillsPanelMocks.openDiscovery.mockReset();
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
+    localStorage.removeItem("cc-switch-last-app-pending");
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -417,6 +418,43 @@ describe("App integration with MSW", () => {
     await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
     await delay(100);
     expect(getSettings().lastActiveApp).toBe("openclaw");
+  });
+
+  it("keeps a selection whose backend write failed and retries it on restart", async () => {
+    setSettings({ lastActiveApp: "claude" });
+    server.use(
+      http.post("http://tauri.local/set_last_active_app", () =>
+        HttpResponse.json(
+          { error: "settings file is locked" },
+          { status: 500 },
+        ),
+      ),
+    );
+    const { default: App } = await import("@/App");
+    const firstLaunch = renderApp(App);
+    await screen.findByTestId("app-switcher");
+
+    fireEvent.click(screen.getByText("switch-openclaw"));
+
+    await waitFor(() =>
+      expect(localStorage.getItem("cc-switch-last-app-pending")).toBe(
+        "openclaw",
+      ),
+    );
+    expect(getSettings().lastActiveApp).toBe("claude");
+
+    // 重启：后端恢复可写，待同步的选择应当胜过 settings 里的旧值。
+    firstLaunch.unmount();
+    server.resetHandlers();
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("app-switcher")).toHaveTextContent("openclaw"),
+    );
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
+    await waitFor(() =>
+      expect(localStorage.getItem("cc-switch-last-app-pending")).toBeNull(),
+    );
   });
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
