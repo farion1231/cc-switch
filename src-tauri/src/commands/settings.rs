@@ -67,12 +67,15 @@ pub async fn save_settings(
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
-    let existing = crate::settings::get_settings();
-    let merged = merge_settings_for_save(settings, &existing);
+    // 原子地"读现有设置 → 合并 → 持久化"：托盘勾选轻量模式等后端写入
+    // 可能与前端保存并发，若锁外读 existing、后 update_settings，中间插入
+    // 的后端写入会被旧快照覆盖（丢"记住轻量模式"偏好）。
+    let (merged, existing) =
+        crate::settings::save_settings_atomic(settings, merge_settings_for_save)
+            .map_err(|e| e.to_string())?;
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
@@ -86,7 +89,7 @@ pub async fn save_settings(
             crate::services::provider::reapply_current_codex_official_live(state.inner())
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
+            if let Err(rollback_err) = crate::settings::mutate_settings(|s| *s = existing.clone()) {
                 log::error!("回滚统一会话开关设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -324,6 +327,7 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+    use serial_test::serial;
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
@@ -638,6 +642,42 @@ mod tests {
             merged.lightweight_mode,
             "backend-owned lightweight_mode preference must be preserved"
         );
+    }
+
+    /// 前端保存与后端写入并发时的竞态回归（Codex Review 指出）：若在锁外
+    /// 读 existing、锁外 update_settings，两次操作之间托盘勾选轻量模式写入
+    /// 的 true 会被锁外旧快照覆盖丢失。save_settings_atomic 必须在同一个
+    /// 写锁内读现有值并合并。
+    #[test]
+    #[serial]
+    fn save_settings_atomic_should_merge_against_live_store() {
+        // 与其他触碰全局设置存储的用例一致：串行执行 + 隔离临时 HOME
+        let test_home = std::env::temp_dir().join("cc-switch-lightweight-atomic-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        crate::settings::update_settings(AppSettings::default()).expect("reset settings");
+        // 模拟托盘已勾选：后端先把偏好写为 true
+        crate::settings::set_lightweight_mode_preference(true).expect("seed preference");
+        // 前端缓存仍是旧值（lightweight_mode=false）的全量载荷
+        let incoming = AppSettings::default();
+
+        let (merged, existing) =
+            crate::settings::save_settings_atomic(incoming, merge_settings_for_save)
+                .expect("atomic save");
+
+        assert!(
+            existing.lightweight_mode,
+            "existing snapshot must reflect the live backend-owned value"
+        );
+        assert!(
+            merged.lightweight_mode,
+            "merged result must keep the backend-owned preference"
+        );
+
+        // 清理，避免影响其他用例
+        crate::settings::update_settings(AppSettings::default()).expect("reset settings");
     }
 }
 

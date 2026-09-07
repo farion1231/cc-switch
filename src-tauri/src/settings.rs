@@ -801,7 +801,33 @@ pub fn set_lightweight_mode_preference(enabled: bool) -> Result<(), AppError> {
     mutate_settings(|settings| settings.lightweight_mode = enabled)
 }
 
-fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
+/// 前端保存设置的原子入口：在同一个写锁内完成「读取现有设置 → 合并前端
+/// 载荷 → 持久化」，返回（合并结果，保存前的现有值）供命令层做变更检测
+/// 与回滚。
+///
+/// 必须整体持锁：托盘勾选"记住轻量模式"等后端侧写入可能与前端保存并发；
+/// 若先锁外 `get_settings`、后 `update_settings`，两次操作之间插入的后端
+/// 写入会被锁外读到的旧快照覆盖，backend-owned 字段被静默回滚。
+pub fn save_settings_atomic<M>(
+    incoming: AppSettings,
+    merge: M,
+) -> Result<(AppSettings, AppSettings), AppError>
+where
+    M: FnOnce(AppSettings, &AppSettings) -> AppSettings,
+{
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let existing = guard.clone();
+    let mut merged = merge(incoming, &existing);
+    merged.normalize_paths();
+    save_settings_file(&merged)?;
+    *guard = merged.clone();
+    Ok((merged, existing))
+}
+
+pub(crate) fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
     F: FnOnce(&mut AppSettings),
 {
