@@ -3432,6 +3432,7 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
 enum CodexStandaloneEndpoint {
     AlphaSearch,
     ImagesGenerations,
+    ImagesEdits,
 }
 
 impl CodexStandaloneEndpoint {
@@ -3439,6 +3440,7 @@ impl CodexStandaloneEndpoint {
         match split_endpoint_and_query(endpoint).0 {
             "/alpha/search" => Some(Self::AlphaSearch),
             "/images/generations" => Some(Self::ImagesGenerations),
+            "/images/edits" => Some(Self::ImagesEdits),
             _ => None,
         }
     }
@@ -3447,6 +3449,7 @@ impl CodexStandaloneEndpoint {
         match self {
             Self::AlphaSearch => "/alpha/search",
             Self::ImagesGenerations => "/images/generations",
+            Self::ImagesEdits => "/images/edits",
         }
     }
 
@@ -3454,41 +3457,44 @@ impl CodexStandaloneEndpoint {
         match self {
             Self::AlphaSearch => "Codex Alpha Search",
             Self::ImagesGenerations => "Codex Images generations",
+            Self::ImagesEdits => "Codex Images edits",
         }
     }
 
     fn full_url_hint(self) -> &'static str {
         match self {
             Self::AlphaSearch => "/responses",
-            Self::ImagesGenerations => "/responses, /chat/completions, or /images/generations",
+            Self::ImagesGenerations | Self::ImagesEdits => {
+                "/responses, /chat/completions, /images/generations, or /images/edits"
+            }
+        }
+    }
+
+    /// Full-URL suffixes that unambiguously locate this endpoint's sibling.
+    ///
+    /// Order matters: a longer suffix must precede any suffix it ends with
+    /// (`/responses/compact` before `/responses`), otherwise the shorter one
+    /// wins and the rewrite keeps a stray `/compact` segment.
+    fn source_suffixes(self) -> &'static [&'static str] {
+        match self {
+            Self::AlphaSearch => &["/responses/compact", "/responses"],
+            // Both Images routes live next to each other, so a full URL pasted
+            // for either one is a valid source for the other.
+            Self::ImagesGenerations | Self::ImagesEdits => &[
+                "/images/generations",
+                "/images/edits",
+                "/chat/completions",
+                "/responses/compact",
+                "/responses",
+            ],
         }
     }
 
     fn source_suffix(self, parsed_path: &str) -> Option<&'static str> {
-        match self {
-            Self::AlphaSearch => {
-                if parsed_path.ends_with("/responses/compact") {
-                    Some("/responses/compact")
-                } else if parsed_path.ends_with("/responses") {
-                    Some("/responses")
-                } else {
-                    None
-                }
-            }
-            Self::ImagesGenerations => {
-                if parsed_path.ends_with("/images/generations") {
-                    Some("/images/generations")
-                } else if parsed_path.ends_with("/chat/completions") {
-                    Some("/chat/completions")
-                } else if parsed_path.ends_with("/responses/compact") {
-                    Some("/responses/compact")
-                } else if parsed_path.ends_with("/responses") {
-                    Some("/responses")
-                } else {
-                    None
-                }
-            }
-        }
+        self.source_suffixes()
+            .iter()
+            .copied()
+            .find(|suffix| parsed_path.ends_with(suffix))
     }
 }
 
@@ -5184,6 +5190,10 @@ mod tests {
                 "https://relay.example/v1/chat/completions?api-version=2026-07",
                 "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0",
             ),
+            (
+                "https://relay.example/v1/images/edits",
+                "https://relay.example/v1/images/generations?client_version=0.145.0",
+            ),
         ];
 
         for (base_url, expected) in cases {
@@ -5227,6 +5237,83 @@ mod tests {
             error,
             ProxyError::ConfigError(message)
                 if message.contains("cannot derive /images/generations")
+        ));
+    }
+
+    #[test]
+    fn codex_standalone_endpoint_recognizes_images_edits() {
+        assert!(matches!(
+            CodexStandaloneEndpoint::from_effective_endpoint(
+                "/images/edits?client_version=0.145.0"
+            ),
+            Some(CodexStandaloneEndpoint::ImagesEdits)
+        ));
+        // Codex ImageGen never calls the variations route; keep it unrouted.
+        assert!(CodexStandaloneEndpoint::from_effective_endpoint("/images/variations").is_none());
+    }
+
+    #[test]
+    fn images_edits_rewrites_known_full_codex_urls() {
+        let cases = [
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/images/edits?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/images/edits?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/chat/completions?api-version=2026-07",
+                "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/images/generations?api-version=2026-07",
+                "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.145.0"),
+                    CodexStandaloneEndpoint::ImagesEdits,
+                )
+                .expect("known Codex full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_edits_preserves_existing_full_edits_url() {
+        let url = rewrite_codex_standalone_full_url(
+            "https://relay.example/v1/images/edits?api-version=2026-07",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesEdits,
+        )
+        .expect("full Images edits URL should be preserved");
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0"
+        );
+    }
+
+    #[test]
+    fn images_edits_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesEdits,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /images/edits")
         ));
     }
 

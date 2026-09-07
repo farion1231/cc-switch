@@ -84,6 +84,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#111111",
   },
+  soleapi: {
+    name: "soleapi",
+    displayName: "SoleAPI",
+    category: "ai-provider",
+    keywords: ["soleapi", "sole", "aggregator", "relay", "gateway", "claude"],
+    defaultColor: "currentColor",
+  },
   sudocode: {
     name: "sudocode",
     displayName: "SudoCode.chat",
