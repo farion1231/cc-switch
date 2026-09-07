@@ -1610,13 +1610,6 @@ requires_openai_auth = true`,
         reasoningLevels: ["high"],
       },
       {
-        // 不在套餐文档表，/models 收录 + 真 Key 实测可用（2026-08-31）
-        model: "minimax-m2.5",
-        displayName: "MiniMax M2.5",
-        contextWindow: 200000,
-        reasoningLevels: ["high"],
-      },
-      {
         model: "glm-5",
         displayName: "GLM-5",
         contextWindow: 200000,
@@ -1838,13 +1831,6 @@ requires_openai_auth = true`,
         displayName: "MiniMax M3",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
-      },
-      {
-        // 型号列表已除名，真 Key 实测仍可用（2026-08-31）
-        model: "minimax-m2.5",
-        displayName: "MiniMax M2.5",
-        contextWindow: 200000,
-        reasoningLevels: ["high"],
       },
       {
         model: "deepseek-v4-flash",

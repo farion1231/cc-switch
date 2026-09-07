@@ -1199,6 +1199,22 @@ pub async fn handle_alpha_search(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_standalone_passthrough(state, request, "/alpha/search").await
+}
+
+/// Handle Codex's legacy Images API endpoint for built-in ImageGen.
+pub async fn handle_images_generations(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_standalone_passthrough(state, request, "/images/generations").await
+}
+
+async fn handle_codex_standalone_passthrough(
+    state: ProxyState,
+    request: axum::extract::Request,
+    canonical_endpoint: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
@@ -1215,7 +1231,7 @@ pub async fn handle_alpha_search(
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/alpha/search");
+    let endpoint = endpoint_with_query(&uri, canonical_endpoint);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
