@@ -59,7 +59,19 @@ impl PromptService {
         if matches!(app, AppType::Pi) {
             return get_pi_prompts(state);
         }
-        state.db.get_prompts(app.as_str())
+        let mut prompts = state.db.get_prompts(app.as_str())?;
+        // External editors change the live file without updating the saved
+        // selection. Refresh only that selection; inactive templates are separate.
+        if let Some(prompt) = prompts.values_mut().find(|prompt| prompt.enabled) {
+            if let Some(content) = Self::get_current_file_content(app.clone())? {
+                if prompt.content != content {
+                    prompt.content = content;
+                    prompt.updated_at = Some(get_unix_timestamp()?);
+                    state.db.save_prompt(app.as_str(), prompt)?;
+                }
+            }
+        }
+        Ok(prompts)
     }
 
     pub fn upsert_prompt(
