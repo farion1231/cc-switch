@@ -3038,6 +3038,171 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn codex_switch_and_rebind_handle_preexisting_auth() {
+        for auth_state in ["native-login", "missing-marker", "deleted-account"] {
+            for target_kind in [
+                "managed",
+                "third-party",
+                "preserving-third-party",
+                "unbound-official",
+            ] {
+                for update_current in [false, true] {
+                    with_test_home(|state, _| {
+                        crate::settings::reload_settings().expect("reload settings");
+                        let mut settings = crate::settings::get_settings();
+                        settings.preserve_codex_official_auth_on_switch =
+                            target_kind == "preserving-third-party";
+                        crate::settings::update_settings(settings).expect("set auth preservation");
+                        tauri::async_runtime::block_on(async {
+                            for (id, user) in [("acct-old", "user-old"), ("acct-new", "user-new")] {
+                                state
+                                    .codex_oauth_manager
+                                    .add_test_account_with_user_identity(id, "test-access", user)
+                                    .await
+                                    .expect("seed managed account");
+                            }
+                        });
+                        let current = managed_codex_provider("current", "acct-old");
+                        let target_id = if update_current { "current" } else { "target" };
+                        let target = match target_kind {
+                            "managed" => managed_codex_provider(target_id, "acct-new"),
+                            "unbound-official" => {
+                                let mut provider = Provider::with_id(
+                                    target_id.to_string(),
+                                    "Unbound Official".to_string(),
+                                    json!({"auth": {}, "config": ""}),
+                                    None,
+                                );
+                                provider.category = Some("official".to_string());
+                                provider
+                            }
+                            _ => Provider::with_id(
+                                target_id.to_string(),
+                                "Third Party".to_string(),
+                                codex_settings("https://third.example/v1", "sk-third"),
+                                None,
+                            ),
+                        };
+                        state
+                            .db
+                            .save_provider("codex", &current)
+                            .expect("save current");
+                        if !update_current {
+                            state
+                                .db
+                                .save_provider("codex", &target)
+                                .expect("save target");
+                        }
+                        ProviderService::switch(state, AppType::Codex, &current.id)
+                            .expect("activate current");
+                        let auth_path = crate::codex_config::get_codex_auth_path();
+                        if auth_state == "missing-marker" {
+                            fs::remove_file(
+                                crate::config::get_app_config_dir()
+                                    .join("codex_managed_oauth_live_auth.json"),
+                            )
+                            .expect("remove marker");
+                        } else {
+                            if auth_state == "deleted-account" {
+                                tauri::async_runtime::block_on(
+                                    state.codex_oauth_manager.remove_account("acct-old"),
+                                )
+                                .expect("remove outgoing account");
+                            }
+                            let native_auth = crate::codex_config::codex_managed_oauth_auth_value(
+                                "native-workspace",
+                                "native-access",
+                                Some(&crate::codex_config::test_codex_id_token("native-user")),
+                                "native-refresh",
+                                "2026-09-01T00:00:00Z",
+                            );
+                            write_json_file(&auth_path, &native_auth)
+                                .expect("simulate native login");
+                        }
+                        let auth_before: Value =
+                            read_json_file(&auth_path).expect("read auth before switch");
+                        let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()
+                            .expect("snapshot before switch");
+                        let apply = || {
+                            if update_current {
+                                ProviderService::update(state, AppType::Codex, None, target.clone())
+                                    .map(|_| ())
+                            } else {
+                                ProviderService::switch(state, AppType::Codex, &target.id)
+                                    .map(|_| ())
+                            }
+                        };
+                        let result = apply();
+                        if auth_state == "deleted-account"
+                            && matches!(target_kind, "managed" | "third-party")
+                        {
+                            let error =
+                                result.expect_err("preexisting login needs explicit recovery");
+                            assert!(matches!(error, AppError::Conflict(_)));
+                            let message = error.to_string();
+                            assert!(message.contains("codex logout"), "{message}");
+                            assert!(
+                                message.contains("未绑定托管账号且不含登录凭据"),
+                                "{message}"
+                            );
+                            assert!(!message.contains("切换期间出现"), "{message}");
+                            assert_eq!(
+                                crate::codex_config::CodexLiveStateSnapshot::capture().unwrap(),
+                                snapshot
+                            );
+                            assert_eq!(
+                                state.db.get_current_provider("codex").unwrap().as_deref(),
+                                Some("current")
+                            );
+                            assert_eq!(
+                                crate::settings::get_current_provider(&AppType::Codex).as_deref(),
+                                Some("current")
+                            );
+                            let stored = state
+                                .db
+                                .get_provider_by_id("current", "codex")
+                                .unwrap()
+                                .unwrap();
+                            assert_eq!(
+                                ProviderService::managed_codex_oauth_account_id(&stored).as_deref(),
+                                Some("acct-old")
+                            );
+                            fs::remove_file(&auth_path)
+                                .expect("simulate the suggested codex logout");
+                            apply().expect("recovery succeeds after logout");
+                        } else {
+                            result.unwrap_or_else(|error| {
+                                panic!(
+                                    "{auth_state}/{target_kind}/update={update_current}: {error}"
+                                )
+                            });
+                        }
+                        assert_eq!(
+                            state.db.get_current_provider("codex").unwrap().as_deref(),
+                            Some(target_id)
+                        );
+                        match target_kind {
+                            "managed" => {
+                                let auth: Value = read_json_file(&auth_path).unwrap();
+                                assert_eq!(
+                                    auth.pointer("/tokens/account_id").and_then(Value::as_str),
+                                    Some("acct-new")
+                                );
+                            }
+                            "third-party" => assert!(!auth_path.exists()),
+                            _ => assert_eq!(
+                                read_json_file::<Value>(&auth_path).unwrap(),
+                                auth_before
+                            ),
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
     fn deleted_managed_account_can_be_rebound_or_switched_away_from() {
         with_test_home(|state, _| {
             crate::settings::reload_settings().expect("reload settings");

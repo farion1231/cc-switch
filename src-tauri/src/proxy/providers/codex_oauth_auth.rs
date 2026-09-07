@@ -204,13 +204,16 @@ enum RefreshTokenAdoptionOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexLiveAuthSwitchGuard {
+    /// None means auth existed at preflight but had no adoptable managed refresh token.
     ExistingAccount(Option<String>),
+    /// The manager account exists, but auth was absent at preflight.
+    AbsentAuth,
     MissingAccount,
 }
 
 impl CodexLiveAuthSwitchGuard {
     pub(crate) fn requires_guarded_commit(&self) -> bool {
-        matches!(self, Self::MissingAccount | Self::ExistingAccount(None))
+        matches!(self, Self::MissingAccount | Self::AbsentAuth)
     }
 
     pub(crate) fn account_missing(&self) -> bool {
@@ -220,7 +223,7 @@ impl CodexLiveAuthSwitchGuard {
     pub(crate) fn expected_refresh_token(&self) -> Option<&str> {
         match self {
             Self::ExistingAccount(token) => token.as_deref(),
-            Self::MissingAccount => None,
+            Self::AbsentAuth | Self::MissingAccount => None,
         }
     }
 
@@ -231,7 +234,7 @@ impl CodexLiveAuthSwitchGuard {
                     account_id, expected,
                 )
             }
-            Self::ExistingAccount(None) | Self::MissingAccount => Ok(()),
+            Self::ExistingAccount(None) | Self::AbsentAuth | Self::MissingAccount => Ok(()),
         }
     }
 
@@ -245,6 +248,9 @@ impl CodexLiveAuthSwitchGuard {
                     account_id,
                     expected.as_deref(),
                 )
+            }
+            Self::AbsentAuth => {
+                crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
             }
             Self::MissingAccount => Ok(()),
         }
@@ -1208,11 +1214,22 @@ impl CodexOAuthManager {
             );
             return Ok(CodexLiveAuthSwitchGuard::MissingAccount);
         }
+        // Capture absence before reading: a native login that appears during
+        // the read must not accidentally opt out of guarded publication.
+        let auth_existed = crate::codex_config::get_codex_auth_path().try_exists()?;
         let Some((live_refresh, live_id_token, live_last_refresh_ms)) = self
             .read_managed_live_auth_refresh_for_account(account_id)
             .await?
         else {
-            return Ok(CodexLiveAuthSwitchGuard::ExistingAccount(None));
+            // No managed refresh token can also mean a preexisting native
+            // login or a missing marker. Explicit switches keep their normal
+            // replacement semantics in that case; only an absent auth file
+            // needs no-clobber publication against a later concurrent login.
+            return Ok(if auth_existed {
+                CodexLiveAuthSwitchGuard::ExistingAccount(None)
+            } else {
+                CodexLiveAuthSwitchGuard::AbsentAuth
+            });
         };
 
         let outcome = self

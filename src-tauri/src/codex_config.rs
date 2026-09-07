@@ -3933,6 +3933,21 @@ pub(crate) fn prepare_codex_live_for_provider_if_auth_absent(
         config_text,
         crate::settings::preserve_codex_official_auth_on_switch(),
     )?;
+    // A login already on disk requires user action, not a retry. Check only
+    // targets that would replace/remove auth: config-only preservation is the
+    // escape route for a dangling binding and must remain available.
+    if plan.write_full_auth || plan.remove_auth_file {
+        let auth_path = get_codex_auth_path();
+        if auth_path
+            .try_exists()
+            .map_err(|error| AppError::io(&auth_path, error))?
+        {
+            return Err(AppError::Conflict(
+                "Codex auth.json 中已有登录凭据，无法安全完成此次切换。请先在终端运行 codex logout，或先切换到未绑定托管账号且不含登录凭据的官方供应商，再重试"
+                    .to_string(),
+            ));
+        }
+    }
     if plan.write_full_auth {
         return prepare_codex_live_if_auth_absent(auth, plan.config_text.as_deref());
     }
@@ -4336,6 +4351,33 @@ mod tests {
             catalog_bytes,
             marker_bytes,
         }
+    }
+
+    #[test]
+    #[serial]
+    fn preexisting_auth_recovery_error_precedes_config_write() {
+        let _home = CodexLiveTestHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let auth = codex_managed_oauth_auth_value(
+            "managed-workspace",
+            "managed-access",
+            Some(&test_codex_id_token("managed-user")),
+            "managed-refresh",
+            "2026-09-02T00:00:00Z",
+        );
+        crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("seed auth");
+        crate::config::write_text_file(&get_codex_config_path(), "model = \"before\"\n")
+            .expect("seed config");
+        let snapshot = CodexLiveStateSnapshot::capture().expect("capture live state");
+        let error = prepare_codex_live_for_provider_if_auth_absent(
+            Some("official"),
+            &auth,
+            Some("model = \"after\"\n"),
+        )
+        .err()
+        .expect("preexisting auth must refuse guarded publication");
+        assert!(error.to_string().contains("codex logout"));
+        assert_eq!(CodexLiveStateSnapshot::capture().unwrap(), snapshot);
     }
 
     #[test]
