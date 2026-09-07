@@ -465,7 +465,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       await settingsApi.checkUpdates();
     } catch (error) {
       console.error("[AboutSection] Failed to open releases page", error);
-      toast.error(t("settings.checkUpdateFailed"));
+      toast.error(t("settings.checkUpdateFailed"), {
+        description: extractErrorMessage(error) || undefined,
+        closeButton: true,
+      });
     }
   }, [t]);
 
