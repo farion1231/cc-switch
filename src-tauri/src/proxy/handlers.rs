@@ -986,6 +986,15 @@ pub async fn handle_images_generations(
     handle_codex_standalone_passthrough(state, request, "/images/generations").await
 }
 
+/// Handle the Images API edit endpoint, which built-in ImageGen uses whenever
+/// the call references existing images instead of generating from scratch.
+pub async fn handle_images_edits(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_standalone_passthrough(state, request, "/images/edits").await
+}
+
 async fn handle_codex_standalone_passthrough(
     state: ProxyState,
     request: axum::extract::Request,
