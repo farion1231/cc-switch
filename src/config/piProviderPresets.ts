@@ -59,6 +59,14 @@ const DEEPSEEK_THINKING_COMPAT = {
   thinkingFormat: "deepseek",
 } as const;
 
+// 1823/132248: thinking.type defaults to "enabled"; disabling requires an explicit
+// {"type":"disabled"}. The same doc says reasoning_content need not be echoed back
+// on multi-turn, so we don't reuse DEEPSEEK_THINKING_COMPAT wholesale.
+const TENCENT_DEEPSEEK_THINKING_COMPAT = {
+  ...OPENAI_COMPLETIONS_COMPAT,
+  thinkingFormat: "deepseek",
+} as const;
+
 const XIAOMI_THINKING_COMPAT = {
   requiresReasoningContentOnAssistantMessages: true,
   thinkingFormat: "deepseek",
@@ -1600,14 +1608,22 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       apiKey: "",
       models: [
         piModel("tencent/tokenplan-auto", { id: "tc-code-latest" }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-202605",
-          name: "DeepSeek V4 Flash Official",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-202606",
-          name: "DeepSeek V4 Pro Official",
-        }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
         piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
         piModel("zai/glm-5", { id: "glm-5" }),
         piModel("zai/glm-5.1", { id: "glm-5.1" }),
@@ -1634,14 +1650,22 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("tencent/tokenplan-auto", { id: "auto" }),
         piModel("zai/glm-5.2", { id: "glm-5.2" }),
         piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-202606",
-          name: "DeepSeek V4 Pro Official",
-        }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-202605",
-          name: "DeepSeek V4 Flash Official",
-        }),
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
         piModel("minimax/minimax-m3", { id: "minimax-m3" }),
       ],
     },
@@ -1666,31 +1690,63 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("zai/glm-5", { id: "glm-5" }),
         piModel("zai/glm-5.1", { id: "glm-5.1" }),
         piModel("zai/glm-5-turbo", { id: "glm-5-turbo" }),
-        piModel("moonshotai/kimi-k2.7-code", { id: "kimi-k2.7-code" }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
+          thinkingProfile: "offUnsupported",
         }),
         piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
         piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
         piModel("minimax/minimax-m3", { id: "minimax-m3" }),
-        piModel("deepseek/deepseek-v4-flash", { id: "deepseek-v4-flash" }),
-        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-0731",
-          name: "DeepSeek V4 Flash 0731 GA",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-0813",
-          name: "DeepSeek V4 Pro 0813 GA",
-        }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-202605",
-          name: "DeepSeek V4 Flash Official",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-202606",
-          name: "DeepSeek V4 Pro Official",
-        }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-0731",
+            name: "DeepSeek V4 Flash 0731 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-0813",
+            name: "DeepSeek V4 Pro 0813 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
@@ -1712,28 +1768,60 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("zai/glm-5.3", { id: "glm-5.3" }),
         piModel("zai/glm-5.2", { id: "glm-5.2" }),
         piModel("minimax/minimax-m3", { id: "minimax-m3" }),
-        piModel("moonshotai/kimi-k2.7-code", { id: "kimi-k2.7-code" }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
+          thinkingProfile: "offUnsupported",
         }),
-        piModel("deepseek/deepseek-v4-flash", { id: "deepseek-v4-flash" }),
-        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-0731",
-          name: "DeepSeek V4 Flash 0731 GA",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-0813",
-          name: "DeepSeek V4 Pro 0813 GA",
-        }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-202605",
-          name: "DeepSeek V4 Flash Official",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-202606",
-          name: "DeepSeek V4 Pro Official",
-        }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-0731",
+            name: "DeepSeek V4 Flash 0731 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-0813",
+            name: "DeepSeek V4 Pro 0813 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
@@ -1790,27 +1878,59 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("tencent/hy4-preview", { id: "hy4-preview" }),
         piModel("tencent/hy3", { id: "hy3" }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-202605",
-          name: "DeepSeek V4 Flash Official",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-202606",
-          name: "DeepSeek V4 Pro Official",
-        }),
-        piModel("deepseek/deepseek-v4-flash-vision-exp", {
-          id: "deepseek/deepseek-v4-flash-vision-exp",
-        }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-0731",
-          name: "DeepSeek V4 Flash 0731 GA",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-0813",
-          name: "DeepSeek V4 Pro 0813 GA",
-        }),
-        piModel("deepseek/deepseek-v4-flash", { id: "deepseek-v4-flash" }),
-        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash-vision-exp", {
+            id: "deepseek/deepseek-v4-flash-vision-exp",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-0731",
+            name: "DeepSeek V4 Flash 0731 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-0813",
+            name: "DeepSeek V4 Pro 0813 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
         piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
         piModel("zai/glm-5.3", { id: "glm-5.3" }),
         piModel("zai/glm-5.2", { id: "glm-5.2" }),
@@ -1820,9 +1940,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("zai/glm-5", { id: "glm-5" }),
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
+          thinkingProfile: "offUnsupported",
         }),
         piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
-        piModel("moonshotai/kimi-k2.7-code", { id: "kimi-k2.7-code" }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
         piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
         piModel("moonshotai/kimi-k2.5", { id: "kimi-k2.5" }),
         piModel("minimax/minimax-m3", { id: "minimax-m3" }),
@@ -1847,28 +1971,66 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [
         piModel("tencent/hy4-preview", { id: "hy4-preview" }),
         piModel("tencent/hy3", { id: "hy3" }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-202605",
-          name: "DeepSeek V4 Flash Official",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-202606",
-          name: "DeepSeek V4 Pro Official",
-        }),
-        piModel("deepseek/deepseek-v4-flash-vision-exp", {
-          id: "deepseek/deepseek-v4-flash-vision-exp",
-        }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash-0731",
-          name: "DeepSeek V4 Flash 0731 GA",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro-0813",
-          name: "DeepSeek V4 Pro 0813 GA",
-        }),
-        piModel("deepseek/deepseek-v4-flash", { id: "deepseek-v4-flash" }),
-        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
-        piModel("deepseek/deepseek-v3.2", { id: "deepseek-v3.2" }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash-vision-exp", {
+            id: "deepseek/deepseek-v4-flash-vision-exp",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-0731",
+            name: "DeepSeek V4 Flash 0731 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-0813",
+            name: "DeepSeek V4 Pro 0813 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v3.2", {
+            id: "deepseek-v3.2",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
         piModel("zai/glm-5.3", { id: "glm-5.3" }),
         piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
         piModel("zai/glm-5.2", { id: "glm-5.2" }),
@@ -1879,12 +2041,15 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
+          thinkingProfile: "offUnsupported",
         }),
-        piModel("moonshotai/kimi-k2.7-code", { id: "kimi-k2.7-code" }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
         piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
         piModel("moonshotai/kimi-k2.5", { id: "kimi-k2.5" }),
         piModel("minimax/minimax-m3", { id: "minimax-m3" }),
-        piModel("minimax/minimax-m2.5", { id: "minimax-m2.5" }),
         piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
         piModel("xiaomi/mimo-v2.5-pro", { id: "mimo-v2.5-pro" }),
       ],

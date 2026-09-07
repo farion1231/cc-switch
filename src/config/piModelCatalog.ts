@@ -225,15 +225,6 @@ export const piModelCatalog = {
       maxTokens: 16_384,
     },
   },
-  "minimax/minimax-m2.5": {
-    capabilities: {
-      name: "MiniMax-M2.5",
-      reasoning: true,
-      input: ["text"],
-      contextWindow: 200_000,
-      maxTokens: 131_072,
-    },
-  },
   "minimax/minimax-m2.7": {
     capabilities: {
       name: "MiniMax-M2.7",
@@ -283,7 +274,7 @@ export const piModelCatalog = {
     capabilities: {
       name: "Kimi K2.7 Code HighSpeed",
       reasoning: true,
-      input: ["text"],
+      input: ["text", "image"],
       contextWindow: 262_144,
       maxTokens: 262_144,
     },
