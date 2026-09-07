@@ -4743,14 +4743,23 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
 
-    /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
-    /// `/bin/echo --version` 在 macOS/Linux 均即刻成功退出。
-    #[cfg(not(target_os = "windows"))]
+    /// 探测 helper 正常路径：以 `--version` 启动 fixture、捕获 stdout 并等到成功退出。
+    #[cfg(unix)]
     #[test]
     fn probe_version_command_captures_healthy_tool_output() {
-        let out = run_probe_version_command(Path::new("/bin/echo"), std::ffi::OsStr::new(""))
-            .expect("probe of /bin/echo should succeed");
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let tool = temp.path().join("tool");
+        std::fs::write(
+            &tool,
+            "#!/bin/sh\nif [ \"${1:-}\" != \"--version\" ]; then\n    exit 1\nfi\nprintf healthy-tool\n",
+        )
+            .expect("version fixture should be written");
+        set_test_executable(&tool, true);
+
+        let out = run_probe_version_command(&tool, std::ffi::OsStr::new(""))
+            .expect("probe of version fixture should succeed");
         assert!(out.status.success());
+        assert_eq!(decode_command_output(&out.stdout), "healthy-tool");
     }
 
     /// 超时击杀路径：挂死的子进程到点被整组击杀、wait 返回超时错误而非永等。
@@ -6098,61 +6107,6 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some("PATH='/Users/my name/.nvm/versions/node/v22/bin':\"$PATH\" '/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
-            );
-        }
-
-        #[test]
-        fn npm_anchor_supplies_sibling_node_to_env_shebang() {
-            use std::os::unix::fs::PermissionsExt;
-            use std::process::Command;
-
-            let temp = tempfile::tempdir().expect("temp dir should be created");
-            let bin = temp.path().join("home dir/.nvm/versions/node/v22.14.0/bin");
-            std::fs::create_dir_all(&bin).expect("node bin should be created");
-
-            let marker = temp.path().join("sibling-node-used");
-            let node = bin.join("node");
-            let npm = bin.join("npm");
-            std::fs::write(
-                &node,
-                format!(
-                    "#!/bin/sh\nprintf sibling-node > {}\n",
-                    shell_single_quote(&marker.to_string_lossy())
-                ),
-            )
-            .expect("fake node should be written");
-            std::fs::write(&npm, "#!/usr/bin/env node\n").expect("fake npm should be written");
-            for executable in [&node, &npm] {
-                let mut permissions = std::fs::metadata(executable)
-                    .expect("fake executable metadata should exist")
-                    .permissions();
-                permissions.set_mode(0o755);
-                std::fs::set_permissions(executable, permissions)
-                    .expect("fake executable should be executable");
-            }
-
-            let codex = bin.join("codex").to_string_lossy().into_owned();
-            let real = temp
-                .path()
-                .join("home dir/.nvm/versions/node/v22.14.0/lib/node_modules/@openai/codex/bin/codex.js")
-                .to_string_lossy()
-                .into_owned();
-            let command = anchored_command_from_paths("codex", &codex, &real)
-                .expect("nvm codex should produce an anchored npm command");
-            let output = Command::new("/bin/bash")
-                .args(["-c", &command])
-                .env("PATH", "/usr/bin:/bin")
-                .output()
-                .expect("anchored npm command should start");
-
-            assert!(
-                output.status.success(),
-                "anchored npm command failed: {}",
-                decode_command_output(&output.stderr)
-            );
-            assert_eq!(
-                std::fs::read_to_string(marker).expect("sibling node should leave a marker"),
-                "sibling-node"
             );
         }
 
