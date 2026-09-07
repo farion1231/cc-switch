@@ -702,18 +702,12 @@ mod tests {
             active.profile_config_dir.as_deref(),
             Some(dir_a.to_string_lossy().as_ref())
         );
+        // The exact shell syntax is platform-dependent (POSIX vs cmd `set`); it is
+        // covered by managed_resume_command_for_platform tests. Here we only assert
+        // the scan pipeline routes through the same builder.
         assert_eq!(
             active.resume_command.as_deref(),
-            Some(
-                format!(
-                    "CLAUDE_CONFIG_DIR={} claude --resume {}",
-                    crate::session_manager::terminal::shell_escape(
-                        dir_a.to_string_lossy().as_ref()
-                    ),
-                    crate::session_manager::terminal::shell_escape("duplicate-session")
-                )
-                .as_str()
-            )
+            Some(managed_resume_command(&dir_a, "duplicate-session").as_str())
         );
 
         let retired = duplicates
