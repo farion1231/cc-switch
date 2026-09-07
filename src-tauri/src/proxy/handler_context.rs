@@ -7,6 +7,8 @@ use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
     forwarder::{ForwardPolicy, RequestForwarder},
+    log_codes::pin as log_pin,
+    provider_router::PinnedProvider,
     server::ProxyState,
     types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
@@ -15,6 +17,15 @@ use axum::http::HeaderMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+
+/// 会话级「钉住供应商」请求头
+///
+/// 客户端把它带上即可让**这一个会话**定向到指定供应商（Claude Code 用
+/// `ANTHROPIC_CUSTOM_HEADERS` 注入即可），值为 provider id 或供应商名称。
+/// 不带、或值为空串时行为不变，仍走默认路由（当前供应商 / 故障转移队列）。
+///
+/// 这个头只在代理内部消费，由 forwarder 从出站请求里剔除，不会泄漏给上游。
+pub const PROVIDER_PIN_HEADER: &str = "x-cc-provider";
 
 /// 流式超时配置
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +85,8 @@ pub struct RequestContext {
     pub copilot_optimizer_config: CopilotOptimizerConfig,
     /// 本次请求的分类器判定结果
     pub classifier: ClassifierPlan,
+    /// 本次请求由 `x-cc-provider` 钉死了供应商
+    pub provider_pinned: bool,
 }
 
 /// 本次请求的分类器判定结果
@@ -147,6 +160,51 @@ impl RequestContext {
             session_result.client_provided
         );
 
+        // 会话级钉住：客户端显式点名了供应商，直接锁定为唯一候选。
+        let pin = headers.get(PROVIDER_PIN_HEADER).map(decode_header_value);
+        let pinned_provider = match pin.as_deref().map(str::trim).filter(|pin| !pin.is_empty()) {
+            Some(pin) => {
+                match state
+                    .provider_router
+                    .resolve_pinned_provider(app_type_str, pin)
+                    .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+                {
+                    PinnedProvider::Found(provider) => {
+                        log::info!(
+                            "[{tag}] [{code}] {PROVIDER_PIN_HEADER}={pin} → {name} ({id})",
+                            code = log_pin::RESOLVED,
+                            name = provider.name,
+                            id = provider.id,
+                        );
+                        Some(*provider)
+                    }
+                    // 这里必须硬失败。静默回落到默认供应商，等于把用户明确点名的会话
+                    // 打到另一个账号上、扣另一份额度，而客户端完全看不出来 ——
+                    // 一个拼错的名字应当当场报错，而不是变成一笔记错账。
+                    PinnedProvider::NotFound => {
+                        log::warn!(
+                            "[{tag}] [{code}] {PROVIDER_PIN_HEADER}={pin} 未匹配到任何 {app_type_str} 供应商",
+                            code = log_pin::UNKNOWN,
+                        );
+                        return Err(ProxyError::InvalidRequest(format!(
+                            "{PROVIDER_PIN_HEADER}: 未找到供应商 \"{pin}\"（{app_type_str}）"
+                        )));
+                    }
+                    PinnedProvider::Ambiguous(count) => {
+                        log::warn!(
+                            "[{tag}] [{code}] {PROVIDER_PIN_HEADER}={pin} 匹配到 {count} 个同名供应商",
+                            code = log_pin::AMBIGUOUS,
+                        );
+                        return Err(ProxyError::InvalidRequest(format!(
+                            "{PROVIDER_PIN_HEADER}: \"{pin}\" 匹配到 {count} 个同名供应商，请改用 provider id"
+                        )));
+                    }
+                }
+            }
+            None => None,
+        };
+        let provider_pinned = pinned_provider.is_some();
+
         // 分类器判定：只对 Claude 生效。claude-desktop / codex / gemini / grokbuild
         // 的入站体不是 Anthropic Messages 形态，特征签名永远不会命中，直接短路。
         let mut classifier = ClassifierPlan::default();
@@ -160,35 +218,48 @@ impl RequestContext {
             );
 
             if app_config.classifier_queue_enabled {
+                // thinking 关闭是**请求形态**的事，与谁来接这一单无关：分类器请求本来
+                // 就不需要 thinking，开着会拖到客户端硬超时、Auto Mode 直接卡住。
+                // 所以钉住时这一项照常生效，只有「换一家去接」才让位给显式指令。
                 classifier.thinking_off = app_config.classifier_force_thinking_off;
 
-                match state
-                    .provider_router
-                    .select_classifier_providers(app_type_str)
-                    .await
-                {
-                    // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
-                    // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
-                    // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
-                    Ok(Some(selection)) if !selection.providers.is_empty() => {
-                        log::info!(
-                            "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
-                            selection.providers.len(),
-                            selection
-                                .providers
-                                .first()
-                                .map(|p| p.name.as_str())
-                                .unwrap_or("-")
-                        );
-                        classifier.routed = true;
-                        classifier.models = Arc::new(selection.models);
-                        classifier_providers = Some(selection.providers);
-                    }
-                    Ok(_) => {
-                        log::info!("[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链");
-                    }
-                    Err(e) => {
-                        log::warn!("[{tag}] [CLS-003] 读取分类器队列失败: {e}, 回落到常规路由链");
+                if provider_pinned {
+                    log::info!(
+                        "[{tag}] [CLS-003] 会话已钉住供应商，跳过分类器队列选路（thinking 关闭仍生效）"
+                    );
+                } else {
+                    match state
+                        .provider_router
+                        .select_classifier_providers(app_type_str)
+                        .await
+                    {
+                        // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
+                        // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
+                        // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
+                        Ok(Some(selection)) if !selection.providers.is_empty() => {
+                            log::info!(
+                                "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
+                                selection.providers.len(),
+                                selection
+                                    .providers
+                                    .first()
+                                    .map(|p| p.name.as_str())
+                                    .unwrap_or("-")
+                            );
+                            classifier.routed = true;
+                            classifier.models = Arc::new(selection.models);
+                            classifier_providers = Some(selection.providers);
+                        }
+                        Ok(_) => {
+                            log::info!(
+                                "[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链"
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[{tag}] [CLS-003] 读取分类器队列失败: {e}, 回落到常规路由链"
+                            );
+                        }
                     }
                 }
             }
@@ -196,9 +267,11 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = match classifier_providers {
-            Some(list) => list,
-            None => state
+        let providers = match (pinned_provider, classifier_providers) {
+            // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
+            (Some(provider), _) => vec![provider],
+            (None, Some(list)) => list,
+            (None, None) => state
                 .provider_router
                 .select_providers(app_type_str)
                 .await
@@ -272,6 +345,7 @@ impl RequestContext {
             optimizer_config,
             copilot_optimizer_config,
             classifier,
+            provider_pinned,
         })
     }
 
@@ -344,6 +418,7 @@ impl RequestContext {
                 classifier_thinking_off: self.classifier.thinking_off,
                 classifier_routed: self.classifier.routed,
                 classifier_models: self.classifier.models.clone(),
+                provider_pinned: self.provider_pinned,
             },
         )
     }
@@ -381,6 +456,48 @@ impl RequestContext {
                 idle_timeout: 0,
             }
         }
+    }
+}
+
+/// 把请求头的原始字节解成字符串
+///
+/// 不能用 `HeaderValue::to_str()`：它只接受可见 ASCII，带中文或重音的供应商名
+/// 会被判成 `Err`，再 `.ok()` 一下就和「压根没带这个头」无法区分 —— 于是静默
+/// 回落到默认供应商，正是钉住这个特性最要杜绝的那种记错账。
+///
+/// 所以这里自己解码，且**不会失败**：先按 UTF-8（curl / 自定义客户端直传原始
+/// 字节），失败再按 latin-1 逐字节（Node 系客户端按 latin-1 落字节，例如 Claude
+/// Code 的 `ANTHROPIC_CUSTOM_HEADERS`）。哪怕解出来是一串乱码，也会走到「未找到
+/// 供应商」的硬失败分支，而不是变成一次悄悄换家。
+fn decode_header_value(value: &axum::http::HeaderValue) -> String {
+    match std::str::from_utf8(value.as_bytes()) {
+        Ok(text) => text.to_string(),
+        Err(_) => value.as_bytes().iter().map(|&b| b as char).collect(),
+    }
+}
+
+#[cfg(test)]
+mod header_decode_tests {
+    use super::decode_header_value;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn decodes_utf8_and_latin1_without_ever_dropping_the_value() {
+        // 可见 ASCII：老路径也能过
+        assert_eq!(
+            decode_header_value(&HeaderValue::from_static("Provider B")),
+            "Provider B"
+        );
+
+        // UTF-8 原始字节（curl / 自定义客户端）：`to_str()` 在这里会返回 Err，
+        // 而静默丢弃就等于悄悄换家
+        let utf8 = HeaderValue::from_bytes("我的备用渠道".as_bytes()).expect("utf-8 header value");
+        assert!(utf8.to_str().is_err(), "前提：to_str 确实吃不下非 ASCII");
+        assert_eq!(decode_header_value(&utf8), "我的备用渠道");
+
+        // latin-1 字节（Node 系客户端按 latin-1 落字节，如 ANTHROPIC_CUSTOM_HEADERS）
+        let latin1 = HeaderValue::from_bytes(&[b'C', b'a', b'f', 0xE9]).expect("latin-1 header");
+        assert_eq!(decode_header_value(&latin1), "Café");
     }
 }
 

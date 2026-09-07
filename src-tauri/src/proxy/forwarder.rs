@@ -205,6 +205,8 @@ pub struct ForwardPolicy {
     pub classifier_routed: bool,
     /// provider_id -> 出站模型名覆写；仅在 `classifier_routed` 时非空
     pub classifier_models: std::sync::Arc<std::collections::HashMap<String, String>>,
+    /// 本次由 `x-cc-provider` 钉住供应商 —— 成功后**不得**改写「当前供应商」
+    pub provider_pinned: bool,
 }
 
 impl RequestForwarder {
@@ -305,8 +307,13 @@ impl RequestForwarder {
     /// 分类器请求走的是侧信道队列，绝不能改写用户在首页选定的当前供应商 ——
     /// 否则每执行一次 Auto Mode 的 Bash 命令，UI / 托盘 / settings 就会被切到
     /// 廉价的分类器供应商，并把 failover_count 污染成噪声。
+    ///
+    /// `x-cc-provider` 钉住的请求同理：那是「这一个会话走这家」，不是「以后都走
+    /// 这家」。让一个后台会话反向改写首页选择，是纯粹的意外。
     fn should_sync_current_provider(&self, provider_id: &str) -> bool {
-        !self.policy.classifier_routed && self.current_provider_id_at_start.as_str() != provider_id
+        !self.policy.classifier_routed
+            && !self.policy.provider_pinned
+            && self.current_provider_id_at_start.as_str() != provider_id
     }
 
     /// 成功回源后是否应把 `current_providers`（即 status.active_targets）刷成实际使用的 provider
@@ -319,7 +326,7 @@ impl RequestForwarder {
     /// 注意这里**不能**复用 `should_sync_current_provider`：那个在「实际 provider == 起始
     /// provider」时也返回 false，会导致代理刚启动、尚未发生任何切换时 active_targets 永远为空。
     fn should_update_active_target(&self) -> bool {
-        !self.policy.classifier_routed
+        !self.policy.classifier_routed && !self.policy.provider_pinned
     }
 
     async fn record_success_result(
@@ -587,7 +594,12 @@ impl RequestForwarder {
             // total_requests / last_request_at / active_connections 已由
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
             // 新「正在尝试哪个 provider」的展示字段。
-            {
+            //
+            // 与 active_targets 共用同一道闸门：面板在 active_targets 为空时正是
+            // 回落到这两个字段显示「当前 Provider」，不挡住的话，侧信道供应商
+            // （分类器队列 / 会话钉住）照样会顶到面板上 —— 尤其是代理刚起、
+            // 首个请求就是侧信道请求时，active_targets 必然为空。
+            if self.should_update_active_target() {
                 let mut status = self.status.write().await;
                 status.current_provider = Some(provider.name.clone());
                 status.current_provider_id = Some(provider.id.clone());
@@ -2077,6 +2089,11 @@ impl RequestForwarder {
                         ordered_headers.append(key.clone(), hv);
                     }
                 }
+                continue;
+            }
+
+            // --- 本地路由控制头 — 只在代理内部消费，不出网 ---
+            if key_str.eq_ignore_ascii_case(super::handler_context::PROVIDER_PIN_HEADER) {
                 continue;
             }
 
@@ -3874,6 +3891,12 @@ mod tests {
         fwd.policy.classifier_routed = true;
         assert!(!fwd.should_sync_current_provider("cheap"));
         assert!(!fwd.should_sync_current_provider("main"));
+
+        // 会话钉住同理：那是「这一个会话走这家」，不是「以后都走这家」
+        fwd.policy.classifier_routed = false;
+        fwd.policy.provider_pinned = true;
+        assert!(!fwd.should_sync_current_provider("cheap"));
+        assert!(!fwd.should_sync_current_provider("main"));
     }
 
     #[test]
@@ -3887,6 +3910,12 @@ mod tests {
 
         // 分类器请求走侧信道，不得污染 UI 上的「当前正在用哪家」标记
         fwd.policy.classifier_routed = true;
+        assert!(!fwd.should_update_active_target());
+
+        // 钉住的会话同样是侧信道：面板在 active_targets 为空时会回落到
+        // status.current_provider，那个字段也归这道闸门管
+        fwd.policy.classifier_routed = false;
+        fwd.policy.provider_pinned = true;
         assert!(!fwd.should_update_active_target());
     }
 

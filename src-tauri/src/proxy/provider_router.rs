@@ -33,6 +33,20 @@ pub struct ClassifierSelection {
     pub models: HashMap<String, String>,
 }
 
+/// `x-cc-provider` 的解析结果
+#[derive(Debug, Clone)]
+pub enum PinnedProvider {
+    /// 唯一命中
+    ///
+    /// `Box` 是为了让这个枚举保持小尺寸：`Provider` 上千字节，裸放进来会让
+    /// 每次返回（含两个空手而归的分支）都搬运一大坨栈内存。
+    Found(Box<Provider>),
+    /// 该 app 下既没有 id 也没有名称匹配的供应商
+    NotFound,
+    /// 名称匹配到多个（携带命中个数，供调用方组织报错信息）
+    Ambiguous(usize),
+}
+
 /// 供应商路由器
 pub struct ProviderRouter {
     /// 数据库连接
@@ -204,6 +218,40 @@ impl ProviderRouter {
         }
 
         Ok(Some(ClassifierSelection { providers, models }))
+    }
+
+    /// 解析请求头钉住的供应商（会话级定向）
+    ///
+    /// 匹配顺序：provider id 全等 → 供应商名称忽略大小写全等。id 唯一而名称不唯一，
+    /// 所以名称撞车时返回 `Ambiguous` 而不是随手挑一个 —— 挑错家等于把这个会话的
+    /// 消耗记到另一个账号头上，且客户端毫不知情。
+    ///
+    /// 命中结果由调用方作为**唯一**候选使用：钉住是用户的显式选择，与「故障转移
+    /// 关闭时只用当前供应商」同源，因此这里不查熔断器，也不做故障转移资格过滤。
+    pub fn resolve_pinned_provider(
+        &self,
+        app_type: &str,
+        pin: &str,
+    ) -> Result<PinnedProvider, AppError> {
+        let all_providers = self.db.get_all_providers(app_type)?;
+
+        if let Some(provider) = all_providers.get(pin) {
+            return Ok(PinnedProvider::Found(Box::new(provider.clone())));
+        }
+
+        let mut matched = all_providers
+            .values()
+            .filter(|provider| provider.name.trim().eq_ignore_ascii_case(pin));
+        let Some(first) = matched.next() else {
+            return Ok(PinnedProvider::NotFound);
+        };
+
+        let duplicates = matched.count();
+        if duplicates > 0 {
+            return Ok(PinnedProvider::Ambiguous(duplicates + 1));
+        }
+
+        Ok(PinnedProvider::Found(Box::new(first.clone())))
     }
 
     /// 请求执行前获取熔断器“放行许可”
@@ -477,6 +525,72 @@ mod tests {
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "a");
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_pinned_provider_matches_id_then_name() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // id 全等：钉住的一定不是「当前供应商」，这正是这个特性的意义
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "b").unwrap(),
+            PinnedProvider::Found(provider) if provider.id == "b"
+        ));
+
+        // 名称匹配忽略大小写（请求头值的首尾空白在调用方已剪掉）
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "provider b").unwrap(),
+            PinnedProvider::Found(provider) if provider.id == "b"
+        ));
+
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "nope").unwrap(),
+            PinnedProvider::NotFound
+        ));
+
+        // 不跨 app 串味：claude 的供应商不该被 codex 的请求钉中
+        assert!(matches!(
+            router.resolve_pinned_provider("codex", "b").unwrap(),
+            PinnedProvider::NotFound
+        ));
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_pinned_provider_reports_duplicate_names() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let first = Provider::with_id("a".to_string(), "Shared".to_string(), json!({}), None);
+        let second = Provider::with_id("b".to_string(), "Shared".to_string(), json!({}), None);
+        db.save_provider("claude", &first).unwrap();
+        db.save_provider("claude", &second).unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 同名撞车必须报错而不是随手挑一个：挑错家 = 把消耗记到另一个账号头上
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "shared").unwrap(),
+            PinnedProvider::Ambiguous(2)
+        ));
+
+        // id 永远唯一，是撞车时的出路
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "b").unwrap(),
+            PinnedProvider::Found(provider) if provider.id == "b"
+        ));
     }
 
     #[tokio::test]

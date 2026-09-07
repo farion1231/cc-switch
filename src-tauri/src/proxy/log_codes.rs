@@ -6,6 +6,7 @@
 //! - FWD: Forwarder (转发器)
 //! - FO: Failover (故障转移)
 //! - CLS: Classifier queue (分类器队列)
+//! - PIN: Provider pin (会话级钉住供应商)
 //! - RSP: Response (响应处理)
 //! - USG: Usage (使用量)
 
@@ -53,6 +54,13 @@ pub mod cls {
     pub const QUEUE_ROUTED: &str = "CLS-002";
     pub const QUEUE_FALLBACK: &str = "CLS-003";
     pub const THINKING_DISABLED: &str = "CLS-004";
+}
+
+/// 会话级钉住供应商日志码
+pub mod pin {
+    pub const RESOLVED: &str = "PIN-001";
+    pub const UNKNOWN: &str = "PIN-002";
+    pub const AMBIGUOUS: &str = "PIN-003";
 }
 
 /// 响应处理日志码
