@@ -3320,6 +3320,83 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Token Market",
+    websiteUrl: "https://www.tokensmarket.ai",
+    apiKeyUrl: "https://www.tokensmarket.ai/console",
+    settingsConfig: {
+      baseUrl: "https://api.tokensmarket.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: {
+            input: 0.5,
+            output: 2.5,
+            cacheRead: 0.05,
+            cacheWrite: 0.625,
+          },
+        },
+        {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1050000,
+          maxTokens: 128000,
+          cost: {
+            input: 0.03,
+            output: 0.18,
+            cacheRead: 0.003,
+            cacheWrite: 0.0375,
+          },
+        },
+        {
+          id: "gemini-3.5-flash",
+          name: "Gemini 3.5 Flash",
+          reasoning: true,
+          input: ["text", "image", "audio", "video"],
+          contextWindow: 1048576,
+          maxTokens: 65536,
+          cost: {
+            input: 0.225,
+            output: 1.35,
+            cacheRead: 0.0225,
+            cacheWrite: 0.225,
+          },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "tokensmarket",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "tokensmarket/claude-sonnet-5",
+        fallbacks: [
+          "tokensmarket/gpt-5.6-luna",
+          "tokensmarket/gemini-3.5-flash",
+        ],
+      },
+      modelCatalog: {
+        "tokensmarket/claude-sonnet-5": { alias: "Sonnet" },
+        "tokensmarket/gpt-5.6-luna": { alias: "Luna" },
+        "tokensmarket/gemini-3.5-flash": { alias: "Gemini Flash" },
+      },
+    },
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

@@ -1349,6 +1349,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "Token Market",
+    websiteUrl: "https://www.tokensmarket.ai",
+    apiKeyUrl: "https://www.tokensmarket.ai/console",
+    category: "aggregator",
+    baseUrl: "https://api.tokensmarket.ai",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5",
+      "claude-opus-5",
+      "claude-haiku-4-5",
+      true,
+    ),
+    endpointCandidates: ["https://api.tokensmarket.ai"],
+    icon: "tokensmarket",
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

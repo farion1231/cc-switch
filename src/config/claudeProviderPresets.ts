@@ -1533,6 +1533,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "Token Market",
+    websiteUrl: "https://www.tokensmarket.ai",
+    apiKeyUrl: "https://www.tokensmarket.ai/console",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.tokensmarket.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.tokensmarket.ai"],
+    modelsUrl: "https://api.tokensmarket.ai/v1/models",
+    icon: "tokensmarket",
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

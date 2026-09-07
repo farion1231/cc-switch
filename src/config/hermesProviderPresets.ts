@@ -1167,6 +1167,46 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Token Market",
+    websiteUrl: "https://www.tokensmarket.ai",
+    apiKeyUrl: "https://www.tokensmarket.ai/console",
+    settingsConfig: {
+      name: "tokensmarket",
+      base_url: "https://api.tokensmarket.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          context_length: 1000000,
+        },
+        {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          context_length: 1050000,
+        },
+        {
+          id: "gemini-3.5-flash",
+          name: "Gemini 3.5 Flash",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "tokensmarket",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { default: "claude-sonnet-5", provider: "tokensmarket" },
+    },
+  },
+  {
     name: "DeepSeek",
     nameKey: "providerForm.presets.deepseek",
     websiteUrl: "https://platform.deepseek.com",

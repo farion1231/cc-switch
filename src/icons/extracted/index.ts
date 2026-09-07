@@ -27,6 +27,7 @@ import _subrouter from "./subrouter.svg?url";
 import _sudocode from "./sudocode.png";
 import _sudocodeUs from "./sudocode-us.png";
 import _teamorouter from "./TeamoRouter-icon-dark.png";
+import _tokensmarket from "./tokensmarket.svg?url";
 import _unity2 from "./unity2.png";
 import _xycai from "./xycai-icon.png";
 import _zetaapi from "./zetaapi-icon.png";
@@ -137,6 +138,7 @@ export const iconUrls: Record<string, string> = {
   sudocode: _sudocode,
   "sudocode-us": _sudocodeUs,
   teamorouter: _teamorouter,
+  tokensmarket: _tokensmarket,
   unity2: _unity2,
   xycai: _xycai,
   zetaapi: _zetaapi,
