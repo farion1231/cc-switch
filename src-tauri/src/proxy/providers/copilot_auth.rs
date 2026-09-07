@@ -1994,6 +1994,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cached_vendor_fallback_is_independent_of_codex_transport_filter() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+        let model = |endpoints: &[&str]| CopilotModel {
+            id: "claude-opus-4.7".to_string(),
+            name: "Claude Opus 4.7".to_string(),
+            vendor: "Anthropic".to_string(),
+            model_picker_enabled: false,
+            context_window: Some(1_000_000),
+            supported_endpoints: endpoints
+                .iter()
+                .map(|endpoint| endpoint.to_string())
+                .collect(),
+        };
+        manager.copilot_models.write().await.extend([
+            ("messages-only".to_string(), vec![model(&["/v1/messages"])]),
+            ("no-metadata".to_string(), vec![model(&[])]),
+            (
+                "chat-capable".to_string(),
+                vec![model(&["/chat/completions"])],
+            ),
+        ]);
+
+        for account in ["messages-only", "no-metadata"] {
+            assert!(manager
+                .fetch_models_for_account(account)
+                .await
+                .unwrap()
+                .is_empty());
+            assert_eq!(
+                manager
+                    .get_model_vendor_for_account(account, "claude-opus-4-8")
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("Anthropic"),
+                "{account}"
+            );
+            for format in [
+                CodexCopilotApiFormat::Auto,
+                CodexCopilotApiFormat::OpenaiChat,
+                CodexCopilotApiFormat::OpenaiResponses,
+            ] {
+                assert_eq!(
+                    manager
+                        .resolve_model_for_account(account, "claude-opus-4-8", format)
+                        .await
+                        .unwrap(),
+                    None,
+                    "{account}: {format:?}"
+                );
+            }
+        }
+
+        let resolved = manager
+            .resolve_model_for_account(
+                "chat-capable",
+                "claude-opus-4-8",
+                CodexCopilotApiFormat::Auto,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.id, "claude-opus-4.7");
+        assert_eq!(
+            resolved.transport,
+            Some(super::super::copilot_model_map::CopilotTransport {
+                protocol: super::super::copilot_model_map::CopilotProtocol::Chat,
+                endpoint: "/chat/completions".to_string(),
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn test_get_api_endpoint_returns_cached_value() {
         let temp_dir = tempdir().unwrap();
         let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());

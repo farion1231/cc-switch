@@ -131,19 +131,27 @@ fn dashes_to_dot_in_last_version(id: &str) -> Option<String> {
 /// 返回 `None` 表示无需变换或无可降级的 family 候选（保留原 ID 让上游决定，
 /// 让用户拿到明确的 `model_not_supported` 而非被静默替换）。
 pub fn resolve_against_models(client_id: &str, models: &[CopilotModel]) -> Option<String> {
-    match_copilot_model(client_id, models).and_then(|matched| matched.replacement_id)
+    match_copilot_model(client_id, models, None).and_then(|matched| matched.replacement_id)
 }
 
 pub fn resolve_model(client_id: &str, models: &[CopilotModel]) -> Option<ResolvedCopilotModel> {
-    resolve_model_with_format(client_id, models, CodexCopilotApiFormat::Auto)
+    // Legacy/vendor lookups must not filter out models without Codex transports.
+    let model = match_copilot_model(client_id, models, None)?.model;
+    Some(ResolvedCopilotModel {
+        id: model.id.clone(),
+        vendor: model.vendor.clone(),
+        transport: transport_for(model, CodexCopilotApiFormat::Auto),
+    })
 }
 
+/// Only family fallback is transport-filtered; exact matches retain their
+/// identity even when the requested format has no supported transport.
 pub fn resolve_model_with_format(
     client_id: &str,
     models: &[CopilotModel],
     api_format: CodexCopilotApiFormat,
 ) -> Option<ResolvedCopilotModel> {
-    let model = match_copilot_model(client_id, models)?.model;
+    let model = match_copilot_model(client_id, models, Some(api_format))?.model;
     Some(ResolvedCopilotModel {
         id: model.id.clone(),
         vendor: model.vendor.clone(),
@@ -161,6 +169,7 @@ struct CopilotModelMatch<'a> {
 fn match_copilot_model<'a>(
     client_id: &str,
     models: &'a [CopilotModel],
+    fallback_format: Option<CodexCopilotApiFormat>,
 ) -> Option<CopilotModelMatch<'a>> {
     let normalized = normalize_to_copilot_id(client_id);
     let target = normalized.as_deref().unwrap_or(client_id);
@@ -174,7 +183,7 @@ fn match_copilot_model<'a>(
         });
     }
 
-    let fallback = family_fallback(target, models)?;
+    let fallback = family_fallback(target, models, fallback_format)?;
     let model = models
         .iter()
         .find(|model| model.id.eq_ignore_ascii_case(&fallback))?;
@@ -242,7 +251,11 @@ fn extract_major_minor(id: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
-fn family_fallback(target: &str, models: &[CopilotModel]) -> Option<String> {
+fn family_fallback(
+    target: &str,
+    models: &[CopilotModel],
+    api_format: Option<CodexCopilotApiFormat>,
+) -> Option<String> {
     let family = detect_family(target)?;
     let want_1m = target.ends_with("-1m");
 
@@ -252,6 +265,15 @@ fn family_fallback(target: &str, models: &[CopilotModel]) -> Option<String> {
             .filter(|m| {
                 let lower = m.id.to_ascii_lowercase();
                 lower.contains(family) && lower.ends_with("-1m") == require_1m
+            })
+            .filter(|m| {
+                api_format.is_none_or(|format| {
+                    // Duplicate IDs resolve to their first catalog metadata.
+                    models
+                        .iter()
+                        .find(|model| model.id.eq_ignore_ascii_case(&m.id))
+                        .is_some_and(|model| transport_for(model, format).is_some())
+                })
             })
             .filter_map(|m| extract_major_minor(&m.id).map(|v| (m, v)))
             .max_by_key(|(_, v)| *v)
@@ -394,6 +416,15 @@ mod tests {
         }
     }
 
+    fn model_with_endpoints(id: &str, endpoints: &[&str]) -> CopilotModel {
+        let mut model = model(id);
+        model.supported_endpoints = endpoints
+            .iter()
+            .map(|endpoint| endpoint.to_string())
+            .collect();
+        model
+    }
+
     #[test]
     fn resolve_exact_match_after_normalize() {
         let models = vec![
@@ -428,10 +459,210 @@ mod tests {
     }
 
     #[test]
+    fn resolve_chat_family_fallback_skips_messages_only_latest() {
+        let mut latest = model("claude-opus-4.7");
+        latest.supported_endpoints = vec!["/v1/messages".to_string()];
+        let mut compatible = model("claude-opus-4.6");
+        compatible.supported_endpoints = vec!["/chat/completions".to_string()];
+
+        let resolved = resolve_model_with_format(
+            "claude-opus-4.8",
+            &[latest, compatible],
+            CodexCopilotApiFormat::OpenaiChat,
+        )
+        .unwrap();
+
+        assert_eq!(resolved.id, "claude-opus-4.6");
+        assert_eq!(
+            resolved.transport,
+            Some(CopilotTransport {
+                protocol: CopilotProtocol::Chat,
+                endpoint: "/chat/completions".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_format_family_fallback_selects_highest_compatible_version() {
+        for (format, protocol, endpoint, incompatible_endpoint) in [
+            (
+                CodexCopilotApiFormat::OpenaiChat,
+                CopilotProtocol::Chat,
+                "/v1/chat/completions",
+                "/responses",
+            ),
+            (
+                CodexCopilotApiFormat::OpenaiResponses,
+                CopilotProtocol::Responses,
+                "/v1/responses",
+                "/chat/completions",
+            ),
+        ] {
+            let models = [
+                model_with_endpoints("claude-opus-4.9", &[incompatible_endpoint]),
+                model_with_endpoints("claude-opus-4.8", &[endpoint]),
+                model_with_endpoints("claude-opus-4.6", &[endpoint]),
+            ];
+            let resolved = resolve_model_with_format("claude-opus-4-10", &models, format).unwrap();
+
+            assert_eq!(resolved.id, "claude-opus-4.8", "{format:?}");
+            assert_eq!(
+                resolved.transport,
+                Some(CopilotTransport {
+                    protocol,
+                    endpoint: endpoint.to_string(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn auto_family_fallback_skips_unsupported_models_without_changing_legacy_resolution() {
+        let models = [
+            model_with_endpoints("claude-opus-4.9", &["/v1/messages"]),
+            model("claude-opus-4.8"),
+            model_with_endpoints("claude-opus-4.7", &["/chat/completions"]),
+            model_with_endpoints("claude-opus-4.6", &["/responses"]),
+        ];
+        let resolved =
+            resolve_model_with_format("claude-opus-4-10", &models, CodexCopilotApiFormat::Auto)
+                .unwrap();
+
+        assert_eq!(resolved.id, "claude-opus-4.7");
+        assert_eq!(
+            resolved.transport,
+            Some(CopilotTransport {
+                protocol: CopilotProtocol::Chat,
+                endpoint: "/chat/completions".to_string(),
+            })
+        );
+        assert_eq!(
+            resolve_against_models("claude-opus-4-10", &models).as_deref(),
+            Some("claude-opus-4.9")
+        );
+        let legacy = resolve_model("claude-opus-4-10", &models).unwrap();
+        assert_eq!(legacy.id, "claude-opus-4.9");
+        assert_eq!(legacy.vendor, "anthropic");
+        assert_eq!(legacy.transport, None);
+    }
+
+    #[test]
+    fn protocol_family_fallback_returns_none_without_compatible_candidates() {
+        for (format, incompatible_endpoint) in [
+            (CodexCopilotApiFormat::Auto, "/v1/messages"),
+            (CodexCopilotApiFormat::OpenaiChat, "/responses"),
+            (CodexCopilotApiFormat::OpenaiResponses, "/chat/completions"),
+        ] {
+            let models = [
+                model_with_endpoints("claude-opus-4.9", &[incompatible_endpoint]),
+                model("claude-opus-4.8"),
+                model_with_endpoints("claude-sonnet-4.6", &["/responses", "/chat/completions"]),
+                model_with_endpoints("gpt-5.6", &["/responses", "/chat/completions"]),
+            ];
+            for requested in [
+                "claude-opus-4-10",
+                "claude-haiku-4.5",
+                "gpt-5.7",
+                "unknown",
+                "",
+            ] {
+                assert_eq!(
+                    resolve_model_with_format(requested, &models, format),
+                    None,
+                    "{requested}: {format:?}"
+                );
+            }
+            assert_eq!(
+                resolve_model_with_format("claude-opus-4.8", &[], format),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn exact_unsupported_models_keep_normalized_identity_and_first_metadata() {
+        for (id, requests) in [
+            (
+                "claude-opus-4.7",
+                ["claude-opus-4.7", "CLAUDE-OPUS-4.7", "CLAUDE-OPUS-4-7"],
+            ),
+            (
+                "claude-opus-4.7-1m",
+                [
+                    "claude-opus-4.7-1m",
+                    "CLAUDE-OPUS-4.7-1M",
+                    "claude-opus-4-7[1M]",
+                ],
+            ),
+        ] {
+            for (format, unsupported) in [
+                (CodexCopilotApiFormat::Auto, vec!["/v1/messages"]),
+                (CodexCopilotApiFormat::Auto, vec![]),
+                (CodexCopilotApiFormat::OpenaiChat, vec!["/responses"]),
+                (
+                    CodexCopilotApiFormat::OpenaiResponses,
+                    vec!["/chat/completions"],
+                ),
+            ] {
+                let mut duplicate = model_with_endpoints(
+                    &id.to_ascii_uppercase(),
+                    &["/responses", "/chat/completions"],
+                );
+                duplicate.vendor = "second".to_string();
+                let models = [
+                    model_with_endpoints(id, &unsupported),
+                    duplicate,
+                    model_with_endpoints("claude-opus-4.6", &["/responses", "/chat/completions"]),
+                ];
+                for requested in requests {
+                    let resolved = resolve_model_with_format(requested, &models, format).unwrap();
+                    assert_eq!(resolved.id, id, "{requested}: {format:?}");
+                    assert_eq!(resolved.vendor, "anthropic");
+                    assert_eq!(resolved.transport, None);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn protocol_family_fallback_prefers_compatible_explicit_one_m_before_base() {
+        for format in [
+            CodexCopilotApiFormat::Auto,
+            CodexCopilotApiFormat::OpenaiChat,
+            CodexCopilotApiFormat::OpenaiResponses,
+        ] {
+            let mut natural =
+                model_with_endpoints("claude-opus-4.8", &["/responses", "/chat/completions"]);
+            natural.context_window = Some(1_048_576);
+            let mut models = [
+                model_with_endpoints("claude-opus-4.9-1m", &["/v1/messages"]),
+                model_with_endpoints("claude-opus-4.6-1m", &["/responses", "/chat/completions"]),
+                natural,
+            ];
+            assert_eq!(
+                resolve_model_with_format("claude-opus-4-10[1M]", &models, format)
+                    .unwrap()
+                    .id,
+                "claude-opus-4.6-1m",
+                "{format:?}"
+            );
+            models[1].supported_endpoints.clear();
+            assert_eq!(
+                resolve_model_with_format("claude-opus-4-10[1M]", &models, format)
+                    .unwrap()
+                    .id,
+                "claude-opus-4.8",
+                "{format:?}"
+            );
+        }
+    }
+
+    #[test]
     fn ordinary_family_fallback_keeps_naturally_large_context_models() {
-        let mut natural = model("claude-opus-4.7");
+        let endpoints = ["/responses", "/chat/completions"];
+        let mut natural = model_with_endpoints("claude-opus-4.7", &endpoints);
         natural.context_window = Some(1_048_576);
-        let mut explicit = model("claude-opus-4.8-1m");
+        let mut explicit = model_with_endpoints("claude-opus-4.8-1m", &endpoints);
         explicit.context_window = Some(1_048_576);
         let models = [natural, explicit];
 
@@ -451,6 +682,25 @@ mod tests {
             resolve_model("claude-opus-4-5[1m]", &models).unwrap().id,
             "claude-opus-4.8-1m"
         );
+        for format in [
+            CodexCopilotApiFormat::Auto,
+            CodexCopilotApiFormat::OpenaiChat,
+            CodexCopilotApiFormat::OpenaiResponses,
+        ] {
+            for (requested, expected) in [
+                ("claude-opus-4-5", "claude-opus-4.7"),
+                ("claude-opus-4.7", "claude-opus-4.7"),
+                ("claude-opus-4-5[1m]", "claude-opus-4.8-1m"),
+            ] {
+                assert_eq!(
+                    resolve_model_with_format(requested, &models, format)
+                        .unwrap()
+                        .id,
+                    expected,
+                    "{requested}: {format:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -551,6 +801,39 @@ mod tests {
     }
 
     #[test]
+    fn protocol_family_fallback_uses_first_duplicate_metadata_for_eligibility() {
+        for (first_endpoint, duplicate_endpoint, expected_id) in [
+            ("/v1/messages", "/chat/completions", "claude-opus-4.6"),
+            ("/chat/completions", "/v1/messages", "claude-opus-4.7"),
+        ] {
+            let mut first = model("claude-opus-4.7");
+            first.supported_endpoints = vec![first_endpoint.to_string()];
+            let mut duplicate = model("CLAUDE-OPUS-4.7");
+            duplicate.vendor = "second".to_string();
+            duplicate.supported_endpoints = vec![duplicate_endpoint.to_string()];
+            let mut older = model("claude-opus-4.6");
+            older.supported_endpoints = vec!["/chat/completions".to_string()];
+            let models = [first, duplicate, older];
+
+            let resolved = resolve_model_with_format(
+                "claude-opus-4.8",
+                &models,
+                CodexCopilotApiFormat::OpenaiChat,
+            )
+            .unwrap();
+            assert_eq!(resolved.id, expected_id, "{first_endpoint}");
+            assert_eq!(resolved.vendor, "anthropic");
+            assert_eq!(
+                resolved.transport,
+                Some(CopilotTransport {
+                    protocol: CopilotProtocol::Chat,
+                    endpoint: "/chat/completions".to_string(),
+                })
+            );
+        }
+    }
+
+    #[test]
     fn transport_keeps_protocol_and_endpoint_together() {
         for (endpoint, protocol) in [
             ("/responses", CopilotProtocol::Responses),
@@ -625,11 +908,26 @@ mod tests {
 
     #[test]
     fn one_m_family_fallback_accepts_natural_context_without_explicit_variant() {
-        let mut one_m = model("claude-opus-4.7");
+        let mut one_m =
+            model_with_endpoints("claude-opus-4.7", &["/responses", "/chat/completions"]);
         one_m.context_window = Some(1_000_000);
-        let resolved = resolve_model("claude-opus-4-5[1M]", &[one_m]).unwrap();
+        let models = [one_m];
+        let resolved = resolve_model("claude-opus-4-5[1M]", &models).unwrap();
 
         assert_eq!(resolved.id, "claude-opus-4.7");
+        for format in [
+            CodexCopilotApiFormat::Auto,
+            CodexCopilotApiFormat::OpenaiChat,
+            CodexCopilotApiFormat::OpenaiResponses,
+        ] {
+            assert_eq!(
+                resolve_model_with_format("claude-opus-4-5[1M]", &models, format)
+                    .unwrap()
+                    .id,
+                "claude-opus-4.7",
+                "{format:?}"
+            );
+        }
     }
 
     #[test]
