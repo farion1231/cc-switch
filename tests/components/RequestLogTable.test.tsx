@@ -4,6 +4,7 @@ import { RequestLogTable } from "@/components/usage/RequestLogTable";
 import type { UsageRangeSelection } from "@/types/usage";
 
 const useRequestLogsMock = vi.hoisted(() => vi.fn());
+const useRequestDetailMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -22,6 +23,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/lib/query/usage", () => ({
   useRequestLogs: (args: unknown) => useRequestLogsMock(args),
+  useRequestDetail: (requestId: string) => useRequestDetailMock(requestId),
 }));
 
 vi.mock("@/components/ui/button", () => ({
@@ -46,15 +48,6 @@ vi.mock("@/components/ui/select", () => ({
   SelectItem: () => null,
 }));
 
-vi.mock("@/components/ui/table", () => ({
-  Table: ({ children }: any) => <table>{children}</table>,
-  TableBody: ({ children }: any) => <tbody>{children}</tbody>,
-  TableCell: ({ children, ...props }: any) => <td {...props}>{children}</td>,
-  TableHead: ({ children, ...props }: any) => <th {...props}>{children}</th>,
-  TableHeader: ({ children }: any) => <thead>{children}</thead>,
-  TableRow: ({ children }: any) => <tr>{children}</tr>,
-}));
-
 describe("RequestLogTable", () => {
   beforeEach(() => {
     useRequestLogsMock.mockReset();
@@ -69,6 +62,68 @@ describe("RequestLogTable", () => {
         isLoading: false,
       }),
     );
+  });
+
+  it("shows cost details only on cost hover without opening a dialog from the model", async () => {
+    const log = {
+      requestId: "request-metadata",
+      providerId: "p1",
+      providerName: "Provider",
+      appType: "codex",
+      model: "gpt-5.6-sol",
+      costMultiplier: "1",
+      inputTokens: 100,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      inputCostUsd: "0.1",
+      outputCostUsd: "0.1",
+      cacheReadCostUsd: "0",
+      cacheCreationCostUsd: "0",
+      totalCostUsd: "0.2",
+      latencyMs: 1000,
+      isStreaming: true,
+      statusCode: 200,
+      createdAt: 1700000000,
+      serviceTier: "priority",
+      serviceTierSource: "request",
+      reasoningEffort: "xhigh",
+    };
+    useRequestLogsMock.mockReturnValue({
+      data: { data: [log], total: 1, page: 0, pageSize: 20 },
+      isLoading: false,
+    });
+    useRequestDetailMock.mockReturnValue({ data: log, isLoading: false });
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        rangeLabel="Today"
+        refreshIntervalMs={0}
+      />,
+    );
+    expect(screen.getByText("Fast")).toBeInTheDocument();
+    expect(screen.getByText("xhigh")).toBeInTheDocument();
+    const row = screen.getByText("gpt-5.6-sol").closest("tr")!;
+    expect(row).not.toHaveAttribute("data-state");
+    fireEvent.pointerMove(row, { pointerType: "mouse" });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    const costCell = screen.getByText("$0.2000").closest("td")!;
+    expect(costCell).toHaveAttribute("data-state", "closed");
+    fireEvent.pointerMove(costCell, { pointerType: "mouse" });
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip")).toHaveTextContent(
+        "100 × $1000.000000/M = $0.100000",
+      ),
+    );
+    fireEvent.click(costCell);
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("gpt-5.6-sol"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "usage.requestDetail" }),
+    ).not.toBeInTheDocument();
   });
 
   it("resets pagination when the dashboard range changes", async () => {

@@ -127,6 +127,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
+        "Codex temporary sessions",
+        crate::services::codex_otel::sync_pending(db),
+    );
+    merge_sync_step(
+        &mut result,
         "Gemini",
         crate::services::session_usage_gemini::sync_gemini_usage(db),
     );
@@ -167,6 +172,7 @@ pub struct DataSourceSummary {
 /// 从 JSONL 中解析出的 assistant 消息使用数据
 #[derive(Debug)]
 struct ParsedAssistantUsage {
+    metadata: crate::proxy::usage::metadata::UsageMetadata,
     message_id: String,
     model: String,
     input_tokens: u32,
@@ -560,6 +566,8 @@ fn sync_single_file(
         };
 
         let parsed = ParsedAssistantUsage {
+            metadata: crate::proxy::usage::metadata::UsageMetadata::default()
+                .with_response(message),
             message_id: msg_id.clone(),
             model: message
                 .get("model")
@@ -895,6 +903,11 @@ fn insert_session_log_entry_on_conn(
         )
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
 
+    if inserted_rows > 0 {
+        conn.execute("UPDATE proxy_request_logs SET service_tier=?2, service_tier_source=?3, reasoning_effort=?4 WHERE request_id=?1",
+            rusqlite::params![request_id, msg.metadata.service_tier, msg.metadata.service_tier_source, msg.metadata.reasoning_effort])?;
+        crate::proxy::usage::fast_pricing::repair(conn, Some(request_id))?;
+    }
     Ok(inserted_rows > 0)
 }
 
@@ -1006,6 +1019,7 @@ mod tests {
 
         // 中间条目（无 stop_reason）
         let intermediate = ParsedAssistantUsage {
+            metadata: Default::default(),
             message_id: "msg_1".to_string(),
             model: "claude-opus-4-6".to_string(),
             input_tokens: 3,
@@ -1020,6 +1034,7 @@ mod tests {
 
         // 最终条目（有 stop_reason）
         let final_entry = ParsedAssistantUsage {
+            metadata: Default::default(),
             message_id: "msg_1".to_string(),
             model: "claude-opus-4-6".to_string(),
             input_tokens: 3,
@@ -1071,6 +1086,7 @@ mod tests {
         }
 
         let msg = ParsedAssistantUsage {
+            metadata: Default::default(),
             message_id: "msg_1".to_string(),
             model: "claude-sonnet-4-5".to_string(),
             input_tokens: 100,
@@ -1094,6 +1110,39 @@ mod tests {
         })?;
         assert_eq!(count, 1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn claude_session_fast_prices_all_components_once() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let msg = ParsedAssistantUsage {
+            metadata: crate::proxy::usage::metadata::UsageMetadata::default()
+                .with_response(&serde_json::json!({"usage":{"speed":"fast"}})),
+            message_id: "fast-claude".into(),
+            model: "claude-opus-5".into(),
+            input_tokens: 1000,
+            output_tokens: 100,
+            cache_read_tokens: 2000,
+            cache_creation_tokens: 500,
+            stop_reason: None,
+            timestamp: Some("2026-09-05T10:00:00Z".into()),
+            session_id: None,
+        };
+        assert!(insert_session_log_entry_on_conn(
+            &conn,
+            "session:fast-claude",
+            &msg
+        )?);
+        assert!(!insert_session_log_entry_on_conn(
+            &conn,
+            "session:fast-claude",
+            &msg
+        )?);
+        let (tier, total):(String,String) = conn.query_row("SELECT service_tier,total_cost_usd FROM proxy_request_logs WHERE request_id='session:fast-claude'",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
+        assert_eq!(tier, "fast");
+        assert_eq!(total.parse::<Decimal>().unwrap(), Decimal::new(2325, 5));
         Ok(())
     }
 

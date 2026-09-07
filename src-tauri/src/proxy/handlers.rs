@@ -7,6 +7,7 @@
 //! - 各 handler 只保留独特的业务逻辑
 //! - Claude 的格式转换逻辑保留在此文件（用于 OpenRouter 旧接口回退）
 
+use super::usage::metadata::UsageMetadata;
 use super::{
     content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
     error_mapper::{get_error_message, map_proxy_error_to_status},
@@ -299,6 +300,7 @@ fn validate_claude_desktop_gateway_auth(
 ///
 /// 支持 OpenAI Chat Completions 和 Responses API 两种格式的转换
 struct ClaudeUsageLog {
+    metadata: UsageMetadata,
     model: String,
     request_model: String,
     outbound_model: String,
@@ -329,6 +331,7 @@ fn prepare_claude_usage_log(
         .unwrap_or_else(|| ctx.request_model.clone());
 
     Some(ClaudeUsageLog {
+        metadata: ctx.usage_metadata.clone().with_response(response),
         model,
         request_model: ctx.request_model.clone(),
         outbound_model: ctx
@@ -353,6 +356,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
         &log.model,
         &log.request_model,
         &log.outbound_model,
+        log.metadata,
         log.usage,
         log.latency_ms,
         None,
@@ -456,6 +460,7 @@ async fn handle_claude_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
+            let request_metadata = ctx.usage_metadata.clone();
             // 上游/转换层未回显模型时，优先用映射后的出站模型兜底（路由接管真值），
             // 其次才是客户端请求别名。空字符串视为缺失（转换器对无回显上游会合成 ""）。
             let fallback_model = ctx
@@ -473,6 +478,7 @@ async fn handle_claude_transform(
                 start_time,
                 Some(claude_stream_usage_event_filter),
                 move |events, first_token_ms| {
+                    let metadata = request_metadata.clone().with_stream_events(&events);
                     if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
                         let model = usage
                             .model
@@ -494,6 +500,7 @@ async fn handle_claude_transform(
                                 &model,
                                 &request_model,
                                 &outbound_model,
+                                metadata,
                                 usage,
                                 latency_ms,
                                 first_token_ms,
@@ -1240,11 +1247,13 @@ async fn handle_codex_xai_native_responses_rewrite(
                     .or_else(|| ctx.outbound_model.clone())
                     .unwrap_or_else(|| ctx.request_model.clone());
                 let request_model = ctx.request_model.clone();
+                let request_metadata = ctx.usage_metadata.clone();
                 let outbound_model = ctx
                     .outbound_model
                     .clone()
                     .unwrap_or_else(|| ctx.request_model.clone());
                 let app_type_str = ctx.app_type_str;
+                let metadata = request_metadata.with_response(&value);
                 tokio::spawn({
                     let state = state.clone();
                     let provider_id = ctx.provider.id.clone();
@@ -1258,6 +1267,7 @@ async fn handle_codex_xai_native_responses_rewrite(
                             &model,
                             &request_model,
                             &outbound_model,
+                            metadata,
                             usage,
                             latency_ms,
                             None,
@@ -1325,6 +1335,7 @@ async fn handle_codex_chat_to_responses_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
+            let request_metadata = ctx.usage_metadata.clone();
             // 接管/模型覆写场景的归因兜底：出站真值优先于客户端请求别名
             let fallback_model = ctx
                 .outbound_model
@@ -1338,6 +1349,7 @@ async fn handle_codex_chat_to_responses_transform(
                 start_time,
                 Some(codex_stream_usage_event_filter),
                 move |events, first_token_ms| {
+                    let metadata = request_metadata.clone().with_stream_events(&events);
                     let usage =
                         TokenUsage::from_codex_stream_events_auto(&events).unwrap_or_default();
                     // 上游遵守 OpenAI 语义省略 usage 时，Chat→Responses 转换器会合成一个
@@ -1370,6 +1382,7 @@ async fn handle_codex_chat_to_responses_transform(
                             &model,
                             &request_model,
                             &outbound_model,
+                            metadata,
                             usage,
                             latency_ms,
                             first_token_ms,
@@ -1445,6 +1458,7 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
+    let response_metadata = ctx.usage_metadata.clone().with_response(&chat_response);
     let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
@@ -1478,6 +1492,7 @@ async fn handle_codex_chat_to_responses_transform(
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
         let app_type_str = ctx.app_type_str;
+        let metadata = response_metadata;
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
@@ -1491,6 +1506,7 @@ async fn handle_codex_chat_to_responses_transform(
                     &model,
                     &request_model,
                     &outbound_model,
+                    metadata,
                     usage,
                     latency_ms,
                     None,
@@ -1638,11 +1654,13 @@ async fn handle_codex_anthropic_to_responses_transform(
             .or_else(|| ctx.outbound_model.clone())
             .unwrap_or_else(|| ctx.request_model.clone());
         let request_model = ctx.request_model.clone();
+        let request_metadata = ctx.usage_metadata.clone();
         let outbound_model = ctx
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
         let app_type_str = ctx.app_type_str;
+        let metadata = request_metadata.with_response(&responses_response);
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
@@ -1656,6 +1674,7 @@ async fn handle_codex_anthropic_to_responses_transform(
                     &model,
                     &request_model,
                     &outbound_model,
+                    metadata,
                     usage,
                     latency_ms,
                     None,
@@ -1705,6 +1724,7 @@ fn build_codex_anthropic_sse_response(
         let state = state.clone();
         let provider_id = ctx.provider.id.clone();
         let request_model = ctx.request_model.clone();
+        let request_metadata = ctx.usage_metadata.clone();
         let fallback_model = ctx
             .outbound_model
             .clone()
@@ -1717,6 +1737,7 @@ fn build_codex_anthropic_sse_response(
             start_time,
             Some(codex_stream_usage_event_filter),
             move |events, first_token_ms| {
+                let metadata = request_metadata.clone().with_stream_events(&events);
                 let usage = TokenUsage::from_codex_stream_events_auto(&events).unwrap_or_default();
                 if !usage.has_billable_tokens() {
                     log::debug!("[Codex] Anthropic streaming response usage is all-zero or missing, skipping usage recording");
@@ -1743,6 +1764,7 @@ fn build_codex_anthropic_sse_response(
                         &model,
                         &request_model,
                         &outbound_model,
+                        metadata,
                         usage,
                         latency_ms,
                         first_token_ms,
@@ -2746,7 +2768,7 @@ fn log_forward_error(
 ) {
     use super::usage::logger::UsageLogger;
 
-    let logger = UsageLogger::new(&state.db);
+    let logger = UsageLogger::new(&state.db).with_metadata(ctx.usage_metadata.clone());
     let status_code = map_proxy_error_to_status(error);
     let error_message = get_error_message(error);
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -2779,6 +2801,7 @@ async fn log_usage(
     model: &str,
     request_model: &str,
     outbound_model: &str,
+    metadata: UsageMetadata,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -2792,7 +2815,7 @@ async fn log_usage(
         return;
     }
 
-    let logger = UsageLogger::new(&state.db);
+    let logger = UsageLogger::new(&state.db).with_metadata(metadata);
 
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;

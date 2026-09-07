@@ -131,6 +131,7 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
         )}
 
         <JsonEditor
+          height="clamp(180px, 50vh, 560px)"
           value={draftValue}
           onChange={setDraftValue}
           placeholder={`# Common Codex config

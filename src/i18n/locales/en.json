@@ -56,6 +56,21 @@
     "hide": "Hide API Key"
   },
   "jsonEditor": {
+    "search": {
+      "find": "Find",
+      "replaceWith": "Replace with",
+      "next": "Next",
+      "previous": "Previous",
+      "selectAll": "Select all matches",
+      "matchCase": "Match case",
+      "regexp": "Regular expression",
+      "wholeWord": "Whole word",
+      "replace": "Replace",
+      "replaceAll": "Replace all",
+      "close": "Close search",
+      "currentMatch": "Current match",
+      "onLine": "on line"
+    },
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",
     "invalidJson": "Invalid JSON format"
   },
@@ -1064,6 +1079,10 @@
     "profile": "Client model profile",
     "rawConfig": "config.toml",
     "invalidToml": "Invalid config.toml: {{error}}",
+    "authJson": "auth.json (JSON)",
+    "authJsonPlaceholder": "{\n  \"https://auth.x.ai::<client-id>\": {\n    \"key\": \"...\",\n    \"refresh_token\": \"...\",\n    \"email\": \"you@example.com\"\n  }\n}",
+    "authJsonError": "auth.json format error, please check JSON syntax",
+    "authJsonRequired": "auth.json must be a JSON object",
     "defaultModelPlaceholder": "e.g. grok-4.5",
     "defaultModelHint": "The model Grok Build requests by default; change it anytime without waiting for a preset update.",
     "advancedSectionHint": "Includes upstream format, reasoning overrides and custom User-Agent. Providers using the Chat Completions or Anthropic Messages protocol require routing takeover to be enabled.",
@@ -1666,6 +1685,13 @@
     "noSearchResults": "No provider presets match your search."
   },
   "usage": {
+    "serviceTier": "Mode",
+    "reasoningEffort": "Reasoning effort",
+    "metadataUnknown": "Unknown",
+    "standardTier": "Standard",
+    "autoTier": "Auto",
+    "tierRequest": "Request setting",
+    "tierResponse": "Response",
     "title": "Usage Statistics",
     "subtitle": "View AI model usage and cost statistics",
     "today": "24 Hours",
@@ -1725,7 +1751,7 @@
     "rawInputLabel": "Raw",
     "sessionSync": {
       "title": "Auto-Scan Session Logs",
-      "description": "Periodically scans each client's local session logs to track usage; when off, logs are only scanned on manual sync",
+      "description": "Scans session logs at the refresh interval selected above. Turning off auto-scan or the refresh interval leaves manual sync available.",
       "syncNow": "Sync Now",
       "syncCompleted": "Sync completed: {{imported}} imported, {{files}} files scanned, {{errors}} errors",
       "syncFailed": "Session usage sync failed: {{error}}"
@@ -1803,12 +1829,16 @@
     "tokenUsage": "Token Usage",
     "cacheCreationCost": "Cache Creation Cost",
     "costBreakdown": "Cost Breakdown",
+    "costBreakdownUnavailable": "The log provides only the total cost; component costs and rates are unavailable.",
+    "costBreakdownMismatch": "Component costs do not reconcile with the total. The recorded total is shown below.",
+    "fastPricingUnavailable": "Fast pricing is unavailable for this model. Showing configured base rates.",
     "performance": "Performance",
     "latency": "Latency",
     "errorMessage": "Error Message",
     "requests": "Requests",
     "tokens": "Tokens",
     "avgCost": "Average Cost",
+    "avgCostPerMillion": "Average cost per million tokens (including cache)",
     "avgLatency": "Average Latency",
     "successRate": "Success Rate",
     "requestId": "Request ID",
