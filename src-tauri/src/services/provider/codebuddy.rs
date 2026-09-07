@@ -122,6 +122,7 @@ pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
     if crate::codebuddy_config::current_model_id()?.as_deref() == Some(id) {
         crate::codebuddy_config::set_current_model_id(None)?;
     }
+    align_db_current_with_native(state)?;
     Ok(())
 }
 
@@ -184,17 +185,22 @@ fn sync_native_locked(state: &AppState, entries: &[Value]) -> Result<usize, AppE
     Ok(changed)
 }
 
-/// 让 DB 的 current 标记跟随原生 settings.json 的当前模型（幂等，缺失则不动）。
+/// 让 DB 的 current 标记跟随原生 settings.json 的当前模型。
+/// - 原生有选中且 DB 有对应行 → 置为 current；
+/// - 原生无选中（被清除/被外部删除）→ 清掉 DB current，避免残留高亮。
 fn align_db_current_with_native(state: &AppState) -> Result<(), AppError> {
-    let Some(current) = crate::codebuddy_config::current_model_id()? else {
-        return Ok(());
-    };
-    if state
-        .db
-        .get_provider_by_id(&current, CODEBUDDY_APP)?
-        .is_some()
-    {
-        let _ = state.db.set_current_provider(CODEBUDDY_APP, &current);
+    match crate::codebuddy_config::current_model_id()? {
+        Some(current)
+            if state
+                .db
+                .get_provider_by_id(&current, CODEBUDDY_APP)?
+                .is_some() =>
+        {
+            let _ = state.db.set_current_provider(CODEBUDDY_APP, &current);
+        }
+        _ => {
+            let _ = state.db.clear_current_provider(CODEBUDDY_APP);
+        }
     }
     Ok(())
 }

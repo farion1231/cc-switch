@@ -867,6 +867,18 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
+    } else if (activeApp === "codebuddy") {
+      // CodeBuddy model endpoints embed their id in the entry; a duplicate
+      // needs a fresh model key in both DB identity and the native JSON entry.
+      const newKey = generateUniqueProviderCopyKey(
+        provider.id,
+        Object.keys(providers),
+      );
+      duplicatedProvider.providerKey = newKey;
+      duplicatedProvider.settingsConfig = {
+        ...(duplicatedProvider.settingsConfig as Record<string, unknown>),
+        id: newKey,
+      };
     }
 
     if (provider.sortIndex !== undefined) {

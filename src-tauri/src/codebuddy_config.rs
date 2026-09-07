@@ -77,10 +77,11 @@ pub(crate) fn current_model_id() -> Result<Option<String>, AppError> {
 }
 
 /// 设置当前选中的模型 id；传 None 表示清除选择。合并写回、保留其它设置字段。
+/// settings.json 已存在但解析失败时返回错误，绝不按空对象覆盖（避免丢 CodeBuddy 自有字段）。
 pub(crate) fn set_current_model_id(id: Option<&str>) -> Result<(), AppError> {
     let path = get_codebuddy_settings_path();
     let _guard = lock_models_file()?;
-    let mut doc = read_json_object_or_default(&path);
+    let mut doc = read_json_object(&path)?;
     match id {
         Some(id) if !id.trim().is_empty() => {
             doc.insert("model".to_string(), Value::String(id.trim().to_string()));
@@ -194,7 +195,8 @@ fn entry_id(entry: &Value) -> Result<&str, AppError> {
     Ok(id)
 }
 
-/// 读取 JSON 对象文档；文件缺失或空按 `{}` 处理。
+/// 读取 JSON 对象文档；文件缺失或空按 `{}` 处理（仅供测试注入使用）。
+#[cfg(test)]
 fn read_json_object_or_default(path: &Path) -> serde_json::Map<String, Value> {
     match read_json_object(path) {
         Ok(map) => map,

@@ -72,7 +72,7 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "codebuddy"
+  "opencode" | "openclaw" | "hermes" | "pi"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -80,7 +80,6 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "openclaw",
   "hermes",
   "pi",
-  "codebuddy",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
