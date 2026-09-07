@@ -61,6 +61,24 @@ pub fn is_openai_o_series(model: &str) -> bool {
         && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
 }
 
+/// OpenAI Responses, Copilot, and several chat/Gemini upstreams reject an
+/// output-token limit below this. Claude Desktop availability probes send
+/// `max_tokens=1`, which those APIs return as HTTP 400.
+pub(crate) const MIN_OPENAI_OUTPUT_TOKENS: u64 = 16;
+
+pub(crate) fn clamp_min_output_tokens(value: &Value) -> Value {
+    match output_token_limit(value) {
+        Some(n) if n < MIN_OPENAI_OUTPUT_TOKENS => json!(MIN_OPENAI_OUTPUT_TOKENS),
+        _ => value.clone(),
+    }
+}
+
+fn output_token_limit(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().map(|n| n.max(0) as u64))
+}
+
 /// Detect Responses-compatible models that support reasoning effort.
 ///
 /// Supported families:
@@ -190,10 +208,11 @@ pub fn anthropic_to_openai_with_reasoning_content(
     // 转换参数 — o-series 模型需要 max_completion_tokens
     let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
     if let Some(v) = body.get("max_tokens") {
+        let clamped = clamp_min_output_tokens(v);
         if is_openai_o_series(model) {
-            result["max_completion_tokens"] = v.clone();
+            result["max_completion_tokens"] = clamped;
         } else {
-            result["max_tokens"] = v.clone();
+            result["max_tokens"] = clamped;
         }
     }
     if let Some(v) = body.get("temperature") {
@@ -1936,6 +1955,28 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["max_tokens"], 1024);
         assert!(result.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_clamps_probe_max_tokens() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["max_tokens"], MIN_OPENAI_OUTPUT_TOKENS);
+    }
+
+    #[test]
+    fn test_clamp_min_output_tokens() {
+        assert_eq!(clamp_min_output_tokens(&json!(1)), json!(16));
+        assert_eq!(clamp_min_output_tokens(&json!(0)), json!(16));
+        assert_eq!(clamp_min_output_tokens(&json!(-3)), json!(16));
+        assert_eq!(clamp_min_output_tokens(&json!(16)), json!(16));
+        assert_eq!(clamp_min_output_tokens(&json!(1024)), json!(1024));
+        assert_eq!(clamp_min_output_tokens(&json!(null)), json!(null));
     }
 
     fn run_tool_choice(value: Value) -> Value {

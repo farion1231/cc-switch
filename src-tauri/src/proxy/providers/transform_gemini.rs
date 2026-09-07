@@ -350,7 +350,10 @@ fn build_generation_config(body: &Value) -> Option<Value> {
     let mut config = Map::new();
 
     if let Some(value) = body.get("max_tokens") {
-        config.insert("maxOutputTokens".to_string(), value.clone());
+        config.insert(
+            "maxOutputTokens".to_string(),
+            super::transform::clamp_min_output_tokens(value),
+        );
     }
     if let Some(value) = body.get("temperature") {
         config.insert("temperature".to_string(), value.clone());
@@ -1288,6 +1291,18 @@ mod tests {
         assert_eq!(result["contents"][0]["role"], "user");
         assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
         assert_eq!(result["generationConfig"]["maxOutputTokens"], 128);
+    }
+
+    #[test]
+    fn anthropic_to_gemini_clamps_probe_max_output_tokens() {
+        let input = json!({
+            "model": "gemini-3.8-flash",
+            "max_tokens": 1,
+            "messages": [{ "role": "user", "content": "hi" }]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        assert_eq!(result["generationConfig"]["maxOutputTokens"], 16);
     }
 
     #[test]

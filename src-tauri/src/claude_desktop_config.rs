@@ -747,10 +747,29 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     body["model"] = json!(upstream_model);
+    clamp_desktop_probe_token_limits(&mut body);
     if should_normalize_mimo_anthropic_thinking_history(provider, &upstream_model) {
         normalize_mimo_anthropic_thinking_history(&mut body);
     }
     Ok(body)
+}
+
+/// Claude Desktop's model-availability probe uses `max_tokens=1`. Copilot and
+/// other OpenAI-compatible upstreams reject that (`max_output_tokens >= 16`).
+fn clamp_desktop_probe_token_limits(body: &mut Value) {
+    const MIN_OUTPUT_TOKENS: u64 = 16;
+    for key in ["max_tokens", "max_output_tokens"] {
+        let Some(n) = body.get(key).and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().map(|n| n.max(0) as u64))
+        }) else {
+            continue;
+        };
+        if n < MIN_OUTPUT_TOKENS {
+            body[key] = json!(MIN_OUTPUT_TOKENS);
+        }
+    }
 }
 
 fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
@@ -1620,6 +1639,18 @@ mod tests {
         )
         .expect("map route");
         assert_eq!(mapped["model"], json!("kimi-k2"));
+
+        let probed = map_proxy_request_model(
+            json!({
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 1,
+                "messages": []
+            }),
+            &provider,
+        )
+        .expect("clamp desktop probe max_tokens");
+        assert_eq!(probed["model"], json!("kimi-k2"));
+        assert_eq!(probed["max_tokens"], json!(16));
 
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
