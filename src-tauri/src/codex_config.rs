@@ -1065,6 +1065,7 @@ pub fn write_codex_live_atomic(
 /// Final step of a guarded live-auth write. All other state is committed
 /// before this value is consumed, so a successful auth publication cannot be
 /// followed by a fallible operation that would need to delete it again.
+#[must_use = "staged Codex auth must be committed after all other fallible state changes"]
 pub(crate) enum CodexAbsentAuthCommit {
     Publish {
         temporary: tempfile::NamedTempFile,

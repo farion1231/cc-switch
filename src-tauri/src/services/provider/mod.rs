@@ -39,8 +39,9 @@ pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_provider_for_live_with_codex_oauth_manager,
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config_for_codex_oauth_manager,
+    prepare_live_snapshot_if_codex_auth_absent, provider_exists_in_live_config,
+    strip_common_config_from_live_settings, sync_current_provider_for_app_to_live,
+    write_live_snapshot, write_live_with_common_config_for_codex_oauth_manager,
     write_live_with_common_config_for_state, LiveSyncOutcome,
 };
 
@@ -4578,14 +4579,13 @@ impl ProviderService {
         error: AppError,
         snapshot: &crate::codex_config::CodexLiveStateSnapshot,
         previous_backup: Option<&crate::proxy::types::LiveBackup>,
-        restore_local_current: Option<(&AppType, Option<&str>)>,
+        preserve_current_auth: bool,
+        previous_provider: Option<&Provider>,
     ) -> AppError {
         let mut rollback_failures = Vec::new();
-        if let Some((app_type, previous_local_current)) = restore_local_current {
-            if let Err(rollback_error) =
-                crate::settings::set_current_provider(app_type, previous_local_current)
-            {
-                rollback_failures.push(format!("恢复本地 current 失败: {rollback_error}"));
+        if let Some(provider) = previous_provider {
+            if let Err(rollback_error) = state.db.save_provider(AppType::Codex.as_str(), provider) {
+                rollback_failures.push(format!("恢复 Provider 数据失败: {rollback_error}"));
             }
         }
         let backup_restore = match previous_backup {
@@ -4601,7 +4601,12 @@ impl ProviderService {
         if let Err(rollback_error) = backup_restore {
             rollback_failures.push(format!("恢复 Codex Live 备份失败: {rollback_error}"));
         }
-        if let Err(rollback_error) = snapshot.restore_preserving_newer_same_account_auth() {
+        let restore = if preserve_current_auth {
+            snapshot.restore_preserving_current_auth()
+        } else {
+            snapshot.restore_preserving_newer_same_account_auth()
+        };
+        if let Err(rollback_error) = restore {
             rollback_failures.push(rollback_error.to_string());
         }
 
@@ -5138,9 +5143,6 @@ impl ProviderService {
                     "当前托管账号已删除；请先关闭代理接管，再更新账号绑定".to_string(),
                 ));
             }
-            let outgoing_live_refresh_token = outgoing_live_auth_guard
-                .as_ref()
-                .and_then(CodexLiveAuthSwitchGuard::expected_refresh_token);
             let requires_guarded_auth_commit = outgoing_live_auth_guard
                 .as_ref()
                 .is_some_and(CodexLiveAuthSwitchGuard::requires_guarded_commit);
@@ -5254,19 +5256,19 @@ impl ProviderService {
                 )
                 .map_err(|error| AppError::Message(format!("更新 Live 备份失败: {error}")))?;
 
-                if live_taken_over {
+                let pending_auth = if live_taken_over {
                     futures::executor::block_on(
                         state
                             .proxy_service
-                            .sync_codex_live_from_provider_while_proxy_active_guarded(
+                            .prepare_codex_live_from_provider_while_proxy_active(
                                 &provider,
                                 outgoing_managed_codex_account_id.as_deref(),
-                                outgoing_live_refresh_token,
+                                outgoing_live_auth_guard.as_ref(),
                             ),
                     )
                     .map_err(|error| {
                         AppError::Message(format!("同步 Codex Live 配置失败: {error}"))
-                    })?;
+                    })?
                 } else {
                     // A backup without a takeover marker is a recoverable
                     // half-takeover state. Keep the actual Live bundle aligned
@@ -5275,32 +5277,55 @@ impl ProviderService {
                         outgoing_managed_codex_account_id.as_deref(),
                         outgoing_live_auth_guard.as_ref(),
                     )?;
-                    Self::write_preflighted_or_current_live(
-                        state,
-                        &app_type,
-                        &provider,
-                        preflighted_provider.as_ref(),
-                    )?;
-                }
+                    if requires_guarded_auth_commit {
+                        Self::prepare_live_if_codex_auth_absent(
+                            state,
+                            &provider,
+                            preflighted_provider.as_ref(),
+                        )?
+                    } else {
+                        Self::write_preflighted_or_current_live(
+                            state,
+                            &app_type,
+                            &provider,
+                            preflighted_provider.as_ref(),
+                        )?;
+                        crate::codex_config::CodexAbsentAuthCommit::Preserve
+                    }
+                };
 
                 Self::clear_outgoing_managed_codex_live_auth(
                     outgoing_managed_codex_account_id.as_deref(),
                     outgoing_live_auth_guard.as_ref(),
                 )?;
 
-                // DB is the final commit. Every fallible side effect above can be
-                // restored exactly while the previous provider row is untouched.
+                // Guarded auth is published only after saving the provider row.
                 state.db.save_provider(app_type.as_str(), &provider)?;
-                Ok::<(), AppError>(())
+                Ok::<_, AppError>(pending_auth)
             })();
-            if let Err(error) = commit_result {
+            let pending_auth = match commit_result {
+                Ok(pending) => pending,
+                Err(error) => {
+                    return Err(Self::managed_codex_takeover_transaction_error(
+                        state,
+                        "更新接管中的 Codex provider",
+                        error,
+                        &snapshot,
+                        previous_backup.as_ref(),
+                        requires_guarded_auth_commit,
+                        None,
+                    ));
+                }
+            };
+            if let Err(error) = pending_auth.commit() {
                 return Err(Self::managed_codex_takeover_transaction_error(
                     state,
-                    "更新接管中的 Codex provider",
+                    "发布接管中的 Codex 认证",
                     error,
                     &snapshot,
                     previous_backup.as_ref(),
-                    None,
+                    requires_guarded_auth_commit,
+                    existing_provider.as_ref(),
                 ));
             }
 

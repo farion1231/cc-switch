@@ -220,13 +220,6 @@ impl CodexLiveAuthSwitchGuard {
         matches!(self, Self::MissingAccount)
     }
 
-    pub(crate) fn expected_refresh_token(&self) -> Option<&str> {
-        match self {
-            Self::ExistingAccount(token) => token.as_deref(),
-            Self::AbsentAuth | Self::MissingAccount => None,
-        }
-    }
-
     pub(crate) fn ensure_unchanged(&self, account_id: &str) -> Result<(), crate::error::AppError> {
         match self {
             Self::ExistingAccount(Some(expected)) => {
@@ -249,10 +242,9 @@ impl CodexLiveAuthSwitchGuard {
                     expected.as_deref(),
                 )
             }
-            Self::AbsentAuth => {
-                crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
-            }
-            Self::MissingAccount => Ok(()),
+            // There was no outgoing auth to remove. Anything now present may
+            // be a concurrent native login, even when its identity matches.
+            Self::AbsentAuth | Self::MissingAccount => Ok(()),
         }
     }
 }
