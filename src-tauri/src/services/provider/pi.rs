@@ -115,16 +115,56 @@ pub(super) fn update(
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     let original_id = original_id.unwrap_or(&provider.id).to_string();
-    if original_id != provider.id {
-        return Err(AppError::InvalidInput(
-            "Pi provider keys cannot be renamed".to_string(),
-        ));
-    }
 
     state
         .db
         .get_provider_by_id(&original_id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{original_id}' not found")))?;
+
+    // Rename is only allowed once the provider is no longer present in
+    // models.json (i.e. the user removed it from live config). This mirrors
+    // the behavior of opencode and the other additive-mode apps: while the key
+    // is still in live config it stays locked; after removal it is editable.
+    if original_id != provider.id {
+        if crate::pi_config::pi_provider_exists(&original_id)? {
+            return Err(AppError::InvalidInput(
+                "Pi provider keys cannot be renamed while the provider is added to models.json"
+                    .to_string(),
+            ));
+        }
+        if state
+            .db
+            .get_provider_by_id(&provider.id, app_type.as_str())?
+            .is_some()
+            || crate::pi_config::pi_provider_exists(&provider.id)?
+        {
+            return Err(AppError::InvalidInput(format!(
+                "Pi provider '{}' already exists",
+                provider.id
+            )));
+        }
+        strip_unsupported_pi_metadata(&mut provider);
+        ProviderService::validate_provider_settings(&app_type, &provider)?;
+        ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+
+        if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
+            return Err(error);
+        }
+        if let Err(error) = state.db.delete_provider(app_type.as_str(), &original_id) {
+            // Roll back the rename to keep the catalog consistent.
+            if let Err(rollback) = state.db.delete_provider(app_type.as_str(), &provider.id) {
+                return Err(AppError::Config(format!(
+                    "failed to delete original Pi provider: {error}; rollback failed: {rollback}"
+                )));
+            }
+            return Err(error);
+        }
+        if crate::settings::get_current_provider(&app_type).as_deref() == Some(&original_id) {
+            crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+        }
+        return Ok(true);
+    }
+
     strip_unsupported_pi_metadata(&mut provider);
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
@@ -771,6 +811,56 @@ mod tests {
 
         let providers = ProviderService::list(&state, AppType::Pi).expect("sync native provider");
         assert_eq!(providers["cc-switch-test-copy"].name, "Native OAuth");
+    }
+
+    #[test]
+    #[serial]
+    fn provider_key_is_locked_while_in_live_and_editable_after_removal() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+
+        // Add into live config: the key is now in models.json.
+        ProviderService::add(&state, AppType::Pi, input("model-a"), true)
+            .expect("add live provider");
+        assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+
+        // Rename must be rejected while the provider is still in models.json.
+        let mut renamed = input("model-a");
+        renamed.id = "cc-switch-renamed".to_string();
+        let error = update(&state, Some("cc-switch-test"), renamed.clone())
+            .expect_err("rename of a live provider must be rejected");
+        assert!(error.to_string().contains("models.json"));
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test", "pi")
+            .unwrap()
+            .is_some());
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-renamed").unwrap());
+
+        // Remove from live config: the key leaves models.json but stays in DB.
+        ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
+            .expect("remove from live config");
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test", "pi")
+            .unwrap()
+            .is_some());
+
+        // Now rename succeeds.
+        update(&state, Some("cc-switch-test"), renamed.clone()).expect("rename after removal");
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-renamed", "pi")
+            .unwrap()
+            .is_some());
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test", "pi")
+            .unwrap()
+            .is_none());
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-renamed").unwrap());
     }
 
     #[test]
