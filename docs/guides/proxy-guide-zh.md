@@ -131,6 +131,19 @@ A: 请确保：
 
 A: 本地代理的延迟开销非常小（通常 < 1ms）。但如果启用了请求日志，在高频请求场景下可能会有少量性能影响。
 
+### Q: 使用 WARP/VPN 加速时，中转站 API 请求失败或 TLS 握手报错？
+
+A: 如果中转站域名由 Cloudflare 托管（TLS 证书签发者是 Cloudflare），开启 WARP 时**不要**把域名加入 WARP 的排除列表（Split Tunnel Exclude）。实测（2026-08）把域名排除后走本地直连，会越过 Cloudflare 边缘节点导致 `schannel failed` / `远程主机强制关闭连接` 等 TLS 错误；**保留在隧道内**（不走排除）反而正常。
+
+排查步骤：
+1. 确认 WARP 状态：`warp-cli status` 应为 Connected
+2. 检查域名是否被排除：`warp-cli tunnel host list`，若在 Exclude 列表中执行 `warp-cli tunnel host remove <域名>`
+3. 验证直连可达性：`curl -o /dev/null -w "%{http_code}" https://<中转站域名>`，返回 000 说明该域名国内直连不通，必须走 WARP 隧道
+
+### Q: WARP 排除列表里的子域不生效？
+
+A: WARP 的 host exclude 是**精确匹配**，根域不覆盖子域。例如只加了 `example.chat`，`api.example.chat` 仍会走隧道。需要把实际请求的子域（`api.`、`tryapi.`、`www.` 等）逐一加入。批量加入中转站域名时，建议把实际用到的子域全部列出，加完用 `warp-cli tunnel host list | grep -c "CLI exclude"` 验证数量。
+
 ## 技术细节
 
 ### 配置文件位置
