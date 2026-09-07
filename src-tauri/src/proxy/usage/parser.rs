@@ -308,7 +308,7 @@ impl TokenUsage {
         }
     }
 
-    /// 智能 Codex 流式响应解析 - 自动检测 OpenAI 或 Codex 格式
+    /// 智能 Codex 流式响应解析 - 自动检测 Codex Responses / Images / OpenAI 格式
     pub fn from_codex_stream_events_auto(events: &[Value]) -> Option<Self> {
         log::debug!("[Codex] 智能解析流式事件，共 {} 个事件", events.len());
 
@@ -322,6 +322,20 @@ impl TokenUsage {
                     }
                 }
             }
+        }
+
+        // Images API 流式格式 (image_generation.completed 事件)：usage 直接挂在
+        // 事件顶层，字段形态与 Codex 非流式响应一致；倒序取最后一个能按该形态
+        // 解析的事件，跳过前面不含 usage 的 partial_image 事件。解析不成立时
+        // 继续走下面的 OpenAI 回退，不改变既有路径
+        if let Some(usage) = events
+            .iter()
+            .rev()
+            .filter(|event| event.pointer("/usage/input_tokens").is_some())
+            .find_map(Self::from_codex_response)
+        {
+            log::debug!("[Codex] 找到顶层 usage.input_tokens 事件");
+            return Some(usage);
         }
 
         // 回退到 OpenAI Chat Completions 格式 (最后一个 chunk 包含 usage)
@@ -1176,5 +1190,44 @@ mod tests {
         assert_eq!(usage.input_tokens, 100);
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.model, Some("gpt-4o".to_string()));
+    }
+
+    #[test]
+    fn test_codex_stream_events_auto_image_generation_completed() {
+        // Images API 流式格式：usage 挂在 image_generation.completed 事件顶层，
+        // 字段形态与 Codex 非流式响应一致 (input_tokens / output_tokens)
+        let events = vec![
+            json!({
+                "type": "image_generation.partial_image",
+                "b64_json": "cGFydGlhbA==",
+                "partial_image_index": 0
+            }),
+            json!({
+                "type": "image_generation.completed",
+                "b64_json": "aW1hZ2U=",
+                "created_at": 1778832973,
+                "usage": {
+                    "input_tokens": 1474,
+                    "input_tokens_details": {
+                        "image_tokens": 1457,
+                        "text_tokens": 17
+                    },
+                    "output_tokens": 1372,
+                    "output_tokens_details": {
+                        "image_tokens": 1372,
+                        "text_tokens": 0
+                    },
+                    "total_tokens": 2846
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_codex_stream_events_auto(&events)
+            .expect("image_generation.completed usage should be parsed");
+        assert_eq!(usage.input_tokens, 1474);
+        assert_eq!(usage.output_tokens, 1372);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, None);
     }
 }
