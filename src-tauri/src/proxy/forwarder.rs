@@ -108,6 +108,63 @@ pub enum CodexUpstreamFormat {
     Anthropic,
 }
 
+struct CopilotRequestContext {
+    classification: super::copilot_optimizer::CopilotClassification,
+    request_id: Option<String>,
+    interaction_id: Option<String>,
+}
+
+impl CopilotRequestContext {
+    fn apply_headers(
+        &self,
+        headers: &mut Vec<(http::HeaderName, http::HeaderValue)>,
+        request_classification: bool,
+    ) -> Result<(), ProxyError> {
+        let request_id = self
+            .request_id
+            .as_deref()
+            .map(http::HeaderValue::from_str)
+            .transpose()
+            .map_err(|_| ProxyError::ConfigError("Invalid Copilot request ID".to_string()))?;
+        let interaction_id = self
+            .interaction_id
+            .as_deref()
+            .map(http::HeaderValue::from_str)
+            .transpose()
+            .map_err(|_| ProxyError::ConfigError("Invalid Copilot interaction ID".to_string()))?;
+
+        for (name, value) in headers.iter_mut() {
+            match name.as_str() {
+                "x-initiator" if request_classification => {
+                    *value = http::HeaderValue::from_static(self.classification.initiator);
+                }
+                "x-interaction-type" if self.classification.is_subagent => {
+                    *value = http::HeaderValue::from_static("conversation-subagent");
+                }
+                "x-request-id" | "x-agent-task-id" => {
+                    if let Some(request_id) = &request_id {
+                        *value = request_id.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(interaction_id) = interaction_id {
+            headers.push((
+                http::HeaderName::from_static("x-interaction-id"),
+                interaction_id,
+            ));
+        }
+        if self.classification.is_subagent {
+            log::info!(
+                "[Copilot] 子代理请求: x-initiator=agent, x-interaction-type=conversation-subagent"
+            );
+        }
+        Ok(())
+    }
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
@@ -1347,7 +1404,7 @@ impl RequestForwarder {
         //   2. 再清洗孤立 tool_result（防止上游 API 报错）
         //   3. 再合并 tool_result + text（减少 premium 计费）
         let run_copilot_optimizer = is_copilot_claude_body && self.copilot_optimizer_config.enabled;
-        let copilot_optimization = if run_copilot_optimizer {
+        let copilot_request_context = if run_copilot_optimizer {
             // 1. 在原始 body 上分类 — 必须在清洗/合并之前执行
             //    孤立 tool_result 仍保持 tool_result 类型，分类能正确识别为 agent
             let has_anthropic_beta = headers.contains_key("anthropic-beta");
@@ -1437,9 +1494,13 @@ impl RequestForwarder {
             let interaction_id =
                 super::copilot_optimizer::deterministic_interaction_id(&session_id);
 
-            Some((classification, det_request_id, interaction_id))
+            Some(CopilotRequestContext {
+                classification,
+                request_id: det_request_id,
+                interaction_id,
+            })
         } else {
-            None
+            self.codex_copilot_request_context(is_copilot_codex_responses, &mapped_body)
         };
 
         // Codex always speaks Responses to the local proxy. Resolve the final
@@ -2014,41 +2075,11 @@ impl RequestForwarder {
         };
 
         // --- Copilot 优化器：动态 header 注入 ---
-        if let Some((ref classification, ref det_request_id, ref interaction_id)) =
-            copilot_optimization
-        {
-            for (name, value) in auth_headers.iter_mut() {
-                match name.as_str() {
-                    "x-initiator" if self.copilot_optimizer_config.request_classification => {
-                        *value = http::HeaderValue::from_static(classification.initiator);
-                    }
-                    "x-interaction-type" if classification.is_subagent => {
-                        // 子代理请求：conversation-subagent 不计 premium interaction
-                        *value = http::HeaderValue::from_static("conversation-subagent");
-                    }
-                    "x-request-id" | "x-agent-task-id" => {
-                        if let Some(ref det_id) = det_request_id {
-                            if let Ok(hv) = http::HeaderValue::from_str(det_id) {
-                                *value = hv;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // x-interaction-id：仅在有 session 时注入（不在 get_auth_headers 中）
-            if let Some(ref iid) = interaction_id {
-                if let Ok(hv) = http::HeaderValue::from_str(iid) {
-                    auth_headers.push((http::HeaderName::from_static("x-interaction-id"), hv));
-                }
-            }
-
-            if classification.is_subagent {
-                log::info!(
-                    "[Copilot] 子代理请求: x-initiator=agent, x-interaction-type=conversation-subagent"
-                );
-            }
+        if let Some(context) = copilot_request_context {
+            context.apply_headers(
+                &mut auth_headers,
+                self.copilot_optimizer_config.request_classification,
+            )?;
         }
 
         // Copilot 指纹头名（由 get_auth_headers 注入，需在原始头中去重）
@@ -2763,6 +2794,25 @@ impl RequestForwarder {
 
         let replay = futures::stream::once(async move { Ok(first) }).chain(stream);
         Ok(ProxyResponse::streamed(status, headers, replay))
+    }
+
+    fn codex_copilot_request_context(
+        &self,
+        is_codex_copilot_responses: bool,
+        body: &Value,
+    ) -> Option<CopilotRequestContext> {
+        if !is_codex_copilot_responses || !self.copilot_optimizer_config.enabled {
+            return None;
+        }
+        Some(CopilotRequestContext {
+            classification: super::copilot_optimizer::classify_responses_request(body),
+            // Keep Codex request IDs per-request; only the interaction ID groups a session.
+            request_id: None,
+            interaction_id: self
+                .session_client_provided
+                .then(|| super::copilot_optimizer::deterministic_interaction_id(&self.session_id))
+                .flatten(),
+        })
     }
 
     async fn resolve_claude_api_format(
@@ -5256,6 +5306,166 @@ mod tests {
     }
 
     // ==================== Copilot 动态 endpoint 路由相关测试 ====================
+
+    fn codex_copilot_headers(forwarder: &RequestForwarder, body: &Value) -> HeaderMap {
+        let mut headers =
+            super::super::providers::copilot_auth::build_copilot_request_headers("test-token")
+                .unwrap();
+        let request_id = headers
+            .iter()
+            .find(|(name, _)| name.as_str() == "x-request-id")
+            .unwrap()
+            .1
+            .clone();
+        if let Some(context) = forwarder.codex_copilot_request_context(true, body) {
+            context
+                .apply_headers(
+                    &mut headers,
+                    forwarder.copilot_optimizer_config.request_classification,
+                )
+                .unwrap();
+        }
+        let headers: HeaderMap = headers.into_iter().collect();
+        assert_eq!(headers["x-request-id"], request_id);
+        assert_eq!(headers["x-agent-task-id"], request_id);
+        headers
+    }
+
+    #[test]
+    fn codex_copilot_tool_continuations_receive_agent_and_session_headers() {
+        let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        forwarder.session_id = "codex_12345678-1234-1234-1234-123456789abc".to_string();
+        forwarder.session_client_provided = true;
+        for item_type in [
+            "function_call_output",
+            "custom_tool_call_output",
+            "tool_search_output",
+        ] {
+            for stream in [false, true] {
+                let body = json!({
+                    "input": [{"type": item_type, "call_id": "call-1", "output": "done"}],
+                    "stream": stream
+                });
+                let headers = codex_copilot_headers(&forwarder, &body);
+                assert_eq!(headers["x-initiator"], "agent", "{body}");
+                assert_eq!(
+                    headers["x-interaction-id"].to_str().unwrap(),
+                    super::super::copilot_optimizer::deterministic_interaction_id(
+                        &forwarder.session_id
+                    )
+                    .unwrap()
+                );
+                assert_eq!(headers["x-interaction-type"], "conversation-agent");
+            }
+        }
+    }
+
+    #[test]
+    fn codex_copilot_headers_reuse_client_session_across_turns() {
+        let first = json!({"input": "Read the file"});
+        let continuation = json!({
+            "input": [{"type": "function_call_output", "call_id": "call-1", "output": "done"}]
+        });
+        for source in ["session_id", "x-session-id", "metadata"] {
+            let mut headers = HeaderMap::new();
+            let mut body = first.clone();
+            let session_id = "12345678-1234-1234-1234-123456789abc";
+            if source == "metadata" {
+                body["metadata"] = json!({"session_id": session_id});
+            } else {
+                headers.insert(source, HeaderValue::from_static(session_id));
+            }
+            let session = super::super::session::extract_session_id(&headers, &body, "codex");
+            let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+            forwarder.session_id = session.session_id;
+            forwarder.session_client_provided = session.client_provided;
+            let first_headers = codex_copilot_headers(&forwarder, &first);
+            let next_headers = codex_copilot_headers(&forwarder, &continuation);
+            assert_eq!(first_headers["x-initiator"], "user");
+            assert_eq!(next_headers["x-initiator"], "agent");
+            assert_eq!(
+                first_headers["x-interaction-id"], next_headers["x-interaction-id"],
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_copilot_headers_honor_switches_and_do_not_invent_sessions() {
+        let body = json!({
+            "previous_response_id": "resp-not-a-session",
+            "input": [{"type": "function_call_output", "call_id": "call-1", "output": "done"}]
+        });
+        let session = super::super::session::extract_session_id(&HeaderMap::new(), &body, "codex");
+        let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        forwarder.session_id = session.session_id;
+        forwarder.session_client_provided = session.client_provided;
+        let headers = codex_copilot_headers(&forwarder, &body);
+        assert_eq!(headers["x-initiator"], "agent");
+        assert!(!headers.contains_key("x-interaction-id"));
+
+        forwarder.session_client_provided = true;
+        forwarder.copilot_optimizer_config.request_classification = false;
+        let headers = codex_copilot_headers(&forwarder, &body);
+        assert_eq!(headers["x-initiator"], "user");
+        assert!(headers.contains_key("x-interaction-id"));
+
+        forwarder.copilot_optimizer_config.enabled = false;
+        let headers = codex_copilot_headers(&forwarder, &body);
+        assert_eq!(headers["x-initiator"], "user");
+        assert!(!headers.contains_key("x-interaction-id"));
+
+        forwarder.copilot_optimizer_config.enabled = true;
+        assert!(forwarder
+            .codex_copilot_request_context(false, &body)
+            .is_none());
+    }
+
+    #[test]
+    fn codex_copilot_new_user_input_is_not_a_replayed_tool_continuation() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let body = json!({
+            "input": [
+                {"type": "function_call_output", "call_id": "call-1", "output": "done"},
+                {"role": "assistant", "content": "The file is updated"},
+                {"role": "user", "content": "Explain a different file"}
+            ]
+        });
+        assert_eq!(
+            codex_copilot_headers(&forwarder, &body)["x-initiator"],
+            "user"
+        );
+    }
+
+    #[test]
+    fn copilot_request_context_preserves_claude_header_overrides() {
+        let mut headers =
+            super::super::providers::copilot_auth::build_copilot_request_headers("test-token")
+                .unwrap();
+        let context = CopilotRequestContext {
+            classification: super::super::copilot_optimizer::CopilotClassification {
+                initiator: "agent",
+                is_warmup: false,
+                is_compact: false,
+                is_subagent: true,
+            },
+            request_id: Some("12345678-1234-1234-1234-123456789abc".to_string()),
+            interaction_id: Some("abcdef12-1234-1234-1234-123456789abc".to_string()),
+        };
+        context.apply_headers(&mut headers, true).unwrap();
+        let headers: HeaderMap = headers.into_iter().collect();
+        assert_eq!(headers["x-initiator"], "agent");
+        assert_eq!(headers["x-interaction-type"], "conversation-subagent");
+        assert_eq!(
+            headers["x-request-id"],
+            context.request_id.as_deref().unwrap()
+        );
+        assert_eq!(headers["x-agent-task-id"], headers["x-request-id"]);
+        assert_eq!(
+            headers["x-interaction-id"],
+            context.interaction_id.as_deref().unwrap()
+        );
+    }
 
     #[test]
     fn copilot_transport_uses_responses_only_for_openai_vendor() {

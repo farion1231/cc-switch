@@ -459,7 +459,7 @@ fn is_call_item_type(item_type: &str) -> bool {
     )
 }
 
-fn is_call_output_item_type(item_type: &str) -> bool {
+pub(crate) fn is_call_output_item_type(item_type: &str) -> bool {
     matches!(
         item_type,
         "function_call_output" | "custom_tool_call_output" | "tool_search_output"
