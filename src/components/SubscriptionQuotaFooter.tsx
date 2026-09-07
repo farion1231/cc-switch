@@ -136,7 +136,10 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
             <span>{t("subscription.expired")}</span>
           </div>
           <button
-            onClick={() => refetch()}
+            onClick={(e) => {
+              e.stopPropagation();
+              refetch();
+            }}
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("subscription.refresh")}
@@ -159,7 +162,10 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
             </div>
           </div>
           <button
-            onClick={() => refetch()}
+            onClick={(e) => {
+              e.stopPropagation();
+              refetch();
+            }}
             disabled={loading}
             className="p-1 rounded hover:bg-amber-100 dark:hover:bg-amber-800/30 transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("subscription.refresh")}
@@ -181,7 +187,10 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
             <span>{t("subscription.queryFailed")}</span>
           </div>
           <button
-            onClick={() => refetch()}
+            onClick={(e) => {
+              e.stopPropagation();
+              refetch();
+            }}
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("subscription.refresh")}
@@ -199,7 +208,10 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
             <span>{quota.error || t("subscription.queryFailed")}</span>
           </div>
           <button
-            onClick={() => refetch()}
+            onClick={(e) => {
+              e.stopPropagation();
+              refetch();
+            }}
             disabled={loading}
             className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("subscription.refresh")}
