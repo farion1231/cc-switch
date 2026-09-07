@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Plus, Trash2 } from "lucide-react";
 import ApiKeyInput from "../ApiKeyInput";
 import type { ProviderCategory } from "@/types";
 
@@ -17,6 +19,8 @@ interface ApiKeySectionProps {
   disabled?: boolean;
   isPartner?: boolean;
   partnerPromotionKey?: string;
+  apiKeys?: string[];
+  onApiKeysChange?: (keys: string[]) => void;
 }
 
 export function ApiKeySection({
@@ -30,6 +34,8 @@ export function ApiKeySection({
   placeholder,
   disabled,
   partnerPromotionKey,
+  apiKeys,
+  onApiKeysChange,
 }: ApiKeySectionProps) {
   const { t } = useTranslation();
 
@@ -44,20 +50,93 @@ export function ApiKeySection({
 
   const finalPlaceholder = placeholder || defaultPlaceholder;
 
+  const keys = apiKeys ?? [value];
+  const supportsMultiple = onApiKeysChange !== undefined;
+  const [selectedIndex, setSelectedIndex] = useState(() =>
+    Math.max(keys.indexOf(value), 0),
+  );
+  const changeKey = (index: number, key: string) => {
+    const next = [...keys];
+    next[index] = key;
+    onApiKeysChange?.(next);
+    if (keys[index] === value) onChange(key);
+  };
+  const selectKey = (index: number) => {
+    setSelectedIndex(index);
+    onChange(keys[index]);
+  };
+  const addKey = () => {
+    const next = [...keys, ""];
+    onApiKeysChange?.(next);
+    setSelectedIndex(next.length - 1);
+    onChange("");
+  };
+  const removeKey = (index: number) => {
+    if (keys.length === 1) return;
+    const next = keys.filter((_, i) => i !== index);
+    onApiKeysChange?.(next);
+    if (index === selectedIndex) {
+      const nextIndex = Math.min(index, next.length - 1);
+      setSelectedIndex(nextIndex);
+      onChange(next[nextIndex]);
+    } else if (index < selectedIndex) {
+      setSelectedIndex(selectedIndex - 1);
+    }
+  };
+
   return (
     <div className="space-y-1">
-      <ApiKeyInput
-        id={id}
-        label={label}
-        value={value}
-        onChange={onChange}
-        placeholder={
-          category === "official"
-            ? finalPlaceholder.official
-            : finalPlaceholder.thirdParty
-        }
-        disabled={disabled ?? category === "official"}
-      />
+      {keys.map((key, index) => (
+        <div key={index} className="flex items-end gap-2">
+          <input
+            type="radio"
+            checked={index === selectedIndex}
+            onChange={() => selectKey(index)}
+            aria-label={t("providerForm.enableApiKey", {
+              defaultValue: "启用此 API Key",
+            })}
+            disabled={disabled ?? category === "official"}
+            className="mb-3 size-4 shrink-0 accent-primary"
+          />
+          <div className="min-w-0 flex-1">
+            <ApiKeyInput
+              id={index === 0 ? id : `${id}-${index}`}
+              label={index === 0 ? label : undefined}
+              value={key}
+              onChange={(next) => changeKey(index, next)}
+              placeholder={
+                category === "official"
+                  ? finalPlaceholder.official
+                  : finalPlaceholder.thirdParty
+              }
+              disabled={disabled ?? category === "official"}
+            />
+          </div>
+          {supportsMultiple && keys.length > 1 && (
+            <button
+              type="button"
+              onClick={() => removeKey(index)}
+              className="mb-1 p-2 text-muted-foreground hover:text-destructive"
+              aria-label={t("providerForm.removeApiKey", {
+                defaultValue: "删除 API Key",
+              })}
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
+        </div>
+      ))}
+      {supportsMultiple && (
+        <button
+          type="button"
+          onClick={addKey}
+          disabled={disabled ?? category === "official"}
+          className="flex items-center gap-1 text-sm text-primary hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground"
+        >
+          <Plus size={16} />
+          {t("providerForm.addApiKey", { defaultValue: "新增 API Key" })}
+        </button>
+      )}
       {/* API Key 获取链接 */}
       {shouldShowLink && websiteUrl && (
         <div className="space-y-2 -mt-1 pl-1">

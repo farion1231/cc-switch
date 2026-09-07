@@ -32,6 +32,8 @@ interface HermesFormFieldsProps {
   onBaseUrlChange: (value: string) => void;
   apiKey: string;
   onApiKeyChange: (value: string) => void;
+  apiKeys?: string[];
+  onApiKeysChange?: (keys: string[]) => void;
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
@@ -81,6 +83,8 @@ export function HermesFormFields({
   onBaseUrlChange,
   apiKey,
   onApiKeyChange,
+  apiKeys,
+  onApiKeysChange,
   category,
   shouldShowApiKeyLink,
   websiteUrl,
@@ -244,6 +248,8 @@ export function HermesFormFields({
       <ApiKeySection
         value={apiKey}
         onChange={onApiKeyChange}
+        apiKeys={apiKeys}
+        onApiKeysChange={onApiKeysChange}
         // Hermes 没有 OAuth-only 的免 key 官方供应商：即便是 official 预设
         // （如 Nous Research）也需用户自填 key，故不让 official 禁用输入框。
         category={category === "official" ? undefined : category}

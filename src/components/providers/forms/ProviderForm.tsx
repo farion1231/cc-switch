@@ -339,6 +339,9 @@ function ProviderFormFull({
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     initialData ? null : "custom",
   );
+  const [apiKeys, setApiKeys] = useState<string[]>(
+    () => initialData?.meta?.apiKeys ?? [],
+  );
   const [activePreset, setActivePreset] = useState<{
     id: string;
     category?: ProviderCategory;
@@ -1828,6 +1831,7 @@ function ProviderFormFull({
         localIsFullUrl
           ? true
           : undefined,
+      apiKeys: apiKeys.filter(Boolean),
     };
 
     if (!isClaudeCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -2368,6 +2372,8 @@ function ProviderFormFull({
               }
               apiKey={apiKey}
               onApiKeyChange={handleApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [apiKey]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowClaudeApiKeyLink}
               websiteUrl={claudeWebsiteUrl}
@@ -2449,6 +2455,8 @@ function ProviderFormFull({
               onXaiAccountSelect={setSelectedXaiAccountId}
               codexApiKey={codexApiKey}
               onApiKeyChange={handleCodexApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [codexApiKey]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
               websiteUrl={codexWebsiteUrl}
@@ -2521,6 +2529,8 @@ function ProviderFormFull({
               )}
               apiKey={geminiApiKey}
               onApiKeyChange={handleGeminiApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [geminiApiKey]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowGeminiApiKeyLink}
               websiteUrl={geminiWebsiteUrl}
@@ -2547,6 +2557,8 @@ function ProviderFormFull({
               onNpmChange={opencodeForm.handleOpencodeNpmChange}
               apiKey={opencodeForm.opencodeApiKey}
               onApiKeyChange={opencodeForm.handleOpencodeApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [opencodeForm.opencodeApiKey]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowOpencodeApiKeyLink}
               websiteUrl={opencodeWebsiteUrl}
@@ -2592,6 +2604,8 @@ function ProviderFormFull({
               onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
               apiKey={openclawForm.openclawApiKey}
               onApiKeyChange={openclawForm.handleOpenclawApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [openclawForm.openclawApiKey]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowOpenclawApiKeyLink}
               websiteUrl={openclawWebsiteUrl}
@@ -2613,6 +2627,8 @@ function ProviderFormFull({
               onBaseUrlChange={hermesForm.handleHermesBaseUrlChange}
               apiKey={hermesForm.hermesApiKey}
               onApiKeyChange={hermesForm.handleHermesApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [hermesForm.hermesApiKey]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowHermesApiKeyLink}
               websiteUrl={hermesWebsiteUrl}

@@ -161,6 +161,8 @@ interface OpenCodeFormFieldsProps {
   // API Key
   apiKey: string;
   onApiKeyChange: (value: string) => void;
+  apiKeys?: string[];
+  onApiKeysChange?: (keys: string[]) => void;
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
@@ -189,6 +191,8 @@ export function OpenCodeFormFields({
   onNpmChange,
   apiKey,
   onApiKeyChange,
+  apiKeys,
+  onApiKeysChange,
   category,
   shouldShowApiKeyLink,
   websiteUrl,
@@ -527,6 +531,8 @@ export function OpenCodeFormFields({
       <ApiKeySection
         value={apiKey}
         onChange={onApiKeyChange}
+        apiKeys={apiKeys}
+        onApiKeysChange={onApiKeysChange}
         category={category}
         shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}

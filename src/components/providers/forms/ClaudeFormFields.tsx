@@ -75,6 +75,8 @@ interface ClaudeFormFieldsProps {
   shouldShowApiKey: boolean;
   apiKey: string;
   onApiKeyChange: (key: string) => void;
+  apiKeys?: string[];
+  onApiKeysChange?: (keys: string[]) => void;
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
@@ -166,6 +168,8 @@ export function ClaudeFormFields({
   shouldShowApiKey,
   apiKey,
   onApiKeyChange,
+  apiKeys,
+  onApiKeysChange,
   category,
   shouldShowApiKeyLink,
   websiteUrl,
@@ -690,6 +694,8 @@ export function ClaudeFormFields({
         <ApiKeySection
           value={apiKey}
           onChange={onApiKeyChange}
+          apiKeys={apiKeys}
+          onApiKeysChange={onApiKeysChange}
           category={category}
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}

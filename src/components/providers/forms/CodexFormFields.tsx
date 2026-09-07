@@ -79,6 +79,8 @@ interface CodexFormFieldsProps {
   // API Key
   codexApiKey: string;
   onApiKeyChange: (key: string) => void;
+  apiKeys?: string[];
+  onApiKeysChange?: (keys: string[]) => void;
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
@@ -373,6 +375,8 @@ export function CodexFormFields({
   onXaiAccountSelect,
   codexApiKey,
   onApiKeyChange,
+  apiKeys,
+  onApiKeysChange,
   category,
   shouldShowApiKeyLink,
   websiteUrl,
@@ -759,6 +763,8 @@ export function CodexFormFields({
           label="API Key"
           value={codexApiKey}
           onChange={onApiKeyChange}
+          apiKeys={apiKeys}
+          onApiKeysChange={onApiKeysChange}
           category={category}
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
