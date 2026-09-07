@@ -499,13 +499,13 @@ mod tests {
             ),
         ] {
             let models = [
-                model_with_endpoints("claude-opus-4.9", &[incompatible_endpoint]),
-                model_with_endpoints("claude-opus-4.8", &[endpoint]),
+                model_with_endpoints("claude-opus-4.8", &[incompatible_endpoint]),
+                model_with_endpoints("claude-opus-4.7", &[endpoint]),
                 model_with_endpoints("claude-opus-4.6", &[endpoint]),
             ];
-            let resolved = resolve_model_with_format("claude-opus-4-10", &models, format).unwrap();
+            let resolved = resolve_model_with_format("claude-opus-5.0", &models, format).unwrap();
 
-            assert_eq!(resolved.id, "claude-opus-4.8", "{format:?}");
+            assert_eq!(resolved.id, "claude-opus-4.7", "{format:?}");
             assert_eq!(
                 resolved.transport,
                 Some(CopilotTransport {
@@ -519,16 +519,16 @@ mod tests {
     #[test]
     fn auto_family_fallback_skips_unsupported_models_without_changing_legacy_resolution() {
         let models = [
-            model_with_endpoints("claude-opus-4.9", &["/v1/messages"]),
-            model("claude-opus-4.8"),
-            model_with_endpoints("claude-opus-4.7", &["/chat/completions"]),
-            model_with_endpoints("claude-opus-4.6", &["/responses"]),
+            model_with_endpoints("claude-opus-4.8", &["/v1/messages"]),
+            model("claude-opus-4.7"),
+            model_with_endpoints("claude-opus-4.6", &["/chat/completions"]),
+            model_with_endpoints("claude-opus-4.5", &["/responses"]),
         ];
         let resolved =
-            resolve_model_with_format("claude-opus-4-10", &models, CodexCopilotApiFormat::Auto)
+            resolve_model_with_format("claude-opus-5.0", &models, CodexCopilotApiFormat::Auto)
                 .unwrap();
 
-        assert_eq!(resolved.id, "claude-opus-4.7");
+        assert_eq!(resolved.id, "claude-opus-4.6");
         assert_eq!(
             resolved.transport,
             Some(CopilotTransport {
@@ -537,11 +537,11 @@ mod tests {
             })
         );
         assert_eq!(
-            resolve_against_models("claude-opus-4-10", &models).as_deref(),
-            Some("claude-opus-4.9")
+            resolve_against_models("claude-opus-5.0", &models).as_deref(),
+            Some("claude-opus-4.8")
         );
-        let legacy = resolve_model("claude-opus-4-10", &models).unwrap();
-        assert_eq!(legacy.id, "claude-opus-4.9");
+        let legacy = resolve_model("claude-opus-5.0", &models).unwrap();
+        assert_eq!(legacy.id, "claude-opus-4.8");
         assert_eq!(legacy.vendor, "anthropic");
         assert_eq!(legacy.transport, None);
     }
@@ -553,16 +553,18 @@ mod tests {
             (CodexCopilotApiFormat::OpenaiChat, "/responses"),
             (CodexCopilotApiFormat::OpenaiResponses, "/chat/completions"),
         ] {
+            let mut gpt = model_with_endpoints("gpt-6-astra", &["/responses", "/chat/completions"]);
+            gpt.vendor = "OpenAI".to_string();
             let models = [
-                model_with_endpoints("claude-opus-4.9", &[incompatible_endpoint]),
-                model("claude-opus-4.8"),
+                model_with_endpoints("claude-opus-4.8", &[incompatible_endpoint]),
+                model("claude-opus-4.7"),
                 model_with_endpoints("claude-sonnet-4.6", &["/responses", "/chat/completions"]),
-                model_with_endpoints("gpt-5.6", &["/responses", "/chat/completions"]),
+                gpt,
             ];
             for requested in [
-                "claude-opus-4-10",
+                "claude-opus-5.0",
                 "claude-haiku-4.5",
-                "gpt-5.7",
+                "gpt-5.6-sol",
                 "unknown",
                 "",
             ] {
@@ -581,19 +583,22 @@ mod tests {
 
     #[test]
     fn exact_unsupported_models_keep_normalized_identity_and_first_metadata() {
-        for (id, requests) in [
+        for (id, vendor, requests) in [
             (
                 "claude-opus-4.7",
-                ["claude-opus-4.7", "CLAUDE-OPUS-4.7", "CLAUDE-OPUS-4-7"],
+                "anthropic",
+                vec!["claude-opus-4.7", "CLAUDE-OPUS-4.7", "CLAUDE-OPUS-4-7"],
             ),
             (
                 "claude-opus-4.7-1m",
-                [
+                "anthropic",
+                vec![
                     "claude-opus-4.7-1m",
                     "CLAUDE-OPUS-4.7-1M",
                     "claude-opus-4-7[1M]",
                 ],
             ),
+            ("gpt-6-astra", "OpenAI", vec!["gpt-6-astra", "GPT-6-ASTRA"]),
         ] {
             for (format, unsupported) in [
                 (CodexCopilotApiFormat::Auto, vec!["/v1/messages"]),
@@ -609,15 +614,16 @@ mod tests {
                     &["/responses", "/chat/completions"],
                 );
                 duplicate.vendor = "second".to_string();
-                let models = [
+                let mut models = [
                     model_with_endpoints(id, &unsupported),
                     duplicate,
                     model_with_endpoints("claude-opus-4.6", &["/responses", "/chat/completions"]),
                 ];
-                for requested in requests {
+                models[0].vendor = vendor.to_string();
+                for requested in &requests {
                     let resolved = resolve_model_with_format(requested, &models, format).unwrap();
                     assert_eq!(resolved.id, id, "{requested}: {format:?}");
-                    assert_eq!(resolved.vendor, "anthropic");
+                    assert_eq!(resolved.vendor, vendor);
                     assert_eq!(resolved.transport, None);
                 }
             }
@@ -632,15 +638,15 @@ mod tests {
             CodexCopilotApiFormat::OpenaiResponses,
         ] {
             let mut natural =
-                model_with_endpoints("claude-opus-4.8", &["/responses", "/chat/completions"]);
+                model_with_endpoints("claude-opus-4.7", &["/responses", "/chat/completions"]);
             natural.context_window = Some(1_048_576);
             let mut models = [
-                model_with_endpoints("claude-opus-4.9-1m", &["/v1/messages"]),
+                model_with_endpoints("claude-opus-4.8-1m", &["/v1/messages"]),
                 model_with_endpoints("claude-opus-4.6-1m", &["/responses", "/chat/completions"]),
                 natural,
             ];
             assert_eq!(
-                resolve_model_with_format("claude-opus-4-10[1M]", &models, format)
+                resolve_model_with_format("claude-opus-5-0[1M]", &models, format)
                     .unwrap()
                     .id,
                 "claude-opus-4.6-1m",
@@ -648,10 +654,10 @@ mod tests {
             );
             models[1].supported_endpoints.clear();
             assert_eq!(
-                resolve_model_with_format("claude-opus-4-10[1M]", &models, format)
+                resolve_model_with_format("claude-opus-5-0[1M]", &models, format)
                     .unwrap()
                     .id,
-                "claude-opus-4.8",
+                "claude-opus-4.7",
                 "{format:?}"
             );
         }
