@@ -42,7 +42,8 @@
     "deleting": "削除中...",
     "auto": "自動",
     "enabled": "有効",
-    "notSet": "未設定"
+    "notSet": "未設定",
+    "collapse": "折りたたむ"
   },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
@@ -978,7 +979,8 @@
       "effectiveApiRequired": "モデル {{id}} には、直接またはプロバイダーから継承した API が必要です",
       "effectiveBaseUrlRequired": "モデル {{id}} には、直接またはプロバイダーから継承したベース URL が必要です",
       "duplicateModel": "モデル ID {{id}} が重複しています",
-      "modelRequired": "モデルを 1 つ以上追加してください"
+      "modelRequired": "モデルを 1 つ以上追加してください",
+      "providerKeyDuplicate": "このプロバイダーキーは既に存在します"
     },
     "current": {
       "readFailed": "Pi のプロバイダー設定を読み込めません",

@@ -2005,6 +2005,17 @@ fn codex_vendor_catalog_model_entry(
         entry_obj.insert("display_name".to_string(), json!(display_name));
         entry_obj.insert("description".to_string(), json!(display_name));
         entry_obj.insert("priority".to_string(), json!(1000 + priority));
+        // Unknown model: don't inherit the flagship entry's modalities —
+        // resolve from the registry/fail-open logic instead, so a vision
+        // variant (e.g. deepseek-v4-flash-vision-exp) is not declared
+        // text-only merely because the flagship is.
+        entry_obj.insert(
+            "input_modalities".to_string(),
+            json!(codex_catalog_input_modalities(
+                &spec.model,
+                spec.input_modalities.as_deref(),
+            )),
+        );
     }
 
     // Explicit user overrides win over the official entry; absent values keep
@@ -6749,6 +6760,107 @@ base_url = "https://production.api/v1"
                 .and_then(|v| v.as_str()),
             Some("xhigh")
         );
+    }
+
+    #[test]
+    fn vendor_catalog_unknown_model_does_not_inherit_flagship_modalities() {
+        // A vision variant not in the official DeepSeek catalog must not
+        // inherit the flagship entry's text-only modalities; the registry /
+        // fail-open logic should resolve it as image-capable instead.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash-vision-exp",
+                        "displayName": "DeepSeek V4 Flash Vision Exp"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(
+            modalities,
+            vec!["text", "image"],
+            "unknown vision model must not inherit the flagship's text-only modalities"
+        );
+    }
+
+    #[test]
+    fn vendor_catalog_unknown_model_explicit_modalities_override() {
+        // An explicit user inputModalities declaration must win over the
+        // registry/fail-open resolution even for unmatched models.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash-vision-exp",
+                        "inputModalities": ["text"]
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(modalities, vec!["text"]);
+    }
+
+    #[test]
+    fn vendor_catalog_matched_model_keeps_vendor_modalities() {
+        // A model that IS in the official catalog must keep the vendor's
+        // declared modalities (deepseek-v4-flash is text-only).
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek V4 Flash"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(modalities, vec!["text"]);
     }
 
     #[test]

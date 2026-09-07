@@ -445,6 +445,7 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "ppio",
     endpointCandidates: ["https://api.ppio.com/anthropic"],
+    modelsUrl: "https://api.ppio.com/openai/v1/models",
     icon: "ppio",
     iconColor: "#2874FF",
   },

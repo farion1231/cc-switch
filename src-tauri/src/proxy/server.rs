@@ -363,6 +363,23 @@ impl ProxyServer {
                 "/codex/v1/alpha/search",
                 post(handlers::handle_alpha_search),
             )
+            // Codex built-in ImageGen still calls the legacy OpenAI Images API.
+            .route(
+                "/images/generations",
+                post(handlers::handle_images_generations),
+            )
+            .route(
+                "/v1/images/generations",
+                post(handlers::handle_images_generations),
+            )
+            .route(
+                "/v1/v1/images/generations",
+                post(handlers::handle_images_generations),
+            )
+            .route(
+                "/codex/v1/images/generations",
+                post(handlers::handle_images_generations),
+            )
             // Gemini API (支持带前缀和不带前缀)
             //
             // 用 `any(..)` 覆盖所有 HTTP 方法：除了 POST `:generateContent` /
@@ -417,6 +434,7 @@ impl ProxyServer {
 mod tests {
     use super::*;
     use crate::provider::{Provider, ProviderMeta};
+    use crate::AppError;
     use axum::http::{header, HeaderMap, StatusCode};
     use serde_json::{json, Value};
     use tokio::sync::Mutex;
@@ -426,6 +444,211 @@ mod tests {
         path_and_query: String,
         authorization: Option<String>,
         body: Value,
+    }
+
+    #[tokio::test]
+    async fn codex_images_generation_aliases_forward_and_record_usage() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let mock_app = Router::new().route(
+            "/v1/images/generations",
+            post({
+                let captured = captured.clone();
+                move |request: axum::extract::Request| {
+                    let captured = captured.clone();
+                    async move {
+                        let (parts, body) = request.into_parts();
+                        let body = axum::body::to_bytes(body, 1024 * 1024)
+                            .await
+                            .expect("read mock request body");
+                        captured.lock().await.push(CapturedRequest {
+                            path_and_query: parts
+                                .uri
+                                .path_and_query()
+                                .map(|value| value.as_str().to_string())
+                                .unwrap_or_else(|| parts.uri.path().to_string()),
+                            authorization: parts
+                                .headers
+                                .get(header::AUTHORIZATION)
+                                .and_then(|value| value.to_str().ok())
+                                .map(ToString::to_string),
+                            body: serde_json::from_slice(&body).expect("parse mock request body"),
+                        });
+
+                        (
+                            StatusCode::OK,
+                            [(header::CONTENT_TYPE, "application/json")],
+                            r#"{"created":1,"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":7,"output_tokens":11,"total_tokens":18}}"#,
+                        )
+                    }
+                }
+            }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "images-api-upstream".to_string(),
+            "Images API Upstream".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save test provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("select test provider");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: true,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let aliases = [
+            "/images/generations",
+            "/v1/images/generations",
+            "/v1/v1/images/generations",
+            "/codex/v1/images/generations",
+        ];
+
+        for (index, path) in aliases.iter().enumerate() {
+            let response = client
+                .post(format!(
+                    "http://127.0.0.1:{}{}?client_version=0.145.0",
+                    proxy_info.port, path
+                ))
+                .header(header::AUTHORIZATION, "Bearer client-secret")
+                .json(&json!({
+                    "model": "gpt-image-1",
+                    "prompt": format!("image generation alias {index}")
+                }))
+                .send()
+                .await
+                .expect("send images request");
+
+            assert_eq!(response.status(), StatusCode::OK, "alias {path}");
+            assert_eq!(
+                response.text().await.expect("read proxy response"),
+                r#"{"created":1,"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":7,"output_tokens":11,"total_tokens":18}}"#,
+                "alias {path}"
+            );
+        }
+
+        let (log_count, input_tokens, output_tokens): (i64, i64, i64) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let totals = {
+                        let conn = crate::database::lock_conn!(db.conn);
+                        match conn.query_row(
+                            "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+                             FROM proxy_request_logs WHERE provider_id = ?1",
+                            ["images-api-upstream"],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                        ) {
+                            Ok(totals) => totals,
+                            Err(error) => panic!("query images usage logs: {error}"),
+                        }
+                    };
+
+                    if totals.0 == aliases.len() as i64 {
+                        break Ok::<_, AppError>(totals);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("images usage logs were not recorded")
+            .expect("read images usage logs");
+        assert_eq!(log_count, aliases.len() as i64);
+        assert_eq!(input_tokens, 7 * aliases.len() as i64);
+        assert_eq!(output_tokens, 11 * aliases.len() as i64);
+
+        let mut full_url_provider = Provider::with_id(
+            "images-api-full-url".to_string(),
+            "Images API Full URL".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1/responses?api-version=test"),
+                "auth": {"OPENAI_API_KEY": "full-url-secret"}
+            }),
+            None,
+        );
+        full_url_provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+        db.save_provider("codex", &full_url_provider)
+            .expect("save full URL images provider");
+        db.set_current_provider("codex", &full_url_provider.id)
+            .expect("select full URL images provider");
+
+        let response = client
+            .post(format!(
+                "http://127.0.0.1:{}/v1/images/generations?client_version=0.145.0",
+                proxy_info.port
+            ))
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .json(&json!({
+                "model": "gpt-image-1",
+                "prompt": "image generation full URL"
+            }))
+            .send()
+            .await
+            .expect("send full URL images request");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.text().await.expect("read full URL image response"),
+            r#"{"created":1,"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":7,"output_tokens":11,"total_tokens":18}}"#
+        );
+
+        let captured = captured.lock().await;
+        assert_eq!(captured.len(), aliases.len() + 1);
+        for (index, request) in captured.iter().take(aliases.len()).enumerate() {
+            assert_eq!(
+                request.path_and_query,
+                "/v1/images/generations?client_version=0.145.0"
+            );
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer upstream-secret")
+            );
+            assert_eq!(request.body["model"], "gpt-image-1");
+            assert_eq!(
+                request.body["prompt"],
+                format!("image generation alias {index}")
+            );
+        }
+
+        let full_url_request = captured.last().expect("full URL image request captured");
+        assert_eq!(
+            full_url_request.path_and_query,
+            "/v1/images/generations?api-version=test&client_version=0.145.0"
+        );
+        assert_eq!(
+            full_url_request.authorization.as_deref(),
+            Some("Bearer full-url-secret")
+        );
+        assert_eq!(full_url_request.body["model"], "gpt-image-1");
+        assert_eq!(full_url_request.body["prompt"], "image generation full URL");
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
     }
 
     #[tokio::test]

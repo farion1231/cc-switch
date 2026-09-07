@@ -42,7 +42,8 @@
     "deleting": "删除中...",
     "auto": "自动",
     "enabled": "已开启",
-    "notSet": "未设置"
+    "notSet": "未设置",
+    "collapse": "收起"
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
@@ -978,7 +979,8 @@
       "effectiveApiRequired": "模型 {{id}} 必须直接配置或继承一个 API",
       "effectiveBaseUrlRequired": "模型 {{id}} 必须直接配置或继承一个基础地址",
       "duplicateModel": "模型 ID {{id}} 重复",
-      "modelRequired": "请至少添加一个模型"
+      "modelRequired": "请至少添加一个模型",
+      "providerKeyDuplicate": "该供应商标识已存在"
     },
     "current": {
       "readFailed": "无法读取 Pi 供应商配置",
