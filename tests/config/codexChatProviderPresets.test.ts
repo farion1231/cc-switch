@@ -10,22 +10,8 @@ const expectedChatPresets = new Map<
   string,
   { baseUrl: string; contextWindows: Record<string, number> }
 >([
-  // 火山 Agent Plan / Coding Plan 与 BytePlus 国际站（coding/v3）均已切
+  // 火山 Agent Plan / Coding Plan 与 BytePlus 国际站（coding/v3）、智谱 GLM 均已切
   // 原生 Responses，见下方 native 清单
-  [
-    "Zhipu GLM",
-    {
-      baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
-      contextWindows: { "glm-5.2": 200000 },
-    },
-  ],
-  [
-    "Zhipu GLM en",
-    {
-      baseUrl: "https://api.z.ai/api/coding/paas/v4",
-      contextWindows: { "glm-5.2": 200000 },
-    },
-  ],
   [
     "Baidu Qianfan Coding Plan",
     {
@@ -168,7 +154,7 @@ describe("Codex Chat provider presets", () => {
   it("uses native Responses API for migrated CN providers without local route mapping", () => {
     const nativeResponsesPresets = new Map<
       string,
-      { contextWindows: Record<string, number> }
+      { baseUrl?: string; contextWindows: Record<string, number> }
     >([
       // 官方 Codex 文档确认 Agent Plan /api/plan/v3 与 Coding Plan
       // /api/coding/v3 均支持 Responses API；BytePlus 国际站 coding/v3
@@ -218,6 +204,25 @@ describe("Codex Chat provider presets", () => {
           },
         },
       ],
+      // 智谱三端点分立（Anthropic /api/anthropic、Chat /api/coding/paas/v4、
+      // Responses /api/v1），官方明示错误端点无法使用 Coding Plan 套餐额度——
+      // 原生 Responses 预设必须锁在 /api/v1（#6944；docs.bigmodel.cn/cn/coding-plan/
+      // tool/codex 与 docs.z.ai/devpack/tool/codex 自带 models.json，2026-09-04 核对：
+      // 国内站 glm-5.3 + glm-5-turbo，国际站仅 glm-5.3）
+      [
+        "Zhipu GLM",
+        {
+          baseUrl: "https://open.bigmodel.cn/api/v1",
+          contextWindows: { "glm-5.3": 1048576, "glm-5-turbo": 204800 },
+        },
+      ],
+      [
+        "Zhipu GLM en",
+        {
+          baseUrl: "https://api.z.ai/api/v1",
+          contextWindows: { "glm-5.3": 1048576 },
+        },
+      ],
     ]);
 
     for (const [name, expected] of nativeResponsesPresets) {
@@ -225,6 +230,15 @@ describe("Codex Chat provider presets", () => {
 
       expect(preset, `${name} preset`).toBeDefined();
       expect(preset?.apiFormat).toBe("openai_responses");
+      if (expected.baseUrl) {
+        // 直连预设的 base_url 必须是厂商的 Responses 端点本身（不是同站的
+        // Chat 端点）；endpointCandidates 与主地址同路径档
+        expect(extractCodexBaseUrl(preset?.config)).toBe(expected.baseUrl);
+        expect(preset?.endpointCandidates).toContain(expected.baseUrl);
+        expect(extractCodexModelName(preset?.config)).toBe(
+          preset?.modelCatalog?.[0]?.model,
+        );
+      }
       // 原生 Responses 预设现在带 modelCatalog：cc-switch 直连时据此生成
       // ~/.codex 的 model-catalogs.json（shell_command 编辑、不发 freeform
       // apply_patch）。带 catalog 不再强制开“本地路由映射”——前端已按
