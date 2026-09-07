@@ -1,6 +1,6 @@
 use http::header::{HeaderValue, InvalidHeaderValue};
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -442,6 +442,14 @@ impl LocalProxyRequestOverrides {
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
+    /// Inactive API keys. The active key remains in `settings_config`.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_api_keys",
+        skip_serializing_if = "Vec::is_empty",
+        rename = "apiKeys"
+    )]
+    pub api_keys: Vec<ApiKeyEntry>,
     /// 自定义端点列表（按 URL 去重存储）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
@@ -562,6 +570,34 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyEntry {
+    pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredApiKey {
+    Legacy(String),
+    Entry(ApiKeyEntry),
+}
+
+fn deserialize_api_keys<'de, D>(deserializer: D) -> Result<Vec<ApiKeyEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<StoredApiKey>::deserialize(deserializer).map(|keys| {
+        keys.into_iter()
+            .map(|key| match key {
+                StoredApiKey::Legacy(key) => ApiKeyEntry { key, note: None },
+                StoredApiKey::Entry(key) => key,
+            })
+            .collect()
+    })
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。
@@ -1021,6 +1057,18 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn provider_meta_reads_legacy_api_key_strings() {
+        let meta: ProviderMeta = serde_json::from_value(json!({
+            "apiKeys": ["primary", "backup"]
+        }))
+        .unwrap();
+
+        assert_eq!(meta.api_keys.len(), 2);
+        assert_eq!(meta.api_keys[1].key, "backup");
+        assert_eq!(meta.api_keys[1].note, None);
+    }
 
     #[test]
     fn proxy_injected_oauth_excludes_codex_oauth() {
