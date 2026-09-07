@@ -5546,6 +5546,12 @@ wire_api = "responses"
                     None
                 };
                 assert_eq!(saved_binding.as_deref(), expected_binding);
+                if should_succeed && !managed_target {
+                    assert!(
+                        !marker_path.exists(),
+                        "{scenario}: successful switch must relinquish outgoing ownership"
+                    );
+                }
                 if !should_succeed {
                     assert_eq!(
                         db.get_live_backup("codex")

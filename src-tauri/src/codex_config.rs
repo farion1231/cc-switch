@@ -726,7 +726,8 @@ pub(crate) fn codex_live_auth_matches_managed_request(
     Ok(live_access_token == Some(request_access_token.trim()))
 }
 
-fn clear_codex_managed_oauth_live_auth_marker_for_account(
+/// Relinquish only this account's ownership marker, without touching live auth.
+pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account(
     account_id: &str,
 ) -> Result<(), AppError> {
     let marker_path = get_codex_managed_oauth_live_auth_marker_path();

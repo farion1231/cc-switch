@@ -242,9 +242,14 @@ impl CodexLiveAuthSwitchGuard {
                     expected.as_deref(),
                 )
             }
-            // There was no outgoing auth to remove. Anything now present may
-            // be a concurrent native login, even when its identity matches.
-            Self::AbsentAuth | Self::MissingAccount => Ok(()),
+            // Relinquish ownership without removing a concurrent native login,
+            // even when its identity matches the outgoing account. The helper
+            // also leaves a newly staged target account's marker untouched.
+            Self::AbsentAuth | Self::MissingAccount => {
+                crate::codex_config::clear_codex_managed_oauth_live_auth_marker_for_account(
+                    account_id,
+                )
+            }
         }
     }
 }

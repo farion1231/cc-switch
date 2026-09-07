@@ -3039,6 +3039,139 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn codex_absent_auth_direct_switch_leaves_no_stale_ownership() {
+        assert_absent_auth_relinquishes_ownership("direct-switch");
+    }
+
+    #[test]
+    #[serial]
+    fn codex_absent_auth_direct_update_leaves_no_stale_ownership() {
+        assert_absent_auth_relinquishes_ownership("direct-update");
+    }
+
+    #[test]
+    #[serial]
+    fn codex_absent_auth_proxy_switch_leaves_no_stale_ownership() {
+        assert_absent_auth_relinquishes_ownership("proxy-switch");
+    }
+
+    #[test]
+    #[serial]
+    fn codex_absent_auth_proxy_update_leaves_no_stale_ownership() {
+        assert_absent_auth_relinquishes_ownership("proxy-update");
+    }
+
+    fn assert_absent_auth_relinquishes_ownership(operation: &str) {
+        for (third_party, fail_commit) in [(false, false), (true, false), (false, true)] {
+            with_test_home(|state, _| {
+                crate::settings::reload_settings().expect("reload settings");
+                tauri::async_runtime::block_on(
+                    state
+                        .codex_oauth_manager
+                        .add_test_account_with_user_identity("acct-a", "managed-access", "user-a"),
+                )
+                .expect("seed managed account");
+                let current = managed_codex_provider("current", "acct-a");
+                let update = operation.ends_with("update");
+                let mut target = Provider::with_id(
+                    if update { "current" } else { "target" }.to_string(),
+                    "Target".to_string(),
+                    if third_party {
+                        codex_settings("https://third.example/v1", "sk-third")
+                    } else {
+                        json!({"auth": {}, "config": ""})
+                    },
+                    None,
+                );
+                if !third_party {
+                    target.category = Some("official".to_string());
+                }
+                state
+                    .db
+                    .save_provider("codex", &current)
+                    .expect("save current");
+                if !update {
+                    state
+                        .db
+                        .save_provider("codex", &target)
+                        .expect("save target");
+                }
+                ProviderService::switch(state, AppType::Codex, &current.id)
+                    .expect("activate managed account");
+                if operation.starts_with("proxy") {
+                    tauri::async_runtime::block_on(
+                        state
+                            .proxy_service
+                            .sync_codex_live_from_provider_while_proxy_active(&current),
+                    )
+                    .expect("activate takeover");
+                    tauri::async_runtime::block_on(
+                        state
+                            .db
+                            .save_live_backup("codex", &current.settings_config.to_string()),
+                    )
+                    .expect("save takeover backup");
+                }
+                let auth_path = crate::codex_config::get_codex_auth_path();
+                fs::remove_file(&auth_path).expect("remove auth while retaining ownership marker");
+                assert!(crate::codex_config::codex_managed_oauth_live_auth_marker_exists());
+                let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()
+                    .expect("capture live state before switching");
+                if fail_commit {
+                    state
+                        .db
+                        .conn
+                        .lock()
+                        .expect("lock database")
+                        .execute_batch(
+                            "CREATE TRIGGER reject_provider_commit BEFORE UPDATE ON providers
+                         BEGIN SELECT RAISE(ABORT, 'forced provider commit failure'); END;",
+                        )
+                        .expect("install provider commit failure");
+                }
+                let result = if update {
+                    ProviderService::update(state, AppType::Codex, None, target).map(|_| ())
+                } else {
+                    ProviderService::switch(state, AppType::Codex, &target.id).map(|_| ())
+                };
+                if fail_commit {
+                    let error = result.expect_err("provider commit must fail");
+                    assert!(error.to_string().contains("forced provider commit failure"));
+                    assert_eq!(
+                        crate::codex_config::CodexLiveStateSnapshot::capture().unwrap(),
+                        snapshot,
+                        "{operation}: rollback must restore outgoing ownership and live state"
+                    );
+                    return;
+                }
+                result.expect("switch away from managed account");
+                assert!(
+                    !crate::codex_config::codex_managed_oauth_live_auth_marker_exists(),
+                    "{operation}, third_party={third_party}: outgoing ownership must be relinquished"
+                );
+                // A later native login can have exactly the same user/workspace
+                // identity. Removing the old managed account must leave it alone.
+                let native = crate::codex_config::codex_managed_oauth_auth_value(
+                    "acct-a",
+                    "native-access",
+                    Some(&crate::codex_config::test_codex_id_token("user-a")),
+                    "native-refresh",
+                    "2099-01-01T00:00:00Z",
+                );
+                write_json_file(&auth_path, &native).expect("write later native login");
+                tauri::async_runtime::block_on(state.codex_oauth_manager.remove_account("acct-a"))
+                    .expect("remove former managed account");
+                assert_eq!(
+                    read_json_file::<Value>(&auth_path).expect("native login must survive"),
+                    native,
+                    "{operation}, third_party={third_party}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial]
     fn codex_switch_and_rebind_handle_preexisting_auth() {
         for auth_state in ["native-login", "missing-marker", "deleted-account"] {
             for target_kind in [
@@ -5159,11 +5292,16 @@ impl ProviderService {
                             outgoing_managed_codex_account_id.as_deref(),
                             outgoing_live_auth_guard.as_ref(),
                         )?;
-                        Self::prepare_live_if_codex_auth_absent(
+                        let pending = Self::prepare_live_if_codex_auth_absent(
                             state,
                             &provider,
                             preflighted_provider.as_ref(),
-                        )
+                        )?;
+                        Self::clear_outgoing_managed_codex_live_auth(
+                            outgoing_managed_codex_account_id.as_deref(),
+                            outgoing_live_auth_guard.as_ref(),
+                        )?;
+                        Ok::<_, AppError>(pending)
                     })();
                     let pending_auth = match pending_auth {
                         Ok(pending) => pending,
@@ -5715,11 +5853,16 @@ impl ProviderService {
                         outgoing_managed_codex_account_id.as_deref(),
                         outgoing_live_auth_guard.as_ref(),
                     )?;
-                    Self::prepare_live_if_codex_auth_absent(
+                    let pending = Self::prepare_live_if_codex_auth_absent(
                         state,
                         provider,
                         preflighted_provider.as_ref(),
-                    )
+                    )?;
+                    Self::clear_outgoing_managed_codex_live_auth(
+                        outgoing_managed_codex_account_id.as_deref(),
+                        outgoing_live_auth_guard.as_ref(),
+                    )?;
+                    Ok::<_, AppError>(pending)
                 })();
                 let pending_auth = match pending_auth {
                     Ok(pending) => pending,
