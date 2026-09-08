@@ -150,15 +150,21 @@ export function CopyToAppsDialog({
         </div>
 
         <DialogFooter className="gap-3 sm:items-center">
-          <p className="mr-auto text-left text-xs leading-relaxed text-muted-foreground sm:max-w-[55%]">
+          <p className="mr-auto text-left text-xs text-muted-foreground">
             {t("provider.copyToApps.modelHint")}
           </p>
-          <Button variant="outline" onClick={onClose} disabled={isCopying}>
+          <Button
+            variant="outline"
+            onClick={onClose}
+            disabled={isCopying}
+            className="shrink-0"
+          >
             {t("common.cancel")}
           </Button>
           <Button
             onClick={handleCopy}
             disabled={isCopying || selected.size === 0}
+            className="shrink-0"
           >
             {isCopying && <Loader2 className="h-4 w-4 animate-spin" />}
             {isCopying
