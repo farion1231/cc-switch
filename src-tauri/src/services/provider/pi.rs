@@ -147,9 +147,7 @@ pub(super) fn update(
         ProviderService::validate_provider_settings(&app_type, &provider)?;
         ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
-        if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
-            return Err(error);
-        }
+        state.db.save_provider(app_type.as_str(), &provider)?;
         if let Err(error) = state.db.delete_provider(app_type.as_str(), &original_id) {
             // Roll back the rename to keep the catalog consistent.
             if let Err(rollback) = state.db.delete_provider(app_type.as_str(), &provider.id) {
