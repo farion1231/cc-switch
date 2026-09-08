@@ -144,10 +144,7 @@ fn second_copy_skips_existing_target_and_preserves_row() {
     assert_eq!(skipped.status, CopyStatus::Skipped);
     let reason = skipped.reason.as_ref().expect("skip reason");
     assert_eq!(reason.key, "alreadyExists");
-    assert_eq!(
-        reason.params.get("id").map(String::as_str),
-        Some("relay-src")
-    );
+    assert_eq!(reason.params.get("name").map(String::as_str), Some("Relay"));
 
     let row = state
         .db
