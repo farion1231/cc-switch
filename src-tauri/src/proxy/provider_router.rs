@@ -6,7 +6,7 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::circuit_breaker::{AllowRequestResult, CircuitBreaker, CircuitBreakerConfig};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -138,18 +138,20 @@ impl ProviderRouter {
     ///
     /// 注意：调用方必须在请求结束后通过 `record_result()` 释放 HalfOpen 名额，
     /// 否则会导致该 Provider 长时间无法进入探测状态。
-    pub async fn allow_provider_request(&self, provider_id: &str, app_type: &str) -> AllowResult {
+    pub async fn allow_provider_request(&self, provider_id: &str, app_type: &str) -> AllowRequestResult {
         let circuit_key = format!("{app_type}:{provider_id}");
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
         breaker.allow_request().await
     }
 
     /// 记录供应商请求结果
+    ///
+    /// 注意：`permit` 由调用方在调用此方法前通过 `permit.take().map(|g| g.disarm())`
+    /// 显式 disarm（或让 guard 自然 Drop），本方法不再接受 `used_half_open_permit: bool`。
     pub async fn record_result(
         &self,
         provider_id: &str,
         app_type: &str,
-        used_half_open_permit: bool,
         success: bool,
         error_msg: Option<String>,
     ) -> Result<(), AppError> {
@@ -164,9 +166,9 @@ impl ProviderRouter {
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
         if success {
-            breaker.record_success(used_half_open_permit).await;
+            breaker.record_success().await;
         } else {
-            breaker.record_failure(used_half_open_permit).await;
+            breaker.record_failure().await;
         }
 
         // 3. 更新数据库健康状态（使用配置的阈值）
@@ -200,16 +202,15 @@ impl ProviderRouter {
     /// 仅释放 HalfOpen permit，不影响健康统计（neutral 接口）
     ///
     /// 用于整流器等场景：请求结果不应计入 Provider 健康度，
-    /// 但仍需释放占用的探测名额，避免 HalfOpen 状态卡死
+    /// 但仍需释放占用的探测名额，避免 HalfOpen 状态卡死。
+    ///
+    /// 注意：`permit` 由调用方在调用此方法前通过 `permit.take().map(|g| g.disarm())`
+    /// 显式 disarm（或让 guard 自然 Drop），本方法不再接受 `used_half_open_permit: bool`。
     pub async fn release_permit_neutral(
         &self,
         provider_id: &str,
         app_type: &str,
-        used_half_open_permit: bool,
     ) {
-        if !used_half_open_permit {
-            return;
-        }
         let circuit_key = format!("{app_type}:{provider_id}");
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
         breaker.release_half_open_permit();
@@ -572,7 +573,7 @@ mod tests {
         let router = ProviderRouter::new(db.clone());
 
         router
-            .record_result("b", "claude", false, false, Some("fail".to_string()))
+            .record_result("b", "claude", false, Some("fail".to_string()))
             .await
             .unwrap();
 
@@ -611,27 +612,28 @@ mod tests {
 
         // 触发熔断：1 次失败
         router
-            .record_result("a", "claude", false, false, Some("fail".to_string()))
+            .record_result("a", "claude", false, Some("fail".to_string()))
             .await
             .unwrap();
 
         // 第一次请求：获取 HalfOpen 探测名额
         let first = router.allow_provider_request("a", "claude").await;
         assert!(first.allowed);
-        assert!(first.used_half_open_permit);
+        assert!(first.permit.is_some());
 
         // 第二次请求应被拒绝（名额已被占用）
         let second = router.allow_provider_request("a", "claude").await;
         assert!(!second.allowed);
 
-        // 使用 release_permit_neutral 释放名额（不影响健康统计）
-        router
-            .release_permit_neutral("a", "claude", first.used_half_open_permit)
-            .await;
+        // 使用 release_permit_neutral 释放名额（不影响健康统计）。
+        // 在调用前手动 disarm guard 让 Drop 变 no-op，避免双重释放。
+        let first_guard = first.permit.expect("first.permit must be Some");
+        first_guard.disarm();
+        router.release_permit_neutral("a", "claude").await;
 
         // 第三次请求应被允许（名额已释放）
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
-        assert!(third.used_half_open_permit);
+        assert!(third.permit.is_some());
     }
 }
