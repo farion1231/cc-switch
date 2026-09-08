@@ -1825,10 +1825,9 @@ pub fn anthropic_to_responses(
     }
 
     // Map Anthropic thinking → OpenAI Responses reasoning.effort and summary.
-    // Responses makes summary visibility an explicit opt-in; Claude Code commonly
-    // omits thinking.display while still expecting its UI to receive a visible
-    // summary. Request the default summary whenever reasoning is enabled, unless
-    // the client explicitly asks to omit it.
+    // Responses makes summary visibility an explicit opt-in. Codex OAuth already
+    // relies on its native client default, while API-key routes must keep their
+    // existing request shape unless the client explicitly opts in.
     if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
         if super::transform::supports_reasoning_effort(model_name) {
             let effort = super::transform::resolve_reasoning_effort(&body);
@@ -1836,7 +1835,7 @@ pub fn anthropic_to_responses(
                 .pointer("/thinking/display")
                 .and_then(Value::as_str)
                 .map(|display| display.eq_ignore_ascii_case("summarized"))
-                .unwrap_or(effort.is_some());
+                .unwrap_or(effort.is_some() && is_codex_oauth);
             if effort.is_some() || summary_requested {
                 let mut reasoning = json!({});
                 if let Some(effort) = effort {
@@ -3235,7 +3234,8 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_responses_adaptive_thinking_requests_visible_summary_without_display() {
+    fn test_anthropic_to_responses_adaptive_thinking_does_not_request_summary_without_display_for_api_key(
+    ) {
         let input = json!({
             "model": "gpt-5.4",
             "thinking": {"type": "adaptive"},
@@ -3243,6 +3243,20 @@ mod tests {
         });
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+        assert!(result["reasoning"].get("summary").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_adaptive_thinking_requests_summary_without_display_for_codex_oauth(
+    ) {
+        let input = json!({
+            "model": "gpt-5.4",
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
         assert_eq!(result["reasoning"]["summary"], "auto");
     }
@@ -3274,9 +3288,12 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, false).unwrap();
-        assert_eq!(result["reasoning"]["effort"], "xhigh");
-        assert!(result["reasoning"].get("summary").is_none());
+        for is_codex_oauth in [false, true] {
+            let result =
+                anthropic_to_responses(input.clone(), None, is_codex_oauth, false).unwrap();
+            assert_eq!(result["reasoning"]["effort"], "xhigh");
+            assert!(result["reasoning"].get("summary").is_none());
+        }
     }
 
     #[test]
@@ -4992,7 +5009,7 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
-        assert_eq!(result["reasoning"]["summary"], "auto");
+        assert!(result["reasoning"].get("summary").is_none());
     }
 
     #[test]
@@ -5007,7 +5024,7 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
-        assert_eq!(result["reasoning"]["summary"], "auto");
+        assert!(result["reasoning"].get("summary").is_none());
     }
 
     #[test]

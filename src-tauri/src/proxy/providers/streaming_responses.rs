@@ -232,6 +232,20 @@ fn responses_json_to_anthropic_sse_for_client(
                         &json!({"type":"content_block_stop","index":index}),
                     ));
                 }
+                Some("redacted_thinking") if preserve_redacted_thinking => {
+                    events.push(anthropic_sse(
+                        "content_block_start",
+                        &json!({
+                            "type":"content_block_start",
+                            "index":index,
+                            "content_block":block
+                        }),
+                    ));
+                    events.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
                 Some("redacted_thinking") => {
                     events.push(anthropic_sse(
                         "content_block_start",
@@ -2179,10 +2193,8 @@ fn missing_reasoning_summary_part(
         if let Some(suffix) = text.strip_prefix(previous_part) {
             return suffix.to_string();
         }
-        if previous_part.starts_with(text) || emitted.starts_with(text) || emitted.ends_with(text) {
-            return String::new();
-        }
-        return text.to_string();
+        // A cumulative snapshot that diverges cannot replace already emitted text.
+        return String::new();
     }
 
     if let Some(suffix) = text.strip_prefix(emitted).filter(|value| !value.is_empty()) {
@@ -2204,6 +2216,7 @@ fn resolve_reasoning_index(
     reasoning_index_by_item_id: &mut HashMap<String, u32>,
     index_by_key: &mut HashMap<String, u32>,
     legacy_reasoning_index: &mut Option<u32>,
+    completed_reasoning_indices: &HashSet<u32>,
     next_content_index: &mut u32,
 ) -> u32 {
     let item_id = item
@@ -2228,7 +2241,18 @@ fn resolve_reasoning_index(
                 .as_ref()
                 .and_then(|key| index_by_key.get(key).copied())
         })
-        .or_else(|| is_keyless.then_some(*legacy_reasoning_index).flatten());
+        .or_else(|| {
+            // An anonymous block may receive its item_id only when the terminal
+            // snapshot arrives. Adopt the still-open legacy block before
+            // allocating, but only while no other item already owns it — a
+            // second reasoning item must not silently merge into streamed text.
+            (*legacy_reasoning_index).filter(|index| {
+                !completed_reasoning_indices.contains(index)
+                    && !reasoning_index_by_item_id
+                        .values()
+                        .any(|bound| bound == index)
+            })
+        });
 
     if let Some(index) = existing {
         // Bind aliases discovered later so a gateway can switch between item_id
@@ -2599,6 +2623,10 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         let mut reasoning_text_by_index: HashMap<u32, String> = HashMap::new();
         let mut reasoning_part_text_by_key: HashMap<String, String> = HashMap::new();
         let mut completed_reasoning_indices: HashSet<u32> = HashSet::new();
+        // Reasoning blocks whose output_item.done arrived but was too sparse to
+        // finalize; they stay open for the terminal snapshot and must not trip
+        // the clean-EOF truncation guard.
+        let mut deferred_done_reasoning: HashSet<u32> = HashSet::new();
         let mut legacy_reasoning_index: Option<u32> = None;
         let mut has_substantive_output = false;
         let mut terminated = false;
@@ -2707,19 +2735,23 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                         if event_name == "response.output_item.added" {
                             let added_reasoning = data.get("item").and_then(|item| {
                                 (item.get("type").and_then(Value::as_str) == Some("reasoning"))
-                                    .then(|| {
-                                        (
-                                            item.get("id")
-                                                .and_then(Value::as_str)
-                                                .map(ToString::to_string),
-                                            reasoning_summary_text(item),
-                                        )
-                                    })
+                                    .then(|| (item.clone(), reasoning_summary_text(item)))
                             });
-                            if let Some((item_id, text)) = added_reasoning {
+                            if let Some((item, text)) = added_reasoning {
+                                let index = resolve_reasoning_index(
+                                    &data,
+                                    Some(&item),
+                                    &mut reasoning_index_by_item_id,
+                                    &mut index_by_key,
+                                    &mut legacy_reasoning_index,
+                                    &completed_reasoning_indices,
+                                    &mut next_content_index,
+                                );
+                                reasoning_item_by_index.insert(index, item.clone());
+                                reasoning_text_by_index.entry(index).or_default();
                                 if !text.is_empty() {
                                     if let Some(object) = data.as_object_mut() {
-                                        if let Some(item_id) = item_id {
+                                        if let Some(item_id) = item.get("id").and_then(Value::as_str) {
                                             object.insert("item_id".to_string(), json!(item_id));
                                         }
                                         object.insert("summary_index".to_string(), json!(0));
@@ -3329,6 +3361,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             &mut reasoning_index_by_item_id,
                                             &mut index_by_key,
                                             &mut legacy_reasoning_index,
+                                            &completed_reasoning_indices,
                                             &mut next_content_index,
                                         );
                                         reasoning_item_by_index.insert(index, item.clone());
@@ -3541,8 +3574,8 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             | "response.reasoning.delta" => {
                                 if let Some(delta) = data
                                     .get("delta")
-                                    .or_else(|| data.get("text"))
-                                    .and_then(|d| d.as_str())
+                                    .and_then(Value::as_str)
+                                    .or_else(|| data.get("text").and_then(Value::as_str))
                                 {
                                     if let Some(index) = current_text_index.take() {
                                         if open_indices.remove(&index) {
@@ -3564,8 +3597,12 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         &mut reasoning_index_by_item_id,
                                         &mut index_by_key,
                                         &mut legacy_reasoning_index,
+                                        &completed_reasoning_indices,
                                         &mut next_content_index,
                                     );
+                                    if completed_reasoning_indices.contains(&index) {
+                                        continue;
+                                    }
                                     if !open_indices.contains(&index) {
                                         let start_event = json!({
                                             "type": "content_block_start",
@@ -3630,8 +3667,8 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             | "response.reasoning_text.done" => {
                                 let Some(text) = data
                                     .get("text")
-                                    .or_else(|| data.get("delta"))
                                     .and_then(Value::as_str)
+                                    .or_else(|| data.get("delta").and_then(Value::as_str))
                                     .filter(|value| !value.is_empty())
                                 else {
                                     continue;
@@ -3642,6 +3679,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     &mut reasoning_index_by_item_id,
                                     &mut index_by_key,
                                     &mut legacy_reasoning_index,
+                                    &completed_reasoning_indices,
                                     &mut next_content_index,
                                 );
                                 if completed_reasoning_indices.contains(&index) {
@@ -3835,8 +3873,11 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         if item.get("type").and_then(Value::as_str)
                                             == Some("reasoning")
                                         {
-                                            terminal_reasoning_items
-                                                .push((output_index as u64, item.clone()));
+                                            terminal_reasoning_items.push((
+                                                None,
+                                                output_index as u64,
+                                                item.clone(),
+                                            ));
                                         }
                                         if item.get("type").and_then(Value::as_str)
                                             == Some("web_search_call")
@@ -4096,19 +4137,41 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     }
                                 }
 
-                                for (output_index, item) in terminal_reasoning_items {
+                                // A skeletal output_item.done must stay pending until the terminal
+                                // event can provide the final reasoning fields.
+                                let mut pending_reasoning_items: Vec<(Option<u32>, u64, Value)> =
+                                    reasoning_item_by_index
+                                        .iter()
+                                        .filter(|(index, _)| {
+                                            !completed_reasoning_indices.contains(index)
+                                        })
+                                        .map(|(index, item)| {
+                                            (Some(*index), u64::from(*index), item.clone())
+                                        })
+                                        .collect();
+                                // HashMap iteration is unordered; sorting by
+                                // content index keeps identical upstream bytes on
+                                // identical downstream SSE.
+                                pending_reasoning_items
+                                    .sort_unstable_by_key(|(index, _, _)| *index);
+                                terminal_reasoning_items.extend(pending_reasoning_items);
+
+                                for (index_hint, output_index, item) in terminal_reasoning_items {
                                     let terminal_data = json!({
                                         "output_index": output_index,
                                         "item_id": item.get("id").cloned().unwrap_or(Value::Null)
                                     });
-                                    let index = resolve_reasoning_index(
-                                        &terminal_data,
-                                        Some(&item),
-                                        &mut reasoning_index_by_item_id,
-                                        &mut index_by_key,
-                                        &mut legacy_reasoning_index,
-                                        &mut next_content_index,
-                                    );
+                                    let index = index_hint.unwrap_or_else(|| {
+                                        resolve_reasoning_index(
+                                            &terminal_data,
+                                            Some(&item),
+                                            &mut reasoning_index_by_item_id,
+                                            &mut index_by_key,
+                                            &mut legacy_reasoning_index,
+                                            &completed_reasoning_indices,
+                                            &mut next_content_index,
+                                        )
+                                    });
                                     if completed_reasoning_indices.contains(&index) {
                                         continue;
                                     }
@@ -4705,7 +4768,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         }
                                     }
                                     Some("reasoning") => {
-                                        has_substantive_output = true;
                                         let item_id = item
                                             .get("id")
                                             .and_then(Value::as_str)
@@ -4716,6 +4778,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             &mut reasoning_index_by_item_id,
                                             &mut index_by_key,
                                             &mut legacy_reasoning_index,
+                                            &completed_reasoning_indices,
                                             &mut next_content_index,
                                         );
                                         if completed_reasoning_indices.contains(&index) {
@@ -4782,7 +4845,8 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             .get("encrypted_content")
                                             .and_then(Value::as_str)
                                             .is_some_and(|value| !value.is_empty());
-                                        if encrypted {
+                                        let can_finalize = encrypted && !full_text.is_empty();
+                                        if can_finalize {
                                             if let Some(envelope) = encode_openai_reasoning_item(&final_item) {
                                                 if open_indices.contains(&index) {
                                                     let signature_event = json!({
@@ -4840,18 +4904,22 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                                 }
                                             }
                                         }
-                                        if open_indices.remove(&index) {
+                                        if can_finalize && open_indices.remove(&index) {
                                             let stop_event = json!({"type": "content_block_stop", "index": index});
                                             let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
                                                 serde_json::to_string(&stop_event).unwrap_or_default());
                                             yield Ok(Bytes::from(stop_sse));
                                         }
-                                        completed_reasoning_indices.insert(index);
-                                        if let Some(id) = item_id {
-                                            reasoning_index_by_item_id.remove(id);
+                                        if can_finalize {
+                                            completed_reasoning_indices.insert(index);
+                                            if let Some(id) = item_id {
+                                                reasoning_index_by_item_id.remove(id);
+                                            }
+                                            reasoning_item_by_index.remove(&index);
+                                            reasoning_text_by_index.remove(&index);
+                                        } else {
+                                            deferred_done_reasoning.insert(index);
                                         }
-                                        reasoning_item_by_index.remove(&index);
-                                        reasoning_text_by_index.remove(&index);
                                     }
                                     Some("message") => {
                                         let buffered_citations =
@@ -4950,6 +5018,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     &mut reasoning_index_by_item_id,
                                     &mut index_by_key,
                                     &mut legacy_reasoning_index,
+                                    &completed_reasoning_indices,
                                     &mut next_content_index,
                                 );
                                 if completed_reasoning_indices.contains(&index) {
@@ -5061,9 +5130,13 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
             // unpaired, even if its server_tool_use block was already closed.
             let has_unpaired_server_tool = !web_search_id_order.is_empty();
             let has_open_reasoning = open_indices.iter().any(|index| {
-                reasoning_item_by_index.contains_key(index)
-                    || reasoning_text_by_index.contains_key(index)
-                    || legacy_reasoning_index == Some(*index)
+                // A deferred done is only waiting for a richer terminal snapshot;
+                // at clean EOF that snapshot never comes, so recycle like the
+                // eagerly-closed blocks did.
+                !deferred_done_reasoning.contains(index)
+                    && (reasoning_item_by_index.contains_key(index)
+                        || reasoning_text_by_index.contains_key(index)
+                        || legacy_reasoning_index == Some(*index))
             });
 
             if has_substantive_output
@@ -5149,7 +5222,7 @@ mod tests {
     use super::*;
     use futures::stream;
     use futures::StreamExt;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     async fn convert_stream_text(input: impl Into<Bytes>) -> String {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
@@ -5159,6 +5232,24 @@ mod tests {
             .into_iter()
             .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
             .collect()
+    }
+
+    async fn convert_stream_text_for_client(
+        input: &'static str,
+        preserve_redacted_thinking: bool,
+    ) -> String {
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
+        create_anthropic_sse_stream_from_responses_with_web_search_options_for_client(
+            upstream,
+            None,
+            None,
+            preserve_redacted_thinking,
+        )
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+        .collect()
     }
 
     async fn convert_stream_text_with_web_search_name(
@@ -5249,6 +5340,42 @@ mod tests {
             ),
             ""
         );
+    }
+
+    #[test]
+    fn test_reasoning_index_reuses_open_legacy_block_until_completion() {
+        let mut reasoning_index_by_item_id = HashMap::new();
+        let mut index_by_key = HashMap::new();
+        let mut legacy_reasoning_index = Some(3);
+        let mut completed_reasoning_indices = HashSet::new();
+        let mut next_content_index = 4;
+
+        let open_index = resolve_reasoning_index(
+            &json!({"output_index": 0}),
+            Some(&json!({"type": "reasoning"})),
+            &mut reasoning_index_by_item_id,
+            &mut index_by_key,
+            &mut legacy_reasoning_index,
+            &completed_reasoning_indices,
+            &mut next_content_index,
+        );
+        assert_eq!(open_index, 3);
+        assert_eq!(index_by_key.get("reasoning:out:0"), Some(&3));
+        assert_eq!(next_content_index, 4);
+
+        completed_reasoning_indices.insert(open_index);
+        let new_index = resolve_reasoning_index(
+            &json!({"output_index": 1}),
+            Some(&json!({"type": "reasoning"})),
+            &mut reasoning_index_by_item_id,
+            &mut index_by_key,
+            &mut legacy_reasoning_index,
+            &completed_reasoning_indices,
+            &mut next_content_index,
+        );
+        assert_eq!(new_index, 4);
+        assert_eq!(index_by_key.get("reasoning:out:1"), Some(&4));
+        assert_eq!(next_content_index, 5);
     }
 
     #[test]
@@ -7045,6 +7172,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_terminal_reasoning_without_id_reuses_keyless_streamed_block() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_reasoning_keyless\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"Need a tool.\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_reasoning_keyless\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}],\"encrypted_content\":\"opaque\"},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\n"
+        );
+        let merged = convert_stream_text_for_client(input, false).await;
+        let thinking: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("thinking_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/thinking")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(thinking, vec!["Need a tool."]);
+        assert_eq!(merged.matches("\"type\":\"signature_delta\"").count(), 1);
+        let events = sse_data_values(&merged);
+        let blocks: Vec<_> = events
+            .iter()
+            .filter(|event| event.pointer("/content_block/type") == Some(&json!("thinking")))
+            .collect();
+        assert_eq!(blocks.len(), 1);
+        let index = &blocks[0]["index"];
+        let signature = events
+            .iter()
+            .find(|event| event.pointer("/delta/type") == Some(&json!("signature_delta")))
+            .unwrap();
+        assert_eq!(&signature["index"], index);
+        let replay =
+            decode_openai_reasoning_item(signature["delta"]["signature"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(replay["encrypted_content"], "opaque");
+        assert_eq!(reasoning_summary_text(&replay), "Need a tool.");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["type"] == "content_block_stop" && &event["index"] == index
+                })
+                .count(),
+            1
+        );
+        assert!(merged.contains("\"text\":\"Done.\""));
+    }
+
+    #[tokio::test]
+    async fn test_encrypted_reasoning_without_terminal_event_reports_truncation() {
+        let input = concat!(
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_eof\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_eof\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"opaque\"}}\n\n"
+        );
+        for preserve in [false, true] {
+            let merged = convert_stream_text_for_client(input, preserve).await;
+            assert!(merged.contains("stream_truncated"));
+            assert!(!merged.contains("event: message_stop"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_drifting_reasoning_snapshot_does_not_repeat_streamed_text() {
+        let input = concat!(
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_drift\",\"delta\":\"Hello\"}\n\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_drift\",\"delta\":\" world\"}\n\n",
+            "data: {\"type\":\"response.reasoning_summary_text.done\",\"item_id\":\"rs_drift\",\"text\":\"Hello  world\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"id\":\"rs_drift\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"opaque\"}]}}\n\n"
+        );
+        let merged = convert_stream_text(input).await;
+        let thinking = sse_data_values(&merged)
+            .iter()
+            .filter_map(|event| event.pointer("/delta/thinking").and_then(Value::as_str))
+            .collect::<String>();
+        assert_eq!(thinking, "Hello world");
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
     async fn test_output_item_done_emits_text_when_deltas_are_missing() {
         let input = concat!(
             "event: response.created\n",
@@ -7163,6 +7376,50 @@ mod tests {
         assert!(merged.contains("event: message_start"));
         assert!(merged.contains("\"text\":\"hello\""));
         assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_stream_request_with_json_response_honors_client_reasoning_format() {
+        let input = r#"{
+            "id":"resp_json_redacted",
+            "status":"completed",
+            "model":"gpt-5.6",
+            "output":[{
+                "type":"reasoning",
+                "id":"rs_json_redacted",
+                "summary":[],
+                "encrypted_content":"opaque"
+            }]
+        }"#;
+        for preserve in [false, true] {
+            let merged = convert_stream_text_for_client(input, preserve).await;
+            let events = sse_data_values(&merged);
+            let blocks: Vec<_> = events
+                .iter()
+                .filter_map(|event| event.get("content_block"))
+                .collect();
+            assert_eq!(blocks.len(), 1);
+            let block = blocks[0];
+            let signatures: Vec<_> = events
+                .iter()
+                .filter_map(|event| event.pointer("/delta/signature").and_then(Value::as_str))
+                .collect();
+            let envelope = if preserve {
+                assert_eq!(block["type"], "redacted_thinking");
+                assert!(signatures.is_empty());
+                block["data"].as_str().unwrap()
+            } else {
+                assert_eq!(block["type"], "thinking");
+                assert_eq!(block["thinking"], "");
+                assert_eq!(signatures.len(), 1);
+                signatures[0]
+            };
+            let replay = decode_openai_reasoning_item(envelope).unwrap();
+            assert_eq!(replay["id"], "rs_json_redacted");
+            assert_eq!(replay["encrypted_content"], "opaque");
+            assert_eq!(merged.matches("event: content_block_stop").count(), 1);
+            assert_eq!(merged.matches("event: message_stop").count(), 1);
+        }
     }
 
     #[tokio::test]
@@ -7490,6 +7747,197 @@ mod tests {
         assert!(merged.contains("\"text\":\"Done.\""));
     }
 
+    #[tokio::test]
+    async fn test_sparse_reasoning_done_waits_for_terminal_snapshot() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_sparse\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_sparse\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_sparse\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_sparse\",\"status\":\"completed\",\"output\":[{\"id\":\"rs_sparse\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Terminal summary.\"}],\"encrypted_content\":\"opaque\"}]}}\n\n"
+        );
+        let merged = convert_stream_text(input).await;
+        let events = sse_data_values(&merged);
+        let thinking: Vec<&str> = events
+            .iter()
+            .filter_map(|event| event.pointer("/delta/thinking").and_then(Value::as_str))
+            .collect();
+
+        assert_eq!(thinking, vec!["Terminal summary."]);
+        assert_eq!(merged.matches("\"type\":\"signature_delta\"").count(), 1);
+        assert_eq!(merged.matches("event: content_block_start").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_sparse_reasoning_done_recycles_stream_at_eof() {
+        // output_item.done without text/encrypted_content leaves the block open
+        // for the terminal snapshot; when the stream just ends, the partial
+        // output must still be recycled instead of reported as truncated.
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_eof\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_eof\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_eof\",\"output_index\":0,\"delta\":\"Partial thought.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_eof\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_eof\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Answer.\"}]}}\n\n"
+        );
+        let merged = convert_stream_text(input).await;
+
+        assert!(
+            !merged.contains("stream_truncated"),
+            "sparse reasoning done must not turn clean EOF into a truncated stream"
+        );
+        assert!(merged.contains("event: message_delta"));
+        assert!(merged.contains("event: message_stop"));
+        let thinking: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/thinking")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+        assert_eq!(thinking, vec!["Partial thought."]);
+        assert!(
+            merged.contains("\"text\":\"Answer.\"")
+                || merged.contains("\\\"text\\\":\\\"Answer.\\\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_second_reasoning_item_keeps_own_block_after_anonymous_deltas() {
+        // An anonymous block is owned by the first item_id that claims it; a
+        // second reasoning item must get its own block instead of silently
+        // merging into (and being dropped with) the first one.
+        let input = concat!(
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"First thought.\"}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_first\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"rs_second\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"id\":\"rs_first\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"First thought.\"}],\"encrypted_content\":\"opaque\"},{\"id\":\"rs_second\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Second thought.\"}],\"encrypted_content\":\"opaque\"}]}}\n\n"
+        );
+        let merged = convert_stream_text(input).await;
+        let thinking: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/thinking")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert!(thinking.contains(&"First thought.".to_string()));
+        assert!(thinking.contains(&"Second thought.".to_string()));
+        assert_eq!(merged.matches("event: content_block_start").count(), 2);
+        assert_eq!(merged.matches("\"type\":\"signature_delta\"").count(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_late_reasoning_delta_after_done_is_ignored() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_late_reasoning\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_late\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_late\",\"output_index\":0,\"delta\":\"First\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_late\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"First\"}],\"encrypted_content\":\"opaque\"}}\n\n",
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_late\",\"output_index\":0,\"delta\":\"late\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+        let merged = convert_stream_text(input).await;
+        let thinking: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/thinking")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(thinking, vec!["First"]);
+        assert_eq!(merged.matches("event: content_block_start").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_anonymous_reasoning_delta_adopts_later_item_id() {
+        let input = concat!(
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"Need a tool.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_adopted\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}],\"encrypted_content\":\"opaque\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+        let merged = convert_stream_text(input).await;
+        let events = sse_data_values(&merged);
+
+        assert_eq!(merged.matches("event: content_block_start").count(), 1);
+        assert_eq!(merged.matches("\"type\":\"signature_delta\"").count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| event.pointer("/delta/thinking").and_then(Value::as_str))
+                .collect::<String>(),
+            "Need a tool."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_added_reasoning_snapshot_keeps_replay_item_without_done_event() {
+        let input = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_added_encrypted\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Added snapshot\"}],\"encrypted_content\":\"opaque\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"
+        );
+        let merged = convert_stream_text(input).await;
+        let signature = sse_data_values(&merged)
+            .into_iter()
+            .find_map(|event| {
+                event
+                    .pointer("/delta/signature")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .expect("added reasoning item should produce a signature");
+        let replay = decode_openai_reasoning_item(&signature).expect("signature should round-trip");
+
+        assert_eq!(reasoning_summary_text(&replay), "Added snapshot");
+        assert_eq!(replay["encrypted_content"], "opaque");
+    }
+
+    #[tokio::test]
+    async fn test_reasoning_done_uses_text_when_delta_is_not_string() {
+        let input = concat!(
+            "event: response.reasoning_summary_text.done\n",
+            "data: {\"type\":\"response.reasoning_summary_text.done\",\"delta\":null,\"text\":\"Fallback summary\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+        let merged = convert_stream_text(input).await;
+
+        assert!(
+            merged.contains("\\\"thinking\\\":\\\"Fallback summary\\\"")
+                || merged.contains("\"thinking\":\"Fallback summary\"")
+        );
+    }
     #[tokio::test]
     async fn test_reasoning_summary_part_added_emits_visible_text() {
         let input = concat!(

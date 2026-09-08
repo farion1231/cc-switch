@@ -2263,6 +2263,10 @@ async fn responses_sse_stream_to_anthropic_message_for_client(
 #[derive(Default)]
 struct ResponsesSseReasoningSummaryState {
     parts: BTreeMap<u64, String>,
+    // output_item.added mirrors the final item, so content[] there precedes any
+    // streamed delta. Keeping that copy out of `parts` stops verbatim delta
+    // appends from doubling the text on gateways that do both.
+    content_fallback_parts: Vec<(u64, String)>,
 }
 
 /// Keep one stable identity when a Responses stream alternates between item_id and output_index.
@@ -2306,8 +2310,6 @@ fn merge_responses_sse_reasoning_summary_part(current: &mut String, incoming: &s
     }
     if current.is_empty() || incoming.starts_with(current.as_str()) {
         *current = incoming.to_string();
-    } else if !current.starts_with(incoming) && !current.ends_with(incoming) {
-        current.push_str(incoming);
     }
 }
 
@@ -2363,6 +2365,75 @@ fn collect_responses_sse_reasoning_item_summary(
         }
         _ => {}
     }
+
+    // Some compatible gateways put visible reasoning in content[] when summary[]
+    // is absent or empty. Keep that fallback for cross-event aggregation.
+    if !state.parts.values().any(|text| !text.is_empty()) {
+        if let Some(Value::Array(parts)) = item.get("content") {
+            for (index, part) in parts.iter().enumerate() {
+                let text = part
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| part.as_str());
+                if let Some(text) = text {
+                    merge_responses_sse_reasoning_summary_part(
+                        state.parts.entry(index as u64).or_default(),
+                        text,
+                    );
+                }
+            }
+        }
+    }
+
+    // Last resort: content[] mirrored by output_item.added, consumed only when
+    // neither snapshots nor deltas produced any summary text.
+    if !state.parts.values().any(|text| !text.is_empty()) {
+        for (index, text) in std::mem::take(&mut state.content_fallback_parts) {
+            merge_responses_sse_reasoning_summary_part(
+                state.parts.entry(index).or_default(),
+                &text,
+            );
+        }
+    }
+}
+
+/// Record content[] text mirrored on output_item.added without touching
+/// `parts`: deltas that follow are authoritative increments, so merging the
+/// mirrored snapshot there would append them to a full copy of the text.
+fn capture_responses_sse_added_reasoning_content(
+    data: &Value,
+    item: &Value,
+    summaries: &mut HashMap<String, ResponsesSseReasoningSummaryState>,
+    keys_by_item_id: &mut HashMap<String, String>,
+    keys_by_output_index: &mut HashMap<u64, String>,
+) {
+    if item.get("type").and_then(Value::as_str) != Some("reasoning") {
+        return;
+    }
+    let Some(key) =
+        responses_sse_reasoning_summary_key(data, keys_by_item_id, keys_by_output_index)
+    else {
+        return;
+    };
+    let Some(Value::Array(parts)) = item.get("content") else {
+        return;
+    };
+    let texts: Vec<(u64, String)> = parts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, part)| {
+            let text = part
+                .get("text")
+                .and_then(Value::as_str)
+                .or_else(|| part.as_str())
+                .filter(|text| !text.is_empty())?;
+            Some((index as u64, text.to_string()))
+        })
+        .collect();
+    if texts.is_empty() {
+        return;
+    }
+    summaries.entry(key).or_default().content_fallback_parts = texts;
 }
 
 fn enrich_responses_sse_reasoning_item(
@@ -2372,9 +2443,7 @@ fn enrich_responses_sse_reasoning_item(
     keys_by_item_id: &mut HashMap<String, String>,
     keys_by_output_index: &mut HashMap<u64, String>,
 ) {
-    if item.get("type").and_then(Value::as_str) != Some("reasoning")
-        || !reasoning_summary_text(item).is_empty()
-    {
+    if item.get("type").and_then(Value::as_str) != Some("reasoning") {
         return;
     }
     let Some(key) =
@@ -2383,6 +2452,12 @@ fn enrich_responses_sse_reasoning_item(
         return;
     };
     let text = responses_sse_reasoning_summary_text(summaries, &key);
+    let existing_text = reasoning_summary_text(item);
+    // Final snapshots may carry only the first part. Retain the longer collected
+    // summary so both visible text and the replay envelope include every part.
+    if !existing_text.is_empty() && (existing_text == text || !text.starts_with(&existing_text)) {
+        return;
+    }
     if !text.is_empty() {
         if let Some(object) = item.as_object_mut() {
             object.insert(
@@ -2456,7 +2531,7 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
         match event_name {
             "response.output_item.added" => {
                 if let Some(item) = data.get("item") {
-                    collect_responses_sse_reasoning_item_summary(
+                    capture_responses_sse_added_reasoning_content(
                         &data,
                         item,
                         &mut reasoning_summaries,
@@ -2490,8 +2565,8 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             | "response.reasoning.delta" => {
                 if let (Some(text), Some(key)) = (
                     data.get("delta")
-                        .or_else(|| data.get("text"))
-                        .and_then(Value::as_str),
+                        .and_then(Value::as_str)
+                        .or_else(|| data.get("text").and_then(Value::as_str)),
                     responses_sse_reasoning_summary_key(
                         &data,
                         &mut reasoning_keys_by_item_id,
@@ -2516,8 +2591,8 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             "response.reasoning_summary_text.done" | "response.reasoning_text.done" => {
                 if let (Some(text), Some(key)) = (
                     data.get("text")
-                        .or_else(|| data.get("delta"))
-                        .and_then(Value::as_str),
+                        .and_then(Value::as_str)
+                        .or_else(|| data.get("delta").and_then(Value::as_str)),
                     responses_sse_reasoning_summary_key(
                         &data,
                         &mut reasoning_keys_by_item_id,
@@ -2567,7 +2642,7 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
                     );
                 }
             }
-            "response.completed" => {
+            "response.completed" | "response.incomplete" => {
                 completed_response = Some(data.get("response").cloned().unwrap_or(data));
             }
             "response.failed" => {
@@ -2586,15 +2661,19 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
         process_block(&block, true)?;
     }
     // 最后一个事件后可能没有空行分隔（错标 SSE 兜底/非规范上游常见）：
-    // 残余 buffer 当最后一块处理，否则尾部的 response.completed 会被丢掉。
+    // 残余 buffer 当最后一块处理，否则尾部的 terminal response 会被丢掉。
     // 已完成时的跳过判定在闭包内（C8）。
     process_block(&buffer, false)?;
 
     let mut response = completed_response.ok_or_else(|| {
-        ProxyError::TransformError("No response.completed event in upstream SSE".to_string())
+        ProxyError::TransformError("No terminal response event in upstream SSE".to_string())
     })?;
 
-    if !output_items.is_empty() {
+    let terminal_output_is_nonempty = response
+        .get("output")
+        .and_then(Value::as_array)
+        .is_some_and(|output| !output.is_empty());
+    if !output_items.is_empty() && !terminal_output_is_nonempty {
         let mut output = Vec::with_capacity(output_items.len());
         for (position, (output_index, mut item)) in output_items.into_iter().enumerate() {
             let data = json!({
@@ -2618,8 +2697,8 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             ));
         }
     } else if let Some(output) = response.get_mut("output").and_then(Value::as_array_mut) {
-        // Some gateways put the final reasoning snapshot only in response.completed.
-        // Enrich that snapshot too when its summary was carried by earlier SSE events.
+        // Keep terminal-only items: done events are only a fallback when the terminal
+        // response has no output array. Enrich terminal reasoning with collected summaries.
         for (index, item) in output.iter_mut().enumerate() {
             let data = json!({
                 "output_index": index as u64,
@@ -2632,6 +2711,31 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
                 &mut reasoning_keys_by_item_id,
                 &mut reasoning_keys_by_output_index,
             );
+        }
+        // A partial terminal output (e.g. a reasoning-only snapshot) must not
+        // drop items that were fully streamed via output_item.done: append the
+        // types the terminal output never mentioned.
+        for (output_index, mut item) in output_items {
+            let item_type = item.get("type").and_then(Value::as_str);
+            if item_type.is_some_and(|item_type| {
+                output
+                    .iter()
+                    .any(|existing| existing.get("type").and_then(Value::as_str) == Some(item_type))
+            }) {
+                continue;
+            }
+            let data = json!({
+                "output_index": output_index.unwrap_or(output.len() as u64),
+                "item_id": item.get("id").and_then(Value::as_str),
+            });
+            enrich_responses_sse_reasoning_item(
+                &data,
+                &mut item,
+                &reasoning_summaries,
+                &mut reasoning_keys_by_item_id,
+                &mut reasoning_keys_by_output_index,
+            );
+            output.push(item);
         }
     }
 
@@ -3197,8 +3301,12 @@ mod tests {
         responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
         upstream_body_parse_error,
     };
-    use crate::proxy::{providers::transform_responses, ProxyError};
+    use crate::proxy::{
+        providers::{reasoning_bridge::reasoning_summary_text, transform_responses},
+        ProxyError,
+    };
     use bytes::Bytes;
+    use serde_json::json;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -3853,6 +3961,102 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
     }
 
     #[test]
+    fn responses_sse_to_response_value_accepts_incomplete_terminal_events() {
+        let sse = r#"event: response.incomplete
+	data: {"type":"response.incomplete","response":{"id":"resp_incomplete","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}}
+
+"#;
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+
+        assert_eq!(response["id"], "resp_incomplete");
+        assert_eq!(response["status"], "incomplete");
+        assert_eq!(
+            response["incomplete_details"]["reason"],
+            "max_output_tokens"
+        );
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_keeps_terminal_items_when_done_is_partial() {
+        let sse = concat!(
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mixed\",\"status\":\"completed\",\"output\":[{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}],\"encrypted_content\":\"opaque\"},{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}]}}\n\n"
+        );
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+
+        assert_eq!(response["output"].as_array().unwrap().len(), 2);
+        assert_eq!(response["output"][0]["type"], "reasoning");
+        assert_eq!(response["output"][1]["type"], "message");
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_collects_content_only_reasoning() {
+        let sse = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_content\",\"type\":\"reasoning\",\"content\":[{\"type\":\"reasoning_text\",\"text\":\"Visible thought.\"}]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_content\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"opaque\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"status\":\"completed\",\"output\":[] }\n\n"
+        );
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+
+        assert_eq!(
+            reasoning_summary_text(&response["output"][0]),
+            "Visible thought."
+        );
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_appends_done_items_missing_from_terminal_output() {
+        // The terminal response only mirrors the reasoning snapshot; the message
+        // that was fully streamed via output_item.done must survive aggregation.
+        let sse = concat!(
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_partial_terminal\",\"status\":\"completed\",\"output\":[{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"opaque\"}]}}\n\n"
+        );
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+
+        let output = response["output"].as_array().unwrap();
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0]["type"], "reasoning");
+        assert_eq!(output[1]["type"], "message");
+        assert_eq!(output[1]["content"][0]["text"], "Done.");
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_does_not_double_added_content_with_deltas() {
+        // Gateways may mirror the final reasoning content[] on output_item.added
+        // and still stream the same text as deltas; the mirrored copy must not
+        // be appended to.
+        let sse = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_mirror\",\"type\":\"reasoning\",\"content\":[{\"type\":\"reasoning_text\",\"text\":\"Visible thought.\"}]}}\n\n",
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_mirror\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Visible \"}\n\n",
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_mirror\",\"output_index\":0,\"summary_index\":0,\"delta\":\"thought.\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mirror\",\"status\":\"completed\",\"output\":[{\"id\":\"rs_mirror\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"opaque\"}]}}\n\n"
+        );
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+
+        assert_eq!(
+            reasoning_summary_text(&response["output"][0]),
+            "Visible thought."
+        );
+    }
+
+    #[test]
     fn responses_sse_to_response_value_preserves_reasoning_summary_events() {
         // Codex OAuth may leave summary empty on output_item.done even though the
         // visible summary was delivered through reasoning summary SSE events.
@@ -3918,6 +4122,66 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
     }
 
     #[test]
+    fn responses_sse_to_response_value_ignores_drifting_summary_snapshots() {
+        let sse = concat!(
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_drift\",\"output_index\":0,\"delta\":\"Hello\"}\n\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_drift\",\"output_index\":0,\"delta\":\" world\"}\n\n",
+            "data: {\"type\":\"response.reasoning_summary_text.done\",\"item_id\":\"rs_drift\",\"output_index\":0,\"text\":\"Hello  world\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"id\":\"rs_drift\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"opaque\"}]}}\n\n"
+        );
+        let response = responses_sse_to_response_value(sse).unwrap();
+        assert_eq!(
+            reasoning_summary_text(&response["output"][0]),
+            "Hello world"
+        );
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_preserves_parts_missing_from_final_snapshot() {
+        for terminal_output in [
+            json!([]),
+            json!([{
+                "id": "rs_parts", "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "First"}],
+                "encrypted_content": "opaque"
+            }]),
+        ] {
+            let item_done = if terminal_output.as_array().unwrap().is_empty() {
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_parts\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"First\"}],\"encrypted_content\":\"opaque\"}}\n\n"
+            } else {
+                ""
+            };
+            let sse = format!(
+                "{}{item_done}data: {}\n\n",
+                concat!(
+                    "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_parts\",\"output_index\":0,\"summary_index\":0,\"delta\":\"First\"}\n\n",
+                    "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_parts\",\"output_index\":0,\"summary_index\":1,\"delta\":\"Second\"}\n\n"
+                ),
+                json!({"type": "response.completed", "response": {
+                    "status": "completed", "output": terminal_output
+                }})
+            );
+            let response = responses_sse_to_response_value(&sse).unwrap();
+            assert_eq!(
+                reasoning_summary_text(&response["output"][0]),
+                "First\nSecond"
+            );
+            let anthropic =
+                transform_responses::responses_to_anthropic_with_web_search_options_for_client(
+                    response, None, None, false,
+                )
+                .unwrap();
+            let block = &anthropic["content"][0];
+            assert_eq!(block["thinking"], "First\nSecond");
+            let replay = crate::proxy::providers::reasoning_bridge::decode_openai_reasoning_item(
+                block["signature"].as_str().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(reasoning_summary_text(&replay), "First\nSecond");
+        }
+    }
+
+    #[test]
     fn responses_sse_to_response_value_separates_reasoning_summary_parts() {
         let sse = r#"event: response.reasoning_summary_part.done
  data: {"type":"response.reasoning_summary_part.done","item_id":"rs_parts","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"First"}}
@@ -3968,7 +4232,7 @@ data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstr
     }
 
     #[test]
-    fn responses_sse_to_response_value_errors_when_no_completed_event() {
+    fn responses_sse_to_response_value_errors_when_no_terminal_event() {
         let sse = "event: response.output_item.done\n\
 data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n\n";
 
