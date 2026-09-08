@@ -362,7 +362,7 @@ export interface Settings {
   minimizeToTrayOnClose: boolean;
   // 主界面隐藏到托盘后是否自动进入轻量模式
   autoLightweightEnabled?: boolean;
-  // 自动进入轻量模式前持续隐藏的分钟数（1–1440）
+  // 自动进入轻量模式前持续隐藏的分钟数（0–1440，0 表示立即进入）
   autoLightweightAfterMinutes?: number;
   // 是否启用应用级窗口控制按钮（最小化/最大化/关闭）
   useAppWindowControls?: boolean;

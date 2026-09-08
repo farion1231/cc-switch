@@ -699,7 +699,7 @@
     "minimizeToTray": "閉じるときトレイへ最小化",
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
     "autoLightweightMode": "軽量モードへ自動移行",
-    "autoLightweightModeDescription": "メイン画面が設定時間だけ非表示になると、自動的に軽量モードへ移行してフロントエンドのリソースを解放します。",
+    "autoLightweightModeDescription": "メイン画面が設定時間だけ非表示になると、自動的に軽量モードへ移行してフロントエンドのリソースを解放します。0 分に設定すると、非表示になった直後に移行します。",
     "autoLightweightDelay": "非表示",
     "minutesUnit": "分",
     "autoLightweightMinutesRange": "{{min}} から {{max}} までの整数を入力してください。",

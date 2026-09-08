@@ -46,7 +46,7 @@ const createSettings = (
   showInTray: true,
   minimizeToTrayOnClose: true,
   autoLightweightEnabled: false,
-  autoLightweightAfterMinutes: 1,
+  autoLightweightAfterMinutes: 5,
   enableClaudePluginIntegration: false,
   claudeConfigDir: "/claude/custom",
   codexConfigDir: "/codex/custom",

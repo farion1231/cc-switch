@@ -89,7 +89,7 @@ fn abort_task(task: Option<TimerTask>) {
     }
 }
 
-/// 窗口成功隐藏（或启动时确认保持隐藏）后启动一次性倒计时。
+/// 窗口成功隐藏（或启动时确认保持隐藏）后安排一次自动进入。
 pub(crate) fn schedule_after_hidden(app: &tauri::AppHandle, reason: &'static str) {
     // 即使设置关闭也推进代号并终止旧任务，确保上一轮不会越过新的隐藏事件。
     let (generation, previous_task) = TIMER.begin_generation();
@@ -101,12 +101,20 @@ pub(crate) fn schedule_after_hidden(app: &tauri::AppHandle, reason: &'static str
     }
     let minutes = config.after_minutes;
 
-    let delay = Duration::from_secs(u64::from(minutes) * 60);
-    let app_handle = app.clone();
     log::debug!("已安排自动轻量模式: reason={reason}, generation={generation}, minutes={minutes}");
 
+    let delay = Duration::from_secs(u64::from(minutes) * 60);
+    let app_handle = app.clone();
+    let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+
     let task = tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(delay).await;
+        // 先登记句柄再启动，避免 0 分钟任务抢先完成而留下无法取消的旧句柄。
+        if start_rx.await.is_err() {
+            return;
+        }
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
 
         // 先取得本轮执行权并清理任务句柄。即使随后排入主线程的回调迟到，
         // 任何显示窗口、修改设置或新一轮计时仍会推进代号并阻止它执行。
@@ -125,11 +133,15 @@ pub(crate) fn schedule_after_hidden(app: &tauri::AppHandle, reason: &'static str
         }
     });
 
-    if let Err(stale_task) = TIMER.install(generation, task) {
-        // 任务创建与句柄安装之间可能恰好发生取消或替换；这种情况下新任务
-        // 从未成为当前任务，必须立即终止。
-        stale_task.abort();
-        log::debug!("自动轻量模式任务在安装前已失效: generation={generation}");
+    match TIMER.install(generation, task) {
+        Ok(()) => {
+            // 若此时已被并发取消，接收端会随任务终止，发送失败即可。
+            let _ = start_tx.send(());
+        }
+        Err(stale_task) => {
+            stale_task.abort();
+            log::debug!("自动轻量模式任务在安装前已失效: generation={generation}");
+        }
     }
 }
 
@@ -141,7 +153,7 @@ pub(crate) fn cancel_pending(reason: &'static str) {
 }
 
 /// 设置保存成功后的运行时协调：关闭时立即取消；若通过非 UI 路径在隐藏状态
-/// 开启或修改时长，则从设置生效时重新计时。
+/// 开启或修改时长，则从设置生效时重新安排。
 pub(crate) fn reconcile_settings(
     app: &tauri::AppHandle,
     previous: crate::settings::AutoLightweightSettings,
@@ -207,6 +219,8 @@ fn complete_if_still_hidden(
         // 不自动重试：失败时保留当前窗口与非轻量状态，让用户仍可从托盘恢复，
         // 下一次明确的隐藏事件再建立新一轮计时。
         log::error!("自动进入轻量模式失败: {error}");
+    } else if scheduled_minutes == 0 {
+        log::info!("主窗口隐藏后已立即自动进入轻量模式");
     } else {
         log::info!("主窗口隐藏超过 {scheduled_minutes} 分钟，已自动进入轻量模式");
     }

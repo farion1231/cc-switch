@@ -338,8 +338,8 @@ pub struct CodexOfficialHistoryUnifyMigration {
     pub codex_config_dir: Option<String>,
 }
 
-pub const DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES: u32 = 1;
-pub const MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES: u32 = 1;
+pub const DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES: u32 = 5;
+pub const MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES: u32 = 0;
 pub const MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES: u32 = 24 * 60;
 
 /// 自动轻量模式的独立配置。
@@ -617,8 +617,8 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
-        // 后端始终兜底约束手工编辑或旧客户端传入的值，避免 0 分钟造成
-        // 意外的立即销毁，也避免异常大值生成没有实际意义的长生命周期任务。
+        // 后端始终兜底约束手工编辑或旧客户端传入的值。0 表示窗口成功
+        // 隐藏后立即进入轻量模式；异常大值则限制为最长 24 小时。
         self.auto_lightweight.after_minutes = self.auto_lightweight.after_minutes.clamp(
             MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES,
             MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES,
@@ -1239,6 +1239,10 @@ mod tests {
             settings.auto_lightweight,
             AutoLightweightSettings::default()
         );
+        assert_eq!(
+            settings.auto_lightweight.after_minutes,
+            DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES
+        );
 
         let settings: AppSettings = serde_json::from_str(
             r#"{"autoLightweightEnabled":false,"autoLightweightAfterMinutes":23}"#,
@@ -1261,10 +1265,7 @@ mod tests {
 
     #[test]
     fn auto_lightweight_minutes_are_normalized_to_a_safe_range() {
-        for (input, expected) in [
-            (0, MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES),
-            (10_000, MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES),
-        ] {
+        for (input, expected) in [(0, 0), (10_000, MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES)] {
             let mut settings = AppSettings {
                 auto_lightweight: AutoLightweightSettings {
                     enabled: true,

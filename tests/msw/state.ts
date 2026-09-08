@@ -99,7 +99,7 @@ let settingsState: Settings = {
   showInTray: true,
   minimizeToTrayOnClose: true,
   autoLightweightEnabled: false,
-  autoLightweightAfterMinutes: 1,
+  autoLightweightAfterMinutes: 5,
   enableClaudePluginIntegration: false,
   claudeConfigDir: "/default/claude",
   codexConfigDir: "/default/codex",

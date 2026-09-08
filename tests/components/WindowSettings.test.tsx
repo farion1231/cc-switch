@@ -5,6 +5,7 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import {
   DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES,
   MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES,
+  MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES,
 } from "@/components/settings/AutoLightweightSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
 
@@ -39,29 +40,34 @@ const createSettings = (
 
 const setup = (overrides: Partial<SettingsFormState> = {}) => {
   const onChange = vi.fn();
-  render(
+  const view = render(
     <WindowSettings settings={createSettings(overrides)} onChange={onChange} />,
   );
   return {
     onChange,
-    input: screen.getByRole("spinbutton", {
-      name: "settings.autoLightweightDelay",
-    }),
     toggle: screen.getByRole("switch", {
       name: "settings.autoLightweightMode",
     }),
+    rerenderSettings: (next: Partial<SettingsFormState>) =>
+      view.rerender(
+        <WindowSettings settings={createSettings(next)} onChange={onChange} />,
+      ),
   };
 };
 
+const getDurationInput = () =>
+  screen.getByRole("spinbutton", {
+    name: "settings.autoLightweightDelay",
+  });
+
 describe("WindowSettings auto lightweight mode", () => {
-  it("is disabled by default and enables the one minute policy", async () => {
-    const { input, onChange, toggle } = setup();
+  it("hides the duration by default and enables the five minute policy", async () => {
+    const { onChange, toggle } = setup();
     expect(toggle).not.toBeChecked();
     expect(
       screen.getByText("auto lightweight description"),
     ).toBeInTheDocument();
-    expect(input).toBeDisabled();
-    expect(input).toHaveValue(DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES);
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
 
     fireEvent.click(toggle);
 
@@ -73,8 +79,29 @@ describe("WindowSettings auto lightweight mode", () => {
     );
   });
 
+  it("shows the duration only while the policy is enabled", () => {
+    const { rerenderSettings } = setup({
+      autoLightweightEnabled: true,
+      autoLightweightAfterMinutes: 12,
+    });
+    expect(getDurationInput()).toHaveValue(12);
+
+    rerenderSettings({
+      autoLightweightEnabled: false,
+      autoLightweightAfterMinutes: 12,
+    });
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+
+    rerenderSettings({
+      autoLightweightEnabled: true,
+      autoLightweightAfterMinutes: 12,
+    });
+    expect(screen.getByRole("spinbutton")).toHaveValue(12);
+  });
+
   it("saves a valid custom duration on blur", async () => {
-    const { input, onChange } = setup({ autoLightweightEnabled: true });
+    const { onChange } = setup({ autoLightweightEnabled: true });
+    const input = getDurationInput();
     fireEvent.change(input, { target: { value: "15" } });
     fireEvent.blur(input);
 
@@ -88,10 +115,11 @@ describe("WindowSettings auto lightweight mode", () => {
 
   it("combines a dirty duration with a toggle click into one save", async () => {
     const user = userEvent.setup();
-    const { input, onChange, toggle } = setup({
+    const { onChange, toggle } = setup({
       autoLightweightEnabled: true,
       autoLightweightAfterMinutes: 5,
     });
+    const input = getDurationInput();
     await user.clear(input);
     await user.type(input, "8");
     await user.click(toggle);
@@ -105,13 +133,30 @@ describe("WindowSettings auto lightweight mode", () => {
     });
   });
 
-  it("rejects non-integer and out-of-range durations without saving", () => {
-    const { input, onChange } = setup({ autoLightweightEnabled: true });
-    fireEvent.change(input, { target: { value: "1.5" } });
+  it("accepts zero as the immediate-entry policy", () => {
+    const { onChange } = setup({ autoLightweightEnabled: true });
+    const input = getDurationInput();
+    fireEvent.change(input, { target: { value: "0" } });
     fireEvent.blur(input);
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      `enter 1-${MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES}`,
-    );
-    expect(onChange).not.toHaveBeenCalled();
+
+    expect(onChange).toHaveBeenCalledWith({
+      autoLightweightEnabled: true,
+      autoLightweightAfterMinutes: 0,
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it.each(["-1", "1.5", String(MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES + 1)])(
+    "rejects invalid duration %s without saving",
+    (value) => {
+      const { onChange } = setup({ autoLightweightEnabled: true });
+      const input = getDurationInput();
+      fireEvent.change(input, { target: { value } });
+      fireEvent.blur(input);
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        `enter ${MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES}-${MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES}`,
+      );
+      expect(onChange).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -699,7 +699,7 @@
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
     "autoLightweightMode": "自动进入轻量模式",
-    "autoLightweightModeDescription": "主界面持续隐藏达到设定时间后，自动进入轻量模式并释放前端资源。",
+    "autoLightweightModeDescription": "主界面持续隐藏达到设定时间后，自动进入轻量模式并释放前端资源；设为 0 分钟时立即进入。",
     "autoLightweightDelay": "隐藏超过",
     "minutesUnit": "分钟",
     "autoLightweightMinutesRange": "请输入 {{min}} 到 {{max}} 之间的整数。",

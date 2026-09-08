@@ -699,7 +699,7 @@
     "minimizeToTray": "Minimize to tray on close",
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
     "autoLightweightMode": "Enter lightweight mode automatically",
-    "autoLightweightModeDescription": "After the main window stays hidden for the configured time, enter lightweight mode and release frontend resources.",
+    "autoLightweightModeDescription": "After the main window stays hidden for the configured time, enter lightweight mode and release frontend resources; set the delay to 0 to enter immediately.",
     "autoLightweightDelay": "Delay",
     "minutesUnit": "min",
     "autoLightweightMinutesRange": "Enter a whole number from {{min}} to {{max}}.",

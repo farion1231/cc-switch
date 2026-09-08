@@ -699,7 +699,7 @@
     "minimizeToTray": "關閉時最小化至系統匣",
     "minimizeToTrayDescription": "勾選後點擊關閉按鈕會隱藏至系統匣，取消則直接退出應用程式。",
     "autoLightweightMode": "自動進入輕量模式",
-    "autoLightweightModeDescription": "主介面持續隱藏達到設定時間後，自動進入輕量模式並釋放前端資源。",
+    "autoLightweightModeDescription": "主介面持續隱藏達到設定時間後，自動進入輕量模式並釋放前端資源；設為 0 分鐘時立即進入。",
     "autoLightweightDelay": "隱藏超過",
     "minutesUnit": "分鐘",
     "autoLightweightMinutesRange": "請輸入 {{min}} 到 {{max}} 之間的整數。",

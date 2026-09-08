@@ -5,8 +5,8 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
-export const DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES = 1;
-export const MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES = 1;
+export const DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES = 5;
+export const MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES = 0;
 export const MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES = 24 * 60;
 
 interface AutoLightweightSettingsProps {
@@ -45,7 +45,7 @@ export function AutoLightweightSettings({
   useEffect(() => {
     setDraftMinutes(String(storedMinutes));
     setHasError(false);
-  }, [storedMinutes]);
+  }, [storedMinutes, enabled]);
 
   const commit = (nextEnabled: boolean) => {
     if (disabled) return;
@@ -84,44 +84,48 @@ export function AutoLightweightSettings({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
-          <label
-            htmlFor="auto-lightweight-minutes"
-            className="text-xs text-muted-foreground"
-          >
-            {t("settings.autoLightweightDelay")}
-          </label>
-          <Input
-            ref={inputRef}
-            id="auto-lightweight-minutes"
-            className="h-8 w-20 px-2 text-center tabular-nums"
-            type="number"
-            inputMode="numeric"
-            min={MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES}
-            max={MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES}
-            step={1}
-            value={draftMinutes}
-            disabled={!enabled || disabled}
-            aria-invalid={hasError}
-            aria-describedby={
-              hasError ? "auto-lightweight-minutes-error" : undefined
-            }
-            onChange={(event) => {
-              setDraftMinutes(event.target.value);
-              if (hasError) setHasError(false);
-            }}
-            onBlur={() => commit(enabled)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.currentTarget.blur();
-              } else if (event.key === "Escape") {
-                setDraftMinutes(String(storedMinutes));
-                setHasError(false);
-              }
-            }}
-          />
-          <span className="text-xs text-muted-foreground">
-            {t("settings.minutesUnit")}
-          </span>
+          {enabled ? (
+            <>
+              <label
+                htmlFor="auto-lightweight-minutes"
+                className="text-xs text-muted-foreground"
+              >
+                {t("settings.autoLightweightDelay")}
+              </label>
+              <Input
+                ref={inputRef}
+                id="auto-lightweight-minutes"
+                className="h-8 w-20 px-2 text-center tabular-nums"
+                type="number"
+                inputMode="numeric"
+                min={MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES}
+                max={MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES}
+                step={1}
+                value={draftMinutes}
+                disabled={disabled}
+                aria-invalid={hasError}
+                aria-describedby={
+                  hasError ? "auto-lightweight-minutes-error" : undefined
+                }
+                onChange={(event) => {
+                  setDraftMinutes(event.target.value);
+                  if (hasError) setHasError(false);
+                }}
+                onBlur={() => commit(enabled)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  } else if (event.key === "Escape") {
+                    setDraftMinutes(String(storedMinutes));
+                    setHasError(false);
+                  }
+                }}
+              />
+              <span className="text-xs text-muted-foreground">
+                {t("settings.minutesUnit")}
+              </span>
+            </>
+          ) : null}
           <Switch
             className="ml-1"
             checked={enabled}
@@ -138,7 +142,7 @@ export function AutoLightweightSettings({
           />
         </div>
       </div>
-      {hasError ? (
+      {enabled && hasError ? (
         <p
           id="auto-lightweight-minutes-error"
           className="mt-2 text-right text-xs text-destructive"

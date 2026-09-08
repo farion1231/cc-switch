@@ -150,7 +150,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             showInTray: true,
             minimizeToTrayOnClose: true,
             autoLightweightEnabled: false,
-            autoLightweightAfterMinutes: 1,
+            autoLightweightAfterMinutes: 5,
             useAppWindowControls: false,
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
