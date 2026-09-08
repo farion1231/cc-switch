@@ -133,12 +133,31 @@ impl HalfOpenPermitGuard {
         Self { counter, armed: true }
     }
 
-    /// 显式标记"已自行处理"，Drop 时不再释放 permit。
+    /// 显式标记"已自行处理"，立即释放 permit 并让 Drop 变 no-op。
     ///
     /// 用于调用方在 forward() 完成后手动调用 `record_success` / `record_failure`
-    /// 的场景——避免 Drop 再调一次 `release_half_open_permit`。
+    /// 的场景——`record_*` 不会再释放 permit，所以 disarm 必须做这一步。
+    /// disarm 后 Drop 变 no-op，避免与 disarm 双重释放。
     pub fn disarm(mut self) {
-        self.armed = false;
+        if self.armed {
+            self.armed = false;
+            // 释放 permit（与 Drop 兜底等价；Drop 见 armed=false 会跳过）
+            let mut current = self.counter.load(Ordering::SeqCst);
+            loop {
+                if current == 0 {
+                    return;
+                }
+                match self.counter.compare_exchange(
+                    current,
+                    current - 1,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => return,
+                    Err(actual) => current = actual,
+                }
+            }
+        }
     }
 }
 
