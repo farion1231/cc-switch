@@ -8,6 +8,7 @@ import {
   rebaseOpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
+import { piProviderPresets } from "@/config/piProviderPresets";
 import {
   extractCodexBaseUrl,
   extractCodexModelName,
@@ -60,14 +61,14 @@ const products = [
     openaiCandidates: [DOMESTIC_PERSONAL_OPENAI],
     configProviderName: "tencent_token_plan",
     model: "tc-code-latest",
-    // 通用 + Hy 两系列合并（1823/130060，2026-08-21 版）+ /models 实测
-    // 收录的 minimax-m2.5；kimi-k2.5 官方标注 2026-08-31 下线不收
+    // 通用 + Hy 两系列合并（1823/130060，2026-08-21 版）+ /models 实测；
+    // minimax-m2.5 官方已除名且平台计划下线，2026-09-07 从全部 app 移除；
+    // kimi-k2.5 官方标注 2026-08-31 下线不收
     catalogModels: [
       "tc-code-latest",
       "deepseek-v4-flash-202605",
       "deepseek-v4-pro-202606",
       "minimax-m2.7",
-      "minimax-m2.5",
       "glm-5",
       "glm-5.1",
       "glm-5.2",
@@ -110,7 +111,8 @@ const products = [
     configProviderName: "tencent_token_plan_enterprise_pro",
     model: "auto",
     // 1823/130659 广州地域（2026-08-25 版）；kimi-k2.5 官方标注
-    // 2026-08-31 下线不收；minimax-m2.5 型号列表已除名但真 Key 实测可用
+    // 2026-08-31 下线不收；minimax-m2.5 官方已除名且平台计划下线，
+    // 2026-09-07 从全部 app 移除
     catalogModels: [
       "auto",
       "glm-5.3",
@@ -123,7 +125,6 @@ const products = [
       "kimi-k2.6",
       "minimax-m2.7",
       "minimax-m3",
-      "minimax-m2.5",
       "deepseek-v4-flash",
       "deepseek-v4-pro",
       "deepseek-v4-flash-0731",
@@ -354,6 +355,37 @@ describe("Tencent Token Plan provider presets", () => {
         expect(model.input).toEqual(["text"]);
       }
     });
+
+    it(`uses the OpenAI-compatible endpoint for ${product.name} in Pi`, () => {
+      const preset = piProviderPresets.find(
+        (item) => item.name === product.name,
+      );
+
+      expect(preset).toBeDefined();
+      expect(preset?.websiteUrl).toBe(
+        product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
+      );
+      expect(preset?.apiKeyUrl).toBe(product.apiKeyUrl);
+      expect(preset?.category).toBe("cn_official");
+      expect(preset?.icon).toBe("tencent");
+      // Pi 预设只携带默认地域 baseUrl（无 endpointCandidates 字段），
+      // 与 openaiBaseUrl（默认地域）对齐；第二地域需用户在 UI 手动改
+      expect(preset?.settingsConfig.baseUrl).toBe(product.openaiBaseUrl);
+      expect(preset?.settingsConfig.api).toBe("openai-completions");
+      expect(
+        (preset?.settingsConfig.models ?? []).map((model) => model.id),
+      ).toEqual(product.catalogModels);
+      // Pi 强制每个模型引用 piModelCatalog 能力条目（运行时由
+      // materializeVerifiedThinkingProfiles 补齐 thinkingLevelMap）
+      for (const model of preset?.settingsConfig.models ?? []) {
+        expect(model.contextWindow).toBeGreaterThan(0);
+        expect(model.maxTokens).toBeGreaterThan(0);
+        expect(typeof model.reasoning).toBe("boolean");
+        expect(model.input.length).toBeGreaterThan(0);
+        expect(model.id).not.toBe("");
+        expect(model.name).not.toBe("");
+      }
+    });
   }
 
   it("keeps post-paid Hunyuan (TokenHub marketplace line) separate from Token Plan products", () => {
@@ -437,8 +469,9 @@ describe("Tencent Token Plan provider presets", () => {
     // 全部真 Key 实测（2026-08-31）：
     // - glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 会 400）
     // - kimi-k2.7-code(-highspeed) 仅接受 thinking:enabled
-    // - minimax-m2.5/m2.7 与国内 auto 关思考被静默忽略 → 不列 none
+    // - minimax-m2.7 与国内 auto 关思考被静默忽略 → 不列 none
     // - 其余模型 thinking 开关真实生效 → 两态 none/high
+    // - minimax-m2.5 官方已除名且平台计划下线（2026-09-07 从全部 app 移除），不再断言
     const epro = codexProviderPresets.find(
       (item) => item.name === "Tencent Token Plan Enterprise Pro",
     );
@@ -449,7 +482,6 @@ describe("Tencent Token Plan provider presets", () => {
     expect(levels("kimi-k2.7-code")).toEqual(["high"]);
     expect(levels("kimi-k2.7-code-highspeed")).toEqual(["high"]);
     expect(levels("minimax-m2.7")).toEqual(["high"]);
-    expect(levels("minimax-m2.5")).toEqual(["high"]);
     expect(levels("auto")).toEqual(["high"]); // 国内 auto 忽略关思考
     expect(levels("glm-5.2")).toEqual(["none", "high"]);
     expect(levels("kimi-k2.6")).toEqual(["none", "high"]);
@@ -543,5 +575,140 @@ describe("Tencent Token Plan provider presets", () => {
     );
     expect(rebased.model?.primary).toBe("my-tencent/tc-code-latest");
     expect(rebased.modelCatalog).toHaveProperty("my-tencent/tc-code-latest");
+  });
+});
+
+describe("Tencent TokenHub (pay-as-you-go) Pi presets", () => {
+  const DOMESTIC_API_KEY_URL =
+    "https://console.cloud.tencent.com/tokenhub/apikey";
+  const INTL_API_KEY_URL = "https://console.tencentcloud.com/tokenhub/apikey";
+  const DOMESTIC_BASE_URL = "https://tokenhub.tencentmaas.com/v1";
+  const INTL_BASE_URL = "https://tokenhub-intl.tencentcloudmaas.com/v1";
+
+  const products = [
+    {
+      name: "Tencent TokenHub",
+      site: "domestic" as const,
+      apiKeyUrl: DOMESTIC_API_KEY_URL,
+      baseUrl: DOMESTIC_BASE_URL,
+      // 官方「语言模型」清单（130051），只收支持 Function Calling 的通用模型；
+      // 翻译/角色扮演不收录；已下线模型（hy3-preview、qwen3.5、minimax-m2.5）不收
+      models: [
+        "hy4-preview",
+        "hy3",
+        "deepseek-v4-flash-202605",
+        "deepseek-v4-pro-202606",
+        "deepseek/deepseek-v4-flash-vision-exp",
+        "deepseek-v4-flash-0731",
+        "deepseek-v4-pro-0813",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "glm-5.3-flash",
+        "glm-5.3",
+        "glm-5.2",
+        "glm-5.1",
+        "glm-5v-turbo",
+        "glm-5-turbo",
+        "glm-5",
+        "kimi-k2.7-code-highspeed",
+        "kimi-k3",
+        "kimi-k2.7-code",
+        "kimi-k2.6",
+        "kimi-k2.5",
+        "minimax-m3",
+        "minimax-m2.7",
+        "mimo-v2.5-pro",
+      ],
+    },
+    {
+      name: "Tencent TokenHub (Intl)",
+      site: "intl" as const,
+      apiKeyUrl: INTL_API_KEY_URL,
+      baseUrl: INTL_BASE_URL,
+      // 官方「语言模型」清单（78934，2026-08-28）；国际站仍列 minimax-m2.5
+      // 与 deepseek-v3.2（国内站已无）。minimax-m2.5 官方已除名且平台计划
+      // 下线（2026-09-07 从全部 app 移除），不收录
+      models: [
+        "hy4-preview",
+        "hy3",
+        "deepseek-v4-flash-202605",
+        "deepseek-v4-pro-202606",
+        "deepseek/deepseek-v4-flash-vision-exp",
+        "deepseek-v4-flash-0731",
+        "deepseek-v4-pro-0813",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "deepseek-v3.2",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "glm-5.2",
+        "glm-5",
+        "glm-5-turbo",
+        "glm-5v-turbo",
+        "glm-5.1",
+        "kimi-k3",
+        "kimi-k2.7-code-highspeed",
+        "kimi-k2.7-code",
+        "kimi-k2.6",
+        "kimi-k2.5",
+        "minimax-m3",
+        "minimax-m2.7",
+        "mimo-v2.5-pro",
+      ],
+    },
+  ];
+
+  for (const product of products) {
+    it(`uses the /v1 endpoint for ${product.name} in Pi`, () => {
+      const preset = piProviderPresets.find(
+        (item) => item.name === product.name,
+      );
+
+      expect(preset).toBeDefined();
+      expect(preset?.websiteUrl).toBe(
+        product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
+      );
+      expect(preset?.apiKeyUrl).toBe(product.apiKeyUrl);
+      expect(preset?.category).toBe("cn_official");
+      expect(preset?.icon).toBe("tencent");
+      expect(preset?.settingsConfig.baseUrl).toBe(product.baseUrl);
+      expect(preset?.settingsConfig.api).toBe("openai-completions");
+      expect(
+        (preset?.settingsConfig.models ?? []).map((model) => model.id),
+      ).toEqual(product.models);
+      for (const model of preset?.settingsConfig.models ?? []) {
+        expect(model.contextWindow).toBeGreaterThan(0);
+        expect(model.maxTokens).toBeGreaterThan(0);
+        expect(typeof model.reasoning).toBe("boolean");
+        expect(model.input.length).toBeGreaterThan(0);
+      }
+    });
+  }
+
+  it("keeps pay-as-you-go /v1 endpoints separate from Token Plan /plan endpoints", () => {
+    const hub = piProviderPresets.find(
+      (item) => item.name === "Tencent TokenHub",
+    );
+    const plan = piProviderPresets.find(
+      (item) => item.name === "Tencent Token Plan",
+    );
+
+    expect(hub?.settingsConfig.baseUrl).toContain("/v1");
+    expect(plan?.settingsConfig.baseUrl).toContain("/plan/v3");
+  });
+
+  it("does not include discontinued minimax-m2.5 on any TokenHub line", () => {
+    for (const product of products) {
+      const preset = piProviderPresets.find(
+        (item) => item.name === product.name,
+      );
+      const ids = (preset?.settingsConfig.models ?? []).map((m) => m.id);
+      expect(ids).not.toContain("minimax-m2.5");
+    }
+    const domestic = piProviderPresets.find(
+      (item) => item.name === "Tencent TokenHub",
+    );
+    const ids = (domestic?.settingsConfig.models ?? []).map((m) => m.id);
+    expect(ids).not.toContain("hy3-preview");
   });
 });

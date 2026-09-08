@@ -1481,8 +1481,9 @@ impl RequestForwarder {
         let codex_anthropic_base_is_full_endpoint =
             codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
-        let is_codex_alpha_search = matches!(app_type, AppType::Codex)
-            && split_endpoint_and_query(&effective_endpoint).0 == "/alpha/search";
+        let codex_standalone_endpoint = matches!(app_type, AppType::Codex)
+            .then(|| CodexStandaloneEndpoint::from_effective_endpoint(&effective_endpoint))
+            .flatten();
 
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
@@ -1490,12 +1491,17 @@ impl RequestForwarder {
                 &effective_endpoint,
                 is_full_url,
             )
-        } else if is_full_url && is_codex_alpha_search {
-            rewrite_codex_alpha_search_full_url(&base_url, passthrough_query.as_deref())?
-        } else if is_full_url
-            || codex_chat_base_is_full_endpoint
-            || codex_anthropic_base_is_full_endpoint
-        {
+        } else if is_full_url {
+            if let Some(endpoint) = codex_standalone_endpoint {
+                rewrite_codex_standalone_full_url(
+                    &base_url,
+                    passthrough_query.as_deref(),
+                    endpoint,
+                )?
+            } else {
+                append_query_to_full_url(&base_url, passthrough_query.as_deref())
+            }
+        } else if codex_chat_base_is_full_endpoint || codex_anthropic_base_is_full_endpoint {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
@@ -3305,24 +3311,92 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
-/// Derive the standalone Alpha Search endpoint from a Codex provider configured
-/// with a complete Responses URL.
+#[derive(Clone, Copy)]
+enum CodexStandaloneEndpoint {
+    AlphaSearch,
+    ImagesGenerations,
+    ImagesEdits,
+}
+
+impl CodexStandaloneEndpoint {
+    fn from_effective_endpoint(endpoint: &str) -> Option<Self> {
+        match split_endpoint_and_query(endpoint).0 {
+            "/alpha/search" => Some(Self::AlphaSearch),
+            "/images/generations" => Some(Self::ImagesGenerations),
+            "/images/edits" => Some(Self::ImagesEdits),
+            _ => None,
+        }
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "/alpha/search",
+            Self::ImagesGenerations => "/images/generations",
+            Self::ImagesEdits => "/images/edits",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "Codex Alpha Search",
+            Self::ImagesGenerations => "Codex Images generations",
+            Self::ImagesEdits => "Codex Images edits",
+        }
+    }
+
+    fn full_url_hint(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "/responses",
+            Self::ImagesGenerations | Self::ImagesEdits => {
+                "/responses, /chat/completions, /images/generations, or /images/edits"
+            }
+        }
+    }
+
+    /// Full-URL suffixes that unambiguously locate this endpoint's sibling.
+    ///
+    /// Order matters: a longer suffix must precede any suffix it ends with
+    /// (`/responses/compact` before `/responses`), otherwise the shorter one
+    /// wins and the rewrite keeps a stray `/compact` segment.
+    fn source_suffixes(self) -> &'static [&'static str] {
+        match self {
+            Self::AlphaSearch => &["/responses/compact", "/responses"],
+            // Both Images routes live next to each other, so a full URL pasted
+            // for either one is a valid source for the other.
+            Self::ImagesGenerations | Self::ImagesEdits => &[
+                "/images/generations",
+                "/images/edits",
+                "/chat/completions",
+                "/responses/compact",
+                "/responses",
+            ],
+        }
+    }
+
+    fn source_suffix(self, parsed_path: &str) -> Option<&'static str> {
+        self.source_suffixes()
+            .iter()
+            .copied()
+            .find(|suffix| parsed_path.ends_with(suffix))
+    }
+}
+
+/// Derive Codex standalone sibling endpoints from a provider configured with a
+/// complete Codex-compatible API URL.
 ///
 /// Full-URL mode normally means "use this exact URL". That is correct for the
-/// request type it was configured for, but reusing a `/responses` URL for an
-/// Alpha Search request silently posts the search payload to the wrong API. Only
-/// rewrite URL shapes whose sibling endpoint is unambiguous; opaque full URLs
-/// fail closed with a configuration error instead of leaking the search payload
-/// to an unrelated route.
-fn rewrite_codex_alpha_search_full_url(
+/// request type it was configured for, but standalone Codex protocols cannot be
+/// posted to chat/responses endpoints. Only rewrite URL shapes whose sibling
+/// endpoint is unambiguous; opaque full URLs fail closed instead of leaking the
+/// payload to an unrelated route.
+fn rewrite_codex_standalone_full_url(
     base_url: &str,
     request_query: Option<&str>,
+    endpoint: CodexStandaloneEndpoint,
 ) -> Result<String, ProxyError> {
     let trimmed = base_url.trim();
     let parsed = url::Url::parse(trimmed).map_err(|_| {
-        ProxyError::ConfigError(
-            "Codex Alpha Search requires a valid full Responses URL".to_string(),
-        )
+        ProxyError::ConfigError(format!("{} requires a valid full URL", endpoint.label()))
     })?;
 
     // Fragments are never sent in HTTP requests. Drop one before splitting the
@@ -3338,21 +3412,20 @@ fn rewrite_codex_alpha_search_full_url(
     let url_without_query = url_without_query.trim_end_matches('/');
 
     let parsed_path = parsed.path().trim_end_matches('/').to_string();
-    let suffix = if parsed_path.ends_with("/responses/compact") {
-        "/responses/compact"
-    } else if parsed_path.ends_with("/responses") {
-        "/responses"
-    } else {
-        return Err(ProxyError::ConfigError(
-            "Codex Alpha Search cannot derive /alpha/search from an opaque full URL; use a base URL or a full URL ending in /responses".to_string(),
-        ));
-    };
+    let suffix = endpoint.source_suffix(&parsed_path).ok_or_else(|| {
+        ProxyError::ConfigError(format!(
+            "{} cannot derive {} from an opaque full URL; use a base URL or a full URL ending in {}",
+            endpoint.label(),
+            endpoint.path(),
+            endpoint.full_url_hint()
+        ))
+    })?;
 
     let prefix_len = url_without_query
         .len()
         .checked_sub(suffix.len())
         .ok_or_else(|| ProxyError::ConfigError("Invalid Codex full URL".to_string()))?;
-    let mut rewritten = format!("{}/alpha/search", &url_without_query[..prefix_len]);
+    let mut rewritten = format!("{}{}", &url_without_query[..prefix_len], endpoint.path());
 
     let request_query = request_query.filter(|query| !query.is_empty());
     let base_query = base_query.filter(|query| !query.is_empty());
@@ -4771,18 +4844,169 @@ mod tests {
 
         for (base_url, expected) in cases {
             assert_eq!(
-                rewrite_codex_alpha_search_full_url(base_url, Some("client_version=0.144.6"))
-                    .expect("known Responses full URL should be rewritable"),
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.144.6"),
+                    CodexStandaloneEndpoint::AlphaSearch,
+                )
+                .expect("known Responses full URL should be rewritable"),
                 expected
             );
         }
     }
 
     #[test]
+    fn images_generations_rewrites_known_full_codex_urls() {
+        let cases = [
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/images/generations?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/images/generations?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/custom/%2F/v1/responses?api-version=2026-07",
+                "https://relay.example/custom/%2F/v1/images/generations?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/chat/completions?api-version=2026-07",
+                "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/images/edits",
+                "https://relay.example/v1/images/generations?client_version=0.145.0",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.145.0"),
+                    CodexStandaloneEndpoint::ImagesGenerations,
+                )
+                .expect("known Codex full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_generations_preserves_existing_full_images_url() {
+        let url = rewrite_codex_standalone_full_url(
+            "https://relay.example/v1/images/generations?api-version=2026-07",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesGenerations,
+        )
+        .expect("full Images URL should be preserved");
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0"
+        );
+    }
+
+    #[test]
+    fn images_generations_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesGenerations,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /images/generations")
+        ));
+    }
+
+    #[test]
+    fn codex_standalone_endpoint_recognizes_images_edits() {
+        assert!(matches!(
+            CodexStandaloneEndpoint::from_effective_endpoint(
+                "/images/edits?client_version=0.145.0"
+            ),
+            Some(CodexStandaloneEndpoint::ImagesEdits)
+        ));
+        // Codex ImageGen never calls the variations route; keep it unrouted.
+        assert!(CodexStandaloneEndpoint::from_effective_endpoint("/images/variations").is_none());
+    }
+
+    #[test]
+    fn images_edits_rewrites_known_full_codex_urls() {
+        let cases = [
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/images/edits?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/images/edits?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/chat/completions?api-version=2026-07",
+                "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/images/generations?api-version=2026-07",
+                "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.145.0"),
+                    CodexStandaloneEndpoint::ImagesEdits,
+                )
+                .expect("known Codex full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_edits_preserves_existing_full_edits_url() {
+        let url = rewrite_codex_standalone_full_url(
+            "https://relay.example/v1/images/edits?api-version=2026-07",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesEdits,
+        )
+        .expect("full Images edits URL should be preserved");
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0"
+        );
+    }
+
+    #[test]
+    fn images_edits_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesEdits,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /images/edits")
+        ));
+    }
+
+    #[test]
     fn alpha_search_rejects_opaque_full_url_instead_of_misrouting_payload() {
-        let error = rewrite_codex_alpha_search_full_url(
+        let error = rewrite_codex_standalone_full_url(
             "https://relay.example/custom/rpc-endpoint",
             Some("client_version=0.144.6"),
+            CodexStandaloneEndpoint::AlphaSearch,
         )
         .expect_err("opaque endpoint must fail closed");
 

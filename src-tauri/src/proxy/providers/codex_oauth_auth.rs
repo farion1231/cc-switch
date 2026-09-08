@@ -66,6 +66,12 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 /// User-Agent
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
+// Shared by model discovery and generation: ChatGPT gates models by this
+// client identity. gpt-6-astra requires >= 0.153.0 in the rust-v0.153.4 catalog.
+// Bump together when a new model raises its minimal_client_version.
+pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
+pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.153.4";
+
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
 pub enum CodexOAuthError {
