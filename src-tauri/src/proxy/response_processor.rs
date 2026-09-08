@@ -351,6 +351,7 @@ pub struct SseUsageCollector {
 
 struct SseUsageCollectorInner {
     events: Mutex<Vec<Value>>,
+    // 首个有效 SSE 数据事件的观察时间，独立于 usage 收集。
     first_event_time: Mutex<Option<std::time::Instant>>,
     first_event_set: AtomicBool,
     start_time: std::time::Instant,
@@ -387,21 +388,63 @@ impl SseUsageCollector {
             .unwrap_or(true)
     }
 
-    /// 标记首个被收集的 SSE 事件时间，沿用 `first_token_ms` 的既有近似语义。
-    async fn mark_first_collected_event_time(&self) {
+    /// 用首个非心跳的完整 JSON 数据事件近似 TTFT，不等待 usage 上报。
+    /// 记录的是处理层观察时间，仍包含预读回放及协议转换的影响。
+    async fn observe_first_event(&self, event_text: &str) {
+        // 锚点建立后跳过解析，后续事件继续沿用 usage 过滤器的热路径优化。
         if self.inner.first_event_set.load(Ordering::Acquire) {
             return;
         }
+
+        // 在 JSON 校验和加锁前取时，避免把本次处理开销计入 TTFT。
+        let observed_at = std::time::Instant::now();
+        let mut event_name = None;
+        let mut data_lines = Vec::new();
+        for line in event_text.lines() {
+            if let Some(name) = strip_sse_field(line, "event") {
+                event_name = Some(name.trim());
+            } else if let Some(data) = strip_sse_field(line, "data") {
+                data_lines.push(data);
+            }
+        }
+
+        let is_heartbeat = |name: &str| {
+            matches!(
+                name,
+                "ping" | "heartbeat" | "keepalive" | "keep-alive" | "keep_alive"
+            )
+        };
+        if event_name.is_some_and(is_heartbeat) {
+            return;
+        }
+
+        // 同一 SSE 事件的多行 data 需拼接；这里只用于计时，不改变原有 usage 解析。
+        let data = data_lines.join("\n");
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            return;
+        }
+        let Ok(event) = serde_json::from_str::<Value>(data) else {
+            return;
+        };
+        if !event.is_object()
+            || event
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(is_heartbeat)
+        {
+            return;
+        }
+
         let mut first_time = self.inner.first_event_time.lock().await;
         if first_time.is_none() {
-            *first_time = Some(std::time::Instant::now());
+            *first_time = Some(observed_at);
             self.inner.first_event_set.store(true, Ordering::Release);
         }
     }
 
-    /// 推送 SSE 事件
+    /// 仅收集用量事件；首次计时由 observe_first_event 独立完成。
     pub async fn push(&self, event: Value) {
-        self.mark_first_collected_event_time().await;
         let mut events = self.inner.events.lock().await;
         events.push(event);
     }
@@ -751,6 +794,10 @@ pub fn create_logged_passthrough_stream(
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = take_sse_block(&mut buffer) {
                             if !event_text.trim().is_empty() {
+                                // 在 usage 过滤前打点，避免流尾才上报用量时将 TTFT 记成总耗时。
+                                if let Some(c) = &collector {
+                                    c.observe_first_event(&event_text).await;
+                                }
                                 // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
@@ -859,6 +906,9 @@ mod tests {
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
     use crate::proxy::failover_switch::FailoverSwitchManager;
+    use crate::proxy::handler_config::{
+        CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
+    };
     use crate::proxy::provider_router::ProviderRouter;
     use crate::proxy::providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
@@ -869,6 +919,330 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    fn timing_collector(
+        start: std::time::Instant,
+        filter: Option<StreamUsageEventFilter>,
+    ) -> (
+        SseUsageCollector,
+        tokio::sync::mpsc::UnboundedReceiver<(Vec<Value>, Option<u64>)>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let collector = SseUsageCollector::new(start, filter, move |events, timing| {
+            tx.send((events, timing)).unwrap();
+        });
+        (collector, rx)
+    }
+
+    fn timing_stream(
+        stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+        collector: Option<SseUsageCollector>,
+    ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+        create_logged_passthrough_stream(
+            stream,
+            "TTFT test",
+            collector,
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        )
+    }
+
+    fn sse_bytes(event: &Value) -> Bytes {
+        Bytes::from(format!("data: {event}\n\n"))
+    }
+
+    #[tokio::test]
+    async fn streaming_ttft_precedes_delayed_usage_for_each_protocol() {
+        use serde_json::json;
+
+        let cases = [
+            (
+                CODEX_PARSER_CONFIG,
+                json!({"type":"response.created","response":{"id":"resp_timing"}}),
+                json!({"type":"response.completed","response":{"id":"resp_timing","model":"test","usage":{"input_tokens":10,"output_tokens":3}}}),
+                false,
+            ),
+            (
+                CODEX_PARSER_CONFIG,
+                json!({"type":"response.created","response":{"id":"resp_timing","usage":null}}),
+                json!({"type":"response.completed","response":{"id":"resp_timing","usage":{"input_tokens":10,"output_tokens":3}}}),
+                true,
+            ),
+            (
+                OPENAI_PARSER_CONFIG,
+                json!({"id":"chat_timing","choices":[{"delta":{"role":"assistant"}}]}),
+                json!({"id":"chat_timing","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3}}),
+                false,
+            ),
+            (
+                GEMINI_PARSER_CONFIG,
+                json!({"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}),
+                json!({"usageMetadata":{"promptTokenCount":10,"totalTokenCount":13}}),
+                false,
+            ),
+            (
+                CLAUDE_PARSER_CONFIG,
+                json!({"type":"message_start","message":{"id":"msg_timing","usage":{"input_tokens":10,"output_tokens":0}}}),
+                json!({"type":"message_delta","usage":{"output_tokens":3}}),
+                true,
+            ),
+        ];
+
+        for (config, first, last, collect_first) in cases {
+            let start = std::time::Instant::now();
+            let (collector, mut results) = timing_collector(start, config.stream_event_filter);
+            let first_bytes = sse_bytes(&first);
+            let last_bytes = sse_bytes(&last);
+            let expected_bytes = [first_bytes.clone(), last_bytes.clone()];
+            let (release, gate) = tokio::sync::oneshot::channel();
+            let input = async_stream::stream! {
+                yield Ok(first_bytes);
+                gate.await.unwrap();
+                yield Ok(last_bytes);
+            };
+            let mut stream = Box::pin(timing_stream(input, Some(collector.clone())));
+            let before = start.elapsed().as_millis() as u64;
+            let output_first = tokio::time::timeout(Duration::from_secs(2), stream.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let after = start.elapsed().as_millis() as u64;
+            assert_eq!(output_first, expected_bytes[0]);
+            assert!(results.try_recv().is_err());
+
+            // 首块已透传后才延迟释放流尾，复现“首事件早到、usage 晚到”的场景。
+            // 使用真实时间，与生产代码的 std::time::Instant 保持一致。
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            release.send(()).unwrap();
+            assert_eq!(stream.next().await.unwrap().unwrap(), expected_bytes[1]);
+            assert!(stream.next().await.is_none());
+            let (events, timing) = results.try_recv().unwrap();
+            let timing = timing.expect("first event should establish TTFT");
+            assert!(
+                (before..=after).contains(&timing),
+                "{timing} outside {before}..={after}"
+            );
+            assert!(start.elapsed().as_millis() as u64 > timing);
+            let expected_events = if collect_first {
+                vec![first, last]
+            } else {
+                vec![last]
+            };
+            assert_eq!(events, expected_events);
+            let usage = (config.stream_parser)(&events).unwrap();
+            assert_eq!((usage.input_tokens, usage.output_tokens), (10, 3));
+            collector.finish().await;
+            drop(stream);
+            assert!(results.try_recv().is_err(), "finish must run only once");
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_ttft_ignores_non_events_even_without_usage_filter() {
+        let mut prefixes = vec![
+            ": keep-alive\n\n".to_string(),
+            "data: \n\n".to_string(),
+            "data: [DONE]\n\n".to_string(),
+            "data: {invalid json}\n\n".to_string(),
+            "data: null\n\n".to_string(),
+            "data: []\n\n".to_string(),
+        ];
+        for heartbeat in ["ping", "heartbeat", "keepalive", "keep-alive", "keep_alive"] {
+            prefixes.push(format!("event: {heartbeat}\ndata: {{\"usage\":null}}\n\n"));
+            prefixes.push(format!(
+                "data: {{ \"type\" : \"{heartbeat}\", \"usage\":null }}\n\n"
+            ));
+        }
+        let (collector, mut results) = timing_collector(std::time::Instant::now(), None);
+        let chunks: Vec<_> = prefixes.into_iter().map(Bytes::from).collect();
+        let mut stream = Box::pin(timing_stream(
+            futures::stream::iter(chunks.clone().into_iter().map(Ok)),
+            Some(collector),
+        ));
+        for chunk in chunks {
+            assert_eq!(stream.next().await.unwrap().unwrap(), chunk);
+        }
+        assert!(stream.next().await.is_none());
+        let (events, timing) = results.try_recv().unwrap();
+        assert_eq!(timing, None);
+        assert!(
+            !events.is_empty(),
+            "usage collection remains independent of timing eligibility"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_ttft_waits_for_complete_multiline_event() {
+        for newline in ["\n", "\r\n"] {
+            let start = std::time::Instant::now();
+            let (collector, mut results) =
+                timing_collector(start, CODEX_PARSER_CONFIG.stream_event_filter);
+            let first = Bytes::from(format!("data: {{\"type\":\"response.created\",{newline}"));
+            let second = Bytes::from(format!(
+                "data: \"response\":{{\"id\":\"resp_split\"}}}}{newline}"
+            ));
+            let delimiter = Bytes::from(newline.to_string());
+            let chunks = vec![first, second, delimiter];
+            let mut stream = Box::pin(timing_stream(
+                futures::stream::iter(chunks.clone().into_iter().map(Ok)),
+                Some(collector.clone()),
+            ));
+            for chunk in &chunks[..2] {
+                assert_eq!(&stream.next().await.unwrap().unwrap(), chunk);
+                assert!(collector.inner.first_event_time.lock().await.is_none());
+            }
+            let before = start.elapsed().as_millis() as u64;
+            assert_eq!(stream.next().await.unwrap().unwrap(), chunks[2]);
+            let after = start.elapsed().as_millis() as u64;
+            assert!(stream.next().await.is_none());
+            let (events, timing) = results.try_recv().unwrap();
+            assert!((before..=after).contains(&timing.unwrap()));
+            assert!(
+                events.is_empty(),
+                "multiline timing must not alter usage collection"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_ttft_is_retained_on_disconnect_or_stream_error() {
+        for fail in [false, true] {
+            let start = std::time::Instant::now();
+            let (collector, mut results) =
+                timing_collector(start, CODEX_PARSER_CONFIG.stream_event_filter);
+            let input = async_stream::stream! {
+                yield Ok(Bytes::from_static(b"data: {\"type\":\"response.created\"}\n\n"));
+                if fail {
+                    yield Err(std::io::Error::other("upstream disconnected"));
+                } else {
+                    futures::future::pending::<()>().await;
+                }
+            };
+            let mut stream = Box::pin(timing_stream(input, Some(collector.clone())));
+            stream.next().await.unwrap().unwrap();
+            let after = start.elapsed().as_millis() as u64;
+            if fail {
+                assert!(stream.next().await.unwrap().is_err());
+            }
+            drop(stream);
+            let (events, timing) = tokio::time::timeout(Duration::from_secs(2), results.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(events.is_empty());
+            assert!(timing.unwrap() <= after);
+            collector.finish().await;
+            assert!(results.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_ttft_handles_empty_single_and_coalesced_streams() {
+        for input in [
+            "",
+            "data: {\"type\":\"response.created\"}",
+            "data: {\"type\":\"response.created\"}\n\n",
+            "data: {\"type\":\"response.created\"}\n\ndata: {\"type\":\"response.completed\"}\n\n",
+        ] {
+            let start = std::time::Instant::now();
+            let (collector, mut results) = timing_collector(start, None);
+            let bytes = Bytes::from_static(input.as_bytes());
+            let mut stream = Box::pin(timing_stream(
+                futures::stream::iter(vec![Ok(bytes.clone())]),
+                Some(collector),
+            ));
+            assert_eq!(stream.next().await.unwrap().unwrap(), bytes);
+            assert!(stream.next().await.is_none());
+            let (events, timing) = results.try_recv().unwrap();
+            let count = input.matches("\n\n").count();
+            assert_eq!(events.len(), count);
+            assert_eq!(timing.is_some(), count > 0);
+            if let Some(timing) = timing {
+                assert!(timing <= start.elapsed().as_millis() as u64);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_without_collector_preserves_bytes() {
+        let chunks = vec![
+            Bytes::from_static(b"data: {"),
+            Bytes::from_static(b"\"type\":\"ping\"}\n\n"),
+        ];
+        let mut stream = Box::pin(timing_stream(
+            futures::stream::iter(chunks.clone().into_iter().map(Ok)),
+            None,
+        ));
+        for chunk in chunks {
+            assert_eq!(stream.next().await.unwrap().unwrap(), chunk);
+        }
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_ttft_survives_codex_protocol_conversion() {
+        use crate::proxy::providers::{streaming_codex_anthropic, streaming_codex_chat};
+        use serde_json::json;
+
+        for anthropic in [false, true] {
+            let first = if anthropic {
+                json!({"type":"message_start","message":{"id":"msg_convert","model":"test","usage":{"input_tokens":10,"output_tokens":0}}})
+            } else {
+                json!({"id":"chat_convert","model":"test","choices":[{"delta":{"role":"assistant"}}]})
+            };
+            let tail = if anthropic {
+                vec![
+                    json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}),
+                    json!({"type":"message_stop"}),
+                ]
+            } else {
+                vec![
+                    json!({"id":"chat_convert","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3}}),
+                ]
+            };
+            let (release, gate) = tokio::sync::oneshot::channel();
+            let input = async_stream::stream! {
+                yield Ok::<_, std::io::Error>(sse_bytes(&first));
+                gate.await.unwrap();
+                for event in tail {
+                    yield Ok(sse_bytes(&event));
+                }
+            };
+            let converted: std::pin::Pin<
+                Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>,
+            > = if anthropic {
+                Box::pin(
+                    streaming_codex_anthropic::create_responses_sse_stream_from_anthropic(input),
+                )
+            } else {
+                Box::pin(streaming_codex_chat::create_responses_sse_stream_from_chat(
+                    input,
+                ))
+            };
+            let start = std::time::Instant::now();
+            let (collector, mut results) =
+                timing_collector(start, CODEX_PARSER_CONFIG.stream_event_filter);
+            let mut stream = Box::pin(timing_stream(converted, Some(collector)));
+            let first = stream.next().await.unwrap().unwrap();
+            assert!(std::str::from_utf8(&first)
+                .unwrap()
+                .contains("response.created"));
+            let after = start.elapsed().as_millis() as u64;
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            release.send(()).unwrap();
+            while let Some(chunk) = stream.next().await {
+                chunk.unwrap();
+            }
+            let (events, timing) = results.try_recv().unwrap();
+            assert!(timing.unwrap() <= after);
+            let usage = (CODEX_PARSER_CONFIG.stream_parser)(&events).unwrap();
+            assert_eq!((usage.input_tokens, usage.output_tokens), (10, 3));
+        }
+    }
 
     #[test]
     fn format_headers_keeps_only_allowlisted_diagnostic_values() {
@@ -887,6 +1261,110 @@ mod tests {
         assert!(formatted.contains("cf-ray=abc123-SJC"), "{formatted}");
         assert!(!formatted.contains("super-secret"), "{formatted}");
         assert!(!formatted.contains("cookie-secret"), "{formatted}");
+    }
+
+    #[tokio::test]
+    async fn streaming_ttft_is_persisted_through_response_handler() {
+        use crate::app_config::AppType;
+        use http_body_util::BodyExt;
+        use rusqlite::OptionalExtension;
+        use serde_json::json;
+
+        let db = Arc::new(Database::memory().unwrap());
+        // 在内存库中沿用当前供应商 ID，避免创建上下文时触发全局设置的自动修复。
+        let provider_id = crate::settings::get_current_provider(&AppType::Codex)
+            .unwrap_or_else(|| "ttft-provider".to_string());
+        insert_provider(&db, &provider_id, "codex", ProviderMeta::default()).unwrap();
+        db.set_current_provider("codex", &provider_id).unwrap();
+        let state = build_state(db.clone());
+        state.config.write().await.enable_logging = true;
+        let ctx = RequestContext::new(
+            &state,
+            &json!({"model":"test","stream":true}),
+            &HeaderMap::new(),
+            AppType::Codex,
+            "TTFT test",
+            "codex",
+        )
+        .await
+        .unwrap();
+        let first = sse_bytes(&json!({"type":"response.created","response":{"id":"resp_persist"}}));
+        let last = sse_bytes(
+            &json!({"type":"response.completed","response":{"id":"resp_persist","model":"test","usage":{"input_tokens":10,"output_tokens":3}}}),
+        );
+        let expected_first = first.clone();
+        let expected_last = last.clone();
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let input = async_stream::stream! {
+            yield Ok(first);
+            gate.await.unwrap();
+            yield Ok(last);
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        let response = ProxyResponse::streamed(http::StatusCode::OK, headers, input);
+        let mut body = handle_streaming(response, &ctx, &state, &CODEX_PARSER_CONFIG, None)
+            .await
+            .into_body();
+        let before = ctx.latency_ms();
+        let first = body.frame().await.unwrap().unwrap().into_data().unwrap();
+        let after = ctx.latency_ms();
+        assert_eq!(first, expected_first);
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        release.send(()).unwrap();
+        assert_eq!(
+            body.frame().await.unwrap().unwrap().into_data().unwrap(),
+            expected_last
+        );
+        assert!(body.frame().await.is_none());
+
+        let request_id = format!("session:codex:{provider_id}:resp_persist");
+        let (latency, timing, input_tokens, output_tokens) = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let row = {
+                    let conn = db.conn.lock().unwrap();
+                    conn.query_row(
+                        "SELECT latency_ms, first_token_ms, input_tokens, output_tokens FROM proxy_request_logs WHERE request_id = ?1",
+                        [&request_id],
+                        |row| Ok((row.get::<_, u64>(0)?, row.get::<_, Option<u64>>(1)?, row.get::<_, u32>(2)?, row.get::<_, u32>(3)?)),
+                    ).optional().unwrap()
+                };
+                if let Some(row) = row { break row; }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("streaming request should be logged");
+        assert!((before..=after).contains(&timing.unwrap()));
+        assert!(latency > timing.unwrap());
+        assert_eq!((input_tokens, output_tokens), (10, 3));
+
+        let response = ProxyResponse::buffered(
+            http::StatusCode::OK,
+            HeaderMap::new(),
+            Bytes::from(json!({"id":"resp_nonstream","model":"test","usage":{"input_tokens":10,"output_tokens":3}}).to_string()),
+        );
+        handle_non_streaming(response, &ctx, &state, &CODEX_PARSER_CONFIG, None)
+            .await
+            .unwrap();
+        let request_id = format!("session:codex:{provider_id}:resp_nonstream");
+        let (timing, is_streaming) = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let row = {
+                    let conn = db.conn.lock().unwrap();
+                    conn.query_row(
+                        "SELECT first_token_ms, is_streaming FROM proxy_request_logs WHERE request_id = ?1",
+                        [&request_id],
+                        |row| Ok((row.get::<_, Option<u64>>(0)?, row.get::<_, bool>(1)?)),
+                    ).optional().unwrap()
+                };
+                if let Some(row) = row { break row; }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("non-streaming request should be logged");
+        assert_eq!(timing, None);
+        assert!(!is_streaming);
+
+        state.config.write().await.enable_logging = false;
+        assert!(create_usage_collector(&ctx, &state, 200, &CODEX_PARSER_CONFIG).is_none());
     }
 
     #[tokio::test]
