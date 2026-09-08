@@ -2643,10 +2643,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     settingsConfig: {
-      baseUrl:
-        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
       apiKey: "",
-      api: "openai-completions",
+      api: "anthropic-messages",
       models: [
         {
           id: "qwen3.8-max",
@@ -2673,9 +2672,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: {
         label: "Base URL",
         placeholder:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
         defaultValue:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
         editorValue: "",
       },
       apiKey: {
@@ -2694,8 +2693,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   // ===== QwenCloud（DashScope 国际站）=====
   // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
-  // QwenCloud 走 anthropic-messages（地址比 Claude Code 的多一段 /v1），
-  // Token Plan 走 OpenAI 兼容层。
+  // QwenCloud 与 Token Plan 都走 anthropic-messages，地址比 Claude Code 的
+  // 多一段 /v1；国内 Token Plan 是唯一例外，官方文档给的就是不带 /v1 的
+  // /apps/anthropic，勿照搬国际站补齐。
   // modelCatalog 必须逐条覆盖 models：OpenClaw 把 agents.defaults.models
   // 当白名单，漏写的模型会在客户端里被隐藏。
   {
@@ -2758,15 +2758,74 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      baseUrl: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "qwen3.7-plus",
+          name: "Qwen3.7 Plus",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3.6-plus",
+          name: "Qwen3.6 Plus",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65536,
+        },
+        {
+          id: "qwen3-coder-plus",
+          name: "Qwen3 Coder Plus",
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 65536,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qwencloud-coding/qwen3.7-plus" },
+      modelCatalog: {
+        "qwencloud-coding/qwen3.7-plus": { alias: "Qwen3.7 Plus" },
+        "qwencloud-coding/qwen3.6-plus": { alias: "Qwen3.6 Plus" },
+        "qwencloud-coding/qwen3-coder-plus": { alias: "Qwen3 Coder Plus" },
+      },
+    },
+  },
+  {
     name: "QwenCloud Token Plan",
     websiteUrl:
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       baseUrl:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
       apiKey: "",
-      api: "openai-completions",
+      api: "anthropic-messages",
       models: [
         {
           id: "qwen3.8-max",
@@ -2800,9 +2859,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: {
         label: "Base URL",
         placeholder:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
         defaultValue:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
@@ -2817,9 +2876,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "qwencloud-token-plan/qwen3.8-max": { alias: "Qwen3.8 Max" },
         "qwencloud-token-plan/qwen3.8-flash": { alias: "Qwen3.8 Flash" },
         "qwencloud-token-plan/qwen3.7-max": { alias: "Qwen3.7 Max" },
-        "qwencloud-token-plan/qwen3.7-plus": { alias: "Qwen3.7 Plus" },
-        "qwencloud-token-plan/qwen3.6-plus": { alias: "Qwen3.6 Plus" },
-        "qwencloud-token-plan/qwen3.6-flash": { alias: "Qwen3.6 Flash" },
       },
     },
   },

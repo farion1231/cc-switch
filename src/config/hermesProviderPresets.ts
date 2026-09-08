@@ -1544,10 +1544,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "Bailian For Coding",
+    name: "千问AI平台 Coding Plan",
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
-      name: "bailian_coding",
+      name: "qianwenai_coding_plan",
       base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
@@ -1557,10 +1557,13 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
     suggestedDefaults: {
-      model: { default: "qwen3-coder-plus", provider: "bailian_coding" },
+      model: {
+        default: "qwen3-coder-plus",
+        provider: "qianwenai_coding_plan",
+      },
     },
   },
   {
@@ -1572,9 +1575,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     settingsConfig: {
       name: "qianwenai_token_plan",
       base_url:
-        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
       api_key: "",
-      api_mode: "chat_completions",
+      api_mode: "anthropic_messages",
       models: [
         { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
         { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },
@@ -1589,9 +1592,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   // ===== QwenCloud（DashScope 国际站）=====
   // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
-  // QwenCloud 用 anthropic_messages，地址不带 /v1（与官方 hermes 文档
-  // 一致，这点和 OpenCode / OpenClaw 不同，勿互相照搬）；
-  // Token Plan 走 chat_completions。
+  // QwenCloud 与 Token Plan 都用 anthropic_messages，地址不带 /v1（与官方
+  // hermes 文档一致，这点和 OpenCode / OpenClaw 不同，勿互相照搬）。
   {
     name: "QwenCloud",
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
@@ -1615,6 +1617,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      name: "qwencloud_coding",
+      base_url: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
+        { id: "qwen3.6-plus", name: "Qwen3.6 Plus", context_length: 1000000 },
+        {
+          id: "qwen3-coder-plus",
+          name: "Qwen3 Coder Plus",
+          context_length: 131072,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    suggestedDefaults: {
+      model: { default: "qwen3.7-plus", provider: "qwencloud_coding" },
+    },
+  },
+  {
     name: "QwenCloud Token Plan",
     websiteUrl:
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
@@ -1622,9 +1650,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     settingsConfig: {
       name: "qwencloud_token_plan",
       base_url:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
       api_key: "",
-      api_mode: "chat_completions",
+      api_mode: "anthropic_messages",
       models: [
         { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
         { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },

@@ -1378,13 +1378,17 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
     // DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
     apiFormat: "openai_responses",
-    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）；
-    // 窗口取 qwen3.8 系官方值 983616（不足 1M，与 piModelCatalog 同值）
+    // 档位与窗口照抄官方 Codex model-catalog.local.json——该元数据段落不分
+    // 套餐，按量付费与 Token Plan 用同一份（qwen3.8 系只收 low/medium/xhigh，
+    // 默认 xhigh；无 high 档，勿按常规四档补齐）
     modelCatalog: modelCatalog([
       {
         model: "qwen3.8-max",
         displayName: "Qwen3.8 Max",
         contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
       },
     ]),
     category: "cn_official",
@@ -1471,6 +1475,40 @@ requires_openai_auth = true`,
         model: "qwen3.7-max",
         displayName: "Qwen3.7 Max",
         contextWindow: 1000000,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+  },
+  {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qwencloud_coding",
+      "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "qwen3.7-plus",
+    ),
+    endpointCandidates: ["https://coding-intl.dashscope.aliyuncs.com/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.7-plus",
+        displayName: "Qwen3.7 Plus",
+        contextWindow: 1000000,
+      },
+      {
+        model: "qwen3.6-plus",
+        displayName: "Qwen3.6 Plus",
+        contextWindow: 1000000,
+      },
+      {
+        model: "qwen3-coder-plus",
+        displayName: "Qwen3 Coder Plus",
+        contextWindow: 131072,
         inputModalities: ["text"],
       },
     ]),

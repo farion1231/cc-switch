@@ -1047,6 +1047,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#6336E7",
   },
   {
+    name: "QwenCloud For Coding",
+    providerKey: "cc-switch-qwencloud-coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      name: "QwenCloud For Coding",
+      baseUrl: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("qwen/qwen3.7-plus", { id: "qwen3.7-plus" }),
+        piModel("qwen/qwen3-coder-plus", {
+          id: "qwen3-coder-plus",
+          contextWindow: 131_072,
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+  },
+  {
     name: "QwenCloud Token Plan",
     providerKey: "cc-switch-qwencloud-token-plan",
     websiteUrl:

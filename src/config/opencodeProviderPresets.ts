@@ -1815,11 +1815,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
+      npm: "@ai-sdk/anthropic",
       name: "千问AI平台 Token Plan",
       options: {
         baseURL:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -1841,9 +1841,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       baseURL: {
         label: "Base URL",
         placeholder:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
         defaultValue:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
@@ -1855,7 +1855,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   // ===== QwenCloud（DashScope 国际站）=====
   // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
-  // 按量付费与 Token Plan 都走 OpenAI 兼容层（/compatible-mode/v1）。
+  // 按量付费走 OpenAI 兼容层（/compatible-mode/v1）；Token Plan 官方给的是
+  // Anthropic 协议地址，且比 Claude Code 的多一段 /v1（AI SDK anthropic 惯例）。
   {
     name: "QwenCloud",
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
@@ -1898,16 +1899,53 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "QwenCloud For Coding",
+      options: {
+        baseURL: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.7-plus": { name: "Qwen3.7 Plus" },
+        "qwen3.6-plus": { name: "Qwen3.6 Plus" },
+        "qwen3-coder-plus": { name: "Qwen3 Coder Plus" },
+      },
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "QwenCloud Token Plan",
     websiteUrl:
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
+      npm: "@ai-sdk/anthropic",
       name: "QwenCloud Token Plan",
       options: {
         baseURL:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -1930,9 +1968,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       baseURL: {
         label: "Base URL",
         placeholder:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
         defaultValue:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
