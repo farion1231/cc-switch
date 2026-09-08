@@ -20,8 +20,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+/// 新建配置文件时的初始内容。
+///
+/// 用严格 JSON 书写：OpenClaw 自己按 JSON5 读取，但该文件同样会被第三方工具
+/// 用严格 JSON 解析器读取，所以不应一上来就写出只有 JSON5 能接受的内容。
 const OPENCLAW_DEFAULT_SOURCE: &str =
-    "{\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n}\n";
+    "{\n  \"models\": {\n    \"mode\": \"merge\",\n    \"providers\": {}\n  }\n}\n";
 const OPENCLAW_TOOLS_PROFILES: &[&str] = &["minimal", "coding", "messaging", "full"];
 
 // ============================================================================
@@ -293,6 +297,9 @@ impl OpenClawConfigDocument {
             .iter_mut()
             .find(|pair| json5_key_name(&pair.key) == Some(key))
         {
+            // 该 section 本来就要重写，顺带把键名归一为带引号形式，
+            // 让旧版本写出的裸键在下一次保存时自愈。
+            existing.key = make_json5_key(key);
             existing.value = new_value;
             return Ok(());
         }
@@ -537,22 +544,14 @@ fn make_root_pair(key: &str, value: RtJSONValue, closing_ws: String) -> RtJSONKe
     }
 }
 
+/// 新键一律使用带引号的键名。
+///
+/// `openclaw.json` 虽然按 JSON5 解析，但文件名与既有内容都是严格 JSON，
+/// 也会被第三方工具用严格解析器读取。裸标识符键只有 JSON5 接受，一旦写入
+/// 就会让原本合法的文件无法通过 `JSON.parse`。带引号的键在 JSON 与 JSON5
+/// 中都合法，而且与嵌套键保持一致——后者经 `serde_json` 序列化，本就带引号。
 fn make_json5_key(key: &str) -> RtJSONValue {
-    if is_identifier_key(key) {
-        RtJSONValue::Identifier(key.to_string())
-    } else {
-        RtJSONValue::DoubleQuotedString(key.to_string())
-    }
-}
-
-fn is_identifier_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-
-    matches!(first, 'a'..='z' | 'A'..='Z' | '_' | '$')
-        && chars.all(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$'))
+    RtJSONValue::DoubleQuotedString(key.to_string())
 }
 
 fn json5_key_name(key: &RtJSONValue) -> Option<&str> {
@@ -990,9 +989,99 @@ mod tests {
 
             let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
             assert!(written.contains("// top-level comment"));
-            assert!(written.contains("agents: {"));
+            assert!(written.contains("\"agents\": {"));
             assert!(written.contains("provider/model"));
         });
+    }
+
+    // 新增的顶层键必须带引号：openclaw.json 同时会被严格 JSON 解析器读取，
+    // 而嵌套键本就经由 serde_json 序列化（始终带引号），根键不应例外。
+    #[test]
+    #[serial]
+    fn root_section_write_keeps_config_strict_json_parseable() {
+        let source = r#"{
+  "models": {
+    "mode": "merge",
+    "providers": {}
+  }
+}
+"#;
+
+        with_test_paths(source, |_| {
+            serde_json::from_str::<Value>(source).expect("fixture starts as strict JSON");
+
+            set_default_model(&OpenClawDefaultModel {
+                primary: "provider/model".to_string(),
+                fallbacks: Vec::new(),
+                extra: HashMap::new(),
+            })
+            .unwrap();
+
+            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            serde_json::from_str::<Value>(&written).unwrap_or_else(|err| {
+                panic!("written config is no longer strict JSON ({err}):\n{written}")
+            });
+        });
+    }
+
+    // 首次创建的配置文件本身就应当是严格 JSON。
+    #[test]
+    #[serial]
+    fn config_created_from_scratch_is_strict_json() {
+        with_test_paths("{}", |path| {
+            fs::remove_file(path).unwrap();
+
+            set_default_model(&OpenClawDefaultModel {
+                primary: "provider/model".to_string(),
+                fallbacks: Vec::new(),
+                extra: HashMap::new(),
+            })
+            .unwrap();
+
+            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            serde_json::from_str::<Value>(&written).unwrap_or_else(|err| {
+                panic!("freshly created config should be strict JSON ({err}):\n{written}")
+            });
+        });
+    }
+
+    // 旧版本已经写坏的文件，在下一次保存该 section 时应恢复为严格 JSON。
+    #[test]
+    #[serial]
+    fn rewriting_a_section_requotes_a_bare_root_key() {
+        let source = r#"{
+  models: {
+    "mode": "merge",
+    "providers": {
+      "1-copy": {
+        "api": "anthropic-messages"
+      }
+    }
+  }
+}
+"#;
+
+        with_test_paths(source, |_| {
+            assert!(serde_json::from_str::<Value>(source).is_err());
+
+            remove_provider("1-copy").unwrap();
+
+            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            assert!(written.contains("\"models\":"), "got:\n{written}");
+            serde_json::from_str::<Value>(&written).unwrap_or_else(|err| {
+                panic!("rewritten config should be strict JSON ({err}):\n{written}")
+            });
+        });
+    }
+
+    #[test]
+    fn new_root_keys_are_always_quoted() {
+        for key in ["models", "needs-quotes"] {
+            assert!(matches!(
+                make_json5_key(key),
+                RtJSONValue::DoubleQuotedString(_)
+            ));
+        }
     }
 
     #[test]
