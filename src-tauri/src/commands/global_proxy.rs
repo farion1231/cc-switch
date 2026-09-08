@@ -4,7 +4,7 @@
 
 use crate::proxy::http_client;
 use crate::store::AppState;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,28 @@ pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<
             .unwrap_or_else(|| "None".to_string())
     );
     Ok(result)
+}
+
+/// 全局出站代理设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalProxySettingsPayload {
+    pub url: Option<String>,
+    pub follow_system_proxy: bool,
+}
+
+/// 获取全局出站代理设置
+#[tauri::command]
+pub fn get_global_proxy_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<GlobalProxySettingsPayload, String> {
+    Ok(GlobalProxySettingsPayload {
+        url: state.db.get_global_proxy_url().map_err(|e| e.to_string())?,
+        follow_system_proxy: state
+            .db
+            .get_global_proxy_follow_system()
+            .map_err(|e| e.to_string())?,
+    })
 }
 
 /// 设置全局代理 URL
@@ -48,7 +70,11 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
     };
 
     // 1. 先验证代理配置是否有效（不应用）
-    http_client::validate_proxy(url_opt)?;
+    let follow_system_proxy = state
+        .db
+        .get_global_proxy_follow_system()
+        .map_err(|e| e.to_string())?;
+    http_client::validate_proxy(url_opt, follow_system_proxy)?;
 
     // 2. 验证成功后保存到数据库
     state
@@ -57,7 +83,7 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
         .map_err(|e| e.to_string())?;
 
     // 3. DB 写入成功后再应用到运行态
-    http_client::apply_proxy(url_opt)?;
+    http_client::apply_proxy(url_opt, follow_system_proxy)?;
 
     log::info!(
         "[GlobalProxy] [GP-009] Configuration updated: {}",
@@ -65,6 +91,67 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
             .map(http_client::mask_url)
             .unwrap_or_else(|| "direct connection".to_string())
     );
+
+    Ok(())
+}
+
+/// 设置全局出站代理设置
+#[tauri::command]
+pub fn set_global_proxy_settings(
+    state: tauri::State<'_, AppState>,
+    settings: GlobalProxySettingsPayload,
+) -> Result<(), String> {
+    let url_opt = settings
+        .url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty());
+
+    http_client::validate_proxy(url_opt, settings.follow_system_proxy)?;
+
+    state
+        .db
+        .set_global_proxy_url(url_opt)
+        .map_err(|e| e.to_string())?;
+    state
+        .db
+        .set_global_proxy_follow_system(settings.follow_system_proxy)
+        .map_err(|e| e.to_string())?;
+
+    http_client::apply_proxy(url_opt, settings.follow_system_proxy)?;
+
+    log::info!(
+        "[GlobalProxy] [GP-012] Settings updated: {}, follow_system_proxy={}",
+        url_opt
+            .map(http_client::mask_url)
+            .unwrap_or_else(|| "direct connection".to_string()),
+        settings.follow_system_proxy
+    );
+
+    Ok(())
+}
+
+/// 获取是否跟随系统代理
+#[tauri::command]
+pub fn get_global_proxy_follow_system(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .get_global_proxy_follow_system()
+        .map_err(|e| e.to_string())
+}
+
+/// 设置是否跟随系统代理
+#[tauri::command]
+pub fn set_global_proxy_follow_system(
+    state: tauri::State<'_, AppState>,
+    follow: bool,
+) -> Result<(), String> {
+    state
+        .db
+        .set_global_proxy_follow_system(follow)
+        .map_err(|e| e.to_string())?;
+
+    let proxy_url = state.db.get_global_proxy_url().map_err(|e| e.to_string())?;
+    http_client::apply_proxy(proxy_url.as_deref(), follow)?;
 
     Ok(())
 }
@@ -166,6 +253,7 @@ pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
     UpstreamProxyStatus {
         enabled: url.is_some(),
         proxy_url: url,
+        follow_system_proxy: http_client::get_follow_system_proxy(),
     }
 }
 
@@ -177,6 +265,8 @@ pub struct UpstreamProxyStatus {
     pub enabled: bool,
     /// 代理 URL
     pub proxy_url: Option<String>,
+    /// 未配置显式代理时，是否跟随系统代理
+    pub follow_system_proxy: bool,
 }
 
 /// 检测到的代理信息
