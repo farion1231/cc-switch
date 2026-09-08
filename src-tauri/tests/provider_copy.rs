@@ -34,6 +34,34 @@ fn seed(config: &mut MultiAppConfig, provider: Provider) {
     manager.providers.insert(provider.id.clone(), provider);
 }
 
+fn codex_relay(id: &str, base_url: &str, is_full_url: bool) -> Provider {
+    let mut provider = Provider::with_id(
+        id.to_string(),
+        "Relay".to_string(),
+        json!({
+            "auth": { "OPENAI_API_KEY": "sk-relay" },
+            "config": format!(
+                "model_provider = \"custom\"\nmodel = \"gpt-5-codex\"\n\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\n"
+            )
+        }),
+        None,
+    );
+    if is_full_url {
+        provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+    }
+    provider
+}
+
+fn seed_codex(config: &mut MultiAppConfig, provider: Provider) {
+    let manager = config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager");
+    manager.providers.insert(provider.id.clone(), provider);
+}
+
 fn meta_json(provider: &Provider) -> Value {
     serde_json::to_value(provider.meta.as_ref().expect("meta present")).expect("serialize meta")
 }
@@ -448,5 +476,159 @@ fn source_gates_reject_and_unknown_targets_fail_per_target() {
     assert_eq!(
         failed.reason.as_ref().map(|reason| reason.key.as_str()),
         Some("unsupportedTarget")
+    );
+}
+
+#[test]
+fn full_url_source_keeps_flag_in_codex_copy() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    let mut source = claude_relay("relay-src");
+    source.settings_config["env"]["ANTHROPIC_BASE_URL"] =
+        json!("https://gateway.example/v1/messages");
+    source.meta = Some(ProviderMeta {
+        is_full_url: Some(true),
+        ..Default::default()
+    });
+    seed(&mut config, source);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let outcomes = copy_provider_to_apps_test_hook(
+        &state,
+        AppType::Claude,
+        "relay-src",
+        &["codex".to_string()],
+    )
+    .expect("copy succeeds");
+    assert_eq!(outcome_of(&outcomes, "codex").status, CopyStatus::Copied);
+
+    // is_full_url 必须跟到 Codex 副本：代理转发按完整端点处理，丢了标记
+    // 会把 …/v1/messages 再拼一层 /responses。
+    let row = state
+        .db
+        .get_provider_by_id("relay-src", "codex")
+        .expect("query codex row")
+        .expect("codex row exists");
+    let meta = meta_json(&row);
+    assert_eq!(meta["isFullUrl"], json!(true));
+    assert_eq!(meta["apiFormat"], "anthropic");
+    assert!(home.join(".codex").join("config.toml").exists());
+}
+
+#[test]
+fn codex_source_to_opencode_normalizes_base_url() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let mut config = MultiAppConfig::default();
+    seed_codex(
+        &mut config,
+        codex_relay("relay-origin", "https://relay.example.com", false),
+    );
+    seed_codex(
+        &mut config,
+        codex_relay("relay-full", "https://gateway.example/v1/responses", true),
+    );
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    // origin 形 base：OpenCode 的 @ai-sdk/openai 只追加 /responses，
+    // 必须补 /v1 才等价于 Codex 适配器的请求 URL。
+    let origin_outcomes = copy_provider_to_apps_test_hook(
+        &state,
+        AppType::Codex,
+        "relay-origin",
+        &["opencode".to_string()],
+    )
+    .expect("origin copy");
+    assert_eq!(
+        outcome_of(&origin_outcomes, "opencode").status,
+        CopyStatus::Copied
+    );
+    let origin_row = state
+        .db
+        .get_provider_by_id("relay-origin", "opencode")
+        .expect("query origin row")
+        .expect("origin row exists");
+    assert_eq!(
+        origin_row
+            .settings_config
+            .pointer("/options/baseURL")
+            .and_then(Value::as_str),
+        Some("https://relay.example.com/v1")
+    );
+    assert_eq!(
+        origin_row
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.api_format.as_deref()),
+        Some("openai_responses")
+    );
+
+    // 完整端点形 base：剥掉 /responses 让 AI SDK 拼回同一 URL。
+    let full_outcomes = copy_provider_to_apps_test_hook(
+        &state,
+        AppType::Codex,
+        "relay-full",
+        &["opencode".to_string()],
+    )
+    .expect("full-url copy");
+    assert_eq!(
+        outcome_of(&full_outcomes, "opencode").status,
+        CopyStatus::Copied
+    );
+    let full_row = state
+        .db
+        .get_provider_by_id("relay-full", "opencode")
+        .expect("query full row")
+        .expect("full row exists");
+    assert_eq!(
+        full_row
+            .settings_config
+            .pointer("/options/baseURL")
+            .and_then(Value::as_str),
+        Some("https://gateway.example/v1")
+    );
+}
+
+#[test]
+fn failed_live_write_rolls_back_new_target_row() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    seed(&mut config, claude_relay("relay-src"));
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    // 让 Codex live 写入必然失败：config.toml 位置被目录占用。
+    let codex_dir = home.join(".codex");
+    std::fs::create_dir_all(&codex_dir).expect("create .codex");
+    std::fs::create_dir_all(codex_dir.join("config.toml")).expect("block config.toml");
+
+    let outcomes = copy_provider_to_apps_test_hook(
+        &state,
+        AppType::Claude,
+        "relay-src",
+        &["codex".to_string()],
+    )
+    .expect("copy call returns outcomes");
+    assert_eq!(outcome_of(&outcomes, "codex").status, CopyStatus::Failed);
+
+    // add 先落库再写 live：失败后本次落下的行必须回滚，否则 alreadyExists
+    // 预检会让重试永远跳过，目标卡在无法通过复制修复的半持久化状态。
+    assert!(state
+        .db
+        .get_provider_by_id("relay-src", "codex")
+        .expect("query codex row")
+        .is_none());
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("codex")
+            .expect("query codex current"),
+        None
     );
 }

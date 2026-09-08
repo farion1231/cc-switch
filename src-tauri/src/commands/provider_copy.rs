@@ -376,6 +376,26 @@ fn opencode_anthropic_base_url(base_url: &str, is_full_url: bool) -> String {
     }
 }
 
+/// OpenCode 的 @ai-sdk/openai 以 baseURL + "/responses" 发请求，而 Codex 源
+/// （openai_responses）的 base 语义与 Codex 适配器一致（proxy/providers/
+/// codex.rs:1056-1077）：origin 补 /v1，已带 /v1 或自定义前缀保持原样。
+/// is_full_url 源是完整端点（…/responses），剥掉尾部 /responses 让 AI SDK
+/// 重新拼回同一请求 URL，否则会得到 …/responses/responses。
+fn opencode_responses_base_url(base_url: &str, is_full_url: bool) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if is_full_url {
+        return trimmed
+            .strip_suffix("/responses")
+            .unwrap_or(trimmed)
+            .to_string();
+    }
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
+    }
+}
+
 /// 按目标应用的原生配置形状重建 settings_config（8 个 builder 派发，
 /// ClaudeDesktop 走 resolve_claude_desktop_copy 的整份 clone 路径）。
 /// api_format 由源应用推导（derive_source_api_format），仅进入副本 meta
@@ -479,6 +499,11 @@ requires_openai_auth = true
                     base_url,
                     source.meta.as_ref().and_then(|meta| meta.is_full_url) == Some(true)
                 ))
+            } else if api_format == "openai_responses" {
+                json!(opencode_responses_base_url(
+                    base_url,
+                    source.meta.as_ref().and_then(|meta| meta.is_full_url) == Some(true)
+                ))
             } else {
                 base_url_value
             };
@@ -553,7 +578,8 @@ requires_openai_auth = true
 /// 副本 meta：api_format（协议信息，供本地代理层转换）+ Anthropic 源的
 /// 认证字段选择（Codex 代理适配器按 meta.apiKeyField 决定 x-api-key 还是
 /// Bearer，见 proxy/providers/codex.rs extract_auth）+ is_full_url（仅
-/// Claude 目标）。其余源 meta 字段（usage_script、custom_endpoints、
+/// Claude/Codex 目标——forwarder 对这两个目标的 codex/anthropic 请求按完整
+/// 端点处理，丢掉标记会把 …/v1/responses 再拼一层 /responses）。其余源 meta 字段（usage_script、custom_endpoints、
 /// claude_desktop_*、provider_type 等）语义绑定源应用，带不过去；显示
 /// 字段由 apply_copy_metadata 复制。
 fn build_copy_meta(source: &Provider, source_app: &AppType, target: AppType) -> ProviderMeta {
@@ -562,7 +588,7 @@ fn build_copy_meta(source: &Provider, source_app: &AppType, target: AppType) -> 
         api_format: Some(api_format.clone()),
         ..ProviderMeta::default()
     };
-    if target == AppType::Claude {
+    if matches!(target, AppType::Claude | AppType::Codex) {
         meta.is_full_url = source.meta.as_ref().and_then(|meta| meta.is_full_url);
     }
     // 表单只为非默认选择（ANTHROPIC_API_KEY）持久化 apiKeyField；None 保持
@@ -745,9 +771,16 @@ fn copy_to_single_target(
         apply_copy_metadata(&mut provider, source, now);
         // add_to_live=false：additive 目标仅落库（liveConfigManaged=false）；
         // 切换式目标由 add 既有语义处理（目标为空时副本成为 current 并写 live）。
-        match ProviderService::add(state, target, provider, false) {
+        match ProviderService::add(state, target.clone(), provider, false) {
             Ok(_) => copied(target_app, source.id.clone()),
-            Err(error) => failed(target_app, error.to_string()),
+            Err(error) => {
+                // add 先落库（空目标还会先置 current）再写 live；live 写入失败时
+                // 把本次落下的行回滚掉，否则 alreadyExists 预检会让重试永远跳过，
+                // 目标卡在无法通过复制修复的半持久化状态。预检保证同 ID 行只可能
+                // 来自本次调用，删行同时清除误置的 current。
+                let _ = state.db.delete_provider(target.as_str(), &source.id);
+                failed(target_app, error.to_string())
+            }
         }
     }
 }
@@ -1294,6 +1327,40 @@ mod copy_to_apps_tests {
             responses_settings.get("npm").and_then(Value::as_str),
             Some("@ai-sdk/openai")
         );
+        // AI SDK openai 只在 baseURL 后追加 /responses，Codex 源的 base 语义
+        // 是补 /v1（与代理层 Codex 适配器一致）——origin 缺 /v1 时必须补齐。
+        assert_eq!(
+            responses_settings
+                .pointer("/options/baseURL")
+                .and_then(Value::as_str),
+            Some("https://relay.example.com/v1")
+        );
+        // is_full_url 的 Codex 源是完整端点（…/responses）：剥掉尾部 /responses，
+        // AI SDK 重新追加 /responses 后请求 URL 与源端一致。
+        let mut responses_full_url = provider_with_settings(json!({
+            "auth": { "OPENAI_API_KEY": "k" },
+            "config": "model = \"gpt-5-codex\"\n"
+        }));
+        responses_full_url
+            .meta
+            .get_or_insert_with(ProviderMeta::default)
+            .is_full_url = Some(true);
+        let responses_full_url_settings = build_target_settings(
+            AppType::OpenCode,
+            &AppType::Codex,
+            "https://gateway.example.com/v1/responses",
+            "sk-relay",
+            "Relay",
+            &["m1".to_string()],
+            &responses_full_url,
+        )
+        .expect("build opencode target from responses full url");
+        assert_eq!(
+            responses_full_url_settings
+                .pointer("/options/baseURL")
+                .and_then(Value::as_str),
+            Some("https://gateway.example.com/v1")
+        );
 
         let chat_source = provider_with_settings(json!({
             "baseUrl": "https://relay.example.com",
@@ -1537,7 +1604,7 @@ mod copy_to_apps_tests {
     }
 
     #[test]
-    fn copy_meta_carries_is_full_url_only_for_claude_target() {
+    fn copy_meta_carries_is_full_url_for_claude_and_codex_targets() {
         let mut source = claude_source();
         source
             .meta
@@ -1548,9 +1615,15 @@ mod copy_to_apps_tests {
         assert_eq!(claude_meta.is_full_url, Some(true));
         assert_eq!(claude_meta.api_format.as_deref(), Some("anthropic"));
 
+        // Codex 目标的代理转发同样按完整端点处理，标记必须带过去，
+        // 否则 …/v1/responses 会被再拼一层 /responses。
         let codex_meta = build_copy_meta(&source, &AppType::Claude, AppType::Codex);
-        assert_eq!(codex_meta.is_full_url, None);
+        assert_eq!(codex_meta.is_full_url, Some(true));
         assert_eq!(codex_meta.api_format.as_deref(), Some("anthropic"));
+
+        // 其余目标维持丢弃语义。
+        let opencode_meta = build_copy_meta(&source, &AppType::Claude, AppType::OpenCode);
+        assert_eq!(opencode_meta.is_full_url, None);
     }
 
     #[test]
