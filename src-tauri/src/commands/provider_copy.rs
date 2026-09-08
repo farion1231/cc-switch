@@ -621,8 +621,8 @@ fn copied(target_app: String, provider_id: String) -> CopyTargetOutcome {
     }
 }
 
-/// 已存在预检失败时的统一跳过结果（带 id 参数供 i18n 插值）。
-fn skipped_already_exists(target_app: String, provider_id: &str) -> CopyTargetOutcome {
+/// 已存在预检失败时的统一跳过结果（带 name 参数供 i18n 插值）。
+fn skipped_already_exists(target_app: String, provider_name: &str) -> CopyTargetOutcome {
     CopyTargetOutcome {
         target_app,
         status: CopyStatus::Skipped,
@@ -631,10 +631,10 @@ fn skipped_already_exists(target_app: String, provider_id: &str) -> CopyTargetOu
             CopyFailureReason::new(
                 "alreadyExists",
                 format!(
-                    "Target app already has a provider with the same ID '{provider_id}', skipped"
+                    "Target app already has a provider with the same ID '{provider_name}', skipped"
                 ),
             )
-            .with_param("id", provider_id),
+            .with_param("name", provider_name),
         ),
     }
 }
@@ -678,7 +678,7 @@ fn copy_to_single_target(
     // 已存在预检先于分支派发（所有目标统一）：save_provider 是 upsert，
     // 漏检会静默覆盖目标应用的同 ID 供应商。重试由此幂等。
     match state.db.get_provider_by_id(&source.id, target.as_str()) {
-        Ok(Some(_)) => return skipped_already_exists(target_app, &source.id),
+        Ok(Some(_)) => return skipped_already_exists(target_app, &source.name),
         Ok(None) => {}
         Err(error) => return failed(target_app, error.to_string()),
     }
@@ -686,7 +686,7 @@ fn copy_to_single_target(
         // native models.json 含内置键（'anthropic'/'openai'）且 DB 未落行时
         // pi::add 会报错；预检把该路径转成 skipped/alreadyExists。
         match crate::pi_config::pi_provider_exists(&source.id) {
-            Ok(true) => return skipped_already_exists(target_app, &source.id),
+            Ok(true) => return skipped_already_exists(target_app, &source.name),
             Ok(false) => {}
             Err(error) => return failed(target_app, error.to_string()),
         }
