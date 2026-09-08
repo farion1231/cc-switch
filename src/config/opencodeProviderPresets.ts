@@ -1104,6 +1104,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "SoleAPI",
+      options: {
+        baseURL: "https://soleapi.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-haiku-4-5-20251001": { name: "Claude Haiku 4.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.micuapi.ai",
     apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
@@ -1506,7 +1536,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash" },
         "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro" },
         "minimax-m2.7": { name: "MiniMax M2.7" },
-        "minimax-m2.5": { name: "MiniMax M2.5" },
         "glm-5": { name: "GLM-5" },
         "glm-5.1": { name: "GLM-5.1" },
         "glm-5.2": { name: "GLM-5.2" },
@@ -1598,7 +1627,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "kimi-k2.6": { name: "Kimi K2.6" },
         "minimax-m2.7": { name: "MiniMax M2.7" },
         "minimax-m3": { name: "MiniMax M3" },
-        "minimax-m2.5": { name: "MiniMax M2.5" },
         "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
         "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
         "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash 0731 GA" },

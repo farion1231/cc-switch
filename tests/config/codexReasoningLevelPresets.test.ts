@@ -52,7 +52,7 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 腾讯 Token Plan（订阅线 /plan 端点）档位全部真 Key 实测（2026-08-31）：
     // glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 直接 400，
     // 错误信息即枚举来源）；kimi-k2.7-code(-highspeed) 仅接受
-    // thinking:enabled；minimax-m2.5/m2.7 与国内 auto 关思考被静默忽略
+    // thinking:enabled；minimax-m2.7 与国内 auto 关思考被静默忽略
     //（选 none 是假关）→ 只列 high；其余模型 thinking 开关真实生效 → 两态
     ["Tencent Token Plan", "tc-code-latest", ["none", "high"]],
     ["Tencent Token Plan", "hy3", ["none", "high"]],

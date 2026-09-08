@@ -385,6 +385,18 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    auth: grokAuth(),
+    config: grokPresetConfig("SoleAPI", "https://soleapi.com/v1"),
+    endpointCandidates: ["https://soleapi.com/v1"],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.micuapi.ai",
     apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",

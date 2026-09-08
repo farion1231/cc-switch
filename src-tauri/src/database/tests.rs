@@ -857,6 +857,28 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             [],
         )
         .expect("set custom GLM price");
+        // <v3.19 老库形态：cache_write 仍是最初 seed 的 0（07-12 条目才补成 6.25）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '5',
+                 output_cost_per_million = '30',
+                 cache_read_cost_per_million = '0.50',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'gpt-5.6-sol'",
+            [],
+        )
+        .expect("restore pre-v3.19 GPT-5.6 Sol price");
+        // 最早 seed 的 M2.5 价（bb7c83c2 时代）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.12',
+                 output_cost_per_million = '0.95',
+                 cache_read_cost_per_million = '0.03',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'minimax-m2.5'",
+            [],
+        )
+        .expect("restore oldest MiniMax M2.5 price");
     }
 
     db.ensure_model_pricing_seeded()
@@ -890,6 +912,46 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
         )
         .expect("query GLM price");
     assert_eq!(glm, ("9".to_string(), "9".to_string(), "9".to_string()));
+
+    // 2026-09-06 条目同样依赖顺序：
+    //   gpt-5.6-sol  5/30/0.50/0 →(07-12 补 cache_write)→ 5/30/0.50/6.25 →(09-06 促销)→ 4/20/0.40/5
+    //   minimax-m2.5 0.12/0.95/0.03/0 →(0.12→0.15 条目)→ 0.15/… →(09-06 官方价)→ 0.30/1.20/0.03/0.375
+    let sol: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gpt-5.6-sol'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GPT-5.6 Sol price");
+    assert_eq!(
+        sol,
+        (
+            "4".to_string(),
+            "20".to_string(),
+            "0.40".to_string(),
+            "5".to_string()
+        )
+    );
+    let m25: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'minimax-m2.5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query MiniMax M2.5 price");
+    assert_eq!(
+        m25,
+        (
+            "0.30".to_string(),
+            "1.20".to_string(),
+            "0.03".to_string(),
+            "0.375".to_string()
+        )
+    );
 }
 
 #[test]

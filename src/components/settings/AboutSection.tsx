@@ -506,7 +506,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       }
     } catch (error) {
       console.error("[AboutSection] Check update failed", error);
-      toast.error(t("settings.checkUpdateFailed"));
+      toast.error(t("settings.checkUpdateFailed"), {
+        description: extractErrorMessage(error) || undefined,
+        closeButton: true,
+      });
     }
   }, [checkUpdate, hasUpdate, isPortable, resetDismiss, t]);
 

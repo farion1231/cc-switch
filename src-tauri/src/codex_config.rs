@@ -1208,6 +1208,141 @@ pub fn codex_auth_has_oauth_login_material(auth: &Value) -> bool {
     })
 }
 
+/// The auth mode Codex resolves for an `auth.json` payload
+/// (`AuthDotJson::resolved_mode`, `codex-rs/login/src/auth/manager.rs`,
+/// 0.153.2): an explicit `auth_mode` wins outright; otherwise presence
+/// decides in this order — `personal_access_token`, `bedrock_api_key`,
+/// `bedrock_access_keys`, `OPENAI_API_KEY` — and everything else is
+/// ChatGPT. Presence is `Option::is_some`, i.e. any non-null value, even an
+/// empty one; the material itself is checked afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexResolvedAuthMode {
+    ApiKey,
+    Chatgpt,
+    ChatgptAuthTokens,
+    Headers,
+    AgentIdentity,
+    PersonalAccessToken,
+    BedrockApiKey,
+    BedrockAccessKeys,
+    /// An `auth_mode` string Codex's serde rejects (`rename_all =
+    /// "lowercase"` plus explicit camelCase renames, exact match): the whole
+    /// file fails to load, which Codex reports as signed out.
+    Unrecognized,
+}
+
+fn codex_auth_resolved_mode(auth: &serde_json::Map<String, Value>) -> CodexResolvedAuthMode {
+    let present = |key: &str| auth.get(key).is_some_and(|value| !value.is_null());
+
+    // `auth_mode: null` deserializes to `None` (serde default) and falls
+    // through to the implicit precedence below.
+    if let Some(mode) = auth.get("auth_mode").filter(|value| !value.is_null()) {
+        return match mode.as_str() {
+            Some("apikey") => CodexResolvedAuthMode::ApiKey,
+            Some("chatgpt") => CodexResolvedAuthMode::Chatgpt,
+            Some("chatgptAuthTokens") => CodexResolvedAuthMode::ChatgptAuthTokens,
+            Some("headers") => CodexResolvedAuthMode::Headers,
+            Some("agentIdentity") => CodexResolvedAuthMode::AgentIdentity,
+            Some("personalAccessToken") => CodexResolvedAuthMode::PersonalAccessToken,
+            Some("bedrockApiKey") => CodexResolvedAuthMode::BedrockApiKey,
+            Some("bedrockAccessKeys") => CodexResolvedAuthMode::BedrockAccessKeys,
+            _ => CodexResolvedAuthMode::Unrecognized,
+        };
+    }
+    if present("personal_access_token") {
+        return CodexResolvedAuthMode::PersonalAccessToken;
+    }
+    if present("bedrock_api_key") {
+        return CodexResolvedAuthMode::BedrockApiKey;
+    }
+    if present("bedrock_access_keys") {
+        return CodexResolvedAuthMode::BedrockAccessKeys;
+    }
+    if present("OPENAI_API_KEY") {
+        return CodexResolvedAuthMode::ApiKey;
+    }
+    CodexResolvedAuthMode::Chatgpt
+}
+
+/// True when Codex would load `auth` as a signed-in OpenAI account for a
+/// `requires_openai_auth` provider — the state its login screen and
+/// `ConfiguredModelProvider::account_state` (0.149+) go by. The auth mode is
+/// resolved exactly as Codex does (`codex_auth_resolved_mode`) and only then
+/// is the matching credential checked, so a Bedrock credential outranks a
+/// stale `OPENAI_API_KEY` sitting next to it just as it does in Codex, where
+/// that probe returns `UnsupportedBedrockApiKeyAuth` and fails TUI startup.
+/// Modes Codex cannot load from storage (`headers`, unrecognized) are signed
+/// out. The credential must be non-blank (stricter than Codex's `is_some`,
+/// erring toward "signed out"); metadata such as `last_refresh` never counts.
+pub fn codex_auth_has_openai_account_material(auth: &Value) -> bool {
+    let Some(obj) = auth.as_object() else {
+        return false;
+    };
+
+    let value_present = |value: &Value| match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    };
+    let has = |key: &str| obj.get(key).is_some_and(value_present);
+
+    match codex_auth_resolved_mode(obj) {
+        CodexResolvedAuthMode::ApiKey => extract_codex_auth_api_key(auth).is_some(),
+        CodexResolvedAuthMode::PersonalAccessToken => has("personal_access_token"),
+        CodexResolvedAuthMode::AgentIdentity => has("agent_identity"),
+        CodexResolvedAuthMode::Chatgpt | CodexResolvedAuthMode::ChatgptAuthTokens => obj
+            .get("tokens")
+            .and_then(Value::as_object)
+            .is_some_and(|tokens| {
+                ["id_token", "access_token", "refresh_token"]
+                    .iter()
+                    .any(|key| tokens.get(*key).is_some_and(value_present))
+            }),
+        CodexResolvedAuthMode::Headers
+        | CodexResolvedAuthMode::BedrockApiKey
+        | CodexResolvedAuthMode::BedrockAccessKeys
+        | CodexResolvedAuthMode::Unrecognized => false,
+    }
+}
+
+/// Where Codex keeps CLI auth, per the top-level `cli_auth_credentials_store`
+/// key (`codex-rs/config/src/types.rs`, serde lowercase; unset = `file`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodexAuthStoreMode {
+    /// `auth.json` is the only store — the file decides login state.
+    File,
+    /// Keyring only; `auth.json` is never read and is deleted after a save.
+    Keyring,
+    /// Keyring first, `auth.json` as fallback for both load and save.
+    Auto,
+    /// In-process only; nothing on disk is ever a login.
+    Ephemeral,
+    /// Unparsable config or a value Codex would reject.
+    Unknown,
+}
+
+pub(crate) fn codex_config_auth_store_mode(config_text: &str) -> CodexAuthStoreMode {
+    if !config_text.contains("cli_auth_credentials_store") {
+        return CodexAuthStoreMode::File;
+    }
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return CodexAuthStoreMode::Unknown;
+    };
+    match doc
+        .get("cli_auth_credentials_store")
+        .and_then(|item| item.as_str())
+    {
+        None => CodexAuthStoreMode::File,
+        Some("file") => CodexAuthStoreMode::File,
+        Some("keyring") => CodexAuthStoreMode::Keyring,
+        Some("auto") => CodexAuthStoreMode::Auto,
+        Some("ephemeral") => CodexAuthStoreMode::Ephemeral,
+        Some(_) => CodexAuthStoreMode::Unknown,
+    }
+}
+
 /// True only when the auth carries material Codex itself authenticates with
 /// ahead of the API-key fallback: OAuth tokens or another first-class login
 /// carrier. Unlike `codex_auth_has_oauth_login_material`, pure metadata such
@@ -3160,7 +3295,15 @@ pub fn neutralize_codex_official_auth_fallback_for_proxy_oauth(
 /// the preserved official OAuth login — the exact leak the safety gates
 /// refuse — and keyless header-auth or local-server tables must keep their
 /// user-authored shape (0.149 keeps them unauthenticated either way).
-fn align_codex_requires_openai_auth_with_login_preservation(
+///
+/// `preserve_official_login` is the post-write login state of `auth.json`.
+/// The direct-switch plan derives it from the preservation setting (which
+/// decides whether the file survives the switch); the takeover writer
+/// derives it from the live file itself — takeover never touches
+/// `auth.json`, but it no longer owns the file's presence (a
+/// preservation-off direct switch deletes it before takeover is enabled),
+/// so the stored card's flag cannot be trusted there either.
+pub(crate) fn align_codex_requires_openai_auth_with_login_preservation(
     config_text: &str,
     preserve_official_login: bool,
 ) -> Result<String, AppError> {
@@ -5803,6 +5946,121 @@ base_url = "https://bedrock.example/v1"
         assert!(
             text.contains("requires_openai_auth = false"),
             "env_key cards must be stamped like bearer cards; got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn openai_account_material_mirrors_codex_account_probe() {
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-test"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "chatgpt",
+            "tokens": { "access_token": "acc" }
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "personal_access_token": "pat"
+        })));
+        // Bedrock credentials make account_state() fail on a
+        // requires_openai_auth provider, so they must not count as a login.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "last_refresh": "2026-09-01T00:00:00Z",
+            "tokens": { "account_id": "acct" }
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "   "
+        })));
+
+        // Precedence mirrors AuthDotJson::resolved_mode: an implicit Bedrock
+        // credential outranks a leftover OPENAI_API_KEY, so the pair is still
+        // Bedrock and must not be promoted to an OpenAI login.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_access_keys": { "access_key_id": "a", "secret_access_key": "s" }
+        })));
+        // An explicit auth_mode wins outright, in both directions.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "bedrockApiKey",
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "sk-live",
+            "bedrock_api_key": "bedrock"
+        })));
+        // personal_access_token outranks the API key even when blank: Codex
+        // then attempts PAT auth with nothing and ends up signed out.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "personal_access_token": "",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        // agent_identity only counts under an explicit mode; implicitly the
+        // payload resolves to ChatGPT, which has no tokens here.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "agent_identity": "jwt"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "agentIdentity",
+            "agent_identity": "jwt"
+        })));
+        // `auth_mode: null` is absent to serde; a string it rejects fails the
+        // whole load (exact-match, so casing matters); headers auth cannot be
+        // loaded from storage at all.
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": null,
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "ApiKey",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "headers",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+    }
+
+    #[test]
+    fn auth_store_mode_reads_top_level_cli_auth_credentials_store() {
+        assert_eq!(
+            codex_config_auth_store_mode("model = \"gpt-5\"\n"),
+            CodexAuthStoreMode::File
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"file\"\n"),
+            CodexAuthStoreMode::File
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"keyring\"\n"),
+            CodexAuthStoreMode::Keyring
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"auto\"\n"),
+            CodexAuthStoreMode::Auto
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"ephemeral\"\n"),
+            CodexAuthStoreMode::Ephemeral
+        );
+        // Codex's serde is lowercase-only; anything else fails its load.
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"Keyring\"\n"),
+            CodexAuthStoreMode::Unknown
+        );
+        // Only the top-level key counts.
+        assert_eq!(
+            codex_config_auth_store_mode(
+                "[model_providers.x]\ncli_auth_credentials_store = \"keyring\"\n"
+            ),
+            CodexAuthStoreMode::File
         );
     }
 
