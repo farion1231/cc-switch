@@ -400,7 +400,9 @@ export function PiProviderForm({
     [initialData?.settingsConfig],
   );
   const isEdit = Boolean(initialData);
-  const { data: piCurrentState } = usePiCurrentState(true);
+  const { data: piCurrentState, isLoading: isPiCurrentStateLoading } =
+    usePiCurrentState(true);
+  const isProviderKeyLockStateLoading = isEdit && isPiCurrentStateLoading;
   const isProviderKeyLocked = useMemo(() => {
     if (!isEdit || !providerId) return false;
     return piCurrentState?.enabledProviderIds.includes(providerId) ?? false;
@@ -1373,7 +1375,9 @@ export function PiProviderForm({
                       onChange={(event) =>
                         handleProviderKeyChange(event.target.value)
                       }
-                      disabled={isProviderKeyLocked}
+                      disabled={
+                        isProviderKeyLocked || isProviderKeyLockStateLoading
+                      }
                       placeholder="my-provider"
                       autoComplete="off"
                     />
