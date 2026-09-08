@@ -42,7 +42,8 @@
     "deleting": "删除中...",
     "auto": "自动",
     "enabled": "已开启",
-    "notSet": "未设置"
+    "notSet": "未设置",
+    "collapse": "收起"
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
@@ -978,7 +979,8 @@
       "effectiveApiRequired": "模型 {{id}} 必须直接配置或继承一个 API",
       "effectiveBaseUrlRequired": "模型 {{id}} 必须直接配置或继承一个基础地址",
       "duplicateModel": "模型 ID {{id}} 重复",
-      "modelRequired": "请至少添加一个模型"
+      "modelRequired": "请至少添加一个模型",
+      "providerKeyDuplicate": "该供应商标识已存在"
     },
     "current": {
       "readFailed": "无法读取 Pi 供应商配置",
@@ -1237,7 +1239,8 @@
       "teamorouter": "TeamoRouter 是企业级 Agentic LLM 网关，价格最高可达 90% 折扣。为 CC Switch 的用户提供了特别福利：新用户通过此链接注册，首次充值享 10% 折扣！",
       "ppio": "PPIO 是国内领先的独立 Agentic Cloud 服务商，一个 API Key 调用全部旗舰开源模型。通过此链接注册并完成实名认证，即可获得 ¥10 代金券。",
       "xycai": "XycAi 企业级 Token 工厂：200+ 全球模型一键接入，SLA 自动赔付，异常缓存 100% 退还！",
-      "9527code": "9527 CODE 是企业级满血 AI 中转平台，为 Claude Code、Codex 等主流模型提供高速稳定的中转服务。持续运营一年，服务稳定性达 99.9%，提供 7×24 小时人工技术支持。新人福利联系客服赠送体验额度，拉新返现无上限！"
+      "9527code": "9527 CODE 是企业级满血 AI 中转平台，为 Claude Code、Codex 等主流模型提供高速稳定的中转服务。持续运营一年，服务稳定性达 99.9%，提供 7×24 小时人工技术支持。新人福利联系客服赠送体验额度，拉新返现无上限！",
+      "soleapi": "SoleAPI 是面向开发者与企业的 AI 模型网关，一个 API Key 直达 Claude、GPT、Gemini 等 30+ 主流模型，原生兼容 OpenAI 与 Anthropic 协议，智能选路毫秒级故障切换，可用性 99.99%，7×24 技术支持。通过专属链接注册即送体验额度，邀请好友充值持续返现！"
     },
     "presets": {
       "ucloud": "优云智算",

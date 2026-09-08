@@ -680,6 +680,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    category: "aggregator",
+    baseUrl: "https://soleapi.com",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // 上游 Haiku 模型 ID 带日期后缀，与角色路由 ID claude-haiku-4-5 不同，
+    // 故用 mappedRoutes 显式映射而非 passthroughRoutes。
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5",
+      "claude-opus-5",
+      "claude-haiku-4-5-20251001",
+    ),
+    endpointCandidates: ["https://soleapi.com"],
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.micuapi.ai",
     apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",

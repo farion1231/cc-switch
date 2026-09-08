@@ -172,6 +172,11 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
+<td width="180"><a href="https://soleapi.com/r/ccswitch"><img src="assets/partners/logos/soleapi-banner.png" alt="SoleAPI" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている SoleAPI に感謝します！SoleAPI は開発者と企業向けの AI モデルゲートウェイです。1 つの API キーで Claude・GPT・Gemini など 30 以上の主要モデルを利用できます。OpenAI / Anthropic プロトコルにネイティブ対応しており、Base URL を差し替えるだけで Claude Code、Codex、Cursor などのコーディングツールや既存の SDK をそのまま接続できます。レイテンシと稼働状況に基づくリアルタイムのスマートルーティングにより、上流障害時はミリ秒単位で予備チャネルへ自動切替。サービス可用性 99.99%、24 時間 365 日のテクニカルサポートを提供し、すべての呼び出しは 1 つの請求にまとまり、リクエストごとのトークン数と料金を透明に確認できます。本プロジェクトの<a href="https://soleapi.com/r/ccswitch">専用リンク</a>から登録すると無料のお試しクレジットを進呈。友人を招待してチャージされると、継続的にキャッシュバックを獲得できます！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.micuapi.ai/register?aff=aOYQ"><img src="assets/partners/logos/mikubanner.svg" alt="Micu" width="150"></a></td>
 <td>Micu API のご支援に感謝します！Micu API は、最高のコストパフォーマンスと高い安定性を追求するグローバル大規模言語モデル中継サービスプロバイダーです。法人企業がバックアップしており、サービス停止のリスクを排除、迅速な正規請求書発行に対応！「試行コストゼロ」をモットーに、最低 1 元からチャージ可能で手数料無料、いつでも返金可能！CC Switch ユーザー向けの限定特典：<a href="https://www.micuapi.ai/register?aff=aOYQ">こちらのリンク</a>から登録し、チャージ時にプロモコード「ccswitch」を入力すると <strong>10% 割引</strong> が適用されます！</td>
 </tr>
@@ -562,7 +567,8 @@ pnpm test:unit --coverage
 │   ├── lib/
 │   │   ├── api/                # Tauri API ラッパー（型安全）
 │   │   └── query/              # TanStack Query 設定
-│   ├── locales/                # 翻訳 (zh/zh-TW/en/ja)
+│   ├── i18n/                   # 国際化
+│   │   └── locales/            # 翻訳 (zh/zh-TW/en/ja)
 │   ├── config/                 # プリセット (providers/mcp)
 │   └── types/                  # TypeScript 型定義
 ├── src-tauri/                  # バックエンド (Rust)

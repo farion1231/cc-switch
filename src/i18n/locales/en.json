@@ -42,7 +42,8 @@
     "deleting": "Deleting...",
     "auto": "Auto",
     "enabled": "Enabled",
-    "notSet": "Not Set"
+    "notSet": "Not Set",
+    "collapse": "Collapse"
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
@@ -978,7 +979,8 @@
       "effectiveApiRequired": "Model {{id}} needs an API, either directly or from the provider",
       "effectiveBaseUrlRequired": "Model {{id}} needs a base URL, either directly or from the provider",
       "duplicateModel": "Model ID {{id}} is duplicated",
-      "modelRequired": "Add at least one model"
+      "modelRequired": "Add at least one model",
+      "providerKeyDuplicate": "This provider key already exists"
     },
     "current": {
       "readFailed": "Could not read Pi's provider configuration",
@@ -1237,7 +1239,8 @@
       "teamorouter": "TeamoRouter is an enterprise-grade Agentic LLM gateway with pricing up to 90% off. It offers exclusive benefits for CC Switch users: register via this link as a new user for 10% off your first top-up!",
       "ppio": "PPIO is a leading independent Agentic Cloud provider in China, serving every flagship open-source model through a single API key. Register via this link and complete identity verification to receive a ¥10 credit voucher.",
       "xycai": "XycAi is an enterprise-grade token factory: one-click access to 200+ global models, automatic SLA compensation, and 100% refunds for abnormal cache charges!",
-      "9527code": "9527 CODE is an enterprise-grade, full-capability AI relay platform delivering fast, stable relay for Claude Code, Codex and other mainstream models. One year of continuous operation, 99.9% service stability, and 7×24 human technical support. New users can contact support for trial credit, with unlimited referral cashback!"
+      "9527code": "9527 CODE is an enterprise-grade, full-capability AI relay platform delivering fast, stable relay for Claude Code, Codex and other mainstream models. One year of continuous operation, 99.9% service stability, and 7×24 human technical support. New users can contact support for trial credit, with unlimited referral cashback!",
+      "soleapi": "SoleAPI is an AI model gateway for developers and enterprises: one API key reaches 30+ leading models including Claude, GPT and Gemini, natively compatible with the OpenAI and Anthropic protocols, with real-time smart routing, millisecond failover, 99.99% availability and 24/7 support. Sign up via the referral link for free trial credits and ongoing cashback for inviting friends who top up!"
     },
     "presets": {
       "ucloud": "Compshare",
