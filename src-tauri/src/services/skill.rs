@@ -493,7 +493,10 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
 
 // ========== SkillService ==========
 
-pub struct SkillService;
+pub struct SkillService {
+    #[cfg(test)]
+    repo_fixture: Option<PathBuf>,
+}
 
 impl Default for SkillService {
     fn default() -> Self {
@@ -503,7 +506,10 @@ impl Default for SkillService {
 
 impl SkillService {
     pub fn new() -> Self {
-        Self
+        Self {
+            #[cfg(test)]
+            repo_fixture: None,
+        }
     }
 
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
@@ -1431,6 +1437,14 @@ impl SkillService {
                 ))
             })?;
 
+        let canonical_temp = temp_dir
+            .canonicalize()
+            .unwrap_or_else(|_| temp_dir.to_path_buf());
+        let resolved_doc_path = source
+            .canonicalize()
+            .ok()
+            .and_then(|source| Self::doc_path_for_source(&canonical_temp, &source));
+
         // Downloads do not mutate local state, so acquire only now and hold the
         // guard through the SSOT replacement, DB metadata update, and app sync.
         let _state_guard = skill_state_write_guard();
@@ -1477,11 +1491,11 @@ impl SkillService {
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
 
         // 更新 readme_url
-        let doc_path = skill
-            .readme_url
-            .as_deref()
-            .and_then(Self::extract_doc_path_from_url)
-            .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
+        let doc_path = Self::choose_doc_path(
+            resolved_doc_path,
+            skill.readme_url.as_deref(),
+            &skill.directory,
+        );
         let readme_url = Self::build_skill_doc_url(&owner, &name, &used_branch, &doc_path);
 
         let updated_metadata = InstalledSkill {
@@ -3145,6 +3159,13 @@ impl SkillService {
         // ——都会把半个解压目录永久留在磁盘上，反复触发即可持续填盘。
         let temp_dir = tempfile::tempdir()?;
         let temp_path = temp_dir.path().to_path_buf();
+
+        // Exercise the real install/update flow without network access in unit tests.
+        #[cfg(test)]
+        if let Some(fixture) = &self.repo_fixture {
+            Self::copy_dir_recursive(fixture, &temp_path)?;
+            return Ok((temp_dir, repo.branch.clone()));
+        }
 
         let mut branches = Vec::new();
         if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
@@ -5997,6 +6018,101 @@ mod tests {
             Some("skills"),
             "persisted source path should survive metadata changes and competing matches"
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn update_skill_persists_relocated_source_before_metadata_rename() {
+        for location in [
+            SkillStorageLocation::CcSwitch,
+            SkillStorageLocation::Unified,
+        ] {
+            for (directory, old_path, new_path) in [
+                ("weread-skills", "skills", "new-location"),
+                ("ordinary-skill", "old/ordinary-skill", "new/ordinary-skill"),
+                ("weread-skills", "skills", "."),
+            ] {
+                let home = tempdir().expect("home");
+                let _home = TestHomeGuard::set(home.path());
+                let _storage = StorageLocationGuard::set(location);
+                let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+                let remote = tempdir().expect("remote repo");
+                let db = Arc::new(Database::memory().expect("memory db"));
+                let service = SkillService {
+                    repo_fixture: Some(remote.path().to_path_buf()),
+                };
+                let mut installed = poisoned_skill("owner/repo:skill", directory);
+                installed.name = directory.to_string();
+                installed.repo_owner = Some("owner".to_string());
+                installed.repo_name = Some("repo".to_string());
+                installed.repo_branch = Some("main".to_string());
+                installed.readme_url = SkillService::build_skill_doc_url(
+                    "owner",
+                    "repo",
+                    "main",
+                    &format!("{old_path}/SKILL.md"),
+                );
+                db.save_skill(&installed).expect("seed installed skill");
+                let local = SkillService::get_ssot_dir().unwrap().join(directory);
+                write_skill(&local, directory);
+                write_skill(&remote.path().join(new_path), directory);
+
+                let updated = service
+                    .update_skill(&db, &installed.id)
+                    .await
+                    .expect("update moved skill");
+                let expected_path = if new_path == "." {
+                    "SKILL.md".to_string()
+                } else {
+                    format!("{new_path}/SKILL.md")
+                };
+                let expected_url =
+                    SkillService::build_skill_doc_url("owner", "repo", "main", &expected_path);
+                let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
+                assert_eq!(
+                    updated.readme_url, expected_url,
+                    "update must return the resolved source URL"
+                );
+                assert_eq!(
+                    saved.readme_url, expected_url,
+                    "the next update must read the new source URL from the DB"
+                );
+                assert_eq!(saved.directory, installed.directory);
+                assert_eq!(saved.apps, installed.apps);
+                assert_eq!(saved.installed_at, installed.installed_at);
+                assert_eq!(
+                    saved.content_hash,
+                    Some(SkillService::compute_dir_hash(&local).unwrap())
+                );
+                assert!(service.check_updates(&db).await.unwrap().is_empty());
+
+                write_skill(&remote.path().join(new_path), "renamed-skill");
+                // Competing directory/name matches must not override the saved source.
+                write_skill(&remote.path().join(directory), directory);
+                let updates = service
+                    .check_updates(&db)
+                    .await
+                    .expect("check renamed skill");
+                assert_eq!(
+                    updates.len(),
+                    1,
+                    "renamed skill must not silently disappear from update checks"
+                );
+                let updated = service
+                    .update_skill(&db, &installed.id)
+                    .await
+                    .expect("update renamed skill");
+                assert_eq!(updated.name, "renamed-skill");
+                assert_eq!(updated.readme_url, expected_url);
+                assert_eq!(updated.directory, installed.directory);
+                assert_eq!(updated.apps, installed.apps);
+                assert_eq!(
+                    SkillService::read_skill_name_desc(&local.join("SKILL.md"), directory).0,
+                    "renamed-skill"
+                );
+                assert!(service.check_updates(&db).await.unwrap().is_empty());
+            }
+        }
     }
 
     #[test]
