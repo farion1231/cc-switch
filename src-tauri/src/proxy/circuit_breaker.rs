@@ -130,7 +130,10 @@ impl std::fmt::Debug for HalfOpenPermitGuard {
 
 impl HalfOpenPermitGuard {
     fn new(counter: Arc<AtomicU32>) -> Self {
-        Self { counter, armed: true }
+        Self {
+            counter,
+            armed: true,
+        }
     }
 
     /// 显式标记"已自行处理"，立即释放 permit 并让 Drop 变 no-op。

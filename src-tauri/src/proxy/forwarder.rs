@@ -664,8 +664,8 @@ impl RequestForwarder {
                                     self.record_success_result(
                                         &provider.id,
                                         app_type_str,
-                                                                                permit_guard.take()
-                                                                            )
+                                        permit_guard.take(),
+                                    )
                                     .await;
 
                                     {
@@ -722,8 +722,8 @@ impl RequestForwarder {
                                             retry_err,
                                             provider,
                                             app_type_str,
-                                                                                        permit_guard.take(),
-                                                                                        "media 降级",
+                                            permit_guard.take(),
+                                            "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
                                         )
@@ -748,9 +748,7 @@ impl RequestForwarder {
                                 log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
                                 // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
                                 self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,)
+                                    .release_permit_neutral(&provider.id, app_type_str)
                                     .await;
                                 let mut status = self.status.write().await;
                                 status.failed_requests += 1;
@@ -806,8 +804,8 @@ impl RequestForwarder {
                                         self.record_success_result(
                                             &provider.id,
                                             app_type_str,
-                                                                                        permit_guard.take()
-                                                                                    )
+                                            permit_guard.take(),
+                                        )
                                         .await;
 
                                         // 更新当前应用类型使用的 provider
@@ -869,8 +867,8 @@ impl RequestForwarder {
                                                 retry_err,
                                                 provider,
                                                 app_type_str,
-                                                                                                permit_guard.take(),
-                                                                                                "整流",
+                                                permit_guard.take(),
+                                                "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
                                             )
@@ -898,9 +896,7 @@ impl RequestForwarder {
                                     "[{app_type_str}] [RECT-013] budget 整流器已触发过，不再重试"
                                 );
                                 self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,)
+                                    .release_permit_neutral(&provider.id, app_type_str)
                                     .await;
                                 let mut status = self.status.write().await;
                                 status.failed_requests += 1;
@@ -922,9 +918,7 @@ impl RequestForwarder {
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
                                 );
                                 self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,)
+                                    .release_permit_neutral(&provider.id, app_type_str)
                                     .await;
                                 let mut status = self.status.write().await;
                                 status.failed_requests += 1;
@@ -968,8 +962,8 @@ impl RequestForwarder {
                                     self.record_success_result(
                                         &provider.id,
                                         app_type_str,
-                                                                                permit_guard.take()
-                                                                            )
+                                        permit_guard.take(),
+                                    )
                                     .await;
 
                                     {
@@ -1025,8 +1019,8 @@ impl RequestForwarder {
                                             retry_err,
                                             provider,
                                             app_type_str,
-                                                                                        permit_guard.take(),
-                                                                                        "budget 整流",
+                                            permit_guard.take(),
+                                            "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
                                         )
@@ -1042,9 +1036,7 @@ impl RequestForwarder {
 
                     if signature_rectifier_non_retryable_client_error {
                         self.router
-                            .release_permit_neutral(
-                                &provider.id,
-                                app_type_str,)
+                            .release_permit_neutral(&provider.id, app_type_str)
                             .await;
                         let mut status = self.status.write().await;
                         status.failed_requests += 1;
@@ -1073,7 +1065,7 @@ impl RequestForwarder {
                                 .record_result(
                                     &provider.id,
                                     app_type_str,
-                                                                        false,
+                                    false,
                                     Some(e.to_string()),
                                 )
                                 .await;
@@ -1100,9 +1092,7 @@ impl RequestForwarder {
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
                             self.router
-                                .release_permit_neutral(
-                                    &provider.id,
-                                    app_type_str,)
+                                .release_permit_neutral(&provider.id, app_type_str)
                                 .await;
                             {
                                 let mut status = self.status.write().await;
@@ -3831,8 +3821,8 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use crate::proxy::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
     use crate::provider::LocalProxyRequestOverrides;
+    use crate::proxy::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -5632,7 +5622,12 @@ mod tests {
             env::set_var("USERPROFILE", dir.path());
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
             crate::settings::reload_settings().expect("reload settings");
-            Self { dir, original_home, original_userprofile, original_test_home }
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
         }
     }
     impl Drop for TempHome {

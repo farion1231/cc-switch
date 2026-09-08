@@ -138,7 +138,11 @@ impl ProviderRouter {
     ///
     /// 注意：调用方必须在请求结束后通过 `record_result()` 释放 HalfOpen 名额，
     /// 否则会导致该 Provider 长时间无法进入探测状态。
-    pub async fn allow_provider_request(&self, provider_id: &str, app_type: &str) -> AllowRequestResult {
+    pub async fn allow_provider_request(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> AllowRequestResult {
         let circuit_key = format!("{app_type}:{provider_id}");
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
         breaker.allow_request().await
@@ -206,11 +210,7 @@ impl ProviderRouter {
     ///
     /// 注意：`permit` 由调用方在调用此方法前通过 `permit.take().map(|g| g.disarm())`
     /// 显式 disarm（或让 guard 自然 Drop），本方法不再接受 `used_half_open_permit: bool`。
-    pub async fn release_permit_neutral(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-    ) {
+    pub async fn release_permit_neutral(&self, provider_id: &str, app_type: &str) {
         let circuit_key = format!("{app_type}:{provider_id}");
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
         breaker.release_half_open_permit();
