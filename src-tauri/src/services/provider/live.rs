@@ -451,6 +451,14 @@ fn remove_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
     }
 }
 
+fn parse_codex_common_config_snippet(snippet: &str) -> Result<DocumentMut, AppError> {
+    let mut doc = snippet
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex common config snippet: {e}")))?;
+    super::sanitize_codex_common_config_doc(&mut doc);
+    Ok(doc)
+}
+
 /// 前端表单勾选/取消"使用通用配置"时，对编辑器里的 config.toml 文本做
 /// 结构化合并/剥离。必须在后端用 toml_edit 做：前端 smol-toml 只能
 /// parse → merge → 整文档重序列化，注释全丢、键序重排，还会生成多余的
@@ -472,9 +480,10 @@ pub fn update_toml_common_config_snippet(
             .parse::<DocumentMut>()
             .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?
     };
-    let source_doc = trimmed
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex common config snippet: {e}")))?;
+    let source_doc = parse_codex_common_config_snippet(trimmed)?;
+    if source_doc.as_table().is_empty() {
+        return Ok(config_toml.to_string());
+    }
 
     if enabled {
         merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
@@ -506,7 +515,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
                 Ok(doc) => doc,
                 Err(_) => return false,
             };
-            let source_doc = match trimmed.parse::<DocumentMut>() {
+            let source_doc = match parse_codex_common_config_snippet(trimmed) {
+                Ok(doc) if doc.as_table().is_empty() => return false,
                 Ok(doc) => doc,
                 Err(_) => return false,
             };
@@ -582,9 +592,10 @@ pub(crate) fn remove_common_config_from_settings(
                     ))
                 })?
             };
-            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
-                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
-            })?;
+            let source_doc = parse_codex_common_config_snippet(trimmed)?;
+            if source_doc.as_table().is_empty() {
+                return Ok(settings.clone());
+            }
 
             remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
             if let Some(obj) = result.as_object_mut() {
@@ -640,9 +651,10 @@ fn apply_common_config_to_settings(
                     ))
                 })?
             };
-            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
-                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
-            })?;
+            let source_doc = parse_codex_common_config_snippet(trimmed)?;
+            if source_doc.as_table().is_empty() {
+                return Ok(settings.clone());
+            }
 
             merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
             if let Some(obj) = result.as_object_mut() {
@@ -2863,6 +2875,129 @@ base_url = "https://a.example/v1"
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn codex_common_config_sanitizes_owned_fields_before_apply() {
+        let settings = json!({
+            "auth": {},
+            "config": r#"model = "current-model"
+model_provider = "current"
+base_url = "https://current.example/v1"
+wire_api = "responses"
+
+[model_providers.current]
+base_url = "https://current.example/v1"
+wire_api = "responses"
+"#
+        });
+        let snippet = r#"model = "stale-model"
+review_model = "stale-review-model"
+model_provider = "stale"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "chat"
+model_context_window = 262144
+openai_base_url = "http://127.0.0.1:15721/v1"
+model_catalog_json = "stale-catalog.json"
+experimental_bearer_token = "sk-stale"
+web_search = "disabled"
+
+[model_providers.stale]
+name = "Stale"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "chat"
+
+[mcp_servers.stale]
+command = "stale-command"
+
+[mcp.servers.legacy]
+command = "legacy-command"
+
+[features]
+shell_snapshot = false
+"#;
+
+        let applied = apply_common_config_to_settings(&AppType::Codex, &settings, snippet).unwrap();
+        let config = applied["config"]
+            .as_str()
+            .expect("applied Codex config should remain a TOML string");
+        let parsed = config
+            .parse::<DocumentMut>()
+            .expect("applied Codex config should remain valid TOML");
+
+        assert_eq!(parsed["model"].as_str(), Some("current-model"));
+        assert_eq!(parsed["model_provider"].as_str(), Some("current"));
+        assert_eq!(
+            parsed["base_url"].as_str(),
+            Some("https://current.example/v1")
+        );
+        assert_eq!(parsed["wire_api"].as_str(), Some("responses"));
+        assert!(parsed.get("model_providers").is_some());
+        assert!(
+            !config.contains("stale")
+                && !config.contains("127.0.0.1")
+                && !config.contains("262144")
+                && !config.contains("mcp_servers")
+                && !config.contains("[mcp")
+                && !config.contains("web_search"),
+            "owned fields and injected artifacts must not be merged, got: {config}"
+        );
+        assert_eq!(parsed["features"]["shell_snapshot"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn codex_common_config_editor_sanitizes_owned_fields_before_merge() {
+        let config = r#"model_provider = "current"
+base_url = "https://current.example/v1"
+wire_api = "responses"
+"#;
+        let snippet = r#"model_provider = "stale"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "chat"
+
+[features]
+shell_snapshot = false
+"#;
+
+        let merged = update_toml_common_config_snippet(config, snippet, true).unwrap();
+        let parsed = merged
+            .parse::<DocumentMut>()
+            .expect("merged editor config should remain valid TOML");
+
+        assert_eq!(parsed["model_provider"].as_str(), Some("current"));
+        assert_eq!(
+            parsed["base_url"].as_str(),
+            Some("https://current.example/v1")
+        );
+        assert_eq!(parsed["wire_api"].as_str(), Some("responses"));
+        assert_eq!(parsed["features"]["shell_snapshot"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn codex_common_config_owned_only_snippet_is_not_detected_or_removed() {
+        let settings = json!({
+            "auth": {},
+            "config": r#"model_provider = "router"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+
+[model_providers.router]
+base_url = "http://127.0.0.1:15721/v1"
+"#
+        });
+        let snippet = settings["config"]
+            .as_str()
+            .expect("fixture should contain a config string");
+
+        assert!(
+            !settings_contain_common_config(&AppType::Codex, &settings, snippet),
+            "provider-owned fields alone must not enable legacy common-config inference"
+        );
+        assert_eq!(
+            remove_common_config_from_settings(&AppType::Codex, &settings, snippet).unwrap(),
+            settings,
+            "removing an owned-only snippet must not delete the active provider route"
+        );
     }
 
     #[test]
