@@ -863,4 +863,149 @@ mod tests {
             Some(default_provider.id.as_str())
         );
     }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn classifier_queue_routing_wins_over_provider_pin() {
+        // 分流优先于钉住：带 x-cc-provider 的会话里，对话本体走被钉的供应商，
+        // 而 Auto Mode 判定请求仍归分类器队列接单。
+        let _home = TempHome::new();
+
+        // 用一个 echo 上游区分「谁接的单」：把 Authorization 原样塞回消息文本
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post(|request: axum::extract::Request| async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("none")
+                    .to_string();
+                let text = format!("served-by:{auth}");
+                (
+                    StatusCode::OK,
+                    axum::Json(json!({
+                        "id": "msg_echo",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-sonnet-4",
+                        "content": [{"type": "text", "text": text}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 1, "output_tokens": 1}
+                    })),
+                )
+            }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let provider_with_token = |id: &str, name: &str, token: &str| {
+            Provider::with_id(
+                id.to_string(),
+                name.to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": format!("http://{mock_addr}"),
+                        "ANTHROPIC_AUTH_TOKEN": token,
+                    }
+                }),
+                None,
+            )
+        };
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let default_provider = provider_with_token("cq-default", "Default Vendor", "token-default");
+        let pinned_provider = provider_with_token("cq-pinned", "Pinned Vendor", "token-pinned");
+        let queue_provider = provider_with_token("cq-queue", "Queue Vendor", "token-queue");
+        for provider in [&default_provider, &pinned_provider, &queue_provider] {
+            db.save_provider("claude", provider).expect("save provider");
+        }
+        db.set_current_provider("claude", &default_provider.id)
+            .expect("select default provider");
+        db.add_to_classifier_queue("claude", &queue_provider.id)
+            .expect("add to classifier queue");
+
+        let mut config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read config");
+        config.classifier_queue_enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("enable classifier queue");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let endpoint = format!("http://127.0.0.1:{}/v1/messages", proxy_info.port);
+        let pin_header = crate::proxy::handler_context::PROVIDER_PIN_HEADER;
+
+        let normal_body = json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        // 命中 stage1 锚点（见 classifier::has_classifier_stop_sequence）
+        let classifier_body = json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 16,
+            "stop_sequences": ["</severity>"],
+            "messages": [{"role": "user", "content": "ls -la"}]
+        });
+
+        let send = |body: Value, pinned: bool| {
+            let client = &client;
+            let endpoint = &endpoint;
+            async move {
+                let mut request = client
+                    .post(endpoint)
+                    .header(header::AUTHORIZATION, "Bearer client-secret");
+                if pinned {
+                    request = request.header(pin_header, "pinned vendor");
+                }
+                let response = request.json(&body).send().await.expect("send request");
+                assert_eq!(response.status(), StatusCode::OK);
+                let value: Value = response.json().await.expect("parse response");
+                value["content"][0]["text"]
+                    .as_str()
+                    .expect("response text")
+                    .to_string()
+            }
+        };
+
+        // 1) 普通请求 + 钉住 → 对话本体走被钉的供应商
+        assert_eq!(
+            send(normal_body.clone(), true).await,
+            "served-by:Bearer token-pinned"
+        );
+        // 2) 判定请求 + 钉住 → 仍被分类器队列抢走（分流优先于钉住）
+        assert_eq!(
+            send(classifier_body.clone(), true).await,
+            "served-by:Bearer token-queue"
+        );
+        // 3) 判定请求、未钉住 → 队列接单（原有行为不变）
+        assert_eq!(
+            send(classifier_body, false).await,
+            "served-by:Bearer token-queue"
+        );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
 }

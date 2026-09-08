@@ -24,6 +24,9 @@ use std::time::Instant;
 /// `ANTHROPIC_CUSTOM_HEADERS` 注入即可），值为 provider id 或供应商名称。
 /// 不带、或值为空串时行为不变，仍走默认路由（当前供应商 / 故障转移队列）。
 ///
+/// 钉住只约束对话本体：Auto Mode 安全分类器请求仍按分类器队列分流（分流优先
+/// 于钉住），队列不可用时才回落到被钉的供应商。
+///
 /// 这个头只在代理内部消费，由 forwarder 从出站请求里剔除，不会泄漏给上游。
 pub const PROVIDER_PIN_HEADER: &str = "x-cc-provider";
 
@@ -220,46 +223,36 @@ impl RequestContext {
             if app_config.classifier_queue_enabled {
                 // thinking 关闭是**请求形态**的事，与谁来接这一单无关：分类器请求本来
                 // 就不需要 thinking，开着会拖到客户端硬超时、Auto Mode 直接卡住。
-                // 所以钉住时这一项照常生效，只有「换一家去接」才让位给显式指令。
                 classifier.thinking_off = app_config.classifier_force_thinking_off;
 
-                if provider_pinned {
-                    log::info!(
-                        "[{tag}] [CLS-003] 会话已钉住供应商，跳过分类器队列选路（thinking 关闭仍生效）"
-                    );
-                } else {
-                    match state
-                        .provider_router
-                        .select_classifier_providers(app_type_str)
-                        .await
-                    {
-                        // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
-                        // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
-                        // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
-                        Ok(Some(selection)) if !selection.providers.is_empty() => {
-                            log::info!(
-                                "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
-                                selection.providers.len(),
-                                selection
-                                    .providers
-                                    .first()
-                                    .map(|p| p.name.as_str())
-                                    .unwrap_or("-")
-                            );
-                            classifier.routed = true;
-                            classifier.models = Arc::new(selection.models);
-                            classifier_providers = Some(selection.providers);
-                        }
-                        Ok(_) => {
-                            log::info!(
-                                "[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链"
-                            );
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "[{tag}] [CLS-003] 读取分类器队列失败: {e}, 回落到常规路由链"
-                            );
-                        }
+                // 会话钉住（x-cc-provider）不拦截这里的选路：分流优先于钉住。
+                match state
+                    .provider_router
+                    .select_classifier_providers(app_type_str)
+                    .await
+                {
+                    // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
+                    // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
+                    // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
+                    Ok(Some(selection)) if !selection.providers.is_empty() => {
+                        log::info!(
+                            "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
+                            selection.providers.len(),
+                            selection
+                                .providers
+                                .first()
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("-")
+                        );
+                        classifier.routed = true;
+                        classifier.models = Arc::new(selection.models);
+                        classifier_providers = Some(selection.providers);
+                    }
+                    Ok(_) => {
+                        log::info!("[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链");
+                    }
+                    Err(e) => {
+                        log::warn!("[{tag}] [CLS-003] 读取分类器队列失败: {e}, 回落到常规路由链");
                     }
                 }
             }
@@ -267,23 +260,32 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = match (pinned_provider, classifier_providers) {
-            // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
-            (Some(provider), _) => vec![provider],
-            (None, Some(list)) => list,
-            (None, None) => state
-                .provider_router
-                .select_providers(app_type_str)
-                .await
-                .map_err(|e| match e {
-                    crate::error::AppError::AllProvidersCircuitOpen => {
-                        ProxyError::AllProvidersCircuitOpen
-                    }
-                    crate::error::AppError::NoProvidersConfigured => {
-                        ProxyError::NoProvidersConfigured
-                    }
-                    _ => ProxyError::DatabaseError(e.to_string()),
-                })?,
+        //
+        // 优先级：分类器队列 > 会话钉住 > 常规路由。
+        //
+        // 分流压过钉住是用户拍板的语义：x-cc-provider 管的是「这个会话的对话本体走
+        // 哪家」，而 Auto Mode 判定请求是会话里的后台杂务，仍归队列接单 —— 否则钉住
+        // 一家贵渠道后，每条 Bash 命令的判定请求也得按全价走它。队列为空/全熔断时，
+        // 判定请求回落到钉住的供应商（没钉住则走常规链）。
+        let providers = match classifier_providers {
+            Some(list) => list,
+            None => match pinned_provider {
+                // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
+                Some(provider) => vec![provider],
+                None => state
+                    .provider_router
+                    .select_providers(app_type_str)
+                    .await
+                    .map_err(|e| match e {
+                        crate::error::AppError::AllProvidersCircuitOpen => {
+                            ProxyError::AllProvidersCircuitOpen
+                        }
+                        crate::error::AppError::NoProvidersConfigured => {
+                            ProxyError::NoProvidersConfigured
+                        }
+                        _ => ProxyError::DatabaseError(e.to_string()),
+                    })?,
+            },
         };
 
         if classifier.routed {
