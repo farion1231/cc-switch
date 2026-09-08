@@ -857,6 +857,28 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             [],
         )
         .expect("set custom GLM price");
+        // <v3.19 老库形态：cache_write 仍是最初 seed 的 0（07-12 条目才补成 6.25）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '5',
+                 output_cost_per_million = '30',
+                 cache_read_cost_per_million = '0.50',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'gpt-5.6-sol'",
+            [],
+        )
+        .expect("restore pre-v3.19 GPT-5.6 Sol price");
+        // 最早 seed 的 M2.5 价（bb7c83c2 时代）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.12',
+                 output_cost_per_million = '0.95',
+                 cache_read_cost_per_million = '0.03',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'minimax-m2.5'",
+            [],
+        )
+        .expect("restore oldest MiniMax M2.5 price");
     }
 
     db.ensure_model_pricing_seeded()
@@ -871,13 +893,14 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("query DeepSeek price");
+    // 从远古价 1.68/3.36/0.14 出发要连跳两级才能到位：
+    //   1.68/3.36/0.14 →(2026-07 条目)→ 0.435/0.87/0.003625
+    //                  →(2026-08-16 峰谷调价条目)→ 1.32/3.96/0.044
+    // 这同时锁住了 repair 条目的顺序：新条目必须排在旧条目之后，
+    // 否则老库会停在中间价位，本断言即会失败。
     assert_eq!(
         deepseek,
-        (
-            "0.435".to_string(),
-            "0.87".to_string(),
-            "0.003625".to_string()
-        )
+        ("1.32".to_string(), "3.96".to_string(), "0.044".to_string())
     );
 
     let glm: (String, String, String) = conn
@@ -889,6 +912,253 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
         )
         .expect("query GLM price");
     assert_eq!(glm, ("9".to_string(), "9".to_string(), "9".to_string()));
+
+    // 2026-09-06 条目同样依赖顺序：
+    //   gpt-5.6-sol  5/30/0.50/0 →(07-12 补 cache_write)→ 5/30/0.50/6.25 →(09-06 促销)→ 4/20/0.40/5
+    //   minimax-m2.5 0.12/0.95/0.03/0 →(0.12→0.15 条目)→ 0.15/… →(09-06 官方价)→ 0.30/1.20/0.03/0.375
+    let sol: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gpt-5.6-sol'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GPT-5.6 Sol price");
+    assert_eq!(
+        sol,
+        (
+            "4".to_string(),
+            "20".to_string(),
+            "0.40".to_string(),
+            "5".to_string()
+        )
+    );
+    let m25: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'minimax-m2.5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query MiniMax M2.5 price");
+    assert_eq!(
+        m25,
+        (
+            "0.30".to_string(),
+            "1.20".to_string(),
+            "0.03".to_string(),
+            "0.375".to_string()
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_claude_5_1_and_standard_sonnet_5_prices() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    for model_id in ["claude-fable-5-1", "claude-mythos-5-1"] {
+        let price: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query Fable 5.1 family price");
+        // 缓存读 0.025x = $0.25，不是 Fable 5 的 $1
+        assert_eq!(
+            price,
+            (
+                "10".to_string(),
+                "50".to_string(),
+                "0.25".to_string(),
+                "12.50".to_string(),
+            ),
+            "{model_id}"
+        );
+    }
+
+    let sonnet: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Sonnet 5 price");
+    // $2/$10 介绍价已转为正式价（原定 2026-09-01 涨至 $3/$15 取消）
+    assert_eq!(
+        sonnet,
+        (
+            "2".to_string(),
+            "10".to_string(),
+            "0.20".to_string(),
+            "2.50".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gpt_6_astra() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gpt-6-astra'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GPT-6 Astra price");
+
+    assert_eq!(
+        price,
+        (
+            "10".to_string(),
+            "50".to_string(),
+            "1".to_string(),
+            "12.5".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_glm_5_3_flash() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'glm-5.3-flash'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GLM-5.3-Flash price");
+
+    assert_eq!(
+        price,
+        (
+            "0.15".to_string(),
+            "0.50".to_string(),
+            "0.03".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gemini_3_8_flash() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-3.8-flash'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 3.8 Flash price");
+
+    assert_eq!(
+        price,
+        (
+            "0.75".to_string(),
+            "3.75".to_string(),
+            "0.075".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_repairs_sonnet_5_list_price_but_keeps_custom_price() {
+    let db = Database::memory().expect("create memory db");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        // 旧 seed 按 list 价录入的行 → 应被修正
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '3',
+                 output_cost_per_million = '15',
+                 cache_read_cost_per_million = '0.30',
+                 cache_creation_cost_per_million = '3.75'
+             WHERE model_id = 'claude-sonnet-5'",
+            [],
+        )
+        .expect("restore old Sonnet 5 list price");
+    }
+
+    db.ensure_model_pricing_seeded()
+        .expect("ensure pricing seeded");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        let sonnet: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query repaired Sonnet 5 price");
+        assert_eq!(
+            sonnet,
+            (
+                "2".to_string(),
+                "10".to_string(),
+                "0.20".to_string(),
+                "2.50".to_string(),
+            )
+        );
+
+        // 用户手改过的价（不匹配旧 seed 值）不动
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '9',
+                 output_cost_per_million = '9',
+                 cache_read_cost_per_million = '9',
+                 cache_creation_cost_per_million = '9'
+             WHERE model_id = 'claude-sonnet-5'",
+            [],
+        )
+        .expect("set custom Sonnet 5 price");
+    }
+
+    db.ensure_model_pricing_seeded()
+        .expect("ensure pricing seeded again");
+
+    let conn = db.conn.lock().expect("lock conn");
+    let custom: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query custom Sonnet 5 price");
+    assert_eq!(
+        custom,
+        (
+            "9".to_string(),
+            "9".to_string(),
+            "9".to_string(),
+            "9".to_string(),
+        )
+    );
 }
 
 #[test]

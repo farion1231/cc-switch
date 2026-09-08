@@ -66,12 +66,12 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 <tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
-<td>Fenno.ai のご支援に感謝します！Fenno.ai は安定かつ高効率な API 中継サービスプロバイダーで、現在は主に Codex の中継を提供しています。OpenAI および Anthropic プロトコルに対応し、Codex・Claude Code・OpenCode などの主要なコーディングツールから柔軟に利用できます。1 日あたり数千億トークンというエンタープライズ級の呼び出し需要を安定して支え、国内外の法人による B2B 決済・請求書発行に対応しています。Fenno.ai は CC Switch 利用者限定の特典を用意しています：<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">こちらのリンク</a>から 9.9 元（150 ドル相当）のお得な Coding Plan を購入でき、友達紹介で最大 20% の特典がもらえます。紹介すればするほどお得です！</td>
+<td>Fenno.ai のご支援に感謝します！Fenno.ai は安定かつ高効率な API 中継サービスプロバイダーで、現在は主に Codex の中継を提供しています。OpenAI および Anthropic プロトコルに対応し、Codex・Claude Code・OpenCode などの主要なコーディングツールから柔軟に利用できます。1 日あたり数千億トークンというエンタープライズ級の呼び出し需要を安定して支え、国内外の法人による B2B 決済・請求書発行に対応しています。Fenno.ai は CC Switch 利用者限定の特典を用意しています：<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">こちらのリンク</a>から 1.99 ドルで 50 ドル相当の Trial プラン（有効期間 7 日間）を購入でき、友達紹介で最大 20% の特典がもらえます。紹介すればするほどお得です！</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://runapi.co/register?aff=iOKB"><img src="assets/partners/logos/runapi.jpg" alt="RunAPI" width="150"></a></td>
-<td>本プロジェクトのスポンサーである RunAPI に感謝いたします！RunAPI は高効率で安定した AI モデル API ゲートウェイです。一つの API Key で、OpenAI、Claude、Gemini、DeepSeek、Grok など 150 種類以上の主要モデルにアクセス可能。料金は公式価格の最大 10%、安定性にも優れ、Claude Code や OpenClaw などのツールとシームレスに連携できます。CC Switch ユーザー限定特典：<a href="https://runapi.co/register?aff=iOKB">こちらのリンク</a>から登録し、初回チャージで 10% オフの割引をお楽しみいただけます！</td>
+<td width="180"><a href="https://runapi.host/register?aff=iOKB"><img src="assets/partners/logos/runapi.jpg" alt="RunAPI" width="150"></a></td>
+<td>本プロジェクトのスポンサーである RunAPI に感謝いたします！RunAPI は高効率で安定した AI モデル API ゲートウェイです。一つの API Key で、OpenAI、Claude、Gemini、DeepSeek、Grok など 150 種類以上の主要モデルにアクセス可能。料金は公式価格の最大 10%、安定性にも優れ、Claude Code や OpenClaw などのツールとシームレスに連携できます。CC Switch ユーザー限定特典：<a href="https://runapi.host/register?aff=iOKB">こちらのリンク</a>から登録し、初回チャージで 10% オフの割引をお楽しみいただけます！</td>
 </tr>
 
 <tr>
@@ -100,6 +100,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
+<td>9527CODE のご支援に感謝します！9527 CODE は、安定性とサービス品質にこだわったエンタープライズ級のフルスペック AI リレープラットフォームです。Claude Code や Codex などの主要 AI モデルに、高速・安定・高品質なリレーサービスを提供します。長期的な安定性、回線品質、継続的な可用性をより重視し、企業や高負荷の AI ユーザーに安定かつ高効率なワンストップのモデル接続ソリューションを提供します。1 年間の継続運営、サービス安定性 99.9%、7×24 時間の有人技術サポート。本プロジェクトの<a href="https://9527.codes/register?aff=e5zI">専用リンク</a>から登録すると、新規ユーザーはカスタマーサポートへのご連絡で体験クレジットを進呈、紹介キャッシュバックは上限なしです！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
 <td>本プロジェクトは <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">Claude API</a> がスポンサーです。Claude API 直結 — わずか 3 分で Claude Code や Agent アプリに接続可能。新規ユーザーにはテストクレジットを提供しています。Anthropic 公式キーおよび AWS Bedrock 公式チャネルに基づいており、リバースエンジニアリングや性能劣化はありません。Opus / Sonnet / Haiku の全モデルラインナップをサポートし、Tool Use や 1M コンテキストなどの公式機能をすべて保持しています。Claude Code ヘビーユーザー、Agent エンジニア、企業技術チームに最適です。請求書発行およびチーム対応が可能です。<a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">こちら</a>から登録してください！</td>
 </tr>
@@ -110,10 +115,15 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
+<td width="180"><a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
 <td>このプロジェクトをご支援いただいている TeamoRouter に感謝します！TeamoRouter は、開発者、AI チーム、企業向けに構築されたエンタープライズグレードの Agentic LLM ゲートウェイです。サブスクリプション不要で、単一の統合 API を通じて Claude Code、Codex、Gemini CLI、OpenAI Codex、その他の人気 AI エージェントにアクセスでき、API 料金は最大 90% オフで利用できます。
 一般的な API リレーサービスとは異なり、TeamoRouter は OpenAI、Anthropic、Vertex、Azure、AWS Bedrock など、数百の公式モデルプロバイダーと信頼できるインフラパートナーを集約しています。各プロバイダーは、Agent プロトコルとの 100% 互換性、キャッシュ性能、リクエストの追跡可能性について検証されており、リバースエンジニアリングされたものや品質が薄められたエンドポイントではなく、安定した品質を提供します。プラットフォームは公式に近い TTFT、99.6% の SLA、最大 5,000 QPM のエンタープライズ規模のスループット、そして業界トップクラスのキャッシュヒット率を提供し、長時間稼働するエージェントワークフローのトークンコストを大幅に削減します。
-TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
+TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://ppio.com/activity/ccswitch"><img src="assets/partners/logos/ppio-banner.png" alt="PPIO" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている PPIO に感謝します！PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、PPTV 創業者の姚欣氏と元 PPTV チーフアーキテクトの王聞宇氏が 2018 年に共同設立しました。API キー 1 つで DeepSeek-V4-Flash、Kimi-K3、GLM-5.2、MiniMax-M3 など、すべての主要なオープンソースモデルを利用できます。法人向け Token Plan は最大 40% オフで、200 席まで対応。Fusion 融合モデルは 1/10 の価格で Fable5 に匹敵します。<a href="https://ppio.com/activity/ccswitch">こちらのリンク</a>から登録し実名認証を完了すると、¥10 のクーポンがもらえます。友人を招待してチャージしてもらうと、最大 15% のキャッシュバックも獲得できます。</td>
 </tr>
 
 <tr>
@@ -159,6 +169,11 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 <tr>
 <td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
 <td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。当日の迅速な請求書発行をサポート。CC Switch ユーザー向けの特別特典：<a href="https://www.sssaicode.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを受けられます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://soleapi.com/r/ccswitch"><img src="assets/partners/logos/soleapi-banner.png" alt="SoleAPI" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている SoleAPI に感謝します！SoleAPI は開発者と企業向けの AI モデルゲートウェイです。1 つの API キーで Claude・GPT・Gemini など 30 以上の主要モデルを利用できます。OpenAI / Anthropic プロトコルにネイティブ対応しており、Base URL を差し替えるだけで Claude Code、Codex、Cursor などのコーディングツールや既存の SDK をそのまま接続できます。レイテンシと稼働状況に基づくリアルタイムのスマートルーティングにより、上流障害時はミリ秒単位で予備チャネルへ自動切替。サービス可用性 99.99%、24 時間 365 日のテクニカルサポートを提供し、すべての呼び出しは 1 つの請求にまとまり、リクエストごとのトークン数と料金を透明に確認できます。本プロジェクトの<a href="https://soleapi.com/r/ccswitch">専用リンク</a>から登録すると無料のお試しクレジットを進呈。友人を招待してチャージされると、継続的にキャッシュバックを獲得できます！</td>
 </tr>
 
 <tr>
@@ -552,7 +567,8 @@ pnpm test:unit --coverage
 │   ├── lib/
 │   │   ├── api/                # Tauri API ラッパー（型安全）
 │   │   └── query/              # TanStack Query 設定
-│   ├── locales/                # 翻訳 (zh/zh-TW/en/ja)
+│   ├── i18n/                   # 国際化
+│   │   └── locales/            # 翻訳 (zh/zh-TW/en/ja)
 │   ├── config/                 # プリセット (providers/mcp)
 │   └── types/                  # TypeScript 型定義
 ├── src-tauri/                  # バックエンド (Rust)

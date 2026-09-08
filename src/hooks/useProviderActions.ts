@@ -2,7 +2,13 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import {
+  piApi,
+  providersApi,
+  settingsApi,
+  openclawApi,
+  type AppId,
+} from "@/lib/api";
 import type {
   Provider,
   UsageScript,
@@ -83,7 +89,6 @@ export function useProviderActions(
         suggestedDefaults?: OpenClawSuggestedDefaults;
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
-        ensureCodexOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
       },
     ) => {
@@ -142,7 +147,10 @@ export function useProviderActions(
   // 更新供应商
   const updateProvider = useCallback(
     async (provider: Provider, originalId?: string) => {
-      await updateProviderMutation.mutateAsync({ provider, originalId });
+      await updateProviderMutation.mutateAsync({
+        provider,
+        originalId,
+      });
 
       // 更新托盘菜单（失败不影响主操作）
       try {
@@ -265,8 +273,8 @@ export function useProviderActions(
         );
       }
 
-      // The built-in Codex official provider can reuse Codex's native ChatGPT
-      // login through local routing. Other official providers remain blocked.
+      // Codex official account cards can reuse the active native ChatGPT login
+      // through local routing. Other apps' official providers remain blocked.
       const officialSupportsTakeover = supportsOfficialProxyTakeover(
         activeApp,
         provider,
@@ -290,15 +298,34 @@ export function useProviderActions(
         const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
 
-        // Show backfill warning if present
+        // Surface switch warnings by code — a generic "backfill failed"
+        // message for an auth-cleanup warning would point the user at the
+        // wrong problem entirely.
         if (result?.warnings?.length) {
-          toast.warning(
-            t("notifications.backfillWarning", {
-              defaultValue:
-                "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
-            }),
-            { duration: 5000 },
+          const authCleanupFailed = result.warnings.some((warning) =>
+            warning.startsWith("codex_auth_cleanup_failed"),
           );
+          const hasOtherWarnings = result.warnings.some(
+            (warning) => !warning.startsWith("codex_auth_cleanup_failed"),
+          );
+          if (authCleanupFailed) {
+            toast.warning(
+              t("notifications.codexAuthCleanupFailed", {
+                defaultValue:
+                  "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
+              }),
+              { duration: 6000 },
+            );
+          }
+          if (hasOtherWarnings) {
+            toast.warning(
+              t("notifications.backfillWarning", {
+                defaultValue:
+                  "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
+              }),
+              { duration: 5000 },
+            );
+          }
         }
 
         // 若已弹过 proxyRequired 警告则不再弹 success
@@ -362,7 +389,11 @@ export function useProviderActions(
           },
         };
 
-        await providersApi.update(updatedProvider, activeApp);
+        if (activeApp === "pi") {
+          await piApi.updateProviderUsageScript(provider.id, script);
+        } else {
+          await providersApi.update(updatedProvider, activeApp);
+        }
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });

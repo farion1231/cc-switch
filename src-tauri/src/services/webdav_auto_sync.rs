@@ -9,6 +9,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::error::AppError;
+use crate::services::sync_protocol::should_trigger_auto_sync_for_table;
 use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
 
@@ -41,18 +42,7 @@ pub(crate) fn is_auto_sync_suppressed() -> bool {
 }
 
 pub fn should_trigger_for_table(table: &str) -> bool {
-    let normalized = table.trim().to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "providers"
-            | "provider_endpoints"
-            | "mcp_servers"
-            | "prompts"
-            | "skills"
-            | "skill_repos"
-            | "settings"
-            | "proxy_config"
-    )
+    should_trigger_auto_sync_for_table(table)
 }
 
 pub(crate) fn enqueue_change_signal(tx: &Sender<String>, table: &str) -> bool {
@@ -201,18 +191,21 @@ mod tests {
         MAX_AUTO_SYNC_WAIT_MS,
     };
     use crate::settings::WebDavSyncSettings;
+    use serial_test::serial;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::channel;
 
     #[test]
     fn should_trigger_sync_for_config_tables_only() {
         assert!(should_trigger_for_table("providers"));
+        assert!(should_trigger_for_table("profiles"));
         assert!(should_trigger_for_table("settings"));
         assert!(!should_trigger_for_table("proxy_request_logs"));
         assert!(!should_trigger_for_table("provider_health"));
     }
 
     #[test]
+    #[serial]
     fn suppression_guard_enables_and_restores_state() {
         assert!(!is_auto_sync_suppressed());
         {
