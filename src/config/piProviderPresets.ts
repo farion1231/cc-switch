@@ -1218,9 +1218,20 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("longcat/longcat-2.0", {
-          id: "LongCat-2.0",
-        }),
+        {
+          ...piModel("longcat/longcat-2.0", {
+            id: "LongCat-2.0",
+            thinkingProfile: "offHighOnly",
+          }),
+          // LongCat supports a thinking.type toggle, not reasoning_effort.
+          compat: {
+            ...OPENAI_COMPLETIONS_COMPAT,
+            thinkingFormat: "deepseek",
+            supportsReasoningEffort: false,
+            supportsStrictMode: false,
+            supportsLongCacheRetention: false,
+          },
+        },
       ],
     },
     category: "cn_official",
