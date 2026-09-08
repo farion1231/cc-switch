@@ -529,6 +529,7 @@ mod tests {
                                 .get(header::AUTHORIZATION)
                                 .and_then(|value| value.to_str().ok())
                                 .map(ToString::to_string),
+                            pin_header: None,
                             body: serde_json::from_slice(&body).expect("parse mock request body"),
                         });
 
@@ -739,6 +740,7 @@ mod tests {
                                 .get(header::AUTHORIZATION)
                                 .and_then(|value| value.to_str().ok())
                                 .map(ToString::to_string),
+                            pin_header: None,
                             body: serde_json::from_slice(&body).expect("parse mock request body"),
                         });
 
