@@ -66,6 +66,29 @@ describe("ProviderActions Pi provider switching", () => {
     expect(screen.queryByTitle("provider.duplicate")).not.toBeInTheDocument();
   });
 
+  it("offers cross-app copying only when the caller supplies the handler", async () => {
+    const user = userEvent.setup();
+    const baseProps = {
+      appId: "claude" as const,
+      isCurrent: false,
+      onSwitch: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onDuplicate: vi.fn(),
+    };
+
+    const { unmount } = render(<ProviderActions {...baseProps} />);
+    expect(
+      screen.queryByTitle("provider.copyToApps.title"),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    const onCopyToApps = vi.fn();
+    render(<ProviderActions {...baseProps} onCopyToApps={onCopyToApps} />);
+    await user.click(screen.getByTitle("provider.copyToApps.title"));
+    expect(onCopyToApps).toHaveBeenCalledTimes(1);
+  });
+
   it("enables a provider that is not in Pi", async () => {
     const user = userEvent.setup();
     const { onSwitch } = renderPiActions({});

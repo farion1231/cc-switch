@@ -178,7 +178,28 @@
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
     },
-    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください"
+    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
+    "copyToApps": {
+      "title": "他のアプリへコピー",
+      "description": "「{{name}}」の設定を選択したアプリにコピーします",
+      "selectAll": "すべて選択",
+      "selectedCount": "{{count}} / {{total}} を選択中",
+      "copy": "{{count}} 個のアプリにコピー",
+      "copying": "コピー中…",
+      "modelHint": "コピー後にモデル設定をご確認ください。アプリ間コピーでは対象アプリの形式に合わせて設定を再構築するため、モデルやプロトコルのパラメータを手動で調整する必要がある場合があります。",
+      "success": "{{count}} 個のアプリにコピーしました",
+      "successPartial": "コピー完了：{{copied}} 件成功、{{skipped}} 件スキップ",
+      "resultSummary": "コピー完了：成功 {{copied}} / スキップ {{skipped}} / 失敗 {{failed}}",
+      "copyError": "他のアプリへのコピーに失敗しました",
+      "reasons": {
+        "sameAsSource": "コピー元と同じアプリです",
+        "alreadyExists": "対象アプリに同じ ID のプロバイダー「{{id}}」が既に存在するためスキップしました",
+        "incompatibleClaudeDesktop": "このプロバイダーの設定は Claude Desktop 用に変換できないためスキップしました",
+        "missingCredentials": "base_url と API キーを取得できないためスキップしました",
+        "unsupportedTarget": "サポートされていない対象アプリです",
+        "saveFailed": "対象アプリへの保存に失敗しました：{{error}}"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要",

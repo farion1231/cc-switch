@@ -1,4 +1,5 @@
 import type { AppId } from "@/lib/api/types";
+import type { CopyTargetOutcome } from "@/lib/api/providers";
 import type {
   McpServer,
   Provider,
@@ -205,7 +206,28 @@ let mcpConfigs: McpConfigState = {
 const cloneProviders = (value: ProvidersByApp) =>
   deepClone(value) as ProvidersByApp;
 
+// 跨应用复制的逐目标结果脚本：null 表示全部 copied，否则按 targetApp 查表。
+let copyProviderToAppsOutcomes: Record<string, CopyTargetOutcome> | null = null;
+
+export const setCopyProviderToAppsOutcomes = (
+  outcomes: Record<string, CopyTargetOutcome> | null,
+) => {
+  copyProviderToAppsOutcomes =
+    outcomes === null
+      ? null
+      : (deepClone(outcomes) as Record<string, CopyTargetOutcome>);
+};
+
+export const getCopyProviderToAppsOutcomes = () =>
+  copyProviderToAppsOutcomes === null
+    ? null
+    : (deepClone(copyProviderToAppsOutcomes) as Record<
+        string,
+        CopyTargetOutcome
+      >);
+
 export const resetProviderState = () => {
+  copyProviderToAppsOutcomes = null;
   providers = createDefaultProviders();
   current = createDefaultCurrent();
   liveProviderIds = {

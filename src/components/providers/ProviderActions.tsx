@@ -9,6 +9,7 @@ import {
   Minus,
   Play,
   Plus,
+  Share2,
   Terminal,
   Trash2,
   Zap,
@@ -41,6 +42,7 @@ interface ProviderActionsProps {
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate?: () => void;
+  onCopyToApps?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
   onDelete: () => void;
@@ -83,6 +85,7 @@ export function ProviderActions({
   onSwitch,
   onEdit,
   onDuplicate,
+  onCopyToApps,
   onTest,
   onConfigureUsage,
   onDelete,
@@ -409,6 +412,18 @@ export function ProviderActions({
             className={iconButtonClass}
           >
             <Copy className="h-4 w-4" />
+          </Button>
+        )}
+
+        {onCopyToApps && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onCopyToApps}
+            title={t("provider.copyToApps.title")}
+            className={iconButtonClass}
+          >
+            <Share2 className="h-4 w-4" />
           </Button>
         )}
 

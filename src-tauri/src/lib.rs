@@ -1380,6 +1380,7 @@ pub fn run() {
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
+            commands::copy_provider_to_apps,
             commands::ensure_claude_desktop_official_provider,
             commands::ensure_codex_official_provider,
             commands::ensure_grokbuild_official_provider,
