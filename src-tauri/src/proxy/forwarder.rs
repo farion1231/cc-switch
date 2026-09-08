@@ -1174,14 +1174,6 @@ impl RequestForwarder {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
-        let is_full_url = provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.is_full_url)
-            .unwrap_or(false)
-            && !provider.is_codex_oauth()
-            && !provider.is_xai_oauth();
-
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = provider
             .meta
@@ -1189,6 +1181,19 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+
+        // Managed Copilot resolves its endpoint from the bound account and injects
+        // the bearer token in the forwarder. Full-URL mode must stay off for it:
+        // it bypasses the Copilot URL builder (dropping /chat/completions) and
+        // would send the managed token to an arbitrary user-editable host.
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false)
+            && !provider.is_codex_oauth()
+            && !provider.is_xai_oauth()
+            && !is_copilot;
 
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to

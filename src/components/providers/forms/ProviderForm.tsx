@@ -1834,6 +1834,7 @@ function ProviderFormFull({
         supportsFullUrl &&
         category !== "official" &&
         !isXaiOauthProvider &&
+        !isCopilotProvider &&
         localIsFullUrl
           ? true
           : undefined,

@@ -862,7 +862,7 @@ export function CodexFormFields({
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.codexApiEndpointPlaceholder")}
           hint={t("providerForm.codexApiHint")}
-          showFullUrlToggle
+          showFullUrlToggle={!isCopilotPreset}
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
           onManageClick={() => onEndpointModalToggle(true)}
