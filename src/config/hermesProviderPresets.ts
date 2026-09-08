@@ -459,6 +459,41 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    settingsConfig: {
+      name: "9527code",
+      base_url: "https://9527.codes",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    icon: "9527code",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5", provider: "9527code" },
+    },
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
@@ -479,12 +514,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "teamorouter",
-      base_url: "https://api.teamorouter.com/v1",
+      base_url: "https://api.teamorouter.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
@@ -861,6 +896,41 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "claude-opus-5", provider: "sssaicode" },
+    },
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      name: "soleapi",
+      base_url: "https://soleapi.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5", provider: "soleapi" },
     },
   },
   {
@@ -1271,6 +1341,191 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key，模型合并两系列；Auto 智能路由调用 ID 是
+    // tc-code-latest。官方未发 Hermes 专属接入页，按工具无关的 /plan/v3
+    // OpenAI Chat 端点收录（与市场线 1300/80643 的 chat_completions 模式
+    // 一致）。kimi-k2.5 官方 2026-08-31 下线不收；minimax-m2.5 真 Key
+    // 实测可用（2026-08-31）照实收
+    name: "Tencent Token Plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    settingsConfig: {
+      name: "tencent_token_plan",
+      base_url: "https://api.lkeap.cloud.tencent.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "tc-code-latest", name: "Auto" },
+        { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro" },
+        { id: "minimax-m2.7", name: "MiniMax M2.7" },
+        { id: "glm-5", name: "GLM-5" },
+        { id: "glm-5.1", name: "GLM-5.1" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "hy3", name: "Hy3" },
+        { id: "hy3-preview", name: "Hy3 Preview" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: { default: "tc-code-latest", provider: "tencent_token_plan" },
+    },
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：Auto
+    // 调用 ID 是 auto（≠国内 tc-code-latest），阵容不同（无 GLM-5/5.1/
+    // Hy3）。端点用国际站文档钦定的 tencentcloudmaas.com 域；Key 按站独立
+    name: "Tencent Token Plan (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      name: "tencent_token_plan_intl",
+      base_url: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "auto", name: "Auto" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "kimi-k2.6", name: "Kimi K2.6" },
+        { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash" },
+        { id: "minimax-m3", name: "MiniMax M3" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: { default: "auto", provider: "tencent_token_plan_intl" },
+    },
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版，广州地域）：
+    // kimi-k2.5 官方 2026-08-31 下线不收；minimax-m2.5 文档已除名但真 Key
+    // 实测可用（2026-08-31），照实收录
+    name: "Tencent Token Plan Enterprise Pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "tencent_token_plan_enterprise_pro",
+      base_url: "https://tokenhub.tencentmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "auto", name: "Auto" },
+        { id: "glm-5.3", name: "GLM-5.3" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "glm-5", name: "GLM-5" },
+        { id: "glm-5.1", name: "GLM-5.1" },
+        { id: "glm-5-turbo", name: "GLM-5 Turbo" },
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
+        { id: "kimi-k2.6", name: "Kimi K2.6" },
+        { id: "minimax-m2.7", name: "MiniMax M2.7" },
+        { id: "minimax-m3", name: "MiniMax M3" },
+        { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731 GA" },
+        { id: "deepseek-v4-pro-0813", name: "DeepSeek V4 Pro 0813 GA" },
+        { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash Official" },
+        { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro Official" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: {
+        default: "auto",
+        provider: "tencent_token_plan_enterprise_pro",
+      },
+    },
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
+    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "tencent_token_plan_enterprise_pro_intl",
+      base_url: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "auto", name: "Auto" },
+        { id: "glm-5.3", name: "GLM-5.3" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "minimax-m3", name: "MiniMax M3" },
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
+        { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731 GA" },
+        { id: "deepseek-v4-pro-0813", name: "DeepSeek V4 Pro 0813 GA" },
+        { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash Official" },
+        { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro Official" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: {
+        default: "auto",
+        provider: "tencent_token_plan_enterprise_pro_intl",
+      },
+    },
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "tencent_token_plan_enterprise_lite",
+      base_url: "https://tokenhub.tencentmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "auto", name: "Auto" }],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: {
+        default: "auto",
+        provider: "tencent_token_plan_enterprise_lite",
+      },
+    },
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
+    // Global），仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "tencent_token_plan_enterprise_lite_intl",
+      base_url: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "auto", name: "Auto" }],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: {
+        default: "auto",
+        provider: "tencent_token_plan_enterprise_lite_intl",
+      },
+    },
+  },
+  {
     // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）：官方
     // Hermes 接入页确认 /v2/tokenplan/personal、默认 deepseek-v4-pro（其
     // api_mode 写 "openai_messages"，本仓 OpenAI Chat 端点惯例统一映射为
@@ -1337,6 +1592,83 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#624AFF",
     suggestedDefaults: {
       model: { default: "qwen3-coder-plus", provider: "bailian_coding" },
+    },
+  },
+  // ===== QwenCloud（DashScope 国际站）=====
+  // 三条线都用 anthropic_messages；地址不带 /v1（与官方 hermes 文档一致，
+  // 这点和 OpenCode / OpenClaw 的 /apps/anthropic/v1 不同，勿互相照搬）。
+  {
+    name: "QwenCloud",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      name: "qwencloud",
+      base_url: "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "qwen3.7-max", name: "Qwen3.7 Max", context_length: 1000000 },
+        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
+        { id: "qwen3.6-plus", name: "Qwen3.6 Plus", context_length: 1000000 },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+    suggestedDefaults: {
+      model: { default: "qwen3.7-max", provider: "qwencloud" },
+    },
+  },
+  {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      name: "qwencloud_coding",
+      base_url: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
+        { id: "qwen3.6-plus", name: "Qwen3.6 Plus", context_length: 1000000 },
+        {
+          id: "qwen3-coder-plus",
+          name: "Qwen3 Coder Plus",
+          context_length: 131072,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+    suggestedDefaults: {
+      model: { default: "qwen3.7-plus", provider: "qwencloud_coding" },
+    },
+  },
+  {
+    name: "QwenCloud Token Plan",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      name: "qwencloud_token_plan",
+      base_url:
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },
+        { id: "qwen3.7-max", name: "Qwen3.7 Max", context_length: 1000000 },
+        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
+        { id: "qwen3.6-plus", name: "Qwen3.6 Plus", context_length: 1000000 },
+        { id: "qwen3.6-flash", name: "Qwen3.6 Flash", context_length: 1000000 },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#6336E7",
+    suggestedDefaults: {
+      model: { default: "qwen3.8-max", provider: "qwencloud_token_plan" },
     },
   },
   {
@@ -1680,6 +2012,29 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "claude-fable-5", provider: "jiekou" },
+    },
+  },
+  {
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    settingsConfig: {
+      name: "aicodewith",
+      base_url: "https://api.aicodewith.ai/chatgpt/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "aicodewith" },
     },
   },
 ];

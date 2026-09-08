@@ -457,13 +457,14 @@ const TOML_PROVIDER_NAME_PATTERN =
   /^\s*name\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_PROVIDER_NAME_REPLACE_PATTERN =
   /^(\s*name\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
+// Keep in sync with the backend list in src-tauri/src/codex_config.rs
+// (CODEX_RESERVED_MODEL_PROVIDER_IDS).
 const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
   "amazon-bedrock",
+  "amazon-bedrock-runtime",
   "openai",
   "ollama",
   "lmstudio",
-  "oss",
-  "ollama-chat",
 ]);
 
 interface TomlSectionRange {
@@ -590,9 +591,10 @@ export const hasExplicitNonOpenAiCodexModelProvider = (
   if (typeof configText !== "string") return false;
   if (isCodexUnifiedSessionProjection(configText)) return false;
   const providerName = getCodexModelProviderName(configText);
-  return Boolean(
-    providerName && providerName.trim().toLowerCase() !== "openai",
-  );
+  // Exact match, mirroring the backend: Codex's built-in lookup is
+  // case-sensitive, so `OpenAI` routes to a custom table — a third-party
+  // upstream, not the official provider.
+  return Boolean(providerName && providerName.trim() !== "openai");
 };
 
 const getCodexProviderSectionName = (
@@ -603,7 +605,10 @@ const getCodexProviderSectionName = (
 };
 
 const isCustomCodexModelProviderId = (providerName: string): boolean => {
-  const id = providerName.trim().toLowerCase();
+  // Exact match, mirroring upstream Codex and the backend predicate: the
+  // built-in provider lookup is case-sensitive, so "OpenAI" etc. are
+  // legitimate custom ids whose tables carry the bearer token.
+  const id = providerName.trim();
   return Boolean(id) && !CODEX_RESERVED_MODEL_PROVIDER_IDS.has(id);
 };
 
