@@ -6033,7 +6033,13 @@ mod tests {
                 ("weread-skills", "skills", "."),
             ] {
                 let home = tempdir().expect("home");
+                let config_dir = home.path().join(".cc-switch");
+                fs::create_dir_all(&config_dir).expect("isolated config directory");
+                // Keep Windows' legacy-HOME fallback out of this destructive test.
+                fs::File::create(config_dir.join("cc-switch.db"))
+                    .expect("isolated database sentinel");
                 let _home = TestHomeGuard::set(home.path());
+                assert_eq!(crate::config::get_app_config_dir(), config_dir);
                 let _storage = StorageLocationGuard::set(location);
                 let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
                 let remote = tempdir().expect("remote repo");
@@ -6054,6 +6060,7 @@ mod tests {
                 );
                 db.save_skill(&installed).expect("seed installed skill");
                 let local = SkillService::get_ssot_dir().unwrap().join(directory);
+                assert!(local.starts_with(home.path()), "SSOT must stay isolated");
                 write_skill(&local, directory);
                 write_skill(&remote.path().join(new_path), directory);
 
