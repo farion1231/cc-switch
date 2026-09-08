@@ -2463,7 +2463,7 @@ impl ProxyService {
                 Err(_) => false,
             },
             AppType::Codex => match self.read_codex_live() {
-                Ok(config) => Self::is_codex_live_taken_over(&config),
+                Ok(config) => self.is_codex_live_taken_over_with_projection(&config),
                 Err(_) => false,
             },
             AppType::Gemini => match self.read_gemini_live() {
@@ -2847,7 +2847,7 @@ impl ProxyService {
         }
 
         if let Ok(config) = self.read_codex_live() {
-            if Self::is_codex_live_taken_over(&config) {
+            if self.is_codex_live_taken_over_with_projection(&config) {
                 return true;
             }
         }
@@ -2906,12 +2906,45 @@ impl ProxyService {
             == Some(PROXY_TOKEN_PLACEHOLDER)
     }
 
-    fn is_codex_live_taken_over(config: &Value) -> bool {
-        Self::codex_live_has_proxy_placeholder(config)
-            || config
-                .get("config")
-                .and_then(|v| v.as_str())
-                .is_some_and(crate::codex_config::codex_config_has_official_proxy_route)
+    /// 检测官方 Codex 接管时优先使用接管投影标记中的 Provider ID。
+    ///
+    /// 当前设置中的 ID 可能已经在接管期间被用户修改，但 Live 配置仍然
+    /// 保留旧 ID。只按当前设置判断会把仍在接管的配置误判成普通配置，随后
+    /// 热切换可能覆盖代理路由。配置指纹用于确认该路由仍是 CC Switch 写入的，
+    /// 避免仅因 Provider ID 相同而误认第三方配置。
+    fn is_codex_live_taken_over_with_projection(&self, config: &Value) -> bool {
+        if Self::codex_live_has_proxy_placeholder(config) {
+            return true;
+        }
+
+        let Some(config_text) = config.get("config").and_then(Value::as_str) else {
+            return false;
+        };
+
+        match futures::executor::block_on(self.db.get_codex_takeover_projection())
+            .ok()
+            .flatten()
+        {
+            Some(projection) => {
+                projection.config_fingerprint == codex_config_fingerprint(config_text)
+                    && crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+                        config_text,
+                        &projection.provider_id,
+                    )
+            }
+            None => {
+                let legacy_provider_id =
+                    crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID;
+                if crate::settings::codex_official_takeover_provider_id() == legacy_provider_id {
+                    crate::codex_config::codex_config_has_official_proxy_route(config_text)
+                } else {
+                    crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+                        config_text,
+                        legacy_provider_id,
+                    )
+                }
+            }
+        }
     }
 
     fn is_gemini_live_taken_over(config: &Value) -> bool {
@@ -2940,7 +2973,7 @@ impl ProxyService {
     fn live_has_proxy_placeholder_for_app(app_type: &AppType, config: &Value) -> bool {
         match app_type {
             AppType::Claude => Self::is_claude_live_taken_over(config),
-            AppType::Codex => Self::is_codex_live_taken_over(config),
+            AppType::Codex => Self::codex_live_has_proxy_placeholder(config),
             AppType::Gemini => Self::is_gemini_live_taken_over(config),
             AppType::GrokBuild => Self::is_grok_live_taken_over(config),
             _ => false,
@@ -4230,6 +4263,58 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_detection_uses_recorded_provider_id_after_setting_change() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let old_provider_id = crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID;
+        let config = format!(
+            r#"model_provider = "{old_provider_id}"
+
+[model_providers.{old_provider_id}]
+name = "OpenAI"
+base_url = "http://127.0.0.1:15721/v1"
+requires_openai_auth = true
+supports_websockets = false
+wire_api = "responses"
+"#
+        );
+        crate::codex_config::write_codex_live_atomic(&json!({}), Some(&config))
+            .expect("write taken-over Codex live config");
+        futures::executor::block_on(db.save_codex_takeover_projection(&CodexTakeoverProjection {
+            provider_id: old_provider_id.to_string(),
+            proxy_base_url: "http://127.0.0.1:15721/v1".to_string(),
+            config_fingerprint: codex_config_fingerprint(&config),
+            marked_at: "2026-09-08T00:00:00Z".to_string(),
+        }))
+        .expect("save takeover projection");
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_official_takeover_provider_id: "custom-takeover".to_string(),
+            ..Default::default()
+        })
+        .expect("change takeover provider id");
+
+        assert!(
+            service.detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "active takeover should still be detected through the recorded provider id"
+        );
+
+        let changed_config = config.replace("15721", "15722");
+        crate::codex_config::write_codex_live_atomic(&json!({}), Some(&changed_config))
+            .expect("write changed Codex live config");
+        assert!(
+            !service.detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "a fingerprint mismatch must not be treated as a CC Switch takeover"
+        );
+
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
     }
 
     #[tokio::test]

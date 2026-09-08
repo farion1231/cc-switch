@@ -237,6 +237,9 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
         std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
     let unified_provider_id = crate::settings::codex_official_unified_provider_id();
     let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
+    // 先持久化本代迁移的目标桶。后续任一步 JSONL / SQLite 迁移失败时，
+    // 已生成的备份仍然带有准确的目标 Provider ID，可以被关闭开关流程恢复。
+    write_backup_generation_meta(&backup_root, &codex_dir_key, &unified_provider_id)?;
     let migrated_jsonl_files = migrate_codex_jsonl_files_to(
         &codex_dir,
         &source_provider_ids,
@@ -249,8 +252,11 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
         &backup_root,
         &unified_provider_id,
     )?;
-    // 备份代际记录来源目录，restore 据此只取当前目录的账本。
-    write_backup_generation_meta(&backup_root, &codex_dir_key, &unified_provider_id)?;
+    if migrated_jsonl_files == 0 && migrated_state_rows == 0 {
+        // 本轮没有任何实际备份内容时，不保留只有 meta.json 的空代际，
+        // 避免前端误判存在可恢复的历史备份。
+        fs::remove_dir_all(&backup_root).map_err(|e| AppError::io(&backup_root, e))?;
+    }
 
     let outcome = CodexHistoryProviderBucketMigrationOutcome {
         source_provider_ids: source_provider_ids.into_iter().collect(),
@@ -319,16 +325,14 @@ fn canonical_dir_string(dir: &Path) -> String {
         .to_string()
 }
 
-/// 在备份代际根目录写入 meta.json，记录这批备份来自哪个 Codex 目录。
-/// 代际目录不存在（本轮没有任何文件被迁移）时跳过。
+/// 在备份代际根目录写入 meta.json，记录这批备份来自哪个 Codex 目录和目标桶。
+/// 需要在实际迁移前写入，保证部分迁移失败时仍能准确恢复。
 fn write_backup_generation_meta(
     backup_root: &Path,
     codex_dir_key: &str,
     target_provider_id: &str,
 ) -> Result<(), AppError> {
-    if !backup_root.exists() {
-        return Ok(());
-    }
+    fs::create_dir_all(backup_root).map_err(|e| AppError::io(backup_root, e))?;
     let payload = serde_json::json!({
         "codexConfigDir": codex_dir_key,
         "targetProviderId": target_provider_id,
@@ -369,8 +373,22 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
     };
     entries.flatten().any(|entry| {
         let generation = entry.path();
-        generation.is_dir() && backup_generation_matches_dir(&generation, codex_dir_key)
+        generation.is_dir()
+            && backup_generation_has_history_payload(&generation)
+            && backup_generation_matches_dir(&generation, codex_dir_key)
     })
+}
+
+fn backup_generation_has_history_payload(generation: &Path) -> bool {
+    let mut jsonl_files = Vec::new();
+    collect_jsonl_files(&generation.join("jsonl"), &mut jsonl_files, 0, 10);
+    if !jsonl_files.is_empty() {
+        return true;
+    }
+
+    let mut state_dbs = Vec::new();
+    collect_files_with_extension(&generation.join("state"), "sqlite", &mut state_dbs, 0, 4);
+    !state_dbs.is_empty()
 }
 
 /// 关闭统一会话开关时的可选还原：按迁移备份账本，把当时迁入统一桶的
@@ -502,19 +520,22 @@ fn collect_official_ledger(
                 .map(str::to_string)
         })
         .unwrap_or_else(|| CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
-        ledger.target_provider_ids.insert(target_provider_id);
+        let mut generation_session_ids = HashSet::new();
         let mut backup_files = Vec::new();
         collect_jsonl_files(&generation.join("jsonl"), &mut backup_files, 0, 10);
         for backup_file in backup_files {
-            collect_official_session_ids_from_backup(
-                &backup_file,
-                &mut ledger.official_session_ids,
-            );
+            collect_official_session_ids_from_backup(&backup_file, &mut generation_session_ids);
         }
+        let mut generation_thread_ids = BTreeSet::new();
         let mut backup_dbs = Vec::new();
         collect_files_with_extension(&generation.join("state"), "sqlite", &mut backup_dbs, 0, 4);
         for backup_db in backup_dbs {
-            collect_official_thread_ids_from_backup(&backup_db, &mut ledger.official_thread_ids);
+            collect_official_thread_ids_from_backup(&backup_db, &mut generation_thread_ids);
+        }
+        if !generation_session_ids.is_empty() || !generation_thread_ids.is_empty() {
+            ledger.target_provider_ids.insert(target_provider_id);
+            ledger.official_session_ids.extend(generation_session_ids);
+            ledger.official_thread_ids.extend(generation_thread_ids);
         }
     }
     Ok(ledger)
@@ -2021,23 +2042,41 @@ base_url = "https://proxy.example/v1"
             codex_dir_key
         ));
 
-        // 无 meta 的早期代际：宽容接受（与 restore 的账本口径一致）
-        fs::create_dir_all(ledger_parent.join("20260612_020202")).expect("create legacy gen");
+        // 无 meta 的早期代际：宽容接受（与 restore 的账本口径一致），
+        // 但必须确实包含历史备份文件。
+        let legacy = ledger_parent.join("20260612_020202");
+        fs::create_dir_all(legacy.join("jsonl")).expect("create legacy gen");
+        fs::write(legacy.join("jsonl/session.jsonl"), "backup").expect("write legacy backup");
         assert!(has_official_history_unify_backup_for_dir(
             &ledger_parent,
             codex_dir_key
         ));
 
         // 精确匹配当前目录的代际
-        fs::remove_dir_all(ledger_parent.join("20260612_020202")).expect("remove legacy gen");
+        fs::remove_dir_all(&legacy).expect("remove legacy gen");
         let matched = ledger_parent.join("20260612_030303");
-        fs::create_dir_all(&matched).expect("create matched gen");
+        fs::create_dir_all(matched.join("jsonl")).expect("create matched gen");
         fs::write(
             matched.join("meta.json"),
             format!("{{\n  \"codexConfigDir\": \"{codex_dir_key}\"\n}}"),
         )
         .expect("write matched meta");
+        fs::write(matched.join("jsonl/session.jsonl"), "backup").expect("write matched backup");
         assert!(has_official_history_unify_backup_for_dir(
+            &ledger_parent,
+            codex_dir_key
+        ));
+
+        // 只有 meta.json 的空代际不能被当作可恢复备份。
+        let metadata_only = ledger_parent.join("20260612_040404");
+        fs::create_dir_all(&metadata_only).expect("create metadata-only generation");
+        fs::write(
+            metadata_only.join("meta.json"),
+            format!("{{\n  \"codexConfigDir\": \"{codex_dir_key}\"\n}}"),
+        )
+        .expect("write metadata-only meta");
+        fs::remove_dir_all(matched).expect("remove matched generation");
+        assert!(!has_official_history_unify_backup_for_dir(
             &ledger_parent,
             codex_dir_key
         ));
