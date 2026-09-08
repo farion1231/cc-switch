@@ -313,7 +313,7 @@ pub fn ensure_grokbuild_official_provider(state: State<'_, AppState>) -> Result<
         .map_err(|e| e.to_string())
 }
 
-fn claude_provider_models_are_claude_safe(provider: &Provider) -> bool {
+pub(crate) fn claude_provider_models_are_claude_safe(provider: &Provider) -> bool {
     let Some(env) = provider
         .settings_config
         .get("env")
