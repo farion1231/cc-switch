@@ -59,6 +59,14 @@ const DEEPSEEK_THINKING_COMPAT = {
   thinkingFormat: "deepseek",
 } as const;
 
+// 1823/132248: thinking.type defaults to "enabled"; disabling requires an explicit
+// {"type":"disabled"}. The same doc says reasoning_content need not be echoed back
+// on multi-turn, so we don't reuse DEEPSEEK_THINKING_COMPAT wholesale.
+const TENCENT_DEEPSEEK_THINKING_COMPAT = {
+  ...OPENAI_COMPLETIONS_COMPAT,
+  thinkingFormat: "deepseek",
+} as const;
+
 const XIAOMI_THINKING_COMPAT = {
   requiresReasoningContentOnAssistantMessages: true,
   thinkingFormat: "deepseek",
@@ -493,6 +501,35 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "teamorouter",
   },
   {
+    name: "PPIO",
+    providerKey: "cc-switch-ppio",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      name: "PPIO",
+      baseUrl: "https://api.ppio.com/openai/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek/deepseek-v4-flash-0731",
+            name: "Deepseek V4 Flash 0731",
+            contextWindow: 1_048_576,
+            maxTokens: 393_216,
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...DEEPSEEK_THINKING_COMPAT },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
+  },
+  {
     name: "ClaudeCN",
     providerKey: "cc-switch-claude-cn",
     websiteUrl: "https://claudecn.top",
@@ -679,6 +716,33 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     partnerPromotionKey: "sssaicode",
     icon: "sssaicode",
     iconColor: "#000000",
+  },
+  {
+    name: "SoleAPI",
+    providerKey: "cc-switch-sole-api",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      name: "SoleAPI",
+      baseUrl: "https://soleapi.com",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5", {
+          id: "claude-opus-5",
+        }),
+        piModel("anthropic/claude-sonnet-5", {
+          id: "claude-sonnet-5",
+        }),
+        piModel("anthropic/claude-haiku-4.5-20251001", {
+          id: "claude-haiku-4-5-20251001",
+        }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
   },
   {
     name: "Micu",
@@ -1581,6 +1645,474 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "cloud_provider",
     icon: "aws",
     iconColor: "#FF9900",
+  },
+  // ===== 腾讯云 Token Plan（订阅套餐，产品线 1823/1300）=====
+  // 与 claude/codex/opencode/hermes/openclaw 六 app 的腾讯预设同源：
+  // 个人版国内走 api.lkeap.cloud.tencent.com/plan，其余走 tencentmaas.com/plan
+  // 域族；两站 Key 不互通，双地域候选（国内→新加坡、国际→广州）仅在企业
+  // 套餐存在。Pi 预设只携带默认地域 baseUrl（PiProviderPreset 无
+  // endpointCandidates 字段），需要第二地域的用户在 UI 中手动改 baseUrl。
+  {
+    name: "Tencent Token Plan",
+    providerKey: "cc-switch-tencent-token-plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    settingsConfig: {
+      name: "Tencent Token Plan",
+      baseUrl: "https://api.lkeap.cloud.tencent.com/plan/v3",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("tencent/tokenplan-auto", { id: "tc-code-latest" }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
+        piModel("zai/glm-5", { id: "glm-5" }),
+        piModel("zai/glm-5.1", { id: "glm-5.1" }),
+        piModel("zai/glm-5.2", { id: "glm-5.2" }),
+        piModel("tencent/hy3", { id: "hy3" }),
+        piModel("tencent/hy3-preview", { id: "hy3-preview" }),
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#00A4FF",
+  },
+  {
+    name: "Tencent Token Plan (Intl)",
+    providerKey: "cc-switch-tencent-token-plan-intl",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      name: "Tencent Token Plan (Intl)",
+      baseUrl: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("tencent/tokenplan-auto", { id: "auto" }),
+        piModel("zai/glm-5.2", { id: "glm-5.2" }),
+        piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        piModel("minimax/minimax-m3", { id: "minimax-m3" }),
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#00A4FF",
+  },
+  {
+    name: "Tencent Token Plan Enterprise Pro",
+    providerKey: "cc-switch-tencent-token-plan-enterprise-pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "Tencent Token Plan Enterprise Pro",
+      baseUrl: "https://tokenhub.tencentmaas.com/plan/v3",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("tencent/tokenplan-auto", { id: "auto" }),
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("zai/glm-5.2", { id: "glm-5.2" }),
+        piModel("zai/glm-5", { id: "glm-5" }),
+        piModel("zai/glm-5.1", { id: "glm-5.1" }),
+        piModel("zai/glm-5-turbo", { id: "glm-5-turbo" }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
+        piModel("moonshotai/kimi-k2.7-code-highspeed", {
+          id: "kimi-k2.7-code-highspeed",
+          thinkingProfile: "offUnsupported",
+        }),
+        piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
+        piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
+        piModel("minimax/minimax-m3", { id: "minimax-m3" }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-0731",
+            name: "DeepSeek V4 Flash 0731 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-0813",
+            name: "DeepSeek V4 Pro 0813 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#00A4FF",
+  },
+  {
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    providerKey: "cc-switch-tencent-token-plan-enterprise-pro-intl",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "Tencent Token Plan Enterprise Pro (Intl)",
+      baseUrl: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("tencent/tokenplan-auto", { id: "auto" }),
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("zai/glm-5.2", { id: "glm-5.2" }),
+        piModel("minimax/minimax-m3", { id: "minimax-m3" }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
+        piModel("moonshotai/kimi-k2.7-code-highspeed", {
+          id: "kimi-k2.7-code-highspeed",
+          thinkingProfile: "offUnsupported",
+        }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-0731",
+            name: "DeepSeek V4 Flash 0731 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-0813",
+            name: "DeepSeek V4 Pro 0813 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#00A4FF",
+  },
+  {
+    name: "Tencent Token Plan Enterprise Lite",
+    providerKey: "cc-switch-tencent-token-plan-enterprise-lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "Tencent Token Plan Enterprise Lite",
+      baseUrl: "https://tokenhub.tencentmaas.com/plan/v3",
+      api: "openai-completions",
+      apiKey: "",
+      models: [piModel("tencent/tokenplan-auto", { id: "auto" })],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#00A4FF",
+  },
+  {
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    providerKey: "cc-switch-tencent-token-plan-enterprise-lite-intl",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      name: "Tencent Token Plan Enterprise Lite (Intl)",
+      baseUrl: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      api: "openai-completions",
+      apiKey: "",
+      models: [piModel("tencent/tokenplan-auto", { id: "auto" })],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#00A4FF",
+  },
+  // ===== 腾讯云 TokenHub（按量付费 API 市场，产品线 1823/1300，/v1 端点）=====
+  // 与 Token Plan 订阅线（/plan 端点）是两条独立产品线：Key 不互通、端点不同。
+  // 模型清单取自官方「语言模型」列表（国内 130051 / 国际 78934），只收录支持
+  // Function Calling 的通用语言模型；翻译（hy-mt2）、角色扮演（hy-role）等
+  // 专用模型不收录（无法用于编码 agent）。
+  {
+    name: "Tencent TokenHub",
+    providerKey: "cc-switch-tencent-tokenhub",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    settingsConfig: {
+      name: "Tencent TokenHub",
+      baseUrl: "https://tokenhub.tencentmaas.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("tencent/hy4-preview", { id: "hy4-preview" }),
+        piModel("tencent/hy3", { id: "hy3" }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash-vision-exp", {
+            id: "deepseek/deepseek-v4-flash-vision-exp",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-0731",
+            name: "DeepSeek V4 Flash 0731 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-0813",
+            name: "DeepSeek V4 Pro 0813 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("zai/glm-5.2", { id: "glm-5.2" }),
+        piModel("zai/glm-5.1", { id: "glm-5.1" }),
+        piModel("zai/glm-5v-turbo", { id: "glm-5v-turbo" }),
+        piModel("zai/glm-5-turbo", { id: "glm-5-turbo" }),
+        piModel("zai/glm-5", { id: "glm-5" }),
+        piModel("moonshotai/kimi-k2.7-code-highspeed", {
+          id: "kimi-k2.7-code-highspeed",
+          thinkingProfile: "offUnsupported",
+        }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
+        piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
+        piModel("moonshotai/kimi-k2.5", { id: "kimi-k2.5" }),
+        piModel("minimax/minimax-m3", { id: "minimax-m3" }),
+        piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
+        piModel("xiaomi/mimo-v2.5-pro", { id: "mimo-v2.5-pro" }),
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#00A4FF",
+  },
+  {
+    name: "Tencent TokenHub (Intl)",
+    providerKey: "cc-switch-tencent-tokenhub-intl",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/apikey",
+    settingsConfig: {
+      name: "Tencent TokenHub (Intl)",
+      baseUrl: "https://tokenhub-intl.tencentcloudmaas.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("tencent/hy4-preview", { id: "hy4-preview" }),
+        piModel("tencent/hy3", { id: "hy3" }),
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-202605",
+            name: "DeepSeek V4 Flash Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-202606",
+            name: "DeepSeek V4 Pro Official",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash-vision-exp", {
+            id: "deepseek/deepseek-v4-flash-vision-exp",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash-0731",
+            name: "DeepSeek V4 Flash 0731 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro-0813",
+            name: "DeepSeek V4 Pro 0813 GA",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v3.2", {
+            id: "deepseek-v3.2",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...TENCENT_DEEPSEEK_THINKING_COMPAT },
+        },
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
+        piModel("zai/glm-5.2", { id: "glm-5.2" }),
+        piModel("zai/glm-5", { id: "glm-5" }),
+        piModel("zai/glm-5-turbo", { id: "glm-5-turbo" }),
+        piModel("zai/glm-5v-turbo", { id: "glm-5v-turbo" }),
+        piModel("zai/glm-5.1", { id: "glm-5.1" }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        piModel("moonshotai/kimi-k2.7-code-highspeed", {
+          id: "kimi-k2.7-code-highspeed",
+          thinkingProfile: "offUnsupported",
+        }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
+        piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
+        piModel("moonshotai/kimi-k2.5", { id: "kimi-k2.5" }),
+        piModel("minimax/minimax-m3", { id: "minimax-m3" }),
+        piModel("minimax/minimax-m2.7", { id: "minimax-m2.7" }),
+        piModel("xiaomi/mimo-v2.5-pro", { id: "mimo-v2.5-pro" }),
+      ],
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#00A4FF",
   },
 ];
 

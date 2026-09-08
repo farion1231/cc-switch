@@ -172,6 +172,11 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
+<td width="180"><a href="https://soleapi.com/r/ccswitch"><img src="assets/partners/logos/soleapi-banner.png" alt="SoleAPI" width="150"></a></td>
+<td>Danke an SoleAPI für die Unterstützung dieses Projekts! SoleAPI ist ein KI-Modell-Gateway für Entwickler und Unternehmen: Ein API-Key gibt Zugriff auf über 30 führende Modelle, darunter Claude, GPT und Gemini. Es ist nativ mit den OpenAI- und Anthropic-Protokollen kompatibel, sodass Claude Code, Codex, Cursor und bestehende SDKs allein durch Austausch der Base URL nahtlos angebunden werden. Anfragen werden in Echtzeit nach Latenz und Upstream-Zustand intelligent geroutet, bei Störungen erfolgt innerhalb von Millisekunden ein automatischer Wechsel auf Ersatzkanäle; die Serviceverfügbarkeit liegt bei 99,99 %, technischer Support ist rund um die Uhr (7×24) erreichbar. Alle Aufrufe landen auf einer einzigen Rechnung, mit transparenter Aufschlüsselung von Tokens und Kosten pro Anfrage. Wer sich über den <a href="https://soleapi.com/r/ccswitch">exklusiven Link</a> dieses Projekts registriert, erhält ein kostenloses Testguthaben, und wer Freunde einlädt, die aufladen, erhält fortlaufend Cashback!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.micuapi.ai/register?aff=aOYQ"><img src="assets/partners/logos/mikubanner.svg" alt="Micu" width="150"></a></td>
 <td>Danke an Micu API für die Unterstützung dieses Projekts! Micu API ist ein globaler LLM-Relay-Anbieter, der sich der Bereitstellung des besten Preis-Leistungs-Verhältnisses bei hoher Stabilität widmet. Gestützt auf ein eingetragenes Unternehmen als Kernabsicherung wird jedes Risiko einer Diensteinstellung ausgeschlossen, mit schneller offizieller Rechnungsstellung! Wir stehen für „kostenloses Ausprobieren": Aufladungen sind schon ab ¥1 ohne Mindestbetrag möglich, und gebührenfreie Rückerstattungen sind jederzeit möglich! Micu API bietet ein exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.micuapi.ai/register?aff=aOYQ">diesen Link</a> und geben Sie beim Aufladen den Gutscheincode „ccswitch" ein, um <strong>10 % Rabatt</strong> zu erhalten!</td>
 </tr>
@@ -562,7 +567,8 @@ pnpm test:unit --coverage
 │   ├── lib/
 │   │   ├── api/                # Tauri-API-Wrapper (typsicher)
 │   │   └── query/              # TanStack-Query-Konfiguration
-│   ├── locales/                # Übersetzungen (zh/zh-TW/en/ja)
+│   ├── i18n/                   # Internationalisierung
+│   │   └── locales/            # Übersetzungen (zh/zh-TW/en/ja)
 │   ├── config/                 # Presets (providers/mcp)
 │   └── types/                  # TypeScript-Definitionen
 ├── src-tauri/                  # Backend (Rust)

@@ -135,6 +135,24 @@ export const piModelCatalog = {
       maxTokens: 384_000,
     },
   },
+  "deepseek/deepseek-v3.2": {
+    capabilities: {
+      name: "DeepSeek V3.2",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 131_072,
+      maxTokens: 32_768,
+    },
+  },
+  "deepseek/deepseek-v4-flash-vision-exp": {
+    capabilities: {
+      name: "DeepSeek V4 Flash Vision Exp",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_000_000,
+      maxTokens: 384_000,
+    },
+  },
   "google/gemini-2.5-flash": {
     capabilities: {
       name: "Gemini 2.5 Flash",
@@ -246,6 +264,15 @@ export const piModelCatalog = {
   "moonshotai/kimi-k2.7-code": {
     capabilities: {
       name: "Kimi K2.7 Code",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 262_144,
+      maxTokens: 262_144,
+    },
+  },
+  "moonshotai/kimi-k2.7-code-highspeed": {
+    capabilities: {
+      name: "Kimi K2.7 Code HighSpeed",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 262_144,
@@ -532,6 +559,15 @@ export const piModelCatalog = {
       maxTokens: 131_072,
     },
   },
+  "zai/glm-5": {
+    capabilities: {
+      name: "GLM-5",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 200_000,
+      maxTokens: 131_072,
+    },
+  },
   "zai/glm-5.1": {
     capabilities: {
       name: "GLM-5.1",
@@ -548,6 +584,78 @@ export const piModelCatalog = {
       input: ["text"],
       contextWindow: 1_000_000,
       maxTokens: 131_072,
+    },
+  },
+  "zai/glm-5.3": {
+    capabilities: {
+      name: "GLM-5.3",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
+  "zai/glm-5.3-flash": {
+    capabilities: {
+      name: "GLM-5.3 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
+  "zai/glm-5-turbo": {
+    capabilities: {
+      name: "GLM-5 Turbo",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 200_000,
+      maxTokens: 131_072,
+    },
+  },
+  "zai/glm-5v-turbo": {
+    capabilities: {
+      name: "GLM-5V Turbo",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 200_000,
+      maxTokens: 131_072,
+    },
+  },
+  "tencent/hy4-preview": {
+    capabilities: {
+      name: "Hy4 Preview",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1_048_576,
+      maxTokens: 65_536,
+    },
+  },
+  "tencent/hy3": {
+    capabilities: {
+      name: "Hy3",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 256_000,
+      maxTokens: 128_000,
+    },
+  },
+  "tencent/hy3-preview": {
+    capabilities: {
+      name: "Hy3 Preview",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 256_000,
+      maxTokens: 128_000,
+    },
+  },
+  "tencent/tokenplan-auto": {
+    capabilities: {
+      name: "Auto",
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 196_608,
+      maxTokens: 32_768,
     },
   },
 } as const satisfies Record<string, PiModelCatalogEntry>;

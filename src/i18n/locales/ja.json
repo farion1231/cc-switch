@@ -42,7 +42,8 @@
     "deleting": "削除中...",
     "auto": "自動",
     "enabled": "有効",
-    "notSet": "未設定"
+    "notSet": "未設定",
+    "collapse": "折りたたむ"
   },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
@@ -982,7 +983,8 @@
       "effectiveApiRequired": "モデル {{id}} には、直接またはプロバイダーから継承した API が必要です",
       "effectiveBaseUrlRequired": "モデル {{id}} には、直接またはプロバイダーから継承したベース URL が必要です",
       "duplicateModel": "モデル ID {{id}} が重複しています",
-      "modelRequired": "モデルを 1 つ以上追加してください"
+      "modelRequired": "モデルを 1 つ以上追加してください",
+      "providerKeyDuplicate": "このプロバイダーキーは既に存在します"
     },
     "current": {
       "readFailed": "Pi のプロバイダー設定を読み込めません",
@@ -1241,7 +1243,8 @@
       "teamorouter": "TeamoRouter はエンタープライズグレードの Agentic LLM ゲートウェイで、料金は最大 90% オフ。CC Switch ユーザーに特別特典を提供しています：このリンクから新規登録すると初回チャージが 10% オフ！",
       "ppio": "PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、API キー 1 つで主要なオープンソースモデルをすべて利用できます。このリンクから登録し実名認証を完了すると、¥10 のクーポンがもらえます。",
       "xycai": "XycAi はエンタープライズグレードのトークンファクトリー：200+ のグローバルモデルにワンクリック接続、SLA 自動補償、異常キャッシュは 100% 返金！",
-      "9527code": "9527 CODE はエンタープライズ級のフルスペック AI 中継プラットフォームで、Claude Code や Codex などの主要モデルに高速・安定した中継サービスを提供します。1 年間の継続運営、サービス安定性 99.9%、7×24 時間の有人技術サポート。新規ユーザーはサポートへのご連絡で体験クレジットを進呈、紹介キャッシュバックは上限なし！"
+      "9527code": "9527 CODE はエンタープライズ級のフルスペック AI 中継プラットフォームで、Claude Code や Codex などの主要モデルに高速・安定した中継サービスを提供します。1 年間の継続運営、サービス安定性 99.9%、7×24 時間の有人技術サポート。新規ユーザーはサポートへのご連絡で体験クレジットを進呈、紹介キャッシュバックは上限なし！",
+      "soleapi": "SoleAPI は開発者と企業向けの AI モデルゲートウェイ。API キー 1 つで Claude・GPT・Gemini など 30 以上の主要モデルを利用でき、OpenAI / Anthropic プロトコルにネイティブ対応。リアルタイムのスマートルーティングとミリ秒単位の自動切替で可用性 99.99%、24 時間 365 日サポート。専用リンクから登録すると無料のお試しクレジット、友人招待で継続的なキャッシュバック！"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1426,6 +1429,7 @@
     "reauthLogin": "再ログイン",
     "reauthSelectHint": "このアカウントは管理バインドを有効にするため再ログインが必要です。",
     "reauthNow": "今すぐ再ログイン",
+    "duplicateAccount": "この ChatGPT アカウントは追加済みです。既存のアカウントを使用してください。",
     "loggedInAccounts": "ログイン済みアカウント",
     "defaultAccount": "デフォルト",
     "selected": "選択中",
@@ -2204,6 +2208,7 @@
     }
   },
   "profiles": {
+    "switcherAriaLabel": "プロジェクト：{{name}}",
     "switcherTooltip": {
       "claude": "プロジェクト：Claude Code のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え",
       "claude-desktop": "プロジェクト：Claude Desktop のプロバイダーをワンクリックで切り替え",
@@ -2892,6 +2897,7 @@
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "takeover": {
+      "ariaLabel": "{{appLabel}} ローカルルーティング",
       "hint": "ルーティングするアプリを選択します。有効にすると、そのアプリのリクエストはローカルルーティング経由で転送されます",
       "enabled": "{{app}} ルーティング有効",
       "disabled": "{{app}} ルーティング無効",

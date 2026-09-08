@@ -52,7 +52,7 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 腾讯 Token Plan（订阅线 /plan 端点）档位全部真 Key 实测（2026-08-31）：
     // glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 直接 400，
     // 错误信息即枚举来源）；kimi-k2.7-code(-highspeed) 仅接受
-    // thinking:enabled；minimax-m2.5/m2.7 与国内 auto 关思考被静默忽略
+    // thinking:enabled；minimax-m2.7 与国内 auto 关思考被静默忽略
     //（选 none 是假关）→ 只列 high；其余模型 thinking 开关真实生效 → 两态
     ["Tencent Token Plan", "tc-code-latest", ["none", "high"]],
     ["Tencent Token Plan", "hy3", ["none", "high"]],
@@ -93,10 +93,15 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Xiaomi MiMo", "mimo-v2.5", ["none", "high"]],
     ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5-pro", ["none", "high"]],
     ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5", ["none", "high"]],
-    // GLM 走 Chat 路由（supportsEffort:false）：none=真实关思考开关，其余档
-    // 等价开思考；只暴露两态，顺带补上模板四档里缺失的 none（关思考入口）
-    ["Zhipu GLM", "glm-5.2", ["none", "high"]],
-    ["Zhipu GLM en", "glm-5.2", ["none", "high"]],
+    // 智谱官方 Codex 接入页自带 models.json（docs.bigmodel.cn/cn/coding-plan/tool/
+    // codex、docs.z.ai/devpack/tool/codex，2026-09-04 核对）：glm-5.3 档位
+    // low/high/max、默认 max（≠ 后端回落的模板默认 high，故显式声明）；
+    // glm-5-turbo 官方档位为空、默认 max——cc-switch 表达不了空档位（会回落
+    // 到模板 none/high，而 none 在原生直连下没有转换层兜底、会原样发给严格
+    // 网关），按官方默认收成单档 max
+    ["Zhipu GLM", "glm-5.3", ["low", "high", "max"], "max"],
+    ["Zhipu GLM", "glm-5-turbo", ["max"]],
+    ["Zhipu GLM en", "glm-5.3", ["low", "high", "max"], "max"],
     // SiliconFlow .com 的 M3：平台级 enable_thinking 布尔开关（后端按平台
     // 推断兜底），M3 官方可关思考 → 两态
     ["SiliconFlow en", "MiniMaxAI/MiniMax-M3", ["none", "high"]],
