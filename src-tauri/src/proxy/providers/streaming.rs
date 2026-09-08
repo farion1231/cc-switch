@@ -266,8 +266,16 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             has_sent_message_start = true;
                                         }
 
-                                        // 处理 reasoning（thinking）
-                                        if let Some(reasoning) = &choice.delta.reasoning {
+                                        // 处理 reasoning（thinking）。DeepSeek/Qwen 系上游可能每个 chunk
+                                        // 都带空串占位的 reasoning_content，空串必须跳过，否则会反复关闭
+                                        // text block 并新开空 thinking block；与下方 content 分支及非流式
+                                        // transform.rs 的 is_empty 过滤保持一致。
+                                        if let Some(reasoning) = choice
+                                            .delta
+                                            .reasoning
+                                            .as_ref()
+                                            .filter(|s| !s.is_empty())
+                                        {
                                             if current_non_tool_block_type != Some("thinking") {
                                                 if let Some(index) = current_non_tool_block_index.take() {
                                                     let event = json!({
@@ -1244,5 +1252,61 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_skips_empty_reasoning_content_placeholder_chunks() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_empty_reasoning\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"\",\"content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_empty_reasoning\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"reasoning_content\":\"think a\",\"content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_empty_reasoning\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"reasoning_content\":\"think b\",\"content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_empty_reasoning\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"reasoning_content\":\"\",\"content\":\"ans\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_empty_reasoning\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"reasoning_content\":\"\",\"content\":\"wer\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_empty_reasoning\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":4}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        let block_starts: Vec<(Option<u64>, &str)> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .map(|event| {
+                (
+                    event.get("index").and_then(|v| v.as_u64()),
+                    event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            block_starts,
+            vec![(Some(0), "thinking"), (Some(1), "text")],
+            "empty reasoning_content placeholder chunks must not churn content blocks"
+        );
+
+        let collect_deltas = |delta_type: &str, field: &str| -> String {
+            events
+                .iter()
+                .filter(|event| {
+                    event_type(event) == Some("content_block_delta")
+                        && event.pointer("/delta/type").and_then(|v| v.as_str()) == Some(delta_type)
+                })
+                .map(|event| {
+                    event
+                        .pointer(field)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect()
+        };
+        assert_eq!(
+            collect_deltas("thinking_delta", "/delta/thinking"),
+            "think athink b"
+        );
+        assert_eq!(collect_deltas("text_delta", "/delta/text"), "answer");
     }
 }
