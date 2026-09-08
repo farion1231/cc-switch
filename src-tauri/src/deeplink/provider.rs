@@ -389,6 +389,93 @@ fn extract_claude_config_env(
     value.get("env").and_then(|v| v.as_object()).cloned()
 }
 
+// Deep-link configuration is untrusted. Only these documented Codex values
+// are allowed to influence the generated provider configuration.
+const CODEX_MAX_RETRIES: u64 = 100;
+const CODEX_MIN_STREAM_IDLE_TIMEOUT_MS: u64 = 60_000;
+const CODEX_MAX_STREAM_IDLE_TIMEOUT_MS: u64 = 300_000;
+const CODEX_REASONING_EFFORTS: &[&str] = &["minimal", "low", "medium", "high", "xhigh"];
+
+#[derive(Default)]
+struct CodexInlineOptions {
+    reasoning_effort: Option<String>,
+    supports_websockets: Option<bool>,
+    request_max_retries: Option<u64>,
+    stream_max_retries: Option<u64>,
+    stream_idle_timeout_ms: Option<u64>,
+}
+
+fn decode_codex_inline_config(request: &DeepLinkImportRequest) -> Option<serde_json::Value> {
+    let config_b64 = request.config.as_ref()?;
+    let decoded = decode_base64_param("config", config_b64).ok()?;
+    let decoded = std::str::from_utf8(&decoded).ok()?;
+    match request.config_format.as_deref().unwrap_or("json") {
+        "json" => serde_json::from_str(decoded).ok(),
+        "toml" => toml::from_str::<toml::Value>(decoded)
+            .ok()
+            .and_then(|value| serde_json::to_value(value).ok()),
+        _ => None,
+    }
+}
+
+fn bounded_toml_u64(value: Option<&toml::Value>, minimum: u64, maximum: u64) -> Option<u64> {
+    let value = u64::try_from(value?.as_integer()?).ok()?;
+    (minimum..=maximum).contains(&value).then_some(value)
+}
+
+fn codex_inline_options(request: &DeepLinkImportRequest) -> CodexInlineOptions {
+    let Some(config_value) = decode_codex_inline_config(request) else {
+        return CodexInlineOptions::default();
+    };
+    let Some(config_text) = config_value.get("config").and_then(|value| value.as_str()) else {
+        return CodexInlineOptions::default();
+    };
+    let Ok(config) = toml::from_str::<toml::Value>(config_text) else {
+        return CodexInlineOptions::default();
+    };
+
+    let reasoning_effort = config
+        .get("model_reasoning_effort")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| CODEX_REASONING_EFFORTS.contains(value))
+        .map(str::to_string);
+
+    // Tuning values are accepted only from the explicitly selected custom
+    // provider table. Never guess a table or allow reserved built-in IDs.
+    let provider_id = config
+        .get("model_provider")
+        .and_then(|value| value.as_str())
+        .filter(|value| crate::codex_config::is_custom_codex_model_provider_id(value));
+    let provider = provider_id.and_then(|provider_id| {
+        config
+            .get("model_providers")
+            .and_then(|providers| providers.get(provider_id))
+    });
+
+    CodexInlineOptions {
+        reasoning_effort,
+        supports_websockets: provider
+            .and_then(|value| value.get("supports_websockets"))
+            .and_then(|value| value.as_bool()),
+        request_max_retries: bounded_toml_u64(
+            provider.and_then(|value| value.get("request_max_retries")),
+            0,
+            CODEX_MAX_RETRIES,
+        ),
+        stream_max_retries: bounded_toml_u64(
+            provider.and_then(|value| value.get("stream_max_retries")),
+            0,
+            CODEX_MAX_RETRIES,
+        ),
+        stream_idle_timeout_ms: bounded_toml_u64(
+            provider.and_then(|value| value.get("stream_idle_timeout_ms")),
+            CODEX_MIN_STREAM_IDLE_TIMEOUT_MS,
+            CODEX_MAX_STREAM_IDLE_TIMEOUT_MS,
+        ),
+    }
+}
+
 /// Build Codex settings configuration
 fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let provider_display_name = request
@@ -410,8 +497,11 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let model_name = request
         .model
         .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .unwrap_or("gpt-5-codex")
         .to_string();
+    let inline_options = codex_inline_options(request);
 
     // Endpoint: normalize trailing slashes (use primary endpoint only)
     let endpoint = get_primary_endpoint(request)
@@ -422,12 +512,15 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let provider_display_name = toml_edit::Value::from(provider_display_name.as_str()).to_string();
     let model_name = toml_edit::Value::from(model_name.as_str()).to_string();
     let endpoint = toml_edit::Value::from(endpoint.as_str()).to_string();
+    let reasoning_effort =
+        toml_edit::Value::from(inline_options.reasoning_effort.as_deref().unwrap_or("high"))
+            .to_string();
 
     // Build config.toml content
-    let config_toml = format!(
+    let mut config_toml = format!(
         r#"model_provider = "custom"
 model = {model_name}
-model_reasoning_effort = "high"
+model_reasoning_effort = {reasoning_effort}
 disable_response_storage = true
 
 [model_providers.custom]
@@ -437,6 +530,23 @@ wire_api = "responses"
 requires_openai_auth = true
 "#
     );
+
+    if let Some(value) = inline_options.supports_websockets {
+        config_toml.push_str(&format!("supports_websockets = {value}\n"));
+    }
+
+    for (name, value) in [
+        ("request_max_retries", inline_options.request_max_retries),
+        ("stream_max_retries", inline_options.stream_max_retries),
+        (
+            "stream_idle_timeout_ms",
+            inline_options.stream_idle_timeout_ms,
+        ),
+    ] {
+        if let Some(value) = value {
+            config_toml.push_str(&format!("{name} = {value}\n"));
+        }
+    }
 
     json!({
         "auth": {
@@ -1165,6 +1275,145 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
         );
+        assert!(custom_provider.get("supports_websockets").is_none());
+    }
+
+    fn codex_request_with_inline_config(config: &str) -> DeepLinkImportRequest {
+        use base64::prelude::*;
+
+        let inline = serde_json::json!({ "config": config }).to_string();
+        DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Tiered relay".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("gpt-5.6-sol".to_string()),
+            config: Some(BASE64_URL_SAFE_NO_PAD.encode(inline)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn codex_deeplink_preserves_allowlisted_effort_and_transport_tuning() {
+        let request = codex_request_with_inline_config(
+            r#"model_provider = "custom"
+model_reasoning_effort = "xhigh"
+
+[model_providers.custom]
+supports_websockets = false
+request_max_retries = 1
+stream_max_retries = 0
+stream_idle_timeout_ms = 300000
+http_headers = { "X-Injected" = "no" }
+experimental_bearer_token = "must-not-survive"
+"#,
+        );
+
+        let settings = build_codex_settings(&request);
+        let parsed: toml::Value =
+            toml::from_str(settings["config"].as_str().unwrap()).expect("valid Codex config");
+        assert_eq!(
+            parsed
+                .get("model_reasoning_effort")
+                .and_then(|value| value.as_str()),
+            Some("xhigh")
+        );
+        let provider = &parsed["model_providers"]["custom"];
+        assert_eq!(
+            provider
+                .get("request_max_retries")
+                .and_then(|value| value.as_integer()),
+            Some(1)
+        );
+        assert_eq!(
+            provider
+                .get("stream_max_retries")
+                .and_then(|value| value.as_integer()),
+            Some(0)
+        );
+        assert_eq!(
+            provider
+                .get("stream_idle_timeout_ms")
+                .and_then(|value| value.as_integer()),
+            Some(300_000)
+        );
+        assert_eq!(
+            provider
+                .get("supports_websockets")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert!(provider.get("http_headers").is_none());
+        assert!(provider.get("experimental_bearer_token").is_none());
+    }
+
+    #[test]
+    fn codex_deeplink_drops_out_of_range_and_unknown_inline_values() {
+        let request = codex_request_with_inline_config(
+            r#"model_provider = "custom"
+model_reasoning_effort = "unsupported"
+
+[model_providers.custom]
+request_max_retries = 101
+stream_max_retries = 101
+stream_idle_timeout_ms = 59999
+env_key = "MUST_NOT_SURVIVE"
+"#,
+        );
+
+        let settings = build_codex_settings(&request);
+        let parsed: toml::Value = toml::from_str(settings["config"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            parsed
+                .get("model_reasoning_effort")
+                .and_then(|value| value.as_str()),
+            Some("high")
+        );
+        let provider = &parsed["model_providers"]["custom"];
+        assert!(provider.get("request_max_retries").is_none());
+        assert!(provider.get("stream_max_retries").is_none());
+        assert!(provider.get("stream_idle_timeout_ms").is_none());
+        assert!(provider.get("env_key").is_none());
+    }
+
+    #[test]
+    fn codex_deeplink_does_not_guess_an_unselected_provider_table() {
+        let request = codex_request_with_inline_config(
+            r#"[model_providers.unselected]
+request_max_retries = 0
+stream_max_retries = 0
+stream_idle_timeout_ms = 60000
+"#,
+        );
+
+        let settings = build_codex_settings(&request);
+        let parsed: toml::Value = toml::from_str(settings["config"].as_str().unwrap()).unwrap();
+        let provider = &parsed["model_providers"]["custom"];
+        assert!(provider.get("request_max_retries").is_none());
+        assert!(provider.get("stream_max_retries").is_none());
+        assert!(provider.get("stream_idle_timeout_ms").is_none());
+    }
+
+    #[test]
+    fn codex_deeplink_does_not_copy_tuning_from_a_reserved_provider_id() {
+        let request = codex_request_with_inline_config(
+            r#"model_provider = "openai"
+
+[model_providers.openai]
+request_max_retries = 0
+stream_max_retries = 0
+stream_idle_timeout_ms = 60000
+"#,
+        );
+
+        let settings = build_codex_settings(&request);
+        let parsed: toml::Value = toml::from_str(settings["config"].as_str().unwrap()).unwrap();
+        let provider = &parsed["model_providers"]["custom"];
+        assert!(provider.get("request_max_retries").is_none());
+        assert!(provider.get("stream_max_retries").is_none());
+        assert!(provider.get("stream_idle_timeout_ms").is_none());
     }
 
     #[test]
