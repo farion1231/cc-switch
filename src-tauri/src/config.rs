@@ -333,6 +333,52 @@ pub fn atomic_write_private(path: &Path, data: &[u8]) -> Result<(), AppError> {
     atomic_write_with_unix_mode(path, data, Some(0o600))
 }
 
+/// Resolve symlink target so atomic writes update the real file and preserve the link.
+/// Also resolves dangling symlinks where the target file does not yet exist.
+fn resolve_symlink_target(path: &Path) -> PathBuf {
+    let mut current = path.to_path_buf();
+    for _ in 0..16 {
+        match fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => match fs::read_link(&current) {
+                Ok(target) => {
+                    current = if target.is_absolute() {
+                        target
+                    } else {
+                        current
+                            .parent()
+                            .map(|parent| parent.join(&target))
+                            .unwrap_or(target)
+                    };
+                }
+                Err(_) => break,
+            },
+            _ => break,
+        }
+    }
+
+    match fs::canonicalize(&current) {
+        Ok(canonical) => normalize_windows_verbatim_path(canonical),
+        Err(_) => current,
+    }
+}
+
+#[cfg(windows)]
+fn normalize_windows_verbatim_path(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{stripped}"));
+    }
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    path
+}
+
+#[cfg(not(windows))]
+fn normalize_windows_verbatim_path(path: PathBuf) -> PathBuf {
+    path
+}
+
 fn atomic_write_with_unix_mode(
     path: &Path,
     data: &[u8],
@@ -341,14 +387,16 @@ fn atomic_write_with_unix_mode(
     #[cfg(not(unix))]
     let _ = unix_mode;
 
-    if let Some(parent) = path.parent() {
+    let target_path = resolve_symlink_target(path);
+
+    if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
 
-    let parent = path
+    let parent = target_path
         .parent()
         .ok_or_else(|| AppError::Config("无效的路径".to_string()))?;
-    let file_name = path
+    let file_name = target_path
         .file_name()
         .ok_or_else(|| AppError::Config("无效的文件名".to_string()))?
         .to_string_lossy()
@@ -401,7 +449,7 @@ fn atomic_write_with_unix_mode(
                 let _ = fs::remove_file(&tmp);
                 return Err(AppError::io(&tmp, source));
             }
-        } else if let Ok(meta) = fs::metadata(path) {
+        } else if let Ok(meta) = fs::metadata(&target_path) {
             let perm = meta.permissions().mode();
             let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(perm));
         }
@@ -414,7 +462,9 @@ fn atomic_write_with_unix_mode(
             Foundation::ERROR_NOT_SUPPORTED, Storage::FileSystem::ReplaceFileW,
         };
 
-        let replaced: Vec<u16> = path
+        const ERROR_SYMLINK_NOT_SUPPORTED: u32 = 1464;
+
+        let replaced: Vec<u16> = target_path
             .as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
@@ -447,15 +497,17 @@ fn atomic_write_with_unix_mode(
 
             let replace_error = std::io::Error::last_os_error();
             // WSL UNC paths reject ReplaceFileW with ERROR_NOT_SUPPORTED (50).
+            // Symbolic links reject ReplaceFileW with ERROR_SYMLINK_NOT_SUPPORTED (1464).
             // std::fs::rename uses a different replace-existing API on Windows.
-            let replace_not_supported =
-                replace_error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32);
+            let replace_not_supported = replace_error.raw_os_error()
+                == Some(ERROR_NOT_SUPPORTED as i32)
+                || replace_error.raw_os_error() == Some(ERROR_SYMLINK_NOT_SUPPORTED as i32);
             if replace_error.kind() != std::io::ErrorKind::NotFound && !replace_not_supported {
                 last_error = Some(replace_error);
                 break;
             }
 
-            match fs::rename(&tmp, path) {
+            match fs::rename(&tmp, &target_path) {
                 Ok(()) => {
                     completed = true;
                     break;
@@ -479,7 +531,11 @@ fn atomic_write_with_unix_mode(
             let source = last_error.unwrap_or_else(std::io::Error::last_os_error);
             let _ = fs::remove_file(&tmp);
             return Err(AppError::IoContext {
-                context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
+                context: format!(
+                    "原子替换失败: {} -> {}",
+                    tmp.display(),
+                    target_path.display()
+                ),
                 source,
             });
         }
@@ -487,10 +543,14 @@ fn atomic_write_with_unix_mode(
 
     #[cfg(not(windows))]
     {
-        if let Err(source) = fs::rename(&tmp, path) {
+        if let Err(source) = fs::rename(&tmp, &target_path) {
             let _ = fs::remove_file(&tmp);
             return Err(AppError::IoContext {
-                context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
+                context: format!(
+                    "原子替换失败: {} -> {}",
+                    tmp.display(),
+                    target_path.display()
+                ),
                 source,
             });
         }
@@ -527,6 +587,63 @@ mod tests {
     fn atomic_write_replaces_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         assert_atomic_write_replaces_existing_file(dir.path());
+    }
+
+    #[test]
+    fn atomic_write_updates_symlink_target_and_preserves_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real_target.json");
+        let link = dir.path().join("symlink.json");
+
+        std::fs::write(&target, b"initial target contents").unwrap();
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+                // Windows non-admin or without developer mode enabled might return PrivilegeNotHeld.
+                return;
+            }
+        }
+
+        atomic_write(&link, b"updated target contents").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"updated target contents");
+        assert_eq!(std::fs::read(&link).unwrap(), b"updated target contents");
+
+        // Verify that `link` remains a symlink and is not converted to a regular file
+        let meta = std::fs::symlink_metadata(&link).unwrap();
+        assert!(meta.file_type().is_symlink());
+    }
+
+    #[test]
+    fn atomic_write_creates_dangling_symlink_target_and_preserves_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("sub").join("non_existent_target.json");
+        let link = dir.path().join("dangling_link.json");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+                // Windows non-admin or without developer mode enabled might return PrivilegeNotHeld.
+                return;
+            }
+        }
+
+        atomic_write(&link, b"created target contents").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"created target contents");
+        assert_eq!(std::fs::read(&link).unwrap(), b"created target contents");
+
+        let meta = std::fs::symlink_metadata(&link).unwrap();
+        assert!(meta.file_type().is_symlink());
     }
 
     #[cfg(windows)]
