@@ -1983,6 +1983,16 @@ impl RequestForwarder {
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
+        // 目标上游是否为 OpenCode Go 网关（opencode.ai）。Claude/Claude Desktop
+        // 的 /zen/go 端点 host 为 opencode.ai。按 host 而非 path 判定：这里是路由
+        // 注入，不能因同域其它路径的误判而给非 Go 网关附加会话头。
+        let is_opencode_go_upstream = url
+            .parse::<http::Uri>()
+            .ok()
+            .and_then(|u| u.host().map(str::to_owned))
+            .map(|h| h == "opencode.ai" || h.ends_with(".opencode.ai"))
+            .unwrap_or(false);
+
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
             const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
@@ -2251,6 +2261,21 @@ impl RequestForwarder {
         // 只发送客户端提供的 session_id；生成的 UUID 每次不同，反而会破坏前缀缓存。
         for (name, value) in codex_oauth_session_headers {
             ordered_headers.insert(name, value);
+        }
+
+        // OpenCode Go 网关（issue #7088）要求随对话携带稳定的 x-opencode-session
+        // 以便路由亲和与提示词缓存；Claude 客户端自己不发送该头，这里把代理已从
+        // 请求中提取的 Claude 会话 ID 原样映射过去。只映射客户端提供的 ID——
+        // 与 Codex OAuth 同理，自生成的 UUID 逐请求不同，反而不利于缓存——且
+        // 不覆盖客户端已显式携带的 x-opencode-session（如官方 opencode 客户端）。
+        if is_opencode_go_upstream && should_send_anthropic_headers {
+            if let Some(value) = maybe_opencode_session_header(
+                &self.session_id,
+                self.session_client_provided,
+                ordered_headers.contains_key("x-opencode-session"),
+            ) {
+                ordered_headers.append("x-opencode-session", value);
+            }
         }
 
         // 序列化请求体。GET/HEAD 是 idempotent/safe 方法，按 HTTP 语义不应携带 body；
@@ -3437,6 +3462,27 @@ fn rewrite_codex_standalone_full_url(
     }
 
     Ok(rewritten)
+}
+
+/// OpenCode Go 网关会话头的取值判定（issue #7088）。
+///
+/// opencode.ai/go 要求客户端随对话发送稳定的 `x-opencode-session`。Claude 客户端
+/// 自己不发送该头，本地代理把已从请求中提取的 Claude 会话 ID 原样映射过去。
+/// 仅当会话 ID 确由客户端提供时才返回：自生成的 UUID 逐请求变化，反而破坏网关的
+/// 前缀缓存（与 Codex OAuth 的考量一致）。已有客户端显式携带的头不覆盖。
+fn maybe_opencode_session_header(
+    session_id: &str,
+    client_provided: bool,
+    already_present: bool,
+) -> Option<http::HeaderValue> {
+    if !client_provided || already_present {
+        return None;
+    }
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return None;
+    }
+    http::HeaderValue::from_str(session_id).ok()
 }
 
 fn build_codex_oauth_session_headers(
@@ -5491,5 +5537,39 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    // ========== OpenCode Go 会话头（maybe_opencode_session_header）测试 ==========
+
+    #[test]
+    fn opencode_session_uses_client_provided_id() {
+        let value = maybe_opencode_session_header("conv-724f4275", true, false)
+            .expect("should inject when client provided the id");
+        assert_eq!(value.to_str().unwrap(), "conv-724f4275");
+    }
+
+    #[test]
+    fn opencode_session_skips_when_header_already_present() {
+        assert!(maybe_opencode_session_header("conv-724f4275", true, true).is_none());
+    }
+
+    #[test]
+    fn opencode_session_skips_generated_uuid() {
+        // 自生成的 UUID 逐请求不同，注入反而破坏网关前缀缓存 → 只在客户端
+        // 真正提供会话 ID 时才发。
+        assert!(maybe_opencode_session_header("5e1f9f88-9ad1-4e35-a5e0-b0f2c7aa9b31", false, false)
+            .is_none());
+    }
+
+    #[test]
+    fn opencode_session_skips_blank_id() {
+        assert!(maybe_opencode_session_header("", true, false).is_none());
+        assert!(maybe_opencode_session_header("   ", true, false).is_none());
+    }
+
+    #[test]
+    fn opencode_session_rejects_non_ascii_id() {
+        // 非法 header 值（如含换行）不能注入，返回 None 而不是 panic。
+        assert!(maybe_opencode_session_header("bad\nvalue", true, false).is_none());
     }
 }
