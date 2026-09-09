@@ -791,6 +791,7 @@
     "openclawConfigDir": "OpenClaw Configuration Directory",
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
+    "dshConfigDir": "DSH Config Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
@@ -801,6 +802,7 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderDsh": "e.g. /home/<user>/.dsh",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
@@ -913,6 +915,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "dsh": "DSH",
     "pi": "Pi"
   },
   "pi": {

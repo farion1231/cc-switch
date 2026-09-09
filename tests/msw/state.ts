@@ -73,6 +73,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   opencode: {},
   openclaw: {},
   hermes: {},
+  dsh: {},
   pi: {},
 });
 
@@ -81,6 +82,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   "claude-desktop": "",
   codex: "codex-1",
   gemini: "gemini-1",
+  dsh: "",
   grokbuild: "",
   opencode: "",
   openclaw: "",
@@ -199,6 +201,7 @@ let mcpConfigs: McpConfigState = {
   opencode: {},
   openclaw: {},
   hermes: {},
+  dsh: {},
   pi: {},
 };
 
@@ -269,6 +272,7 @@ export const resetProviderState = () => {
     opencode: {},
     openclaw: {},
     hermes: {},
+    dsh: {},
     pi: {},
   };
 };
