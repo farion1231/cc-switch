@@ -2181,6 +2181,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "MiniMax-M3": {
           name: "MiniMax M3",
+          reasoning: true,
           limit: { context: 1000000, output: 131072 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
@@ -2216,6 +2217,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "MiniMax-M3": {
           name: "MiniMax M3",
+          reasoning: true,
           limit: { context: 1000000, output: 131072 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
