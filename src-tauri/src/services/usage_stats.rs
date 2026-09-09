@@ -6,7 +6,8 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{
-    fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL,
+    fresh_input_sql, perceived_latency_sql, INPUT_TOKEN_SEMANTICS_FRESH,
+    INPUT_TOKEN_SEMANTICS_TOTAL,
 };
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -1332,6 +1333,7 @@ impl Database {
         let rollup_pname = provider_name_coalesce("r", "p2");
         let fresh_input_detail = fresh_input_sql("l");
         let fresh_input_rollup = fresh_input_sql("r");
+        let detail_latency = perceived_latency_sql("l");
         let sql = format!(
             "SELECT
                 provider_id, app_type, provider_name,
@@ -1349,7 +1351,7 @@ impl Database {
                     COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
-                    COALESCE(SUM(l.latency_ms), 0) as latency_sum
+                    COALESCE(SUM({detail_latency}), 0) as latency_sum
                 FROM proxy_request_logs l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
                 {detail_where}
@@ -3843,6 +3845,64 @@ mod tests {
         assert_eq!(stats[0].provider_id, "p1");
         assert_eq!(stats[0].request_count, 1);
         assert_eq!(stats[0].total_tokens, 275);
+
+        Ok(())
+    }
+
+    #[test]
+    fn provider_stats_use_first_token_latency_for_streaming_requests() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    is_streaming, latency_ms, first_token_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "streaming",
+                    "p1",
+                    "codex",
+                    "gpt-test",
+                    100,
+                    50,
+                    "0.01",
+                    1,
+                    60_000,
+                    1_000,
+                    200,
+                    1_000
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    is_streaming, latency_ms, first_token_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "non-streaming",
+                    "p1",
+                    "codex",
+                    "gpt-test",
+                    100,
+                    50,
+                    "0.01",
+                    0,
+                    2_000,
+                    Option::<i64>::None,
+                    200,
+                    2_000
+                ],
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("codex"), None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].request_count, 2);
+        assert_eq!(stats[0].avg_latency_ms, 1_500);
 
         Ok(())
     }
