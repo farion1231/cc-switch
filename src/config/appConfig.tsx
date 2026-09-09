@@ -202,7 +202,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   },
   dsh: {
     label: "DSH",
-    icon: <ProviderIcon icon="dsh" name="DSH" size={14} showFallback={false} />,
+    icon: (
+      <ProviderIcon
+        icon="deepseek"
+        name="DeepSeek Harness (DSH)"
+        size={14}
+        showFallback={false}
+      />
+    ),
     activeClass:
       "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
     badgeClass:
