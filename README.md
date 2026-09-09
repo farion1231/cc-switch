@@ -152,11 +152,6 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch"><img src="assets/partners/logos/atlascloud_banner.png" alt="Atlas Cloud" width="150"></a></td>
-<td>Atlas Cloud is a full-modal AI inference platform that gives developers a single AI API to access video generation, image generation, and LLM APIs. Instead of managing multiple vendor integrations, you connect once and get unified access to 300+ curated models across all modalities. Check out Atlas Cloud's new <a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch">coding plan</a> promotion for more budget-friendly API access!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch"><img src="assets/partners/logos/ucloud.png" alt="Compshare" width="150"></a></td>
 <td>Thanks to Compshare for sponsoring this project! Compshare is UCloud's AI cloud platform, providing stable and comprehensive domestic and international model APIs with just one key. Featuring cost-effective monthly and per-use domestic-model Coding Plan packages, alongside stable officially-relayed overseas models. Supports Claude Code, Codex, and API access. Enterprise-grade high concurrency, 24/7 technical support, and self-service invoicing. Users who register via <a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch">this link</a> will receive a free 5 CNY platform trial credit!</td>
 </tr>
@@ -169,6 +164,11 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 <tr>
 <td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
 <td>Thanks to SSSAiCode for sponsoring this project! SSSAiCode is a stable and reliable API relay service, dedicated to providing stable, reliable, and affordable Claude and Codex model services, with same-day fast invoicing. SSSAiCode offers a special deal for CC Switch users: register via <a href="https://www.sssaicode.com/register?ref=DCP0SM">this link</a> to enjoy $10 extra credit on every top-up!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://soleapi.com/r/ccswitch"><img src="assets/partners/logos/soleapi-banner.png" alt="SoleAPI" width="150"></a></td>
+<td>Thanks to SoleAPI for supporting this project! SoleAPI is an AI model gateway for developers and enterprises: one API key gives you access to 30+ leading models including Claude, GPT and Gemini. It is natively compatible with the OpenAI and Anthropic protocols, so Claude Code, Codex, Cursor and your existing SDKs work by simply changing the Base URL. Requests are routed in real time by latency and upstream health, with millisecond-level automatic failover to backup channels, 99.99% service availability and 24/7 technical support. Every call lands on a single bill with per-request token and cost breakdowns you can inspect at any time. Sign up through this project's <a href="https://soleapi.com/r/ccswitch">referral link</a> to receive free trial credits, and earn ongoing cashback by inviting friends who top up!</td>
 </tr>
 
 <tr>
@@ -562,7 +562,8 @@ pnpm test:unit --coverage
 │   ├── lib/
 │   │   ├── api/                # Tauri API wrapper (type-safe)
 │   │   └── query/              # TanStack Query config
-│   ├── locales/                # Translations (zh/zh-TW/en/ja)
+│   ├── i18n/                   # Internationalization
+│   │   └── locales/            # Translations (zh/zh-TW/en/ja)
 │   ├── config/                 # Presets (providers/mcp)
 │   └── types/                  # TypeScript definitions
 ├── src-tauri/                  # Backend (Rust)

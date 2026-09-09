@@ -782,30 +782,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    settingsConfig: {
-      name: "atlascloud",
-      base_url: "https://api.atlascloud.ai/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [
-        {
-          id: "zai-org/glm-5.1",
-          name: "GLM 5.1",
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
-    suggestedDefaults: {
-      model: { default: "zai-org/glm-5.1", provider: "atlascloud" },
-    },
-  },
-  {
     name: "Compshare",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
@@ -896,6 +872,41 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "claude-opus-5", provider: "sssaicode" },
+    },
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      name: "soleapi",
+      base_url: "https://soleapi.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5", provider: "soleapi" },
     },
   },
   {
@@ -1122,6 +1133,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    settingsConfig: {
+      name: "atlascloud",
+      base_url: "https://api.atlascloud.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "zai-org/glm-5.1",
+          name: "GLM 5.1",
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "atlascloud",
+    suggestedDefaults: {
+      model: { default: "zai-org/glm-5.1", provider: "atlascloud" },
+    },
+  },
+  {
     name: "OpenRouter",
     nameKey: "providerForm.presets.openrouter",
     websiteUrl: "https://openrouter.ai",
@@ -1325,7 +1358,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash" },
         { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro" },
         { id: "minimax-m2.7", name: "MiniMax M2.7" },
-        { id: "minimax-m2.5", name: "MiniMax M2.5" },
         { id: "glm-5", name: "GLM-5" },
         { id: "glm-5.1", name: "GLM-5.1" },
         { id: "glm-5.2", name: "GLM-5.2" },
@@ -1392,7 +1424,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         { id: "kimi-k2.6", name: "Kimi K2.6" },
         { id: "minimax-m2.7", name: "MiniMax M2.7" },
         { id: "minimax-m3", name: "MiniMax M3" },
-        { id: "minimax-m2.5", name: "MiniMax M2.5" },
         { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
         { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
         { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731 GA" },

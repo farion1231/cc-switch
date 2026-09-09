@@ -322,6 +322,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://soleapi.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://soleapi.com",
+    model: "gemini-3.8-flash",
+    description: "SoleAPI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    endpointCandidates: ["https://soleapi.com"],
+    icon: "soleapi",
+  },
+  {
     name: "ETok.ai",
     websiteUrl: "https://etok.ai",
     apiKeyUrl: "https://etok.ai",

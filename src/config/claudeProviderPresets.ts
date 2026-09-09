@@ -445,6 +445,7 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "ppio",
     endpointCandidates: ["https://api.ppio.com/anthropic"],
+    modelsUrl: "https://api.ppio.com/openai/v1/models",
     icon: "ppio",
     iconColor: "#2874FF",
   },
@@ -609,27 +610,6 @@ export const providerPresets: ProviderPreset[] = [
     icon: "a6api",
   },
   {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.atlascloud.ai",
-        ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "zai-org/glm-5.1",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/glm-5.1",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/glm-5.1",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/glm-5.1",
-        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
-      },
-    },
-    endpointCandidates: ["https://api.atlascloud.ai"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
-  },
-  {
     name: "Compshare",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
@@ -702,6 +682,22 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "sssaicode", // 促销信息 i18n key
     icon: "sssaicode",
     iconColor: "#000000",
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://soleapi.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://soleapi.com"],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
   },
   {
     name: "Micu",
@@ -872,6 +868,25 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     icon: "amux",
+  },
+  {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.atlascloud.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "zai-org/glm-5.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/glm-5.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/glm-5.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/glm-5.1",
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
+      },
+    },
+    endpointCandidates: ["https://api.atlascloud.ai"],
+    category: "aggregator",
+    icon: "atlascloud",
   },
   {
     name: "Gemini Native",
@@ -1565,6 +1580,9 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     endpointCandidates: ["https://api.novita.ai/anthropic"],
+    // Anthropic 兼容层在 /anthropic 子路径，OpenAI 侧却在 /openai/v1；剥后缀
+    // 后的根路径没有 /models（实测 404），通用候选够不到，故覆写
+    modelsUrl: "https://api.novita.ai/openai/v1/models",
     icon: "novita",
     iconColor: "#000000",
   },
@@ -1793,6 +1811,9 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     endpointCandidates: ["https://api.jiekou.ai/anthropic"],
+    // 同 Novita：Anthropic 在 /anthropic、OpenAI 在 /openai/v1，根路径无
+    // /models（实测 404），通用候选够不到，故覆写
+    modelsUrl: "https://api.jiekou.ai/openai/v1/models",
     icon: "jiekou",
     iconColor: "#000000",
   },

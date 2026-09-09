@@ -857,6 +857,28 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             [],
         )
         .expect("set custom GLM price");
+        // <v3.19 老库形态：cache_write 仍是最初 seed 的 0（07-12 条目才补成 6.25）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '5',
+                 output_cost_per_million = '30',
+                 cache_read_cost_per_million = '0.50',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'gpt-5.6-sol'",
+            [],
+        )
+        .expect("restore pre-v3.19 GPT-5.6 Sol price");
+        // 最早 seed 的 M2.5 价（bb7c83c2 时代）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.12',
+                 output_cost_per_million = '0.95',
+                 cache_read_cost_per_million = '0.03',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'minimax-m2.5'",
+            [],
+        )
+        .expect("restore oldest MiniMax M2.5 price");
     }
 
     db.ensure_model_pricing_seeded()
@@ -890,6 +912,46 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
         )
         .expect("query GLM price");
     assert_eq!(glm, ("9".to_string(), "9".to_string(), "9".to_string()));
+
+    // 2026-09-06 条目同样依赖顺序：
+    //   gpt-5.6-sol  5/30/0.50/0 →(07-12 补 cache_write)→ 5/30/0.50/6.25 →(09-06 促销)→ 4/20/0.40/5
+    //   minimax-m2.5 0.12/0.95/0.03/0 →(0.12→0.15 条目)→ 0.15/… →(09-06 官方价)→ 0.30/1.20/0.03/0.375
+    let sol: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gpt-5.6-sol'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GPT-5.6 Sol price");
+    assert_eq!(
+        sol,
+        (
+            "4".to_string(),
+            "20".to_string(),
+            "0.40".to_string(),
+            "5".to_string()
+        )
+    );
+    let m25: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'minimax-m2.5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query MiniMax M2.5 price");
+    assert_eq!(
+        m25,
+        (
+            "0.30".to_string(),
+            "1.20".to_string(),
+            "0.03".to_string(),
+            "0.375".to_string()
+        )
+    );
 }
 
 #[test]
@@ -937,6 +999,84 @@ fn model_pricing_seed_includes_claude_5_1_and_standard_sonnet_5_prices() {
             "10".to_string(),
             "0.20".to_string(),
             "2.50".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gpt_6_astra() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gpt-6-astra'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GPT-6 Astra price");
+
+    assert_eq!(
+        price,
+        (
+            "10".to_string(),
+            "50".to_string(),
+            "1".to_string(),
+            "12.5".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_glm_5_3_flash() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'glm-5.3-flash'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GLM-5.3-Flash price");
+
+    assert_eq!(
+        price,
+        (
+            "0.15".to_string(),
+            "0.50".to_string(),
+            "0.03".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gemini_3_8_flash() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-3.8-flash'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 3.8 Flash price");
+
+    assert_eq!(
+        price,
+        (
+            "0.75".to_string(),
+            "3.75".to_string(),
+            "0.075".to_string(),
+            "0".to_string(),
         )
     );
 }
