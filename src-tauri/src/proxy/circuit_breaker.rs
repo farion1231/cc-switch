@@ -228,6 +228,14 @@ impl CircuitBreaker {
                 if let Some(opened_at) = *self.last_opened_at.read().await {
                     if opened_at.elapsed().as_secs() >= config.timeout_seconds {
                         drop(config); // 释放读锁再转换状态
+
+                        // 【根因修复】permit-first check（与 allow_request 同样的修复）：
+                        // counter > 0 说明还有 in-flight probe 在飞，此时不能 reset counter
+                        // 否则会导致 max_half_open_requests 限流被打破。
+                        if self.half_open_requests.load(Ordering::SeqCst) > 0 {
+                            return false;
+                        }
+
                         log::info!(
                             "[{}] 熔断器 Open → HalfOpen (超时恢复)",
                             log_cb::OPEN_TO_HALF_OPEN
@@ -256,6 +264,31 @@ impl CircuitBreaker {
                 if let Some(opened_at) = *self.last_opened_at.read().await {
                     if opened_at.elapsed().as_secs() >= config.timeout_seconds {
                         drop(config); // 释放读锁再转换状态
+
+                        // 【根因修复】permit-first check：转换之前先确认没有 in-flight probe。
+                        // 半开探测的核心不变量是 max_half_open_requests=1，这个不变量
+                        // 必须由 permit 本身保证，而不是由 state 转换保证。
+                        //
+                        // 错误做法：直接 transition_to_half_open() 把 counter reset 到 0
+                        // → 新 probe 进来 fetch_add 拿到 permit（counter=1）→ 上一代
+                        // probe 的 guard drop 紧接着 decrement 1 → 新 probe 的 slot 被
+                        // 错误释放 → 第三个 probe 又能进来 → max=1 限流被打破。
+                        //
+                        // 正确顺序：counter > 0 → 还有 in-flight probe，不转换；
+                        //           counter = 0 → 才允许转换。
+                        if self.half_open_requests.load(Ordering::SeqCst) > 0 {
+                            log::debug!(
+                                "[{}] 熔断器拒绝请求: 上一代 HalfOpen probe 尚未释放 (counter={}), \
+                                 等待其结束后再触发 Open → HalfOpen",
+                                log_cb::OPEN_TO_HALF_OPEN,
+                                self.half_open_requests.load(Ordering::SeqCst)
+                            );
+                            return AllowRequestResult {
+                                allowed: false,
+                                permit: None,
+                            };
+                        }
+
                         log::info!(
                             "[{}] 熔断器 Open → HalfOpen (超时恢复)",
                             log_cb::OPEN_TO_HALF_OPEN
@@ -476,6 +509,12 @@ impl CircuitBreaker {
         self.total_requests.store(0, Ordering::SeqCst);
         self.failed_requests.store(0, Ordering::SeqCst);
     }
+
+    /// 测试专用：直接读取 half_open_requests 计数（不经过 guard）
+    #[cfg(test)]
+    pub fn get_half_open_requests_for_test(&self) -> u32 {
+        self.half_open_requests.load(Ordering::SeqCst)
+    }
 }
 
 /// 熔断器统计信息
@@ -582,5 +621,103 @@ mod tests {
         breaker.reset().await;
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
         assert!(breaker.allow_request().await.allowed);
+    }
+
+    /// P2 review race 场景（permit-first 修复）：
+    /// Probe A 失败 → state=Open，但 counter 仍=1（guard 还没释放）
+    /// 此时另一并发请求调用 allow_request（timeout 已过）：
+    /// 旧实现：transition_to_half_open() 把 counter reset 0 → 新 probe 拿到 permit
+    ///         → 老 guard drop 紧接着 decrement 1 → 限流被打破
+    /// 新实现：检查 counter > 0 → 直接返回 denied，不转换，不 reset
+    #[tokio::test]
+    async fn test_open_to_halfopen_blocked_when_inflight_permit_exists() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        // 1. 进入 Open，再让 allow_request 触发 Open→HalfOpen，拿第一个 permit
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        assert!(first.allowed);
+        assert!(first.permit.is_some());
+        let guard = first.permit.expect("must have guard");
+        assert_eq!(breaker.get_half_open_requests_for_test(), 1);
+
+        // 2. Probe A 失败 → state=Open（counter 仍=1，guard 持有中）
+        // 这里用 transition_to_open 模拟 record_failure 的状态转换效果
+        breaker.transition_to_open().await;
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+        assert_eq!(
+            breaker.get_half_open_requests_for_test(),
+            1,
+            "counter 必须仍=1（guard 未释放）"
+        );
+
+        // 3. 并发请求：state=Open, timeout=0 已过，按旧实现会 reset counter
+        // 按新实现应该检查 counter>0 → 直接 denied
+        let second = breaker.allow_request().await;
+        assert!(
+            !second.allowed,
+            "counter>0 时不允许转换，第二个请求必须被拒绝"
+        );
+        assert!(second.permit.is_none());
+        assert_eq!(
+            breaker.get_state().await,
+            CircuitState::Open,
+            "state 必须仍是 Open，不能 reset counter 也不能 transition"
+        );
+        assert_eq!(
+            breaker.get_half_open_requests_for_test(),
+            1,
+            "counter 必须保持为1，绝对不能被 reset"
+        );
+
+        // 4. 验证 guard 还在 armed 状态，可以正确释放
+        drop(guard);
+        assert_eq!(
+            breaker.get_half_open_requests_for_test(),
+            0,
+            "guard drop 后 counter 必须归零"
+        );
+
+        // 5. guard 释放后，并发请求才能成功 transition
+        let third = breaker.allow_request().await;
+        assert!(third.allowed, "counter=0 后下一个请求必须能进入 HalfOpen");
+        assert!(third.permit.is_some());
+        assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
+    }
+
+    /// 配合 is_available 的同样场景：counter > 0 时也不应 transition
+    #[tokio::test]
+    async fn test_is_available_blocked_when_inflight_permit_exists() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        let guard = first.permit.expect("must have guard");
+
+        // 模拟 record_failure 路径
+        breaker.transition_to_open().await;
+        assert_eq!(breaker.get_half_open_requests_for_test(), 1);
+
+        // is_available 在 counter>0 时应返回 false（与 allow_request 一致）
+        assert!(
+            !breaker.is_available().await,
+            "counter>0 时 is_available 必须返回 false，阻止 transition"
+        );
+        assert_eq!(
+            breaker.get_half_open_requests_for_test(),
+            1,
+            "counter 必须保持"
+        );
+
+        drop(guard);
+        assert!(breaker.is_available().await);
     }
 }
