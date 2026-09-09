@@ -126,12 +126,17 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["StepFun", "step-3.5-flash-2603", ["low", "high"]],
     ["StepFun en", "step-3.7-flash", ["low", "medium", "high"]],
     ["StepFun en", "step-3.5-flash-2603", ["low", "high"]],
-    // Kimi 开放平台：k2.7-code 始终思考且官方标注不支持 effort → 单档；k3
-    // 三档（官方默认 max=后端回落结果，无需显式 default）。均关不掉思考无 none
-    ["Kimi", "kimi-k2.7-code", ["high"]],
+    // Kimi 开放平台（原生 Responses 直连，默认模型 kimi-k3）：k3 三档不声明
+    // default——native 模板默认 high ∈ 子集故后端保留 high（= 预设
+    // config.toml 的 model_reasoning_effort），官方默认 max 只是 API 侧未显式
+    // 传 effort 时的行为；k2.7-code 始终思考且官方标注不支持 effort → 单档。
+    // 均关不掉思考无 none
     ["Kimi", "kimi-k3", ["low", "high", "max"]],
-    // Kimi Code 端点：k3/k3-256k 官方默认 high ≠ 回落值 max → 显式 default
-    // 首两例；kimi-for-coding(-highspeed) Thinking 恒 ON 单档
+    ["Kimi", "kimi-k2.7-code", ["high"]],
+    // Kimi Code 端点（原生 Responses 直连）：k3/k3-256k 官方 models.json 明写
+    // default_reasoning_level "high"，与 native 模板回落值相同——照抄官方目录
+    // 的显式声明（表单可见性优先，MiniMax/MiMo 先例）故仍有第四位期望；
+    // kimi-for-coding(-highspeed) Thinking 恒 ON 单档
     ["Kimi For Coding", "kimi-for-coding", ["high"]],
     ["Kimi For Coding", "kimi-for-coding-highspeed", ["high"]],
     ["Kimi For Coding", "k3", ["low", "high", "max"], "high"],
@@ -158,7 +163,8 @@ describe("Codex preset pre-filled reasoning levels", () => {
       const model = catalogModel(presetName, modelId);
       expect(model.reasoningLevels).toEqual(levels);
       // 默认档通常不显式声明（后端 fallback 已落到正确档位）；仅当官方默认
-      // 与回落结果不一致时才有第四位期望值（Kimi Code k3 系先例）
+      // 与回落结果不一致（智谱 glm-5.3 先例），或预设照抄了厂商官方 catalog
+      // 里的显式默认（Kimi Code k3 系）时，才有第四位期望值
       expect(model.defaultReasoningLevel).toBe(expectedDefault);
     },
   );
