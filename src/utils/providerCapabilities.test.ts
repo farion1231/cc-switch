@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
+  providerNeedsPublicRoute,
   providerNeedsRouting,
   resolveCodexOfficialIdentity,
   supportsOfficialProxyTakeover,
@@ -379,5 +380,54 @@ describe("providerNeedsRouting", () => {
         ).toBe(true);
       },
     );
+  });
+
+  describe("Cursor：非 official 不再强制需要路由（可直连第三方 OpenAI 格式接口）", () => {
+    it("official 不需要路由", () => {
+      expect(
+        providerNeedsRouting("cursor", mkProvider({ category: "official" })),
+      ).toBe(false);
+    });
+
+    it.each([
+      "custom",
+      "cn_official",
+      "aggregator",
+      "third_party",
+      undefined,
+    ] as const)("category=%s 也不需要路由", (category) => {
+      expect(
+        providerNeedsRouting(
+          "cursor",
+          mkProvider(category === undefined ? {} : { category }),
+        ),
+      ).toBe(false);
+    });
+  });
+});
+
+describe("providerNeedsPublicRoute", () => {
+  it("仅 Cursor 非 official 需要公网路由", () => {
+    expect(
+      providerNeedsPublicRoute("cursor", mkProvider({ category: "official" })),
+    ).toBe(false);
+    expect(
+      providerNeedsPublicRoute("cursor", mkProvider({ category: "custom" })),
+    ).toBe(true);
+    expect(
+      providerNeedsPublicRoute(
+        "cursor",
+        mkProvider({ category: "cn_official" }),
+      ),
+    ).toBe(true);
+    expect(providerNeedsPublicRoute("cursor", mkProvider({}))).toBe(true);
+  });
+
+  it("其他应用不打公网路由标签", () => {
+    for (const app of ["claude", "codex", "claude-desktop"] as AppId[]) {
+      expect(
+        providerNeedsPublicRoute(app, mkProvider({ category: "custom" })),
+      ).toBe(false);
+    }
   });
 });

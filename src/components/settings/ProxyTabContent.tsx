@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
+import { Server, Activity, Zap, Globe, ShieldAlert, Radio } from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -11,6 +11,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ProxyPanel } from "@/components/proxy";
+import { PublicRoutePanel } from "@/components/proxy/PublicRoutePanel";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
@@ -18,6 +19,7 @@ import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { usePublicRouteStatus } from "@/lib/query/proxy";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { getAppLabel, PROXY_APP_IDS } from "@/config/appConfig";
 
@@ -46,6 +48,9 @@ export function ProxyTabContent({
     stopWithRestore,
     isPending: isProxyPending,
   } = useProxyStatus();
+
+  const { data: publicRouteStatusData } = usePublicRouteStatus();
+  const publicRouteEnabled = publicRouteStatusData?.enabled ?? false;
 
   const handleToggleProxy = async (checked: boolean) => {
     try {
@@ -134,6 +139,50 @@ export function ProxyTabContent({
               onToggleProxy={handleToggleProxy}
               isProxyPending={isProxyPending}
             />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* 公网路由：共享公网隧道，把本地路由暴露给支持自定义 Base URL 的应用 */}
+        <AccordionItem
+          value="public-route"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <Radio className="h-5 w-5 text-sky-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("settings.advanced.publicRoute.title")}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("settings.advanced.publicRoute.description")}
+                </p>
+              </div>
+              <Badge
+                variant={publicRouteEnabled ? "default" : "secondary"}
+                className="gap-1.5 h-6 ml-auto mr-2"
+              >
+                <Activity
+                  className={`h-3 w-3 ${publicRouteEnabled ? "status-heartbeat" : ""}`}
+                />
+                {publicRouteEnabled
+                  ? t("settings.advanced.publicRoute.enabled")
+                  : t("settings.advanced.publicRoute.disabled")}
+              </Badge>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            {isRunning ? (
+              <PublicRoutePanel />
+            ) : (
+              <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                  {t("settings.advanced.publicRoute.proxyRequired", {
+                    defaultValue: "需要先启动本地路由，才能配置公网路由",
+                  })}
+                </p>
+              </div>
+            )}
           </AccordionContent>
         </AccordionItem>
 

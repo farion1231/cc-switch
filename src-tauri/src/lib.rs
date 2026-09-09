@@ -9,6 +9,7 @@ mod codex_history_migration;
 mod codex_state_db;
 mod commands;
 mod config;
+mod cursor_config;
 mod database;
 mod deeplink;
 mod error;
@@ -974,6 +975,14 @@ pub fn run() {
                     Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
                 }
+
+                match crate::services::mcp::McpService::import_from_cursor(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Cursor");
+                    }
+                    Ok(_) => log::debug!("○ No Cursor MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Cursor MCP: {e}"),
+                }
             }
 
             // 4. 导入提示词文件（表空时触发）
@@ -988,6 +997,7 @@ pub fn run() {
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
+                    crate::app_config::AppType::Cursor,
                     crate::app_config::AppType::Pi,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
@@ -1241,6 +1251,20 @@ pub fn run() {
 
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
+
+                // 公网路由（Cursor 经公网隧道接入）：若上次退出时处于启用状态且代理已恢复运行，
+                // 自动重建 cloudflared 公网隧道（快速隧道 URL 每次都会变化）。
+                if crate::settings::get_settings().public_route_enabled
+                    && state.proxy_service.is_running().await
+                {
+                    match state.proxy_service.start_public_route_tunnel().await {
+                        Ok(status) => log::info!(
+                            "✓ 公网路由 隧道已自动恢复: {}",
+                            status.public_url.as_deref().unwrap_or("(无公网地址)")
+                        ),
+                        Err(e) => log::error!("✗ 自动恢复 公网路由 隧道失败: {e}"),
+                    }
+                }
 
                 // Periodic backup check (on startup)
                 if let Err(e) = state.db.periodic_backup_if_needed() {
@@ -1580,6 +1604,13 @@ pub fn run() {
             commands::get_circuit_breaker_config,
             commands::update_circuit_breaker_config,
             commands::get_circuit_breaker_stats,
+            // 公网路由 takeover (third-party provider via public tunnel)
+            commands::get_public_route_status,
+            commands::enable_public_route,
+            commands::disable_public_route,
+            commands::list_named_tunnels,
+            commands::set_public_route_tunnel_config,
+            commands::regenerate_public_route_api_key,
             // Failover queue management
             commands::get_failover_queue,
             commands::get_available_providers_for_failover,
@@ -1913,6 +1944,10 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
             }
             log::info!("代理服务器清理完成");
         }
+
+        // 退出时兜底停掉 公网路由 隧道（cloudflared 子进程 kill_on_drop 通常已处理，
+        // 这里显式 stop 以更新状态并记录日志）
+        let _ = proxy_service.stop_public_route_tunnel().await;
     }
 }
 
@@ -1944,7 +1979,7 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
 ///
 /// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
 /// 则自动启动代理服务并接管对应应用的 Live 配置。
-const PROXY_STARTUP_APP_TYPES: [&str; 4] = ["claude", "codex", "gemini", "grokbuild"];
+const PROXY_STARTUP_APP_TYPES: [&str; 5] = ["claude", "codex", "gemini", "grokbuild", "cursor"];
 
 async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static str> {
     let mut apps = Vec::new();

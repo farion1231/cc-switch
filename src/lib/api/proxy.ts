@@ -5,6 +5,8 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
+  PublicRouteStatus,
+  NamedTunnel,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -65,6 +67,42 @@ export const proxyApi = {
   // 更新指定应用的代理配置
   async updateProxyConfigForApp(config: AppProxyConfig): Promise<void> {
     return invoke("update_proxy_config_for_app", { config });
+  },
+
+  // ========== 公网路由 API ==========
+
+  // 查询公网路由状态
+  async getPublicRouteStatus(): Promise<PublicRouteStatus> {
+    return invoke("get_public_route_status");
+  },
+
+  // 启用公网路由（启动 cloudflared 隧道）
+  async enablePublicRoute(): Promise<PublicRouteStatus> {
+    return invoke("enable_public_route");
+  },
+
+  // 禁用公网路由（停止隧道）
+  async disablePublicRoute(): Promise<PublicRouteStatus> {
+    return invoke("disable_public_route");
+  },
+
+  // 重新生成公网路由隧道鉴权密钥（ccsk-*）；Cursor 的 key 无法自动写入，需用户重新粘贴
+  async regeneratePublicRouteApiKey(): Promise<PublicRouteStatus> {
+    return invoke("regenerate_public_route_api_key");
+  },
+
+  // 保存公网路由隧道配置（模式 + 命名隧道参数）；开启中会立即重建隧道
+  async setPublicRouteTunnelConfig(config: {
+    mode: string;
+    namedTunnel?: string | null;
+    namedHostname?: string | null;
+  }): Promise<PublicRouteStatus> {
+    return invoke("set_public_route_tunnel_config", config);
+  },
+
+  // 列出 Cloudflare 账户下已有的命名隧道（需已 cloudflared login）
+  async listNamedTunnels(): Promise<NamedTunnel[]> {
+    return invoke("list_named_tunnels");
   },
 
   // ========== 计费默认配置 API ==========

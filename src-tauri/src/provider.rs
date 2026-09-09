@@ -247,6 +247,12 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
+            // Cursor uses a flat settingsConfig: { baseUrl, apiKey, model }
+            // (same canonical format as the CursorFormFields frontend).
+            AppType::Cursor => (
+                str_at(settings.get("baseUrl")),
+                str_at(settings.get("apiKey")),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a

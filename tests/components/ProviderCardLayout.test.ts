@@ -33,6 +33,14 @@ describe("ProviderCard layout", () => {
     );
   });
 
+  it("公网路由 badge is clickable and opens 公网路由 settings via callback", () => {
+    expect(source).toContain("onOpenPublicRouteSettings");
+    expect(source).toMatch(
+      /onClick=\{[\s\S]*?onOpenPublicRouteSettings[\s\S]*?\}[\s\S]*?cursor\.needsPublicRoute/,
+    );
+    expect(source).toMatch(/type="button"[\s\S]*?cursor\.needsPublicRoute|cursor\.needsPublicRoute[\s\S]*?type="button"/);
+  });
+
   it("does not add a Pi-only model list to provider cards", () => {
     expect(source).not.toContain("ProviderModelSummary");
     expect(source).not.toContain("extractPiModelSummaryItems");

@@ -25,6 +25,7 @@ export const APP_IDS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "cursor",
   "pi",
 ];
 
@@ -37,6 +38,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   opencode: true,
   openclaw: true,
   hermes: true,
+  cursor: false,
   pi: true,
 };
 
@@ -48,24 +50,35 @@ export const SKILLS_APP_IDS: AppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "cursor",
   "pi",
 ];
 
-export type ProxyAppId = Extract<
-  AppId,
-  "claude" | "codex" | "gemini" | "grokbuild"
->;
-
-/** Apps with a complete local gateway + failover data plane. */
-export const PROXY_APP_IDS: ProxyAppId[] = [
+export const PROXY_APP_IDS = [
   "claude",
   "codex",
   "gemini",
   "grokbuild",
+] as const;
+
+export type FailoverProxyAppId = (typeof PROXY_APP_IDS)[number];
+
+export type ProxyAppId = FailoverProxyAppId | "cursor";
+
+/** Apps exposed in proxy takeover toggles (includes Cursor local routing). */
+export const PROXY_TAKEOVER_APP_IDS: ProxyAppId[] = [
+  ...PROXY_APP_IDS,
+  "cursor",
 ];
 
 export function isProxyAppId(appId: string): appId is ProxyAppId {
-  return (PROXY_APP_IDS as string[]).includes(appId);
+  return (PROXY_TAKEOVER_APP_IDS as readonly string[]).includes(appId);
+}
+
+export function isFailoverProxyAppId(
+  appId: string,
+): appId is FailoverProxyAppId {
+  return (PROXY_APP_IDS as readonly string[]).includes(appId);
 }
 
 export type AdditiveAppId = Extract<
@@ -184,6 +197,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
+  },
+  cursor: {
+    label: "Cursor",
+    icon: (
+      <ProviderIcon
+        icon="cursor"
+        name="Cursor"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-purple-500/10 ring-1 ring-purple-500/20 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/20 border-0 gap-1.5",
   },
   pi: {
     label: "Pi",

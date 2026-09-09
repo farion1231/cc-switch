@@ -235,6 +235,24 @@ jobs:
         # link.exe/mt.exe cannot create manifest temp files on \\wsl.localhost.
         shell: pwsh
         run: |
+          $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
+          # Build/link the test binary with native TEMP first.
+          # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path
+          # (LNK1327), so make sure the binary is fully linked before TEMP is switched
+          # to the UNC path at runtime.
+          cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $testExe = Get-ChildItem "src-tauri\target\debug\deps\cc_switch_lib-*.exe" |
+            Where-Object { $_.Name -notmatch '\.d$' } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $testExe) {
+            throw "cc-switch lib test binary not found"
+          }
+          # Only now point TEMP/TMP at the WSL UNC path and run the test binary directly
+          # (bypassing cargo so it never re-links under a UNC TEMP).
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"

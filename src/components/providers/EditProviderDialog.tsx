@@ -250,13 +250,12 @@ export function EditProviderDialog({
           )
         : (liveSettings ?? storedSettings ?? {});
 
-    // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
-    // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
-    // 来回切换供应商都可能让 Live 丢失该投影，从而 read_live_settings 反解为空。
-    // 若放任 Live 覆盖，编辑界面会显示空映射表，保存后连同数据库里的映射一起清空（数据丢失）。
-    // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
+    // Codex / Cursor 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。
+    // Live config 不包含 modelCatalog（Cursor 的 env.json 没有，Codex 的 config.toml 仅在
+    // 写入时投影），若放任 Live 覆盖，编辑界面会显示空映射表，保存后连带数据库里的映射一起清空。
+    // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live。
     if (
-      appId === "codex" &&
+      (appId === "codex" || appId === "cursor") &&
       liveSettings &&
       provider?.settingsConfig &&
       typeof provider.settingsConfig === "object"

@@ -297,6 +297,7 @@ export interface VisibleApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  cursor: boolean;
   pi: boolean;
 }
 
@@ -419,6 +420,8 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 Cursor 配置目录（可选）
+  cursorConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
 
@@ -513,6 +516,7 @@ export interface McpApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  cursor: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
