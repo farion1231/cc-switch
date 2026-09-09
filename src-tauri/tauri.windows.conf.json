@@ -6,7 +6,9 @@
         "label": "main",
         "title": "CC Switch",
         "titleBarStyle": "Visible",
+        "create": false,
         "visible": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --single-process",
         "minWidth": 900,
         "minHeight": 600
       }

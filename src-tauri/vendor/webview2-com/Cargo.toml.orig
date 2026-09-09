@@ -1,0 +1,44 @@
+[package]
+name = "webview2-com"
+description = "Rust bindings for the WebView2 COM APIs"
+
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+version.workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = [
+    "i686-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-pc-windows-gnu",
+    "i686-pc-windows-gnu",
+]
+
+[dependencies]
+webview2-com-sys.workspace = true
+webview2-com-macros.workspace = true
+
+windows.workspace = true
+windows-core.workspace = true
+windows-implement.workspace = true
+windows-interface.workspace = true
+
+[dev-dependencies]
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies.windows]
+workspace = true
+features = [
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+]

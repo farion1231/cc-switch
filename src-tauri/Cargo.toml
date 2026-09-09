@@ -10,6 +10,15 @@ rust-version = "1.85.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# The upstream Wry release still uses a nested Win32 message pump while waiting
+# for WebView2 callbacks. That can deadlock WebView2 initialization on this
+# Windows host, so pin the upstream fix until it is released to crates.io.
+[patch.crates-io]
+wry = { git = "https://github.com/npiesco/wry", rev = "efbd299" }
+# The generated WebView2 callback helpers use the same unsafe nested pump.
+# Keep the COM-aware wait implementation in-tree so clean builds reproduce it.
+webview2-com = { path = "vendor/webview2-com" }
+
 [lib]
 name = "cc_switch_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

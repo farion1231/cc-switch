@@ -73,12 +73,13 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 #[cfg(target_os = "windows")]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
+#[cfg(target_os = "windows")]
+use tauri::WebviewWindowBuilder;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
@@ -96,6 +97,67 @@ fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
     } else {
         log::debug!("Windows AppUserModelID 已设置为 {app_id}");
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupWindowAction {
+    ShowImmediately,
+    HideAfterSetup,
+}
+
+fn startup_window_action(silent_startup: bool) -> StartupWindowAction {
+    if silent_startup {
+        StartupWindowAction::HideAfterSetup
+    } else {
+        StartupWindowAction::ShowImmediately
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn schedule_main_window_creation<R: tauri::Runtime>(
+    app: &mut tauri::App<R>,
+    silent_startup: bool,
+) -> tauri::Result<()> {
+    // Tauri normally creates configured windows before `setup`. Deferring the
+    // Windows webview until setup has initialized the app avoids entering the
+    // WebView2 STA callback path during Tauri's pre-setup bootstrap.
+    let Some(window_config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "main")
+        .cloned()
+    else {
+        log::error!("Windows 主窗口配置不存在");
+        return Ok(());
+    };
+
+    let app_handle = app.handle().clone();
+    app.run_on_main_thread(move || {
+        let window_result = WebviewWindowBuilder::from_config(&app_handle, &window_config)
+            .and_then(|builder| builder.build());
+        let window = match window_result {
+            Ok(window) => window,
+            Err(error) => {
+                log::error!("创建主窗口失败: {error}");
+                return;
+            }
+        };
+        match startup_window_action(silent_startup) {
+            StartupWindowAction::HideAfterSetup => {
+                let _ = window.hide();
+                let _ = window.set_skip_taskbar(true);
+                log::info!("静默启动模式：主窗口已隐藏");
+            }
+            StartupWindowAction::ShowImmediately => {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.set_skip_taskbar(false);
+                log::info!("正常启动模式：主窗口已显示");
+            }
+        }
+    })
 }
 
 pub(crate) struct RedactedUrl<'a> {
@@ -387,22 +449,6 @@ pub fn run() {
         }));
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        let startup_page_handled = AtomicBool::new(false);
-        builder = builder.on_page_load(move |webview, payload| {
-            if webview.label() == "main"
-                && payload.event() == tauri::webview::PageLoadEvent::Finished
-                && payload.url().scheme() != "about"
-                && !startup_page_handled.swap(true, Ordering::Relaxed)
-                && !crate::settings::get_settings().silent_startup
-            {
-                let _ = webview.window().show();
-                log::info!("主页面加载完成，主窗口已显示");
-            }
-        });
-    }
-
     let builder = builder
         // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
         .plugin(tauri_plugin_deep_link::init())
@@ -578,7 +624,10 @@ pub fn run() {
                         db_version: Some(version),
                         supported_version: Some(crate::database::SCHEMA_VERSION),
                     });
+                    #[cfg(target_os = "windows")]
+                    schedule_main_window_creation(app, false)?;
                     // 主窗口默认 visible:false，恢复界面必须强制显示
+                    #[cfg(not(target_os = "windows"))]
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
@@ -607,7 +656,6 @@ pub fn run() {
                     }
                 }
             };
-
             // 数据库可用后立即应用持久化日志级别，避免后续服务初始化
             // 继续使用启动阶段的 Info 回退。损坏配置显式 fail-closed 到 Info。
             match db.get_log_config() {
@@ -1331,40 +1379,45 @@ pub fn run() {
                 }
             }
 
-            // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
+            #[cfg(target_os = "windows")]
+            schedule_main_window_creation(app, settings.silent_startup)?;
+
+            #[cfg(not(target_os = "windows"))]
             if let Some(window) = app.get_webview_window("main") {
                 // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁
                 // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
                 #[cfg(target_os = "linux")]
                 let _ = window.set_decorations(!settings.use_app_window_controls);
-                if settings.silent_startup {
-                    // 静默启动模式：保持窗口隐藏
-                    let _ = window.hide();
-                    #[cfg(target_os = "windows")]
-                    let _ = window.set_skip_taskbar(true);
-                    #[cfg(target_os = "macos")]
-                    tray::apply_tray_policy(app.handle(), false);
-                    log::info!("静默启动模式：主窗口已隐藏");
-                } else {
-                    // 正常启动模式：显示窗口
-                    #[cfg(not(target_os = "windows"))]
-                    let _ = window.show();
-                    #[cfg(target_os = "windows")]
-                    log::info!("正常启动模式：等待主页面加载完成后显示主窗口");
-                    #[cfg(not(target_os = "windows"))]
-                    log::info!("正常启动模式：主窗口已显示");
 
-                    // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
-                    // 启动时 webview 未获取焦点 + surface 尺寸协商失败，导致点击无效。
-                    // 这里做 set_focus + 伪 resize，等价于无视觉版本的"最大化-还原"。
-                    #[cfg(target_os = "linux")]
-                    {
-                        linux_fix::nudge_main_window(window.clone());
+                match startup_window_action(settings.silent_startup) {
+                    StartupWindowAction::HideAfterSetup => {
+                        let _ = window.hide();
+                        #[cfg(target_os = "windows")]
+                        let _ = window.set_skip_taskbar(true);
+                        #[cfg(target_os = "macos")]
+                        tray::apply_tray_policy(app.handle(), false);
+                        log::info!("静默启动模式：主窗口已隐藏");
+                    }
+                    StartupWindowAction::ShowImmediately => {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        #[cfg(target_os = "windows")]
+                        let _ = window.set_skip_taskbar(false);
+                        #[cfg(target_os = "macos")]
+                        tray::apply_tray_policy(app.handle(), true);
+                        log::info!("正常启动模式：主窗口已显示");
+
+                        // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
+                        // 启动时 webview 未获取焦点 + surface 尺寸协商失败，导致点击无效。
+                        // 这里做 set_focus + 伪 resize，等价于无视觉版本的"最大化-还原"。
+                        #[cfg(target_os = "linux")]
+                        {
+                            linux_fix::nudge_main_window(window.clone());
+                        }
                     }
                 }
             }
-
 
             Ok(())
         })
@@ -2283,7 +2336,7 @@ mod tests {
     use super::{
         classify_exit_request, enabled_proxy_apps_on_startup, redact_url_for_log,
         redact_url_for_log_with_secrets, redact_url_origin_for_log, runtime_log_level_allows,
-        ExitRequestAction,
+        startup_window_action, ExitRequestAction, StartupWindowAction,
     };
     use crate::database::Database;
 
@@ -2390,6 +2443,18 @@ mod tests {
         assert_eq!(
             classify_exit_request(Some(1)),
             ExitRequestAction::CleanupAndExit
+        );
+    }
+
+    #[test]
+    fn startup_window_is_visible_unless_silent_startup_is_enabled() {
+        assert_eq!(
+            startup_window_action(false),
+            StartupWindowAction::ShowImmediately
+        );
+        assert_eq!(
+            startup_window_action(true),
+            StartupWindowAction::HideAfterSetup
         );
     }
 
