@@ -722,7 +722,11 @@ fn cleanup_dsh_backups(dir: &Path) -> Result<(), AppError> {
 /// 写入（upsert）一个 DSH provider 到指定 settings 文件。
 ///
 /// 区块级替换 + 备份 + 原子写；不触碰 `agent-default-model`。
-fn set_provider_at(path: &Path, id: &str, config: &JsonValue) -> Result<DshWriteOutcome, AppError> {
+pub fn set_provider_at(
+    path: &Path,
+    id: &str,
+    config: &JsonValue,
+) -> Result<DshWriteOutcome, AppError> {
     let _guard = dsh_write_lock()
         .lock()
         .map_err(|e| AppError::Config(format!("DSH write lock poisoned: {e}")))?;
@@ -779,7 +783,7 @@ pub fn set_provider(id: &str, config: JsonValue) -> Result<DshWriteOutcome, AppE
 }
 
 /// 从指定 settings 文件删除一个 DSH provider。
-fn remove_provider_at(path: &Path, id: &str) -> Result<DshWriteOutcome, AppError> {
+pub fn remove_provider_at(path: &Path, id: &str) -> Result<DshWriteOutcome, AppError> {
     let _guard = dsh_write_lock()
         .lock()
         .map_err(|e| AppError::Config(format!("DSH write lock poisoned: {e}")))?;
@@ -823,7 +827,7 @@ pub fn remove_provider(id: &str) -> Result<DshWriteOutcome, AppError> {
 /// 覆写顶层 `agent-default-model` 小节（切换当前路由）。
 ///
 /// 只重写该顶层小节，保留其余内容。
-fn set_default_model_at(
+pub fn set_default_model_at(
     path: &Path,
     default_model: &DshDefaultModel,
 ) -> Result<DshWriteOutcome, AppError> {
