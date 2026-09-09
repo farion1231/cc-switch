@@ -212,6 +212,12 @@ impl Provider {
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
             ),
+            // DSH (settings.yaml) stores provider blocks with camelCase fields;
+            // secrets stay behind the apiKeyEnv reference, never a raw value.
+            AppType::Dsh => (
+                str_at(settings.get("baseURL")),
+                String::new(), // DSH resolves apiKeyEnv per request; no raw key here.
+            ),
             // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
             AppType::OpenClaw => (
                 str_at(settings.get("baseUrl")),

@@ -152,6 +152,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Dsh => build_dsh_settings(request),
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers must be added from the Pi provider page".to_string(),
@@ -559,6 +560,44 @@ fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::V
 /// protocol) and let the user adjust via the UI after import. We never rely
 /// on Hermes' built-in URL heuristics, which only recognize a handful of
 /// official endpoints.
+/// Build a DSH provider settings object from a deep link request.
+///
+/// DSH provider blocks use camelCase fields (`baseURL`, `apiKeyEnv`,
+/// `reasoningEfforts`) and resolve credentials per request through the
+/// environment. A deep link has no env-var name to reference, so the key
+/// (when present) is placed in `apiKey` for the user to migrate into an
+/// `apiKeyEnv` reference via the UI; cc-switch never writes that field to
+/// the live settings.yaml — `dsh_config::set_provider` consumers are
+/// expected to keep secrets behind references.
+fn build_dsh_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+
+    if let Some(name) = request.name.as_deref().filter(|s| !s.is_empty()) {
+        config.insert("displayName".to_string(), json!(name));
+    }
+
+    if !endpoint.is_empty() {
+        config.insert("baseURL".to_string(), json!(endpoint));
+    }
+
+    config.insert("api".to_string(), json!("openai-completions"));
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    if let Some(model) = &request.model {
+        config.insert(
+            "models".to_string(),
+            json!([{ "id": model, "reasoningEfforts": { "off": null, "low": "low", "high": "high" } }]),
+        );
+    }
+
+    json!(config)
+}
+
 fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let endpoint = get_primary_endpoint(request);
 

@@ -46,6 +46,8 @@ pub struct VisibleApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default)]
+    pub dsh: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
 }
@@ -61,6 +63,7 @@ impl Default for VisibleApps {
             opencode: true,
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
+            dsh: false,    // 默认不显示，需用户手动启用
             pi: true,
         }
     }
@@ -78,6 +81,7 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
+            AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
         }
     }
@@ -432,6 +436,8 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsh_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
@@ -459,6 +465,9 @@ pub struct AppSettings {
     /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
+    /// 当前 DSH 供应商 ID（本地存储，保持结构一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_dsh: Option<String>,
 
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -549,6 +558,7 @@ impl Default for AppSettings {
             opencode_config_dir: None,
             openclaw_config_dir: None,
             hermes_config_dir: None,
+            dsh_config_dir: None,
             pi_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
@@ -558,6 +568,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            current_provider_dsh: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -626,6 +637,13 @@ impl AppSettings {
 
         self.hermes_config_dir = self
             .hermes_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.dsh_config_dir = self
+            .dsh_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -964,6 +982,14 @@ pub fn get_hermes_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_dsh_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .dsh_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
 pub fn get_pi_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
@@ -1009,6 +1035,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
+        AppType::Dsh => settings.current_provider_dsh.clone(),
         AppType::Pi => None,
     }
 }
@@ -1028,6 +1055,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
+        AppType::Dsh => settings.current_provider_dsh = id_owned.clone(),
         AppType::Pi => {}
     })
 }
