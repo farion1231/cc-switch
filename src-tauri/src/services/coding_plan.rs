@@ -1527,7 +1527,7 @@ pub(crate) fn resolve_volcengine_aksk(
 #[serde(rename_all = "camelCase")]
 pub struct VolcengineAkSkStatus {
     pub configured: bool,
-    /// referenced | default | legacy | none
+    /// referenced | default | legacy | migrated | none
     pub kind: &'static str,
     pub account_label: Option<String>,
     pub ak_masked: Option<String>,
@@ -1539,8 +1539,9 @@ pub(crate) fn get_volcengine_aksk_status(
     aksk_account_id: Option<&str>,
     inline_ak: Option<&str>,
     inline_sk: Option<&str>,
+    provider_name: Option<&str>,
 ) -> VolcengineAkSkStatus {
-    match resolve_volcengine_aksk(db, aksk_account_id, inline_ak, inline_sk, None) {
+    match resolve_volcengine_aksk(db, aksk_account_id, inline_ak, inline_sk, provider_name) {
         Ok(cred) => VolcengineAkSkStatus {
             configured: true,
             kind: cred.source,

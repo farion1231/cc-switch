@@ -1,5 +1,3 @@
-use serde::Serialize;
-
 use crate::provider::UsageScript;
 use crate::services::coding_plan::{VolcengineAccount, VolcengineAkSkStatus};
 use crate::services::subscription::SubscriptionQuota;
@@ -13,6 +11,11 @@ fn usage_script_aksk(state: &AppState, app: &str, provider_id: &str) -> Option<U
         .meta
         .as_ref()
         .and_then(|m| m.usage_script.clone())
+}
+
+fn provider_name(state: &AppState, app: &str, provider_id: &str) -> Option<String> {
+    let providers = state.db.get_all_providers(app).ok()?;
+    providers.get(provider_id).map(|p| p.name.clone())
 }
 
 #[tauri::command]
@@ -124,10 +127,12 @@ pub fn get_volcengine_aksk_status(
     provider_id: String,
 ) -> Result<VolcengineAkSkStatus, String> {
     let script = usage_script_aksk(&state, &app, &provider_id);
+    let provider_name = provider_name(&state, &app, &provider_id);
     Ok(crate::services::coding_plan::get_volcengine_aksk_status(
         &state.db,
         script.as_ref().and_then(|s| s.aksk_account_id.as_deref()),
         script.as_ref().and_then(|s| s.access_key_id.as_deref()),
         script.as_ref().and_then(|s| s.secret_access_key.as_deref()),
+        provider_name.as_deref(),
     ))
 }

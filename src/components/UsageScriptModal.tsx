@@ -483,6 +483,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     Awaited<ReturnType<typeof subscriptionApi.getVolcengineAkSkStatus>>
   | null>(null);
   const [addingAccount, setAddingAccount] = useState(false);
+  const [editingAccount, setEditingAccount] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [newAccount, setNewAccount] = useState({ label: "", ak: "", sk: "" });
   const [renaming, setRenaming] = useState(false);
   const [renameLabel, setRenameLabel] = useState("");
@@ -495,23 +497,32 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     if (!isVolcengineEntry) {
       setVolcengineAccounts([]);
       setAkSkStatus(null);
+      setAddingAccount(false);
+      setEditingAccount(false);
+      setEditingAccountId(null);
       return;
     }
     let cancelled = false;
     subscriptionApi
       .listVolcengineAccounts()
-      .then((list) => {
-        if (!cancelled) setVolcengineAccounts(list);
+      .then(async (list) => {
+        if (cancelled) return;
+        setVolcengineAccounts(list);
+        // 空池直接展开新增表单，避免受控 Select 已选中哨兵值后无法触发 onChange。
+        if (list.length === 0) setAddingAccount(true);
+        setAkSkStatus(null);
+        // 状态查询可能把旧版内联凭据迁移入池，因此必须在列表之后读取。
+        try {
+          const status = await subscriptionApi.getVolcengineAkSkStatus(
+            appId,
+            provider.id,
+          );
+          if (!cancelled) setAkSkStatus(status);
+        } catch {
+          if (!cancelled) setAkSkStatus(null);
+        }
       })
       .catch(() => {});
-    subscriptionApi
-      .getVolcengineAkSkStatus(appId, provider.id)
-      .then((s) => {
-        if (!cancelled) setAkSkStatus(s);
-      })
-      .catch(() => {
-        if (!cancelled) setAkSkStatus(null);
-      });
     return () => {
       cancelled = true;
     };
@@ -519,7 +530,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const refreshVolcengineAccountsAndStatus = async () => {
     try {
-      setVolcengineAccounts(await subscriptionApi.listVolcengineAccounts());
+      const list = await subscriptionApi.listVolcengineAccounts();
+      setVolcengineAccounts(list);
+      setAddingAccount(list.length === 0);
+      if (!editingAccountId || !list.some((a) => a.id === editingAccountId)) {
+        setEditingAccount(false);
+        setEditingAccountId(null);
+      }
       setAkSkStatus(await subscriptionApi.getVolcengineAkSkStatus(appId, provider.id));
     } catch {
       // 状态拉取失败静默忽略（保持上次值）
@@ -535,22 +552,30 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       return `${t("usageScript.akSkStatusDefault", { name: akSkStatus.accountLabel ?? "" })}：${cred}`;
     if (akSkStatus.kind === "legacy")
       return `${t("usageScript.akSkStatusLegacy")}：${cred}`;
+    if (akSkStatus.kind === "migrated")
+      return `${t("usageScript.akSkStatusMigrated", { name: akSkStatus.accountLabel ?? "" })}：${cred}`;
     return t("usageScript.akSkStatusNone");
   };
 
   const selectedVolcengineAccountId =
-    script.akskAccountId ?? volcengineAccounts[0]?.id ?? "";
+    script.akskAccountId && volcengineAccounts.some((a) => a.id === script.akskAccountId)
+      ? script.akskAccountId
+      : (volcengineAccounts[0]?.id ?? "");
   const selectedVolcengineAccountLabel =
     volcengineAccounts.find((a) => a.id === selectedVolcengineAccountId)?.label ?? "";
 
   const handleSaveVolcengineAccount = async () => {
     try {
       const saved = await subscriptionApi.saveVolcengineAccount({
+        // 更新指定池账号；新增时不传 id。
+        id: editingAccount ? (editingAccountId ?? undefined) : undefined,
         accessKeyId: newAccount.ak,
         secretAccessKey: newAccount.sk,
-        label: newAccount.label || undefined,
+        label: editingAccount ? undefined : (newAccount.label || undefined),
       });
       setAddingAccount(false);
+      setEditingAccount(false);
+      setEditingAccountId(null);
       setNewAccount({ label: "", ak: "", sk: "" });
       setScript({ ...script, akskAccountId: saved.id });
       await refreshVolcengineAccountsAndStatus();
@@ -1533,10 +1558,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       value={selectedVolcengineAccountId || "__add__"}
                       onValueChange={(value) => {
                         if (value === "__add__") {
+                          setEditingAccount(false);
+                          setEditingAccountId(null);
                           setAddingAccount(true);
                           return;
                         }
                         setAddingAccount(false);
+                        setEditingAccount(false);
+                        setEditingAccountId(null);
                         setScript({ ...script, akskAccountId: value });
                       }}
                     >
@@ -1566,22 +1595,24 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     )}
                   </div>
 
-                  {addingAccount && (
+                  {(addingAccount || editingAccount) && (
                     <div className="space-y-2 rounded-md border border-white/10 p-3">
+                      {!editingAccount && (
+                        <Input
+                          placeholder={t("usageScript.volcengineAccountNamePlaceholder")}
+                          value={newAccount.label}
+                          onChange={(e) => setNewAccount({ ...newAccount, label: e.target.value })}
+                        />
+                      )}
                       <Input
-                        placeholder={t("usageScript.volcengineAccountNamePlaceholder")}
-                        value={newAccount.label}
-                        onChange={(e) => setNewAccount({ ...newAccount, label: e.target.value })}
-                      />
-                      <Input
-                        placeholder="AccessKey ID"
+                        placeholder={editingAccount ? t("usageScript.volcengineAccessKeyIdPlaceholder") : "AccessKey ID"}
                         value={newAccount.ak}
                         onChange={(e) => setNewAccount({ ...newAccount, ak: e.target.value })}
                         autoComplete="off"
                       />
                       <Input
                         type="password"
-                        placeholder="Secret Access Key"
+                        placeholder={editingAccount ? t("usageScript.volcengineSecretAccessKeyPlaceholder") : "Secret Access Key"}
                         value={newAccount.sk}
                         onChange={(e) => setNewAccount({ ...newAccount, sk: e.target.value })}
                         autoComplete="off"
@@ -1594,14 +1625,23 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                         >
                           {t("usageScript.volcengineAccountSave")}
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => setAddingAccount(false)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setAddingAccount(false);
+                            setEditingAccount(false);
+                            setEditingAccountId(null);
+                            setNewAccount({ label: "", ak: "", sk: "" });
+                          }}
+                        >
                           {t("usageScript.volcengineAccountCancel")}
                         </Button>
                       </div>
                     </div>
                   )}
 
-                  {!addingAccount && selectedVolcengineAccountId && (
+                  {!addingAccount && !editingAccount && selectedVolcengineAccountId && (
                     renaming ? (
                       <div className="flex items-center gap-2">
                         <Input
@@ -1627,6 +1667,18 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           }}
                         >
                           {t("usageScript.volcengineRename")}
+                        </button>
+                        <button
+                          type="button"
+                          className="underline-offset-2 hover:underline hover:text-foreground"
+                          onClick={() => {
+                            setRenaming(false);
+                            setNewAccount({ label: "", ak: "", sk: "" });
+                            setEditingAccount(true);
+                            setEditingAccountId(selectedVolcengineAccountId);
+                          }}
+                        >
+                          {t("usageScript.volcengineEditCredentials")}
                         </button>
                         <button
                           type="button"

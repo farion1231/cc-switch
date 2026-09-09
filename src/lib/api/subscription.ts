@@ -3,7 +3,7 @@ import type { SubscriptionQuota } from "@/types/subscription";
 
 export interface VolcengineAkSkStatus {
   configured: boolean;
-  kind: "referenced" | "default" | "legacy" | "none";
+  kind: "referenced" | "default" | "legacy" | "migrated" | "none";
   accountLabel?: string;
   akMasked?: string;
   skMasked?: string;
