@@ -8,7 +8,7 @@ mod callback;
 mod options;
 mod pwstr;
 
-use std::{fmt, sync::mpsc};
+use std::{fmt, sync::mpsc::{self, TryRecvError}};
 
 use windows::{
     core::{HRESULT, PCWSTR},
@@ -68,11 +68,43 @@ pub fn wait_with_pump<T>(rx: mpsc::Receiver<T>) -> Result<T> {
     let flags = (COWAIT_DISPATCH_CALLS.0 | COWAIT_DISPATCH_WINDOW_MESSAGES.0) as u32;
 
     loop {
-        if let Ok(result) = rx.try_recv() {
-            unsafe { CloseHandle(wake_event)? };
-            return Ok(result);
+        match rx.try_recv() {
+            Ok(result) => {
+                unsafe { CloseHandle(wake_event)? };
+                return Ok(result);
+            }
+            Err(TryRecvError::Disconnected) => {
+                unsafe { CloseHandle(wake_event)? };
+                return Err(Error::TaskCanceled);
+            }
+            Err(TryRecvError::Empty) => {}
         }
 
         let _ = unsafe { CoWaitForMultipleHandles(flags, 50, &[wake_event]) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{wait_with_pump, Error};
+    use std::{sync::mpsc, time::Duration};
+
+    #[test]
+    fn disconnected_callback_channel_returns_cancellation() {
+        let (sender, receiver) = mpsc::channel::<()>();
+        drop(sender);
+
+        let (result_sender, result_receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            result_sender
+                .send(wait_with_pump(receiver))
+                .expect("the test receiver should still be available");
+        });
+
+        let result = result_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("wait_with_pump should return after the callback channel disconnects");
+
+        assert!(matches!(result, Err(Error::TaskCanceled)));
     }
 }
