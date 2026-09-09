@@ -398,6 +398,8 @@ impl SseUsageCollector {
 
         // 在 JSON 校验和加锁前取时，避免把本次处理开销计入 TTFT。
         let observed_at = std::time::Instant::now();
+        // 忽略开头的 BOM，避免行首匹配漏掉首个 data 或 event 字段。
+        let event_text = event_text.strip_prefix('\u{feff}').unwrap_or(event_text);
         let mut event_name = None;
         let mut data_lines = Vec::new();
         for line in event_text.lines() {
@@ -1038,6 +1040,57 @@ mod tests {
             collector.finish().await;
             drop(stream);
             assert!(results.try_recv().is_err(), "finish must run only once");
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_ttft_accepts_leading_bom_across_chunks() {
+        let first = Bytes::from_static(
+            "\u{feff}data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
+                .as_bytes(),
+        );
+        let last = serde_json::json!({"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":3}}});
+
+        // 同时覆盖完整 BOM，以及 BOM 的三个字节被网络分块拆开的情况。
+        for split in [1, 2, first.len()] {
+            let start = std::time::Instant::now();
+            let (collector, mut results) =
+                timing_collector(start, CODEX_PARSER_CONFIG.stream_event_filter);
+            let mut chunks = vec![first.slice(..split)];
+            if split < first.len() {
+                chunks.push(first.slice(split..));
+            }
+            let first_chunk_count = chunks.len();
+            chunks.push(sse_bytes(&last));
+            let mut stream = Box::pin(timing_stream(
+                futures::stream::iter(chunks.clone().into_iter().map(Ok)),
+                Some(collector.clone()),
+            ));
+
+            for (index, chunk) in chunks[..first_chunk_count].iter().enumerate() {
+                assert_eq!(&stream.next().await.unwrap().unwrap(), chunk);
+                if index + 1 < first_chunk_count {
+                    assert!(collector.inner.first_event_time.lock().await.is_none());
+                }
+            }
+            // 在流尾被读取前就必须建立锚点，不能等到 usage 事件才计时。
+            let first_time = collector
+                .inner
+                .first_event_time
+                .lock()
+                .await
+                .expect("BOM-prefixed first event should establish TTFT");
+            assert_eq!(
+                stream.next().await.unwrap().unwrap(),
+                chunks[first_chunk_count]
+            );
+            assert!(stream.next().await.is_none());
+            let (events, timing) = results.try_recv().unwrap();
+            assert_eq!(
+                timing,
+                Some(first_time.duration_since(start).as_millis() as u64)
+            );
+            assert_eq!(events, vec![last.clone()]);
         }
     }
 
