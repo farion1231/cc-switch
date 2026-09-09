@@ -451,7 +451,57 @@ mod tests {
     struct CapturedRequest {
         path_and_query: String,
         authorization: Option<String>,
+        /// 上游实际收到的 `x-cc-provider`，正常应恒为 None
+        pin_header: Option<String>,
         body: Value,
+    }
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: tempfile::TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("failed to create temp home");
+            let original_home = std::env::var("HOME").ok();
+            let original_userprofile = std::env::var("USERPROFILE").ok();
+            let original_test_home = std::env::var("CC_SWITCH_TEST_HOME").ok();
+
+            std::env::set_var("HOME", dir.path());
+            std::env::set_var("USERPROFILE", dir.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings");
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+
+            match &self.original_userprofile {
+                Some(value) => std::env::set_var("USERPROFILE", value),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
     }
 
     #[tokio::test]
@@ -479,6 +529,7 @@ mod tests {
                                 .get(header::AUTHORIZATION)
                                 .and_then(|value| value.to_str().ok())
                                 .map(ToString::to_string),
+                            pin_header: None,
                             body: serde_json::from_slice(&body).expect("parse mock request body"),
                         });
 
@@ -689,6 +740,7 @@ mod tests {
                                 .get(header::AUTHORIZATION)
                                 .and_then(|value| value.to_str().ok())
                                 .map(ToString::to_string),
+                            pin_header: None,
                             body: serde_json::from_slice(&body).expect("parse mock request body"),
                         });
 
@@ -905,6 +957,14 @@ mod tests {
                                 .get(header::AUTHORIZATION)
                                 .and_then(|value| value.to_str().ok())
                                 .map(ToString::to_string),
+                            // 按字节记录：`to_str()` 对非 ASCII 返回 Err，用它就会把
+                            // 「中文头泄漏到了上游」误判成「没泄漏」—— 正是这个测试要抓的事
+                            pin_header: parts
+                                .headers
+                                .get(crate::proxy::handler_context::PROVIDER_PIN_HEADER)
+                                .map(|value| {
+                                    String::from_utf8_lossy(value.as_bytes()).into_owned()
+                                }),
                             body: serde_json::from_slice(&body).expect("parse mock request body"),
                         });
 
@@ -1076,5 +1136,330 @@ mod tests {
             full_url_request.body["commands"]["search_query"][0]["q"],
             "full URL"
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn provider_pin_header_routes_to_named_provider_without_leaking_the_header() {
+        let _home = TempHome::new();
+
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post({
+                let captured = captured.clone();
+                move |request: axum::extract::Request| {
+                    let captured = captured.clone();
+                    async move {
+                        let (parts, body) = request.into_parts();
+                        let body = axum::body::to_bytes(body, 1024 * 1024)
+                            .await
+                            .expect("read mock request body");
+                        captured.lock().await.push(CapturedRequest {
+                            path_and_query: parts
+                                .uri
+                                .path_and_query()
+                                .map(|value| value.as_str().to_string())
+                                .unwrap_or_else(|| parts.uri.path().to_string()),
+                            authorization: parts
+                                .headers
+                                .get(header::AUTHORIZATION)
+                                .and_then(|value| value.to_str().ok())
+                                .map(ToString::to_string),
+                            pin_header: parts
+                                .headers
+                                .get(crate::proxy::handler_context::PROVIDER_PIN_HEADER)
+                                .and_then(|value| value.to_str().ok())
+                                .map(ToString::to_string),
+                            body: serde_json::from_slice(&body).expect("parse mock request body"),
+                        });
+
+                        let mut headers = HeaderMap::new();
+                        headers.insert(
+                            header::CONTENT_TYPE,
+                            "application/json".parse().expect("content type"),
+                        );
+                        (
+                            StatusCode::OK,
+                            headers,
+                            r#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#,
+                        )
+                    }
+                }
+            }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let claude_provider = |id: &str, name: &str, token: &str| {
+            Provider::with_id(
+                id.to_string(),
+                name.to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": format!("http://{mock_addr}"),
+                        "ANTHROPIC_AUTH_TOKEN": token,
+                    }
+                }),
+                None,
+            )
+        };
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let default_provider = claude_provider("pin-default", "Default Vendor", "token-default");
+        // 特意起中文名：`HeaderValue::to_str()` 吃不下非 ASCII，一旦这里退回
+        // 「当作没带头」，这个会话就会静默扣到默认供应商头上
+        let pinned_provider = claude_provider("pin-target", "我的备用渠道", "token-pinned");
+        db.save_provider("claude", &default_provider)
+            .expect("save default provider");
+        db.save_provider("claude", &pinned_provider)
+            .expect("save pinned provider");
+        db.set_current_provider("claude", &default_provider.id)
+            .expect("select default provider");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let endpoint = format!("http://127.0.0.1:{}/v1/messages", proxy_info.port);
+        let payload = json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+
+        // 不带头 → 走当前供应商
+        let response = client
+            .post(&endpoint)
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .json(&payload)
+            .send()
+            .await
+            .expect("send unpinned request");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 带头（中文名，原始 UTF-8 字节）→ 走被点名的供应商
+        let response = client
+            .post(&endpoint)
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .header(
+                crate::proxy::handler_context::PROVIDER_PIN_HEADER,
+                http::HeaderValue::from_bytes("我的备用渠道".as_bytes()).expect("pin header"),
+            )
+            .json(&payload)
+            .send()
+            .await
+            .expect("send pinned request");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 名字拼错 → 当场 400，而不是悄悄扣到默认供应商头上
+        let response = client
+            .post(&endpoint)
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .header(
+                crate::proxy::handler_context::PROVIDER_PIN_HEADER,
+                "no-such-vendor",
+            )
+            .json(&payload)
+            .send()
+            .await
+            .expect("send bad pin request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+
+        let captured = captured.lock().await;
+        // 拼错的那次根本不该出网
+        assert_eq!(captured.len(), 2);
+        assert_eq!(
+            captured[0].authorization.as_deref(),
+            Some("Bearer token-default")
+        );
+        assert_eq!(
+            captured[1].authorization.as_deref(),
+            Some("Bearer token-pinned")
+        );
+        for request in captured.iter() {
+            assert_eq!(request.path_and_query, "/v1/messages");
+            // 控制头只在代理内部消费，绝不能出网
+            assert_eq!(request.pin_header, None);
+        }
+
+        // 钉住是「这一个会话」，不是「以后都走这家」：首页选择必须原样不动
+        assert_eq!(
+            db.get_current_provider("claude").expect("read current"),
+            Some(default_provider.id.clone())
+        );
+        let status = proxy.get_status().await;
+        assert!(status
+            .active_targets
+            .iter()
+            .all(|target| target.provider_id != pinned_provider.id));
+        // 面板在 active_targets 为空时回落到这个字段，同样不能被钉住的供应商顶掉
+        assert_eq!(
+            status.current_provider_id.as_deref(),
+            Some(default_provider.id.as_str())
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn classifier_queue_routing_wins_over_provider_pin() {
+        // 分流优先于钉住：带 x-cc-provider 的会话里，对话本体走被钉的供应商，
+        // 而 Auto Mode 判定请求仍归分类器队列接单。
+        let _home = TempHome::new();
+
+        // 用一个 echo 上游区分「谁接的单」：把 Authorization 原样塞回消息文本
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post(|request: axum::extract::Request| async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("none")
+                    .to_string();
+                let text = format!("served-by:{auth}");
+                (
+                    StatusCode::OK,
+                    axum::Json(json!({
+                        "id": "msg_echo",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-sonnet-4",
+                        "content": [{"type": "text", "text": text}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 1, "output_tokens": 1}
+                    })),
+                )
+            }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let provider_with_token = |id: &str, name: &str, token: &str| {
+            Provider::with_id(
+                id.to_string(),
+                name.to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": format!("http://{mock_addr}"),
+                        "ANTHROPIC_AUTH_TOKEN": token,
+                    }
+                }),
+                None,
+            )
+        };
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let default_provider = provider_with_token("cq-default", "Default Vendor", "token-default");
+        let pinned_provider = provider_with_token("cq-pinned", "Pinned Vendor", "token-pinned");
+        let queue_provider = provider_with_token("cq-queue", "Queue Vendor", "token-queue");
+        for provider in [&default_provider, &pinned_provider, &queue_provider] {
+            db.save_provider("claude", provider).expect("save provider");
+        }
+        db.set_current_provider("claude", &default_provider.id)
+            .expect("select default provider");
+        db.add_to_classifier_queue("claude", &queue_provider.id)
+            .expect("add to classifier queue");
+
+        let mut config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read config");
+        config.classifier_queue_enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("enable classifier queue");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let endpoint = format!("http://127.0.0.1:{}/v1/messages", proxy_info.port);
+        let pin_header = crate::proxy::handler_context::PROVIDER_PIN_HEADER;
+
+        let normal_body = json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        // 命中 stage1 锚点（见 classifier::has_classifier_stop_sequence）
+        let classifier_body = json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 16,
+            "stop_sequences": ["</severity>"],
+            "messages": [{"role": "user", "content": "ls -la"}]
+        });
+
+        let send = |body: Value, pinned: bool| {
+            let client = &client;
+            let endpoint = &endpoint;
+            async move {
+                let mut request = client
+                    .post(endpoint)
+                    .header(header::AUTHORIZATION, "Bearer client-secret");
+                if pinned {
+                    request = request.header(pin_header, "pinned vendor");
+                }
+                let response = request.json(&body).send().await.expect("send request");
+                assert_eq!(response.status(), StatusCode::OK);
+                let value: Value = response.json().await.expect("parse response");
+                value["content"][0]["text"]
+                    .as_str()
+                    .expect("response text")
+                    .to_string()
+            }
+        };
+
+        // 1) 普通请求 + 钉住 → 对话本体走被钉的供应商
+        assert_eq!(
+            send(normal_body.clone(), true).await,
+            "served-by:Bearer token-pinned"
+        );
+        // 2) 判定请求 + 钉住 → 仍被分类器队列抢走（分流优先于钉住）
+        assert_eq!(
+            send(classifier_body.clone(), true).await,
+            "served-by:Bearer token-queue"
+        );
+        // 3) 判定请求、未钉住 → 队列接单（原有行为不变）
+        assert_eq!(
+            send(classifier_body, false).await,
+            "served-by:Bearer token-queue"
+        );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
     }
 }

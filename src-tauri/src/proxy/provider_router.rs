@@ -20,6 +20,33 @@ pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) ->
         || !crate::proxy::providers::is_codex_official_provider(provider)
 }
 
+/// 分类器队列的一次选路结果
+///
+/// 模型覆写单独成表而不是挂在 `Provider` 上：`Provider` 是全局领域对象，
+/// 给它加一个只在分类器侧信道有意义的字段，会让每一处读写 provider 的代码
+/// 都要面对一个与自己无关的概念。
+#[derive(Debug, Clone, Default)]
+pub struct ClassifierSelection {
+    /// 按队列顺序排列的可用供应商
+    pub providers: Vec<Provider>,
+    /// provider_id -> 出站模型名覆写（只含真正配了覆写的成员）
+    pub models: HashMap<String, String>,
+}
+
+/// `x-cc-provider` 的解析结果
+#[derive(Debug, Clone)]
+pub enum PinnedProvider {
+    /// 唯一命中
+    ///
+    /// `Box` 是为了让这个枚举保持小尺寸：`Provider` 上千字节，裸放进来会让
+    /// 每次返回（含两个空手而归的分支）都搬运一大坨栈内存。
+    Found(Box<Provider>),
+    /// 该 app 下既没有 id 也没有名称匹配的供应商
+    NotFound,
+    /// 名称匹配到多个（携带命中个数，供调用方组织报错信息）
+    Ambiguous(usize),
+}
+
 /// 供应商路由器
 pub struct ProviderRouter {
     /// 数据库连接
@@ -128,6 +155,103 @@ impl ProviderRouter {
         }
 
         Ok(result)
+    }
+
+    /// 选择分类器队列供应商（Auto Mode 安全分类器请求专用的侧信道）
+    ///
+    /// 与 `select_providers` 的关键差异：
+    /// - 不读 `auto_failover_enabled`，也不看「当前供应商」
+    /// - 队列为空 / 全部熔断时返回 `Ok(None)`，由调用方回落到常规路由链，
+    ///   **永不**返回 `AllProvidersCircuitOpen` / `NoProvidersConfigured`
+    ///
+    /// 熔断器与常规链路**共用** `"{app_type}:{provider_id}"` key：供应商真死了对
+    /// 两条链路都死，不该在全局最紧的延迟预算上重敲一个已知故障的端点。
+    ///
+    /// 返回值里的 `models` 只收录**真正配了覆写**的成员，所以「没配」和
+    /// 「配了空串」在下游是同一件事：透传客户端的模型名。
+    pub async fn select_classifier_providers(
+        &self,
+        app_type: &str,
+    ) -> Result<Option<ClassifierSelection>, AppError> {
+        let all_providers = self.db.get_all_providers(app_type)?;
+        let queue = self.db.get_classifier_queue(app_type)?;
+
+        let mut providers = Vec::new();
+        let mut models: HashMap<String, String> = HashMap::new();
+        let mut total = 0usize;
+        let mut circuit_open = 0usize;
+
+        for item in queue {
+            let Some(provider) = all_providers.get(&item.provider_id).cloned() else {
+                continue;
+            };
+            // 与故障转移同源的账号边界约束（Codex Official 账号卡不可复用）。
+            // 分类器队列目前只对 Claude 开放，这里保留是为了将来放开时不踩坑。
+            if !provider_supports_failover(app_type, &provider) {
+                continue;
+            }
+            total += 1;
+
+            let circuit_key = format!("{app_type}:{}", provider.id);
+            let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+
+            if breaker.is_available().await {
+                if let Some(model) = item
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                {
+                    models.insert(provider.id.clone(), model.to_string());
+                }
+                providers.push(provider);
+            } else {
+                circuit_open += 1;
+            }
+        }
+
+        if providers.is_empty() {
+            if total > 0 && circuit_open == total {
+                log::warn!("[{app_type}] [CLS-003] 分类器队列内供应商已全部熔断");
+            }
+            return Ok(None);
+        }
+
+        Ok(Some(ClassifierSelection { providers, models }))
+    }
+
+    /// 解析请求头钉住的供应商（会话级定向）
+    ///
+    /// 匹配顺序：provider id 全等 → 供应商名称忽略大小写全等。id 唯一而名称不唯一，
+    /// 所以名称撞车时返回 `Ambiguous` 而不是随手挑一个 —— 挑错家等于把这个会话的
+    /// 消耗记到另一个账号头上，且客户端毫不知情。
+    ///
+    /// 命中结果由调用方作为**唯一**候选使用：钉住是用户的显式选择，与「故障转移
+    /// 关闭时只用当前供应商」同源，因此这里不查熔断器，也不做故障转移资格过滤。
+    pub fn resolve_pinned_provider(
+        &self,
+        app_type: &str,
+        pin: &str,
+    ) -> Result<PinnedProvider, AppError> {
+        let all_providers = self.db.get_all_providers(app_type)?;
+
+        if let Some(provider) = all_providers.get(pin) {
+            return Ok(PinnedProvider::Found(Box::new(provider.clone())));
+        }
+
+        let mut matched = all_providers
+            .values()
+            .filter(|provider| provider.name.trim().eq_ignore_ascii_case(pin));
+        let Some(first) = matched.next() else {
+            return Ok(PinnedProvider::NotFound);
+        };
+
+        let duplicates = matched.count();
+        if duplicates > 0 {
+            return Ok(PinnedProvider::Ambiguous(duplicates + 1));
+        }
+
+        Ok(PinnedProvider::Found(Box::new(first.clone())))
     }
 
     /// 请求执行前获取熔断器“放行许可”
@@ -403,6 +527,72 @@ mod tests {
         assert_eq!(providers[0].id, "a");
     }
 
+    #[test]
+    #[serial]
+    fn test_resolve_pinned_provider_matches_id_then_name() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // id 全等：钉住的一定不是「当前供应商」，这正是这个特性的意义
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "b").unwrap(),
+            PinnedProvider::Found(provider) if provider.id == "b"
+        ));
+
+        // 名称匹配忽略大小写（请求头值的首尾空白在调用方已剪掉）
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "provider b").unwrap(),
+            PinnedProvider::Found(provider) if provider.id == "b"
+        ));
+
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "nope").unwrap(),
+            PinnedProvider::NotFound
+        ));
+
+        // 不跨 app 串味：claude 的供应商不该被 codex 的请求钉中
+        assert!(matches!(
+            router.resolve_pinned_provider("codex", "b").unwrap(),
+            PinnedProvider::NotFound
+        ));
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_pinned_provider_reports_duplicate_names() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let first = Provider::with_id("a".to_string(), "Shared".to_string(), json!({}), None);
+        let second = Provider::with_id("b".to_string(), "Shared".to_string(), json!({}), None);
+        db.save_provider("claude", &first).unwrap();
+        db.save_provider("claude", &second).unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 同名撞车必须报错而不是随手挑一个：挑错家 = 把消耗记到另一个账号头上
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "shared").unwrap(),
+            PinnedProvider::Ambiguous(2)
+        ));
+
+        // id 永远唯一，是撞车时的出路
+        assert!(matches!(
+            router.resolve_pinned_provider("claude", "b").unwrap(),
+            PinnedProvider::Found(provider) if provider.id == "b"
+        ));
+    }
+
     #[tokio::test]
     #[serial]
     async fn test_failover_enabled_uses_queue_order_ignoring_current() {
@@ -633,5 +823,179 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    // ---- 分类器队列 ----
+
+    /// 建一个带 sort_index 的普通供应商并存库
+    fn seed_provider(db: &Database, id: &str, sort_index: usize) {
+        let mut provider =
+            Provider::with_id(id.to_string(), format!("Provider {id}"), json!({}), None);
+        provider.sort_index = Some(sort_index);
+        db.save_provider("claude", &provider).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_empty_returns_none() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_provider(&db, "a", 1);
+        db.set_current_provider("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db);
+        assert!(router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_follows_its_own_order_not_the_homepage() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        // 首页顺序是 b 在前，但队列自己的顺序是 a 在前 —— 后者说了算
+        seed_provider(&db, "a", 2);
+        seed_provider(&db, "b", 1);
+        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_classifier_queue("claude", "b").unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let selection = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("queue should be active");
+        let ids: Vec<&str> = selection.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b"]);
+
+        db.reorder_classifier_queue("claude", &["b".to_string(), "a".to_string()])
+            .unwrap();
+        let selection = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("queue should be active");
+        let ids: Vec<&str> = selection.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["b", "a"], "拖拽后的顺序必须生效");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_selection_carries_only_configured_model_overrides() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_provider(&db, "a", 1);
+        seed_provider(&db, "b", 2);
+        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_classifier_queue("claude", "b").unwrap();
+        db.set_classifier_model("claude", "a", Some("glm-4-flash"))
+            .unwrap();
+
+        let router = ProviderRouter::new(db);
+        let selection = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("queue should be active");
+
+        assert_eq!(
+            selection.models.get("a").map(String::as_str),
+            Some("glm-4-flash")
+        );
+        assert!(
+            !selection.models.contains_key("b"),
+            "没配覆写的成员不该出现在表里，否则下游无法区分「透传」与「覆写成空」"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_ignores_current_provider_and_failover_switch() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_provider(&db, "a", 1);
+        seed_provider(&db, "b", 2);
+        // 当前供应商是 a，且自动故障转移是关的 —— 两者都不该影响分类器队列
+        db.set_current_provider("claude", "a").unwrap();
+        db.add_to_classifier_queue("claude", "b").unwrap();
+
+        let config = db.get_proxy_config_for_app("claude").await.unwrap();
+        assert!(!config.auto_failover_enabled);
+
+        let router = ProviderRouter::new(db);
+        let selection = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("queue should be active");
+
+        assert_eq!(selection.providers.len(), 1);
+        assert_eq!(selection.providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_skips_open_circuit_providers() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 600,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        seed_provider(&db, "a", 1);
+        seed_provider(&db, "b", 2);
+        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_classifier_queue("claude", "b").unwrap();
+
+        let router = ProviderRouter::new(db);
+        router
+            .record_result("a", "claude", false, false, Some("boom".to_string()))
+            .await
+            .unwrap();
+
+        let selection = router
+            .select_classifier_providers("claude")
+            .await
+            .unwrap()
+            .expect("b should still be available");
+
+        assert_eq!(selection.providers.len(), 1);
+        assert_eq!(selection.providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn classifier_queue_all_open_returns_none_not_error() {
+        // 取舍 #3 的编码：分类器不可用时回落常规链路，绝不冒泡熔断错误
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 600,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        seed_provider(&db, "a", 1);
+        db.add_to_classifier_queue("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db);
+        router
+            .record_result("a", "claude", false, false, Some("boom".to_string()))
+            .await
+            .unwrap();
+
+        let selected = router.select_classifier_providers("claude").await;
+        assert!(matches!(selected, Ok(None)));
     }
 }

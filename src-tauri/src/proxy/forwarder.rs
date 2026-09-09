@@ -188,6 +188,25 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 本次请求的转发策略开关
+    policy: ForwardPolicy,
+}
+
+/// 转发器的「每请求策略」开关集合
+///
+/// 独立成结构体而不是继续追加位置参数：`RequestForwarder::new` 已经有 16 个
+/// 位置参数，再加裸 bool 与相邻的 `session_client_provided: bool` 极易串位。
+/// 下一个 per-request 开关的成本从此是一个字段，而不是一个参数。
+#[derive(Debug, Clone, Default)]
+pub struct ForwardPolicy {
+    /// 发送前强制关闭 thinking，并禁用 budget 反向整流
+    pub classifier_thinking_off: bool,
+    /// 本次由分类器队列供给 provider —— 成功后**不得**改写「当前供应商」
+    pub classifier_routed: bool,
+    /// provider_id -> 出站模型名覆写；仅在 `classifier_routed` 时非空
+    pub classifier_models: std::sync::Arc<std::collections::HashMap<String, String>>,
+    /// 本次由 `x-cc-provider` 钉住供应商 —— 成功后**不得**改写「当前供应商」
+    pub provider_pinned: bool,
 }
 
 impl RequestForwarder {
@@ -255,6 +274,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        policy: ForwardPolicy,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -278,7 +298,35 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            policy,
         }
+    }
+
+    /// 成功回源后是否应把「当前供应商」同步为实际使用的 provider
+    ///
+    /// 分类器请求走的是侧信道队列，绝不能改写用户在首页选定的当前供应商 ——
+    /// 否则每执行一次 Auto Mode 的 Bash 命令，UI / 托盘 / settings 就会被切到
+    /// 廉价的分类器供应商，并把 failover_count 污染成噪声。
+    ///
+    /// `x-cc-provider` 钉住的请求同理：那是「这一个会话走这家」，不是「以后都走
+    /// 这家」。让一个后台会话反向改写首页选择，是纯粹的意外。
+    fn should_sync_current_provider(&self, provider_id: &str) -> bool {
+        !self.policy.classifier_routed
+            && !self.policy.provider_pinned
+            && self.current_provider_id_at_start.as_str() != provider_id
+    }
+
+    /// 成功回源后是否应把 `current_providers`（即 status.active_targets）刷成实际使用的 provider
+    ///
+    /// 与 `should_sync_current_provider` 是两条独立的泄漏路径：那个管的是**持久**切换
+    /// （写 settings / 刷托盘 / 发 provider-switched），这个管的是 UI 上的「当前正在用哪家」
+    /// 标记 —— `ProxyServer::get_status` 把它暴露为 `active_targets`，前端据此给供应商卡片
+    /// 画绿色边框。分类器请求若写进去，会一直显示到下一次常规请求为止。
+    ///
+    /// 注意这里**不能**复用 `should_sync_current_provider`：那个在「实际 provider == 起始
+    /// provider」时也返回 false，会导致代理刚启动、尚未发生任何切换时 active_targets 永远为空。
+    fn should_update_active_target(&self) -> bool {
+        !self.policy.classifier_routed && !self.policy.provider_pinned
     }
 
     async fn record_success_result(
@@ -511,6 +559,34 @@ impl RequestForwarder {
                     body.clone()
                 };
 
+            // 分类器请求：在 per-provider body 上强制关闭 thinking。
+            // 放在这里而不是 handler，是因为这是唯一一份「即将发给上游」的可变副本，
+            // 也保证故障转移到下一家时补丁仍然带着。放在 Bedrock 优化块之后，
+            // 确保覆盖 thinking_optimizer 可能刚注入的 thinking 配置。
+            if self.policy.classifier_thinking_off
+                && super::classifier::disable_thinking(&mut provider_body)
+            {
+                log::info!(
+                    "[{app_type_str}] [CLS-004] 分类器请求已强制关闭 thinking (provider={})",
+                    provider.id
+                );
+            }
+
+            // 分类器队列条目的模型覆写。与 thinking-off 同一个落点，理由相同：
+            // 这是唯一一份「即将发给上游」的可变副本，且故障转移到下一家时，
+            // 下一轮会用**那一家**自己的覆写重新改写，不会串味。
+            //
+            // 客户端选的模型未必存在于队列里这些便宜的供应商上，覆写在此写死后，
+            // 下游的映射 / 转换层与 usage 归因都会自然跟着走。
+            if let Some(model) = self.policy.classifier_models.get(&provider.id) {
+                if super::classifier::override_model(&mut provider_body, model) {
+                    log::info!(
+                        "[{app_type_str}] [CLS-005] 分类器请求模型覆写为 {model} (provider={})",
+                        provider.id
+                    );
+                }
+            }
+
             attempted_providers += 1;
 
             // 更新状态中的当前 Provider 信息（per-attempt 维度的标识）
@@ -518,7 +594,12 @@ impl RequestForwarder {
             // total_requests / last_request_at / active_connections 已由
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
             // 新「正在尝试哪个 provider」的展示字段。
-            {
+            //
+            // 与 active_targets 共用同一道闸门：面板在 active_targets 为空时正是
+            // 回落到这两个字段显示「当前 Provider」，不挡住的话，侧信道供应商
+            // （分类器队列 / 会话钉住）照样会顶到面板上 —— 尤其是代理刚起、
+            // 首个请求就是侧信道请求时，active_targets 必然为空。
+            if self.should_update_active_target() {
                 let mut status = self.status.write().await;
                 status.current_provider = Some(provider.name.clone());
                 status.current_provider_id = Some(provider.id.clone());
@@ -545,7 +626,7 @@ impl RequestForwarder {
                         .await;
 
                     // 更新当前应用类型使用的 provider
-                    {
+                    if self.should_update_active_target() {
                         let mut current_providers = self.current_providers.write().await;
                         current_providers.insert(
                             app_type_str.to_string(),
@@ -558,8 +639,7 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                        let should_switch = self.should_sync_current_provider(&provider.id);
                         if should_switch {
                             status.failover_count += 1;
 
@@ -648,7 +728,7 @@ impl RequestForwarder {
                                     )
                                     .await;
 
-                                    {
+                                    if self.should_update_active_target() {
                                         let mut current_providers =
                                             self.current_providers.write().await;
                                         current_providers.insert(
@@ -662,8 +742,7 @@ impl RequestForwarder {
                                         status.success_requests += 1;
                                         status.last_error = None;
                                         let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                            self.should_sync_current_provider(&provider.id);
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -793,7 +872,7 @@ impl RequestForwarder {
                                         .await;
 
                                         // 更新当前应用类型使用的 provider
-                                        {
+                                        if self.should_update_active_target() {
                                             let mut current_providers =
                                                 self.current_providers.write().await;
                                             current_providers.insert(
@@ -808,8 +887,7 @@ impl RequestForwarder {
                                             status.success_requests += 1;
                                             status.last_error = None;
                                             let should_switch =
-                                                self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
+                                                self.should_sync_current_provider(&provider.id);
                                             if should_switch {
                                                 status.failover_count += 1;
 
@@ -868,7 +946,11 @@ impl RequestForwarder {
                     }
 
                     // 检测是否需要触发 budget 整流器（仅 Claude/ClaudeAuth 供应商）
-                    if is_anthropic_provider {
+                    //
+                    // 分类器请求例外：budget 整流器会把 thinking 重设为 enabled +
+                    // budget_tokens=32000，正好抵消我们刚做的关闭。分类器请求本就
+                    // 不该带 thinking，上游若报 budget 错误必然另有原因，重试无意义。
+                    if is_anthropic_provider && !self.policy.classifier_thinking_off {
                         let error_message = extract_error_message(&e);
                         if should_rectify_thinking_budget(
                             error_message.as_deref(),
@@ -958,7 +1040,7 @@ impl RequestForwarder {
                                     )
                                     .await;
 
-                                    {
+                                    if self.should_update_active_target() {
                                         let mut current_providers =
                                             self.current_providers.write().await;
                                         current_providers.insert(
@@ -972,8 +1054,7 @@ impl RequestForwarder {
                                         status.success_requests += 1;
                                         status.last_error = None;
                                         let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                            self.should_sync_current_provider(&provider.id);
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -2035,6 +2116,11 @@ impl RequestForwarder {
                         ordered_headers.append(key.clone(), hv);
                     }
                 }
+                continue;
+            }
+
+            // --- 本地路由控制头 — 只在代理内部消费，不出网 ---
+            if key_str.eq_ignore_ascii_case(super::handler_context::PROVIDER_PIN_HEADER) {
                 continue;
             }
 
@@ -3874,7 +3960,57 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            policy: ForwardPolicy::default(),
         }
+    }
+
+    #[test]
+    fn forward_policy_default_is_inert() {
+        // 默认策略必须两个开关全关，保证所有既有路径逐字节不变
+        let policy = ForwardPolicy::default();
+        assert!(!policy.classifier_thinking_off);
+        assert!(!policy.classifier_routed);
+    }
+
+    #[test]
+    fn should_sync_current_provider_skips_classifier_routed_requests() {
+        let mut fwd = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        fwd.current_provider_id_at_start = "main".to_string();
+
+        // 常规请求：换了 provider 就该同步当前供应商
+        assert!(fwd.should_sync_current_provider("cheap"));
+        assert!(!fwd.should_sync_current_provider("main"));
+
+        // 分类器请求：无论如何都不得改写用户选定的当前供应商
+        fwd.policy.classifier_routed = true;
+        assert!(!fwd.should_sync_current_provider("cheap"));
+        assert!(!fwd.should_sync_current_provider("main"));
+
+        // 会话钉住同理：那是「这一个会话走这家」，不是「以后都走这家」
+        fwd.policy.classifier_routed = false;
+        fwd.policy.provider_pinned = true;
+        assert!(!fwd.should_sync_current_provider("cheap"));
+        assert!(!fwd.should_sync_current_provider("main"));
+    }
+
+    #[test]
+    fn should_update_active_target_skips_only_classifier_routed_requests() {
+        let mut fwd = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        fwd.current_provider_id_at_start = "main".to_string();
+
+        // 常规请求必须刷新 active_targets —— 包括「实际 provider == 起始 provider」的情况，
+        // 否则代理刚启动、还没发生任何切换时前端拿不到任何 active_target。
+        assert!(fwd.should_update_active_target());
+
+        // 分类器请求走侧信道，不得污染 UI 上的「当前正在用哪家」标记
+        fwd.policy.classifier_routed = true;
+        assert!(!fwd.should_update_active_target());
+
+        // 钉住的会话同样是侧信道：面板在 active_targets 为空时会回落到
+        // status.current_provider，那个字段也归这道闸门管
+        fwd.policy.classifier_routed = false;
+        fwd.policy.provider_pinned = true;
+        assert!(!fwd.should_update_active_target());
     }
 
     #[test]

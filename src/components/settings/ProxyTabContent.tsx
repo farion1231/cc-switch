@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
+import {
+  Server,
+  Activity,
+  Zap,
+  Globe,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -13,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProxyPanel } from "@/components/proxy";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
+import { ClassifierQueueManager } from "@/components/proxy/ClassifierQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -218,6 +226,48 @@ export function ProxyTabContent({
                   );
                 })}
               </Tabs>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Classifier Queue (Claude only) */}
+        <AccordionItem
+          value="classifier"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="h-5 w-5 text-sky-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("settings.advanced.classifier.title")}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("settings.advanced.classifier.description")}
+                </p>
+              </div>
+              {/* 只对 Claude 开放：特征签名是 Anthropic Messages 入站格式独有的 */}
+              <Badge variant="secondary" className="h-6 ml-auto mr-2">
+                {getAppLabel("claude")}
+              </Badge>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            <div className="space-y-6">
+              {!isRunning && (
+                <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                  <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                    {t("proxy.classifier.proxyRequired", {
+                      defaultValue:
+                        "需要先启动路由服务并接管 Claude，才能配置分类器队列",
+                    })}
+                  </p>
+                </div>
+              )}
+              <ClassifierQueueManager
+                appType="claude"
+                disabled={!isRunning || !(takeoverStatus?.claude ?? false)}
+              />
             </div>
           </AccordionContent>
         </AccordionItem>

@@ -5,6 +5,8 @@
 //! - SRV: Server (服务器)
 //! - FWD: Forwarder (转发器)
 //! - FO: Failover (故障转移)
+//! - CLS: Classifier queue (分类器队列)
+//! - PIN: Provider pin (会话级钉住供应商)
 //! - RSP: Response (响应处理)
 //! - USG: Usage (使用量)
 
@@ -44,6 +46,21 @@ pub mod fo {
     pub const LIVE_BACKUP_ERROR: &str = "FO-003";
     pub const ALL_CIRCUIT_OPEN: &str = "FO-004";
     pub const NO_PROVIDERS: &str = "FO-005";
+}
+
+/// 分类器队列日志码
+pub mod cls {
+    pub const REQUEST_DETECTED: &str = "CLS-001";
+    pub const QUEUE_ROUTED: &str = "CLS-002";
+    pub const QUEUE_FALLBACK: &str = "CLS-003";
+    pub const THINKING_DISABLED: &str = "CLS-004";
+}
+
+/// 会话级钉住供应商日志码
+pub mod pin {
+    pub const RESOLVED: &str = "PIN-001";
+    pub const UNKNOWN: &str = "PIN-002";
+    pub const AMBIGUOUS: &str = "PIN-003";
 }
 
 /// 响应处理日志码
