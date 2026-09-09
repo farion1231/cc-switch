@@ -22,6 +22,73 @@ interface EditProviderDialogProps {
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
 
+/**
+ * Live 配置可能被客户端或代理改写过，但 API key 的唯一来源应是数据库中的
+ * provider 配置。保留 Live 的模型/MCP 等其它字段，同时把凭据字段恢复为 SSOT，
+ * 避免编辑当前供应商时“只改模型也把 key 换掉”。
+ */
+function restoreProviderCredentials(
+  appId: AppId,
+  liveSettings: Record<string, unknown>,
+  storedSettings: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = { ...liveSettings };
+
+  if (appId === "codex") {
+    const storedAuth = storedSettings.auth;
+    if (
+      storedAuth &&
+      typeof storedAuth === "object" &&
+      !Array.isArray(storedAuth)
+    ) {
+      const liveAuth =
+        result.auth &&
+        typeof result.auth === "object" &&
+        !Array.isArray(result.auth)
+          ? { ...(result.auth as Record<string, unknown>) }
+          : {};
+      delete liveAuth.OPENAI_API_KEY;
+      if (Object.prototype.hasOwnProperty.call(storedAuth, "OPENAI_API_KEY")) {
+        liveAuth.OPENAI_API_KEY = (
+          storedAuth as Record<string, unknown>
+        ).OPENAI_API_KEY;
+      }
+      result.auth = liveAuth;
+    }
+    return result;
+  }
+
+  const credentialKeys =
+    appId === "gemini"
+      ? ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+      : [
+          "ANTHROPIC_AUTH_TOKEN",
+          "ANTHROPIC_API_KEY",
+          "OPENROUTER_API_KEY",
+          "OPENAI_API_KEY",
+          "GOOGLE_API_KEY",
+        ];
+  const storedEnv = storedSettings.env;
+  if (!storedEnv || typeof storedEnv !== "object" || Array.isArray(storedEnv)) {
+    return result;
+  }
+
+  const liveEnv =
+    result.env && typeof result.env === "object" && !Array.isArray(result.env)
+      ? { ...(result.env as Record<string, unknown>) }
+      : {};
+  for (const key of credentialKeys) {
+    delete liveEnv[key];
+  }
+  for (const key of credentialKeys) {
+    if (Object.prototype.hasOwnProperty.call(storedEnv, key)) {
+      liveEnv[key] = (storedEnv as Record<string, unknown>)[key];
+    }
+  }
+  result.env = liveEnv;
+  return result;
+}
+
 export function EditProviderDialog({
   open,
   provider,
@@ -132,10 +199,13 @@ export function EditProviderDialog({
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
   const initialSettingsConfig = useMemo(() => {
-    const base = (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
-      string,
-      unknown
-    >;
+    const stored = (provider?.settingsConfig ?? {}) as Record<string, unknown>;
+    const base = (liveSettings ?? stored) as Record<string, unknown>;
+
+    const credentialsRestored =
+      liveSettings && provider?.settingsConfig
+        ? restoreProviderCredentials(appId, base, stored)
+        : base;
 
     // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
     // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
@@ -151,11 +221,11 @@ export function EditProviderDialog({
       const dbCatalog = (provider.settingsConfig as Record<string, unknown>)
         .modelCatalog;
       if (dbCatalog !== undefined) {
-        return { ...base, modelCatalog: dbCatalog };
+        return { ...credentialsRestored, modelCatalog: dbCatalog };
       }
     }
 
-    return base;
+    return credentialsRestored;
   }, [liveSettings, provider?.settingsConfig, appId]); // 只依赖 settingsConfig，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单

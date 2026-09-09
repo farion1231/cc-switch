@@ -146,6 +146,7 @@ describe("EditProviderDialog", () => {
         JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
       ).toEqual({
         ...liveSettings,
+        auth: { OPENAI_API_KEY: "db-key" },
         modelCatalog: dbModelCatalog,
       });
     });
@@ -155,7 +156,51 @@ describe("EditProviderDialog", () => {
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual({
       ...liveSettings,
+      auth: { OPENAI_API_KEY: "db-key" },
       modelCatalog: dbModelCatalog,
+    });
+  });
+
+  it("编辑当前 Claude 供应商时保留数据库 API key，不使用 live 中的 key", async () => {
+    const provider: Provider = {
+      id: "shared",
+      name: "Shared",
+      category: "aggregator",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "db-key",
+        },
+      },
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue({
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "live-key",
+        ANTHROPIC_BASE_URL: "https://live.example/v1",
+      },
+    });
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="claude"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "db-key",
+          ANTHROPIC_BASE_URL: "https://live.example/v1",
+        },
+      });
     });
   });
 
