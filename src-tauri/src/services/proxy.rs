@@ -3842,7 +3842,9 @@ impl ProxyService {
                 }
 
                 let config_result = prepared_cfg.as_deref().map_or(Ok(()), |cfg| {
-                    crate::config::write_text_file(&get_codex_config_path(), cfg)
+                    let merged = crate::codex_config::merge_live_non_managed_provider_sections(cfg)
+                        .map_err(|error| format!("merge legacy providers failed: {error}"))?;
+                    crate::config::write_text_file(&get_codex_config_path(), &merged)
                         .map_err(|error| format!("写入 Codex config 失败: {error}"))
                 });
                 match config_result {
@@ -3862,7 +3864,9 @@ impl ProxyService {
                         // Unguarded provider writes preserve an existing login;
                         // only restore transactions interpret empty auth as an
                         // exact-generation deletion.
-                        crate::config::write_text_file(&get_codex_config_path(), cfg)
+                        let merged = crate::codex_config::merge_live_non_managed_provider_sections(cfg)
+                            .map_err(|e| format!("merge legacy providers failed: {e}"))?;
+                        crate::config::write_text_file(&get_codex_config_path(), &merged)
                             .map_err(|e| format!("写入 Codex config 失败: {e}"))
                     } else {
                         crate::codex_config::write_codex_live_atomic(auth, Some(cfg))
@@ -3877,8 +3881,12 @@ impl ProxyService {
                             .map_err(|e| format!("写入 Codex auth 失败: {e}"))
                     }
                 }
-                (None, Some(cfg)) => crate::config::write_text_file(&get_codex_config_path(), cfg)
-                    .map_err(|e| format!("写入 Codex config 失败: {e}")),
+                (None, Some(cfg)) => {
+                    let merged = crate::codex_config::merge_live_non_managed_provider_sections(cfg)
+                        .map_err(|e| format!("merge legacy providers failed: {e}"))?;
+                    crate::config::write_text_file(&get_codex_config_path(), &merged)
+                        .map_err(|e| format!("写入 Codex config 失败: {e}"))
+                }
                 (None, None) => Ok(()),
             }
         };

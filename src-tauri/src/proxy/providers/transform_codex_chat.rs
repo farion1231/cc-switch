@@ -557,13 +557,22 @@ fn collapse_system_messages_to_head(messages: Vec<Value>) -> Vec<Value> {
 
     for msg in messages {
         if msg.get("role").and_then(|v| v.as_str()) == Some("system") {
-            if let Some(text) = msg.get("content").and_then(|v| v.as_str()) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
+            match msg.get("content") {
+                Some(Value::String(text)) if !text.trim().is_empty() => {
                     system_chunks.push(text.to_string());
                 }
-                continue;
+                Some(Value::Array(parts)) if !parts.is_empty() => {
+                    system_chunks.extend(
+                        parts
+                            .iter()
+                            .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
+                            .filter(|text| !text.trim().is_empty())
+                            .map(ToString::to_string),
+                    );
+                }
+                _ => {}
             }
+            continue;
         }
         rest.push(msg);
     }
@@ -3010,6 +3019,24 @@ mod tests {
         assert_eq!(out[1]["content"], "U1");
         assert_eq!(out[2]["content"], "A1");
         assert_eq!(out[3]["content"], "U2");
+    }
+
+    #[test]
+    fn responses_request_to_chat_drops_empty_system_messages() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [
+                {"type": "message", "role": "developer", "content": null},
+                {"type": "message", "role": "system", "content": "   "},
+                {"type": "message", "role": "developer", "content": []},
+                {"type": "message", "role": "user", "content": "hello"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages, &[json!({"role": "user", "content": "hello"})]);
     }
 
     #[test]
