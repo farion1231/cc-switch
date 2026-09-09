@@ -411,7 +411,19 @@
         "mediaFallback": "Unsupported Image Fallback",
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
         "mediaHeuristic": "Text-Only Model Preflight",
-        "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged"
+        "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged",
+        "steerUserRole": "Steer messages",
+        "steerUserRoleDescription": "When a user sends a message during a running task, converts the corresponding system message to user while preserving its content and position",
+        "responseSystemGroup": "Response system conversion",
+        "responseSystemDescription": "When Claude Code requests are forwarded through Chat Completions, converts the selected conversation system messages to user to reduce cache misses",
+        "tokenReminderUserRole": "Token budget reminders",
+        "tokenReminderUserRoleDescription": "When Claude Code inserts a reminder about remaining tokens, changes the reminder's role from system to user",
+        "todoReminderUserRole": "Todo reminders",
+        "todoReminderUserRoleDescription": "When Claude Code inserts a TodoWrite reminder, changes the reminder's role from system to user",
+        "taskNotificationUserRole": "Background task notifications",
+        "taskNotificationUserRoleDescription": "When a background task sends a status notification, changes its role from system to user and preserves the notice that it is not human input",
+        "allSystemUserRole": "Convert all",
+        "allSystemUserRoleDescription": "When enabled, converts every system message after the first user message to user, regardless of type. Overrides the four options above while keeping their saved settings; later system instructions also receive user priority"
       },
       "optimizer": {
         "title": "Bedrock Request Optimizer",

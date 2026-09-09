@@ -253,6 +253,7 @@ mod tests {
             request_thinking_budget: true,
             request_media_fallback: true,
             request_media_heuristic: true,
+            ..Default::default()
         }
     }
 
@@ -263,6 +264,7 @@ mod tests {
             request_thinking_budget: false,
             request_media_fallback: true,
             request_media_heuristic: true,
+            ..Default::default()
         }
     }
 
@@ -273,6 +275,7 @@ mod tests {
             request_thinking_budget: true,
             request_media_fallback: true,
             request_media_heuristic: true,
+            ..Default::default()
         }
     }
 
