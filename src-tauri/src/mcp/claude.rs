@@ -8,9 +8,11 @@ use crate::error::AppError;
 
 use super::validation::{extract_server_spec, validate_server_spec};
 
+/// Check if Claude's config locations exist on disk.
+/// Used only for removal (remove_server_from_claude) — sync operations
+/// should NOT guard on this to avoid silently skipping deployment when
+/// Claude Code hasn't been launched yet.
 fn should_sync_claude_mcp() -> bool {
-    // Claude 未安装/未初始化时：通常 ~/.claude 目录与 ~/.claude.json 都不存在。
-    // 按用户偏好：此时跳过写入/删除，不创建任何文件或目录。
     crate::config::get_claude_config_dir().exists() || crate::config::get_claude_mcp_path().exists()
 }
 
@@ -37,11 +39,13 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     out
 }
 
-/// 将 config.json 中 enabled==true 的项投影写入 ~/.claude.json
+/// Project enabled servers from config.json into ~/.claude.json.
 pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
-    if !should_sync_claude_mcp() {
-        return Ok(());
-    }
+    // Don't guard with should_sync_claude_mcp() — when ~/.claude/ or
+    // ~/.claude.json don't exist yet (fresh Claude Code install that
+    // hasn't been launched), the guard would silently skip the write,
+    // and MCP configs configured in CC Switch are never deployed.
+    // set_mcp_servers_map already handles parent directory creation.
     let enabled = collect_enabled_servers(&config.mcp.claude);
     crate::claude_mcp::set_mcp_servers_map(&enabled)
 }
@@ -113,37 +117,37 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
     Ok(changed)
 }
 
-/// 将单个 MCP 服务器同步到 Claude live 配置
+/// Sync a single MCP server into Claude's live config (~/.claude.json).
 pub fn sync_single_server_to_claude(
     _config: &MultiAppConfig,
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
-    if !should_sync_claude_mcp() {
-        return Ok(());
-    }
-    // 读取现有的 MCP 配置
+    // Don't guard with should_sync_claude_mcp() — see sync_enabled_to_claude.
+    // Read the existing MCP config
     let current = crate::claude_mcp::read_mcp_servers_map()?;
 
-    // 创建新的 HashMap，包含现有的所有服务器 + 当前要同步的服务器
+    // Merge the server we're syncing with existing servers
     let mut updated = current;
     updated.insert(id.to_string(), server_spec.clone());
 
-    // 写回
+    // Write back
     crate::claude_mcp::set_mcp_servers_map(&updated)
 }
 
-/// 从 Claude live 配置中移除单个 MCP 服务器
+/// Remove a single MCP server from Claude's live config (~/.claude.json).
+/// If the config doesn't exist, there's nothing to remove — return Ok early.
 pub fn remove_server_from_claude(id: &str) -> Result<(), AppError> {
     if !should_sync_claude_mcp() {
+        log::debug!("Skipping MCP removal from Claude: config does not exist");
         return Ok(());
     }
-    // 读取现有的 MCP 配置
+    // Read the existing MCP config
     let mut current = crate::claude_mcp::read_mcp_servers_map()?;
 
-    // 移除指定服务器
+    // Remove the specified server
     current.remove(id);
 
-    // 写回
+    // Write back
     crate::claude_mcp::set_mcp_servers_map(&current)
 }

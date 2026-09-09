@@ -855,14 +855,15 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
 }
 
 #[test]
-fn enabling_claude_mcp_skips_when_claude_config_absent() {
+fn enabling_claude_mcp_creates_config_when_claude_config_absent() {
     use support::create_test_state;
 
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let home = ensure_test_home();
 
-    // 确认 Claude 相关目录/文件都不存在（模拟“未安装/未运行过 Claude”）
+    // Verify Claude config locations don't exist (simulating fresh Claude install
+    // that hasn't been launched yet)
     assert!(
         !home.join(".claude").exists(),
         "~/.claude should not exist in fresh test environment"
@@ -874,7 +875,11 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
 
     let state = create_test_state().expect("create test state");
 
-    // 先插入一个未启用 Claude 的 MCP 服务器（避免 upsert 触发同步）
+    // Insert a server with Claude disabled first, then toggle on.
+    // Previously the toggle was silently skipped (the old guard refused to
+    // create ~/.claude.json), so users who configured CC Switch before ever
+    // launching Claude Code never got their MCP servers deployed.
+    // After the fix: toggle creates ~/.claude.json with the enabled server.
     McpService::upsert_server(
         &state,
         McpServer {
@@ -900,13 +905,25 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
     )
     .expect("insert server without syncing");
 
-    // 启用 Claude：配置缺失时应跳过写入（不创建 ~/.claude.json）
+    // Toggle Claude on — should now CREATE the config instead of skipping
     McpService::toggle_app(&state, "claude-server", AppType::Claude, true)
-        .expect("toggle claude should succeed even when ~/.claude is missing");
+        .expect("toggle claude should succeed and create ~/.claude.json");
 
     assert!(
-        !home.join(".claude.json").exists(),
-        "~/.claude.json should still not exist after skipped sync"
+        home.join(".claude.json").exists(),
+        "~/.claude.json should now exist — toggle must create it rather than silently skip"
+    );
+
+    // Verify the server was actually written
+    let text = fs::read_to_string(home.join(".claude.json")).expect("read ~/.claude.json");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse ~/.claude.json");
+    let servers = value
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .expect("mcpServers object");
+    assert!(
+        servers.contains_key("claude-server"),
+        "claude-server should be present in ~/.claude.json after toggle"
     );
 }
 
