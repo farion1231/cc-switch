@@ -5,7 +5,8 @@
 //! ## Session ID 提取
 //!
 //! 支持从客户端请求中提取 Session ID，用于关联同一对话的多个请求：
-//! - Claude: 从 `metadata.user_id` (格式: `user_xxx_session_yyy`) 或 `metadata.session_id` 提取
+//! - Claude / Claude Desktop（`claude-desktop`）: 从 header `x-claude-code-session-id`
+//!   或 `metadata.user_id` (格式: `user_xxx_session_yyy`) / `metadata.session_id` 提取
 //! - Codex: 从 headers 中的 `session_id` / `x-session-id` 或 `metadata.session_id` 提取
 //! - Grok Build: 从 headers 中的 `x-grok-conv-id` / `x-grok-session-id` 提取
 //! - 其他: 生成新的 UUID
@@ -73,7 +74,7 @@ pub fn extract_session_id(
     body: &serde_json::Value,
     client_format: &str,
 ) -> SessionIdResult {
-    if client_format == "claude" {
+    if matches!(client_format, "claude" | "claude-desktop") {
         if let Some(result) = extract_claude_session(headers, body) {
             return result;
         }
@@ -455,5 +456,26 @@ mod tests {
         // 没有 "_session_" 分隔符的情况
         assert_eq!(parse_session_from_user_id("user_john_abc123"), None);
         assert_eq!(parse_session_from_user_id("_session_"), None);
+    }
+
+    #[test]
+    fn test_claude_desktop_uses_claude_session_header() {
+        // Claude Desktop 的 app_type_str 是 "claude-desktop"，必须和 "claude"
+        // 一样读 Claude 会话头，否则下游的 x-opencode-session 映射拿不到 ID。
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-claude-code-session-id",
+            "d937243f-2702-4f20-97b6-c9682235ab81".parse().unwrap(),
+        );
+        let body = json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = extract_session_id(&headers, &body, "claude-desktop");
+
+        assert_eq!(result.session_id, "d937243f-2702-4f20-97b6-c9682235ab81");
+        assert_eq!(result.source, SessionIdSource::Header);
+        assert!(result.client_provided);
     }
 }
