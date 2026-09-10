@@ -9,10 +9,13 @@ use yaml_rust::{YamlEmitter, YamlLoader};
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 
+pub const OFFICIAL_PROVIDER_ID: &str = "deepseek-official";
 pub const DEFAULT_PROFILE_NAME: &str = "default";
 pub const DESKTOP_PROFILE_NAME: &str = "desktop";
 const API_KEY_FIELD: &str = "apiKey";
 const SETTINGS_NAMESPACE: &str = "llm-deepseek";
+const PI_AI_NAMESPACE: &str = "llm-pi-ai";
+const DEFAULT_MODEL_NAMESPACE: &str = "agent-default-model";
 const API_KEY_REF: &str = "DEEPSEEK_API_KEY";
 const PROFILE_PATCH_TEMPLATE: &str = "\
 # Your patch layer for this dsh profile, applied after every bundle layer:
@@ -54,6 +57,26 @@ pub struct DeepSeekHarnessProviderConfig {
     pub models: Option<Value>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeProviderSource {
+    DeepSeek,
+    PiAi,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeProvider {
+    pub name: String,
+    pub source: NativeProviderSource,
+    pub config: Value,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NativeState {
+    pub providers: indexmap::IndexMap<String, NativeProvider>,
+    pub current_provider: Option<String>,
+    pub current_model: Option<String>,
 }
 
 pub fn get_dsh_home() -> PathBuf {
@@ -142,21 +165,7 @@ pub fn set_provider(
         })?;
     }
 
-    let credentials_path = get_credentials_path();
-    let api_key = config.api_key.as_deref().map(str::trim).unwrap_or("");
-    if !api_key.is_empty() {
-        update_yaml_document(&credentials_path, |document| {
-            merge_mapping_value(document, API_KEY_REF, Yaml::String(api_key.to_string()));
-            Ok(())
-        })?;
-    } else if credentials_path.exists() {
-        update_yaml_document(&credentials_path, |document| {
-            if let Yaml::Hash(hash) = document {
-                hash.remove(&mapping_key(API_KEY_REF));
-            }
-            Ok(())
-        })?;
-    }
+    update_credential_reference(API_KEY_REF, config.api_key.as_deref())?;
 
     log::debug!("DeepSeek Harness provider '{provider_id}' written to live config");
     Ok(())
@@ -177,21 +186,295 @@ pub fn remove_provider() -> Result<(), AppError> {
         })?;
     }
 
-    let credentials_path = get_credentials_path();
-    if credentials_path.exists() {
-        update_yaml_document(&credentials_path, |document| {
-            if let Yaml::Hash(hash) = document {
-                hash.remove(&mapping_key(API_KEY_REF));
-            }
-            Ok(())
-        })?;
-    }
+    update_credential_reference(API_KEY_REF, None)?;
     Ok(())
 }
 
 pub fn provider_exists_in_live_config() -> Result<bool, AppError> {
     let document = parse_yaml_document(&get_settings_path())?;
     Ok(matches!(document, Yaml::Hash(hash) if hash.contains_key(&mapping_key(SETTINGS_NAMESPACE))))
+}
+
+pub fn read_native_state() -> Result<NativeState, AppError> {
+    let settings = parse_yaml_document(&get_settings_path())?;
+    let credentials = read_credential_references()?;
+    let mut state = NativeState::default();
+    let Some(root) = settings.as_hash() else {
+        return Ok(state);
+    };
+
+    if let Some(section) = root
+        .get(&mapping_key(SETTINGS_NAMESPACE))
+        .and_then(Yaml::as_hash)
+    {
+        let config = yaml_hash_to_json(section)?;
+        let name = "DeepSeek".to_string();
+        let config = with_resolved_api_key(config, &credentials);
+        state.providers.insert(
+            OFFICIAL_PROVIDER_ID.to_string(),
+            NativeProvider {
+                name,
+                source: NativeProviderSource::DeepSeek,
+                config,
+            },
+        );
+    }
+
+    if let Some(providers) = root
+        .get(&mapping_key(PI_AI_NAMESPACE))
+        .and_then(Yaml::as_hash)
+        .and_then(|section| section.get(&mapping_key("providers")))
+        .and_then(Yaml::as_hash)
+    {
+        for (id, config) in providers {
+            let Some(id) = id.as_str() else { continue };
+            let Some(config_hash) = config.as_hash() else {
+                continue;
+            };
+            let config = with_resolved_api_key(yaml_hash_to_json(config_hash)?, &credentials);
+            let name = config
+                .get("displayName")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(id)
+                .to_string();
+            state.providers.insert(
+                id.to_string(),
+                NativeProvider {
+                    name,
+                    source: NativeProviderSource::PiAi,
+                    config,
+                },
+            );
+        }
+    }
+
+    if let Some(default_model) = root
+        .get(&mapping_key(DEFAULT_MODEL_NAMESPACE))
+        .and_then(Yaml::as_hash)
+    {
+        state.current_provider = yaml_string(default_model, "provider");
+        state.current_model = yaml_string(default_model, "model");
+    }
+    Ok(state)
+}
+
+pub fn set_pi_ai_provider(provider_id: &str, config: &Value) -> Result<(), AppError> {
+    validate_route_id(provider_id)?;
+    let mut config = config.as_object().cloned().ok_or_else(|| {
+        AppError::InvalidInput("DeepSeek Harness provider must be an object".to_string())
+    })?;
+    let api_key = config
+        .remove(API_KEY_FIELD)
+        .and_then(|value| value.as_str().map(ToOwned::to_owned));
+    let credential_ref = config
+        .get("apiKeyEnv")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned);
+    if let Some(reference) = credential_ref.as_deref() {
+        validate_credential_ref(reference)?;
+        update_credential_reference(reference, api_key.as_deref())?;
+    }
+    let section = yaml_value(&Value::Object(config))?;
+    update_yaml_document(&get_settings_path(), |document| {
+        let root = ensure_hash(document);
+        let pi_ai = ensure_child_hash(root, PI_AI_NAMESPACE);
+        let providers = ensure_child_hash(pi_ai, "providers");
+        providers.insert(mapping_key(provider_id), section);
+        Ok(())
+    })
+}
+
+pub fn remove_pi_ai_provider(provider_id: &str) -> Result<(), AppError> {
+    validate_route_id(provider_id)?;
+    let settings_path = get_settings_path();
+    if !settings_path.exists() {
+        return Ok(());
+    }
+    update_yaml_document(&settings_path, |document| {
+        if let Yaml::Hash(root) = document {
+            if let Some(Yaml::Hash(section)) = root.get_mut(&mapping_key(PI_AI_NAMESPACE)) {
+                if let Some(Yaml::Hash(providers)) = section.get_mut(&mapping_key("providers")) {
+                    providers.remove(&mapping_key(provider_id));
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+pub fn set_current_model(provider_id: &str, model_id: &str) -> Result<(), AppError> {
+    validate_route_id(provider_id)?;
+    if model_id.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "DeepSeek Harness model id cannot be empty".to_string(),
+        ));
+    }
+    update_yaml_document(&get_settings_path(), |document| {
+        let root = ensure_hash(document);
+        let current = ensure_child_hash(root, DEFAULT_MODEL_NAMESPACE);
+        current.insert(
+            mapping_key("provider"),
+            Yaml::String(provider_id.to_string()),
+        );
+        current.insert(mapping_key("model"), Yaml::String(model_id.to_string()));
+        Ok(())
+    })
+}
+
+fn with_resolved_api_key(mut config: Value, credentials: &HashMap<String, String>) -> Value {
+    let reference = config
+        .get("apiKeyEnv")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    if let (Some(reference), Some(object)) = (reference, config.as_object_mut()) {
+        if let Some(api_key) = credentials.get(&reference) {
+            object.insert(API_KEY_FIELD.to_string(), Value::String(api_key.clone()));
+        }
+    }
+    config
+}
+
+fn read_credential_references() -> Result<HashMap<String, String>, AppError> {
+    let path = get_credentials_path();
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let document = parse_yaml_document(&path)?;
+    let Some(root) = document.as_hash() else {
+        return Ok(HashMap::new());
+    };
+    let refs = if root.get(&mapping_key("version")).is_some() {
+        root.get(&mapping_key("refs")).and_then(Yaml::as_hash)
+    } else {
+        Some(root)
+    };
+    Ok(refs
+        .into_iter()
+        .flat_map(|refs| refs.iter())
+        .filter_map(|(key, value)| Some((key.as_str()?.to_string(), value.as_str()?.to_string())))
+        .collect())
+}
+
+fn update_credential_reference(reference: &str, value: Option<&str>) -> Result<(), AppError> {
+    validate_credential_ref(reference)?;
+    let path = get_credentials_path();
+    if value.map(str::trim).unwrap_or("").is_empty() && !path.exists() {
+        return Ok(());
+    }
+    update_yaml_document(&path, |document| {
+        let root = ensure_hash(document);
+        if !root.contains_key(&mapping_key("version")) {
+            let legacy = root.clone();
+            root.clear();
+            root.insert(mapping_key("version"), Yaml::Integer(1));
+            root.insert(mapping_key("refs"), Yaml::Hash(legacy));
+        }
+        let refs = ensure_child_hash(root, "refs");
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => {
+                refs.insert(mapping_key(reference), Yaml::String(value.to_string()));
+            }
+            None => {
+                refs.remove(&mapping_key(reference));
+            }
+        }
+        Ok(())
+    })
+}
+
+fn ensure_hash(document: &mut Yaml) -> &mut YamlHash {
+    if !matches!(document, Yaml::Hash(_)) {
+        *document = Yaml::Hash(YamlHash::new());
+    }
+    let Yaml::Hash(hash) = document else {
+        unreachable!("document was normalized")
+    };
+    hash
+}
+
+fn ensure_child_hash<'a>(parent: &'a mut YamlHash, key: &str) -> &'a mut YamlHash {
+    let key = mapping_key(key);
+    if !matches!(parent.get(&key), Some(Yaml::Hash(_))) {
+        parent.insert(key.clone(), Yaml::Hash(YamlHash::new()));
+    }
+    let Some(Yaml::Hash(hash)) = parent.get_mut(&key) else {
+        unreachable!("child was normalized")
+    };
+    hash
+}
+
+fn yaml_hash_to_json(hash: &YamlHash) -> Result<Value, AppError> {
+    let mut object = serde_json::Map::new();
+    for (key, value) in hash {
+        let key = key
+            .as_str()
+            .ok_or_else(|| AppError::Config("DSH YAML keys must be strings".to_string()))?;
+        object.insert(key.to_string(), yaml_to_json(value)?);
+    }
+    Ok(Value::Object(object))
+}
+
+fn yaml_to_json(value: &Yaml) -> Result<Value, AppError> {
+    Ok(match value {
+        Yaml::Null | Yaml::BadValue => Value::Null,
+        Yaml::Boolean(value) => Value::Bool(*value),
+        Yaml::Integer(value) => Value::Number((*value).into()),
+        Yaml::Real(value) => {
+            serde_json::Number::from_f64(value.parse::<f64>().map_err(|error| {
+                AppError::Config(format!("Invalid DSH real number '{value}': {error}"))
+            })?)
+            .map(Value::Number)
+            .ok_or_else(|| AppError::Config(format!("Invalid DSH real number: {value}")))?
+        }
+        Yaml::String(value) => Value::String(value.clone()),
+        Yaml::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(yaml_to_json)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Yaml::Hash(hash) => yaml_hash_to_json(hash)?,
+        Yaml::Alias(_) => {
+            return Err(AppError::Config(
+                "DSH YAML aliases are not supported".to_string(),
+            ))
+        }
+    })
+}
+
+fn yaml_string(hash: &YamlHash, key: &str) -> Option<String> {
+    hash.get(&mapping_key(key))
+        .and_then(Yaml::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn validate_route_id(value: &str) -> Result<(), AppError> {
+    if value.is_empty()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(AppError::InvalidInput(format!(
+            "Invalid DeepSeek Harness provider id: {value}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_credential_ref(value: &str) -> Result<(), AppError> {
+    if value.is_empty()
+        || !value.bytes().enumerate().all(|(index, byte)| {
+            byte == b'_' || byte.is_ascii_uppercase() || (index > 0 && byte.is_ascii_digit())
+        })
+    {
+        return Err(AppError::InvalidInput(format!(
+            "Invalid DeepSeek Harness credential reference: {value}"
+        )));
+    }
+    Ok(())
 }
 
 fn ensure_profile(profile: Option<&str>) -> Result<(), AppError> {
@@ -358,7 +641,9 @@ mod tests {
             assert!(!settings.contains("sk-test"));
 
             let credentials = std::fs::read_to_string(home.join(".credentials.yaml")).unwrap();
-            assert_eq!(credentials, "---\nDEEPSEEK_API_KEY: \"sk-test\"\n");
+            assert!(credentials.contains("version: 1"));
+            assert!(credentials.contains("refs:"));
+            assert!(credentials.contains("DEEPSEEK_API_KEY: \"sk-test\""));
             assert!(home.join("profiles/desktop/package.json").exists());
             assert!(home.join("profiles/desktop/cordis.patch.yml").exists());
             assert!(home.join("profiles/desktop/pnpm-workspace.yaml").exists());
@@ -516,6 +801,106 @@ mod tests {
 
             remove_provider().unwrap();
             assert!(!provider_exists_in_live_config().unwrap());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn reads_official_and_pi_ai_native_providers_with_current_model() {
+        with_temp_home(|home| {
+            std::fs::write(
+                home.join("settings.yaml"),
+                "llm-deepseek:\n  baseURL: https://api.deepseek.com\n  apiKeyEnv: DEEPSEEK_API_KEY\n  models:\n    - id: deepseek-v4-pro\n      name: DeepSeek V4 Pro\nllm-pi-ai:\n  providers:\n    yuzuvalley:\n      displayName: Company Gateway\n      api: openai-completions\n      baseURL: https://gateway.example/v1\n      apiKeyEnv: YUZUVALLEY_API_KEY\n      models:\n        - id: glm-5.3\n          name: GLM 5.3\nagent-default-model:\n  provider: yuzuvalley\n  model: glm-5.3\n",
+            )
+            .unwrap();
+            std::fs::write(
+                home.join(".credentials.yaml"),
+                "version: 1\nrefs:\n  DEEPSEEK_API_KEY: deepseek-secret\n  YUZUVALLEY_API_KEY: gateway-secret\nrecords:\n  client-connection/browser-session:\n    kind: grant\n    payload:\n      version: 1\n      secret: keep\n",
+            )
+            .unwrap();
+
+            let state = read_native_state().unwrap();
+            assert_eq!(state.current_provider.as_deref(), Some("yuzuvalley"));
+            assert_eq!(state.current_model.as_deref(), Some("glm-5.3"));
+            assert_eq!(state.providers.len(), 2);
+
+            let official = state.providers.get(OFFICIAL_PROVIDER_ID).unwrap();
+            assert_eq!(official.source, NativeProviderSource::DeepSeek);
+            assert_eq!(official.config["apiKey"], "deepseek-secret");
+
+            let gateway = state.providers.get("yuzuvalley").unwrap();
+            assert_eq!(gateway.source, NativeProviderSource::PiAi);
+            assert_eq!(gateway.name, "Company Gateway");
+            assert_eq!(gateway.config["baseURL"], "https://gateway.example/v1");
+            assert_eq!(gateway.config["apiKey"], "gateway-secret");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn writes_versioned_credentials_and_preserves_records() {
+        with_temp_home(|home| {
+            std::fs::write(
+                home.join(".credentials.yaml"),
+                "version: 1\nrefs:\n  OTHER_KEY: keep\nrecords:\n  client-connection/browser-session:\n    kind: grant\n    payload:\n      secret: keep-record\n",
+            )
+            .unwrap();
+
+            set_provider(
+                OFFICIAL_PROVIDER_ID,
+                &DeepSeekHarnessProviderConfig {
+                    api_key: Some("rotated".to_string()),
+                    base_url: Some("https://api.deepseek.com".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+            let credentials = parse_yaml_document(&home.join(".credentials.yaml")).unwrap();
+            let root = credentials.as_hash().unwrap();
+            assert_eq!(root[&mapping_key("version")].as_i64(), Some(1));
+            let refs = root[&mapping_key("refs")].as_hash().unwrap();
+            assert_eq!(
+                refs[&mapping_key("DEEPSEEK_API_KEY")].as_str(),
+                Some("rotated")
+            );
+            assert_eq!(refs[&mapping_key("OTHER_KEY")].as_str(), Some("keep"));
+            assert!(root.contains_key(&mapping_key("records")));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn writes_and_removes_pi_ai_provider_without_touching_siblings() {
+        with_temp_home(|home| {
+            std::fs::write(
+                home.join("settings.yaml"),
+                "llm-pi-ai:\n  providers:\n    sibling:\n      displayName: Keep\nagent-default-model:\n  provider: sibling\n  model: keep-model\n",
+            )
+            .unwrap();
+            std::fs::write(home.join(".credentials.yaml"), "version: 1\nrefs: {}\n").unwrap();
+
+            let config = serde_json::json!({
+                "displayName": "Company Gateway",
+                "api": "openai-completions",
+                "baseURL": "https://gateway.example/v1",
+                "apiKeyEnv": "COMPANY_API_KEY",
+                "apiKey": "secret",
+                "models": [{ "id": "glm-5.3", "name": "GLM 5.3" }]
+            });
+            set_pi_ai_provider("company", &config).unwrap();
+            set_current_model("company", "glm-5.3").unwrap();
+
+            let state = read_native_state().unwrap();
+            assert!(state.providers.contains_key("sibling"));
+            assert!(state.providers.contains_key("company"));
+            assert_eq!(state.current_provider.as_deref(), Some("company"));
+            assert_eq!(state.current_model.as_deref(), Some("glm-5.3"));
+
+            remove_pi_ai_provider("company").unwrap();
+            let state = read_native_state().unwrap();
+            assert!(state.providers.contains_key("sibling"));
+            assert!(!state.providers.contains_key("company"));
         });
     }
 }
