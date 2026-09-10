@@ -145,6 +145,11 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["OpenCode Go", "glm-5.2", ["high", "max"]],
     ["OpenCode Go", "deepseek-v4-pro", ["high", "max"]],
     ["OpenCode Go", "deepseek-v4-flash", ["low", "high", "max"]],
+    // 千问官方 Codex 页只发布一份 model-catalog.local.json，且该元数据段落
+    // 位于套餐分页之前（help.aliyun.com/zh/model-studio/codex，2026-09-08
+    // 核对）：qwen3.8-max 档位 low/medium/xhigh、默认 xhigh（≠ 模板回落的
+    // none/high，故显式声明）；按量付费与 Token Plan 同源同一份
+    ["千问AI平台", "qwen3.8-max", ["low", "medium", "xhigh"], "xhigh"],
   ];
 
   it.each(EXPECTED)(
@@ -159,14 +164,12 @@ describe("Codex preset pre-filled reasoning levels", () => {
   );
 
   it("keeps deliberately-unfilled presets unfilled", () => {
-    // Bailian qwen3-coder-plus 无 per-model 档位证据。OpenCode Go 的
-    // toggle/未收录模型保持不填：glm-5.1 是 toggle 型（models.dev 无 effort
-    // 声明）、kimi-k2.7-code 官方标注不支持 effort、mimo-v2.5-pro 未收录
-    // models.dev——与 opencode 客户端一致（代理侧无表不发 reasoning_effort
+    // OpenCode Go 的 toggle/未收录模型保持不填：glm-5.1 是 toggle 型（models.dev
+    // 无 effort 声明）、kimi-k2.7-code 官方标注不支持 effort、mimo-v2.5-pro 未
+    // 收录 models.dev——与 opencode 客户端一致（代理侧无表不发 reasoning_effort
     // 字段）。SiliconFlow .cn 的 M2.5 能否真正关思考无官方明文、ModelScope
     // 是否透传思考字段未证实——真机验证前不造两态假开关（2026-08-15 盘点结论）
     const UNFILLED: Array<[string, string]> = [
-      ["Bailian", "qwen3-coder-plus"],
       ["OpenCode Go", "glm-5.1"],
       ["OpenCode Go", "kimi-k2.7-code"],
       ["OpenCode Go", "mimo-v2.5-pro"],

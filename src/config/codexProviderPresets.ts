@@ -1379,69 +1379,121 @@ requires_openai_auth = true`,
     iconColor: "#2932E1",
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
-    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "bailian",
+      "qianwenai",
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "qwen3-coder-plus",
+      "qwen3.8-max",
     ),
     endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
-    // 阿里百炼 DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
+    // DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
     apiFormat: "openai_responses",
-    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）
+    // 档位与窗口照抄官方 Codex model-catalog.local.json——该元数据段落不分
+    // 套餐，按量付费与 Token Plan 用同一份（qwen3.8 系只收 low/medium/xhigh，
+    // 默认 xhigh；无 high 档，勿按常规四档补齐）
     modelCatalog: modelCatalog([
       {
-        model: "qwen3-coder-plus",
-        displayName: "Qwen3 Coder Plus",
-        contextWindow: 1048576,
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
       },
     ]),
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qianwenai_token_plan",
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "qwen3.8-max",
+    ),
+    endpointCandidates: [
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    ],
+    apiFormat: "openai_responses",
+    // 档位与窗口照抄官方 Codex model-catalogs.json（qwen3.8 系只收
+    // low/medium/xhigh，默认 xhigh；无 high 档，勿按常规四档补齐）
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.8-flash",
+        displayName: "Qwen3.8 Flash",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+    ]),
+    category: "cn_official",
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   // ===== QwenCloud（DashScope 国际站）=====
-  // 三条线的 base_url 与密钥互不通用，且协议档位不同：
-  // 按量付费与 Token Plan 走 /compatible-mode/v1 原生 Responses；
-  // Coding Plan 的地址是 /v1（没有 compatible-mode 段），官方明示只支持
-  // Chat Completions，故单独标 openai_chat 让后端改写 wire_api。
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // 按量付费与 Token Plan 走 /compatible-mode/v1 原生 Responses。
   {
     name: "QwenCloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qwencloud",
       "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-      "qwen3.7-max",
+      "qwen3.8-max",
     ),
     endpointCandidates: [
       "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     ],
     apiFormat: "openai_responses",
+    // 档位与窗口照抄官方 Codex model-catalogs.json（qwen3.8 系只收
+    // low/medium/xhigh，默认 xhigh；无 high 档，勿按常规四档补齐）
     modelCatalog: modelCatalog([
+      {
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.8-flash",
+        displayName: "Qwen3.8 Flash",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
       {
         model: "qwen3.7-max",
         displayName: "Qwen3.7 Max",
         contextWindow: 1000000,
         inputModalities: ["text"],
       },
-      {
-        model: "qwen3.7-plus",
-        displayName: "Qwen3.7 Plus",
-        contextWindow: 1000000,
-      },
-      {
-        model: "qwen3.6-plus",
-        displayName: "Qwen3.6 Plus",
-        contextWindow: 1000000,
-      },
     ]),
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
@@ -1475,13 +1527,14 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
     name: "QwenCloud Token Plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qwencloud_token_plan",
@@ -1519,7 +1572,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {

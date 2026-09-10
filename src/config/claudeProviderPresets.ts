@@ -1201,20 +1201,29 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#2932E1",
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://dashscope.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
+        // 模型 id 非 claude-* 时 Claude Code 按 200K 默认窗口处理，必须显式
+        // 钉住官方值：qwen3.8 系 context_window = 983616
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
       },
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   {
-    name: "Bailian For Coding",
+    name: "千问AI平台 Coding Plan",
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
       env: {
@@ -1224,7 +1233,30 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
+        // 官方 Token Plan 配置同样钉窗口：qwen3.8 系 context_window = 983616
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
+      },
+    },
+    category: "cn_official",
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   // ===== QwenCloud（DashScope 国际站）=====
@@ -1233,21 +1265,21 @@ export const providerPresets: ProviderPreset[] = [
   // base_url 不匹配会 401，因此拆成三个预设而非共用一条加候选地址。
   {
     name: "QwenCloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
           "https://dashscope-intl.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "qwen3.7-max",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.6-flash",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-max",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.7-max",
+        ANTHROPIC_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
@@ -1266,28 +1298,29 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
     name: "QwenCloud Token Plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
           "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "qwen3.8-max",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.6-flash",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
         // 官方 Claude Code 配置钉的窗口：qwen3.8 系 context_window = 983616
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
