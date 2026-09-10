@@ -5,8 +5,9 @@ import en from "./locales/en.json";
 import ja from "./locales/ja.json";
 import zh from "./locales/zh.json";
 import zhTW from "./locales/zh-TW.json";
+import ptBR from "./locales/pt-BR.json";
 
-type Language = "zh" | "zh-TW" | "en" | "ja";
+type Language = "zh" | "zh-TW" | "en" | "ja" | "pt-BR";
 
 const DEFAULT_LANGUAGE: Language = "zh";
 
@@ -18,7 +19,8 @@ const getInitialLanguage = (): Language => {
         stored === "zh" ||
         stored === "zh-TW" ||
         stored === "en" ||
-        stored === "ja"
+        stored === "ja" ||
+        stored === "pt-BR"
       ) {
         return stored;
       }
@@ -54,6 +56,10 @@ const getInitialLanguage = (): Language => {
     return "ja";
   }
 
+  if (navigatorLang?.startsWith("pt")) {
+    return "pt-BR";
+  }
+
   if (navigatorLang?.startsWith("en")) {
     return "en";
   }
@@ -73,6 +79,9 @@ const resources = {
   },
   "zh-TW": {
     translation: zhTW,
+  },
+  "pt-BR": {
+    translation: ptBR,
   },
 };
 

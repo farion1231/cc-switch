@@ -53,6 +53,7 @@ export function getLocaleFromLanguage(language: string): string {
   }
   if (normalized.startsWith("zh")) return "zh-CN";
   if (normalized.startsWith("ja")) return "ja-JP";
+  if (normalized.startsWith("pt-BR")) return "pt-BR";
   return "en-US";
 }
 

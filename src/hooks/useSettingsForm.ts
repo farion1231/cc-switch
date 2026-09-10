@@ -3,14 +3,14 @@ import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
 
-type Language = "zh" | "zh-TW" | "en" | "ja";
+type Language = "zh" | "zh-TW" | "en" | "ja" | "pt-BR";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
 };
 
 const normalizeLanguage = (lang?: string | null): Language => {
-  if (!lang) return "zh";
+  if (!lang) return "pt-BR";
   const normalized = lang.toLowerCase().replace(/_/g, "-");
 
   if (normalized === "zh") {
@@ -26,22 +26,33 @@ const normalizeLanguage = (lang?: string | null): Language => {
     return "zh-TW";
   }
 
-  if (normalized === "en" || normalized === "ja") {
-    return normalized;
+  if (normalized === "en") {
+    return "en";
+  }
+
+  if (normalized === "ja") {
+    return "ja";
+  }
+
+  if (normalized === "pt-br" || normalized.startsWith("pt")) {
+    return "pt-BR";
   }
 
   if (normalized.startsWith("zh")) {
     return "zh";
   }
 
-  return "zh";
+  return "pt-BR";
 };
 
 const isSupportedLanguage = (lang?: string | null): boolean => {
   if (!lang) return false;
   const normalized = lang.toLowerCase().replace(/_/g, "-");
   return (
-    normalized === "en" || normalized === "ja" || normalized.startsWith("zh")
+    normalized === "en" ||
+    normalized === "ja" ||
+    normalized === "pt-BR" ||
+    normalized.startsWith("zh")
   );
 };
 

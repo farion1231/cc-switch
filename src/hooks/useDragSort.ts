@@ -24,7 +24,9 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         ? "zh-CN"
         : i18n.language === "zh-TW"
           ? "zh-TW"
-          : "en-US";
+          : i18n.language === "pt-BR"
+            ? "pt-BR"
+            : "en-US";
     return Object.values(providers).sort((a, b) => {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;

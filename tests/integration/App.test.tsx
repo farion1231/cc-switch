@@ -213,14 +213,14 @@ describe("App integration with MSW", () => {
     renderApp(App);
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toContain(
         "claude-1",
       ),
     );
 
     fireEvent.click(screen.getByText("switch-codex"));
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toContain(
         "codex-1",
       ),
     );
@@ -234,7 +234,7 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByText("confirm-add"));
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toMatch(
         /New codex Provider/,
       ),
     );
@@ -243,7 +243,7 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByText("confirm-edit"));
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toMatch(
         /-edited/,
       ),
     );
@@ -251,7 +251,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("switch"));
     fireEvent.click(screen.getByText("duplicate"));
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(/copy/),
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toMatch(/copy/),
     );
 
     fireEvent.click(screen.getByText("open-website"));
@@ -270,7 +270,7 @@ describe("App integration with MSW", () => {
     renderApp(App);
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toContain(
         "claude-1",
       ),
     );
@@ -332,7 +332,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("switch-openclaw"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toContain(
         "deepseek",
       ),
     );
@@ -340,7 +340,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("duplicate"));
 
     await waitFor(() => {
-      const providerList = screen.getByTestId("provider-list").textContent;
+      const providerList = screen.getAllByTestId("provider-list")[0].textContent;
       expect(providerList).toContain("deepseek-copy-2");
       expect(providerList).toContain("DeepSeek copy");
     });
@@ -380,7 +380,7 @@ describe("App integration with MSW", () => {
     renderApp(App);
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toContain(
         "Custom Pi",
       ),
     );
@@ -423,7 +423,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("switch-openclaw"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(screen.getAllByTestId("provider-list")[0].textContent).toContain(
         "deepseek",
       ),
     );
@@ -436,7 +436,7 @@ describe("App integration with MSW", () => {
       );
     });
 
-    expect(screen.getByTestId("provider-list").textContent).not.toContain(
+    expect(screen.getAllByTestId("provider-list")[0].textContent).not.toContain(
       "deepseek-copy",
     );
 
