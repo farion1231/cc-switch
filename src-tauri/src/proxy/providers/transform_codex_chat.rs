@@ -888,6 +888,20 @@ fn flush_pending_tool_calls(
         return;
     }
 
+    // One Responses model turn can contain an assistant commentary message
+    // directly followed by function-call items. Keep them on the same Chat
+    // assistant message: a standalone text-only assistant turn teaches Chat
+    // models to stop after a progress update instead of emitting the expected
+    // tool call.
+    if merge_pending_tool_calls_into_adjacent_assistant(
+        messages,
+        pending_tool_calls,
+        pending_reasoning,
+    ) {
+        *last_assistant_index = Some(messages.len() - 1);
+        return;
+    }
+
     // Media from the preceding tool-result batch must be presented before a
     // new assistant tool-call turn. Consecutive outputs do not enter here
     // because `pending_tool_calls` is empty after the first output.
@@ -900,6 +914,83 @@ fn flush_pending_tool_calls(
     attach_pending_reasoning_to_assistant(&mut message, pending_reasoning);
     *last_assistant_index = Some(messages.len());
     messages.push(message);
+}
+
+/// Merge pending Chat tool calls into a directly adjacent assistant message
+/// that does not carry tool calls yet. The Responses input preserves both the
+/// commentary text and the calls as separate items of the same model turn;
+/// serializing them as two consecutive assistant messages lets Chat models
+/// imitate the first text-only message as a complete turn.
+fn merge_pending_tool_calls_into_adjacent_assistant(
+    messages: &mut [Value],
+    pending_tool_calls: &mut Vec<Value>,
+    pending_reasoning: &mut Option<String>,
+) -> bool {
+    let Some(message) = messages.last_mut() else {
+        return false;
+    };
+    if message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return false;
+    }
+    let has_tool_calls = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty());
+    if has_tool_calls {
+        return false;
+    }
+
+    let Some(obj) = message.as_object_mut() else {
+        return false;
+    };
+    obj.insert(
+        "tool_calls".to_string(),
+        Value::Array(std::mem::take(pending_tool_calls)),
+    );
+    attach_pending_reasoning_to_assistant_unique(message, pending_reasoning);
+    true
+}
+
+fn attach_pending_reasoning_to_assistant_unique(
+    message: &mut Value,
+    pending_reasoning: &mut Option<String>,
+) {
+    let Some(reasoning) = pending_reasoning.take() else {
+        return;
+    };
+    let reasoning = reasoning.trim();
+    if reasoning.is_empty() {
+        return;
+    }
+
+    let existing_text = message
+        .get("reasoning_content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let existing_segments: Vec<&str> = existing_text
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let missing_segments: Vec<&str> = reasoning
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty() && !existing_segments.contains(segment))
+        .collect();
+    if missing_segments.is_empty() {
+        return;
+    }
+
+    let merged = if existing_segments.is_empty() {
+        missing_segments.join("\n\n")
+    } else {
+        let existing = existing_segments.join("\n\n");
+        let missing = missing_segments.join("\n\n");
+        format!("{existing}\n\n{missing}")
+    };
+    if let Some(obj) = message.as_object_mut() {
+        obj.insert("reasoning_content".to_string(), Value::String(merged));
+    }
 }
 
 fn responses_message_item_to_chat_message(
@@ -3999,6 +4090,108 @@ mod tests {
         assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 1);
         assert_eq!(messages[1]["tool_calls"][0]["id"], "call_2");
         assert_eq!(messages[1]["reasoning_content"], "second batch reasoning");
+    }
+
+    #[test]
+    fn responses_request_to_chat_coalesces_adjacent_commentary_with_tool_calls() {
+        let mut call = test_function_call("call_1");
+        call["reasoning_content"] = json!("need to update the file");
+
+        let result = convert_test_input(vec![
+            json!({
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": "need to update the file"}
+                ]
+            }),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Part 1 written. Appending sections 4-5."}
+                ]
+            }),
+            call,
+            test_function_output("call_1", json!("Success")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(
+            messages[0]["content"],
+            "Part 1 written. Appending sections 4-5."
+        );
+        let calls = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["id"], "call_1");
+        assert_eq!(messages[0]["reasoning_content"], "need to update the file");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn responses_request_to_chat_deduplicates_repeated_call_reasoning_segments() {
+        let mut call_1 = test_function_call("call_1");
+        call_1["reasoning_content"] = json!("need to update the file");
+        let mut call_2 = test_function_call("call_2");
+        call_2["reasoning_content"] = json!("second section planning");
+
+        let result = convert_test_input(vec![
+            json!({
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": "need to update the file"}
+                ]
+            }),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Part 1 written. Appending sections 4-5."}
+                ]
+            }),
+            call_1,
+            call_2,
+            test_function_output("call_1", json!("Success 1")),
+            test_function_output("call_2", json!("Success 2")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool", "tool"]);
+        assert_eq!(
+            messages[0]["reasoning_content"],
+            "need to update the file\n\nsecond section planning"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_user_boundary_before_tool_call_turn() {
+        let result = convert_test_input(vec![
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Done for now."}
+                ]
+            }),
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": "Continue with the next file."
+            }),
+            test_function_call("call_next"),
+            test_function_output("call_next", json!("Next result")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["assistant", "user", "assistant", "tool"]
+        );
+        assert!(messages[0].get("tool_calls").is_none());
+        assert_eq!(messages[0]["content"], "Done for now.");
+        assert_eq!(messages[2]["content"], Value::Null);
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_next");
     }
 
     #[test]
