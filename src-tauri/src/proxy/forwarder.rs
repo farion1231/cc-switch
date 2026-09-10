@@ -1460,7 +1460,13 @@ impl RequestForwarder {
             let api_format = resolved_claude_api_format
                 .as_deref()
                 .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-            rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+            rewrite_claude_transform_endpoint_for_base(
+                endpoint,
+                api_format,
+                is_copilot,
+                &mapped_body,
+                &base_url,
+            )
         } else {
             (
                 endpoint.to_string(),
@@ -3219,6 +3225,22 @@ fn rewrite_claude_transform_endpoint(
     is_copilot: bool,
     body: &Value,
 ) -> (String, Option<String>) {
+    rewrite_claude_transform_endpoint_for_base(
+        endpoint,
+        api_format,
+        is_copilot,
+        body,
+        "https://unused.example",
+    )
+}
+
+fn rewrite_claude_transform_endpoint_for_base(
+    endpoint: &str,
+    api_format: &str,
+    is_copilot: bool,
+    body: &Value,
+    base_url: &str,
+) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = if is_claude_messages_path(path) {
         strip_beta_query(query)
@@ -3266,6 +3288,10 @@ fn rewrite_claude_transform_endpoint(
         "/chat/completions"
     } else if api_format == "openai_responses" {
         "/v1/responses"
+    } else if base_url_has_version_path(base_url) {
+        // Providers such as Zhipu expose a versioned root (/api/paas/v4) but
+        // expect /chat/completions directly below it, not /v4/v1/chat/completions.
+        "/chat/completions"
     } else {
         "/v1/chat/completions"
     };
@@ -3276,6 +3302,22 @@ fn rewrite_claude_transform_endpoint(
     };
 
     (rewritten, passthrough_query)
+}
+
+fn base_url_has_version_path(base_url: &str) -> bool {
+    url::Url::parse(base_url)
+        .ok()
+        .and_then(|url| {
+            url.path()
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .map(str::to_owned)
+        })
+        .is_some_and(|segment| {
+            let version = segment.strip_prefix('v').unwrap_or("");
+            !version.is_empty() && version.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 fn merge_query_params(base_query: Option<&str>, extra_param: Option<&str>) -> Option<String> {
@@ -4356,6 +4398,43 @@ mod tests {
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_allows_versioned_openai_base() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint_for_base(
+            "/v1/messages?beta=true&foo=bar",
+            "openai_chat",
+            false,
+            &json!({ "model": "glm-5.3-flash" }),
+            "https://open.bigmodel.cn/api/paas/v4",
+        );
+
+        assert_eq!(endpoint, "/chat/completions?foo=bar");
+        assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_keeps_default_openai_base() {
+        let (endpoint, _) = rewrite_claude_transform_endpoint_for_base(
+            "/v1/messages",
+            "openai_chat",
+            false,
+            &json!({ "model": "gpt-5.4" }),
+            "https://api.example.com",
+        );
+
+        assert_eq!(endpoint, "/v1/chat/completions");
+    }
+
+    #[test]
+    fn versioned_base_detection_matches_numeric_versions_only() {
+        assert!(base_url_has_version_path(
+            "https://open.bigmodel.cn/api/paas/v4"
+        ));
+        assert!(base_url_has_version_path("https://api.example.com/v2/"));
+        assert!(!base_url_has_version_path("https://api.example.com/v1beta"));
+        assert!(!base_url_has_version_path("https://api.example.com"));
     }
 
     #[test]
