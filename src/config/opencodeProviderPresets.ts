@@ -43,6 +43,13 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
 > = {
   "@ai-sdk/openai-compatible": [
     {
+      id: "MiniMax-M3",
+      name: "MiniMax M3",
+      contextLimit: 1000000,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image"], output: ["text"] },
+    },
+    {
       id: "MiniMax-M2.7",
       name: "MiniMax M2.7",
       contextLimit: 204800,
@@ -1803,21 +1810,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
-    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Bailian",
+      name: "千问AI平台",
       options: {
         baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         apiKey: "",
         setCacheKey: true,
       },
-      models: {},
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+      },
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
     templateValues: {
       baseURL: {
@@ -1833,13 +1852,61 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "千问AI平台 Token Plan",
+      options: {
+        baseURL:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
   // ===== QwenCloud（DashScope 国际站）=====
-  // 按量付费走 OpenAI 兼容层；Coding / Token Plan 官方给的是 Anthropic
-  // 协议地址，且比 Claude Code 的地址多一段 /v1（AI SDK anthropic 的惯例）。
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // 按量付费走 OpenAI 兼容层（/compatible-mode/v1）；Token Plan 官方给的是
+  // Anthropic 协议地址，且比 Claude Code 的多一段 /v1（AI SDK anthropic 惯例）。
   {
     name: "QwenCloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "QwenCloud",
@@ -1849,13 +1916,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
         "qwen3.7-max": { name: "Qwen3.7 Max" },
-        "qwen3.7-plus": { name: "Qwen3.7 Plus" },
-        "qwen3.6-plus": { name: "Qwen3.6 Plus" },
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     templateValues: {
       baseURL: {
@@ -1890,7 +1965,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     templateValues: {
       baseURL: {
@@ -1910,8 +1985,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "QwenCloud Token Plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "QwenCloud Token Plan",
@@ -1925,19 +2001,18 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "qwen3.8-max": {
           name: "Qwen3.8 Max",
           limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
         },
         "qwen3.8-flash": {
           name: "Qwen3.8 Flash",
           limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
         },
         "qwen3.7-max": { name: "Qwen3.7 Max" },
-        "qwen3.7-plus": { name: "Qwen3.7 Plus" },
-        "qwen3.6-plus": { name: "Qwen3.6 Plus" },
-        "qwen3.6-flash": { name: "Qwen3.6 Flash" },
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     templateValues: {
       baseURL: {
@@ -2172,11 +2247,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.7": { name: "MiniMax M2.7" },
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -2204,11 +2283,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.7": { name: "MiniMax M2.7" },
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",

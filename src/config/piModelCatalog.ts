@@ -478,6 +478,16 @@ export const piModelCatalog = {
       maxTokens: 131_072,
     },
   },
+  "qwen/qwen3.8-flash": {
+    capabilities: {
+      name: "Qwen3.8 Flash",
+      reasoning: true,
+      // 官方 Codex catalog 未单列 flash 的输入模态，按同族 3.8-max 处理
+      input: ["text", "image"],
+      contextWindow: 983_616,
+      maxTokens: 131_072,
+    },
+  },
   "qwen/qwen3.8-max-preview": {
     capabilities: {
       name: "Qwen3.8 Max Preview",
