@@ -1004,7 +1004,18 @@ fn apply_provider_to_paths_inner(
 
     write_deployment_mode(&paths.normal_config_path, "3p")?;
     write_deployment_mode(&paths.threep_config_path, "3p")?;
-    write_json_file(&paths.profile_path, &profile)?;
+    // Keep Claude Desktop-owned state when switching the gateway provider. A
+    // malformed old profile falls back to the fresh gateway profile so switching
+    // remains a recovery path for damaged local configuration.
+    let existing = read_json_or_empty(&paths.profile_path).unwrap_or_else(|error| {
+        log::warn!(
+            "Failed to read existing Claude Desktop gateway profile {}; replacing it: {error}",
+            paths.profile_path.display()
+        );
+        json!({})
+    });
+    let merged = merge_profile(&existing, &profile);
+    write_json_file(&paths.profile_path, &merged)?;
     write_meta(&paths.meta_path, Some(PROFILE_ID))?;
 
     Ok(())
@@ -1043,6 +1054,23 @@ fn build_gateway_profile(
     }
 
     profile
+}
+
+fn merge_profile(existing: &Value, new_profile: &Value) -> Value {
+    let mut merged = existing.clone();
+    let Some(merged_obj) = merged.as_object_mut() else {
+        return new_profile.clone();
+    };
+    let Some(new_obj) = new_profile.as_object() else {
+        return new_profile.clone();
+    };
+    for (key, value) in new_obj {
+        merged_obj.insert(key.clone(), value.clone());
+    }
+    if !new_obj.contains_key("inferenceModels") {
+        merged_obj.remove("inferenceModels");
+    }
+    merged
 }
 
 fn read_json_or_empty(path: &Path) -> Result<Value, AppError> {
@@ -1536,6 +1564,49 @@ mod tests {
         assert_eq!(
             profile["inferenceModels"],
             json!([{ "name": "claude-sonnet-4-6", "supports1m": true }])
+        );
+    }
+
+    #[test]
+    fn claude_desktop_apply_preserves_non_gateway_profile_fields() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        write_json_file(
+            &paths.profile_path,
+            &json!({
+                "chatTabEnabled": true,
+                "managedMcpServers": [{ "name": "local" }],
+                "inferenceModels": [{ "name": "old-model" }]
+            }),
+        )
+        .expect("pre-write profile");
+
+        let db = test_db();
+        apply_provider_to_paths(&db, &direct_provider("direct"), &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["chatTabEnabled"], json!(true));
+        assert_eq!(profile["managedMcpServers"][0]["name"], json!("local"));
+        assert!(profile.get("inferenceModels").is_none());
+        assert_eq!(profile["inferenceProvider"], json!("gateway"));
+    }
+
+    #[test]
+    fn claude_desktop_apply_replaces_malformed_profile() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        fs::create_dir_all(paths.profile_path.parent().expect("profile parent"))
+            .expect("create profile parent");
+        fs::write(&paths.profile_path, b"{").expect("write malformed profile");
+
+        let db = test_db();
+        apply_provider_to_paths(&db, &direct_provider("direct"), &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read repaired profile");
+        assert_eq!(profile["inferenceProvider"], json!("gateway"));
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("https://gateway.example.com")
         );
     }
 
