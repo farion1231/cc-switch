@@ -99,10 +99,48 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.moonshot.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
+        // 必须显式路由端点别名 kimi-k2.7-code（与 Kimi For Coding / codex / hermes / opencode 预设一致）
+        // ——CLAUDE_CODE_MAX_CONTEXT_TOKENS 只对非 claude- 前缀模型 id 生效
         ANTHROPIC_MODEL: "kimi-k2.7-code",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2.7-code",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2.7-code",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2.7-code",
+        // 双键钉 256K：Claude Code 把未知 model id 兜底成 200K，钉住实际窗口
+        // 才能让状态栏和压缩点对齐到 kimi-k2.7-code 的真实 256K 上限。
+        // 压缩窗口=min(模型窗口,值)，与窗口同值时行为等价于不设，但显式钉住
+        // 可屏蔽远程实验下发的更小压缩点；调整直接改 JSON，不出表单字段。
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144",
+      },
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+  },
+  {
+    name: "Kimi K3 (Moonshot)",
+    primePartner: true,
+    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    settingsConfig: {
+      env: {
+        // Moonshot 官方 Anthropic 协议端点（kimi-k3 id），跟 Kimi Code 服务
+        // （api.kimi.com/coding/ + id `k3`）是两套不同的 id/endpoint/API key。
+        // 同时保留两个预设是为了覆盖两种订阅渠道，避免互相覆盖。
+        ANTHROPIC_BASE_URL: "https://api.moonshot.cn/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        // 必须显式路由端点别名 kimi-k3（与 codex / hermes / opencode / openclaw 预设一致）
+        // ——CLAUDE_CODE_MAX_CONTEXT_TOKENS 只对非 claude- 前缀模型 id 生效
+        ANTHROPIC_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3",
+        // 双键钉 1M：kimi-k3 实际窗口 1,048,576 (2^20)，显式覆盖 262144 默认值
+        // 才能让状态栏和压缩点对齐到 1M 上限（K2.7 的 262144 默认是为
+        // kimi-k2.7-code / kimi-for-coding 设的，对 K3 不够大）。
+        // 压缩窗口=min(模型窗口,值)，与窗口同值时行为等价于不设，但显式钉住
+        // 可屏蔽远程实验下发的更小压缩点；调整直接改 JSON，不出表单字段。
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1048576",
       },
     },
     category: "cn_official",
@@ -126,6 +164,89 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
         // 双键钉 256K：压缩窗口=min(模型窗口,值)，与窗口同值时行为等价于不设，
         // 但显式钉住可屏蔽远程实验下发的更小压缩点；调整直接改 JSON，不出表单字段
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144",
+      },
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+  },
+  {
+    name: "Kimi K3",
+    primePartner: true,
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
+    settingsConfig: {
+      env: {
+        // Kimi Code 服务（Kimi For Coding 订阅渠道），id 来自
+        // https://www.kimi.com/code/docs/kimi-code/models
+        ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+        ANTHROPIC_AUTH_TOKEN: "",
+        // 必须显式路由端点别名 k3（与 codex/hermes/opencode/openclaw 的
+        // kimi-k3 不同，这是 Kimi Code 服务侧的 id，配套 endpoint 也是
+        // api.kimi.com/coding/，不是 api.moonshot.cn/anthropic）
+        // ——CLAUDE_CODE_MAX_CONTEXT_TOKENS 只对非 claude- 前缀模型 id 生效
+        ANTHROPIC_MODEL: "k3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "k3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "k3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "k3",
+        // 双键钉 1M：k3 标准窗口 1,048,576（2^20），1M context 需 Allegretto+
+        // 订阅档；如订阅档位不够，K3 实际会被服务端裁到 256K，建议改用下面的
+        // "Kimi K3 256K" 预设。压缩窗口=min(模型窗口,值)，与窗口同值时
+        // 行为等价于不设，但显式钉住可屏蔽远程实验下发的更小压缩点；
+        // 调整直接改 JSON，不出表单字段。
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1048576",
+      },
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+  },
+  {
+    name: "Kimi K3 256K",
+    primePartner: true,
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
+    settingsConfig: {
+      env: {
+        // Kimi Code 服务（Kimi For Coding 订阅渠道），id 来自
+        // https://www.kimi.com/code/docs/kimi-code/models
+        ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+        ANTHROPIC_AUTH_TOKEN: "",
+        // k3-256k 是 k3 的 256K 固定窗口变种，256K 之内质量与 k3 一致，
+        // 但 token 消耗约为 k3 (1M) 的一半——性价比更高，订阅档位要求更宽
+        ANTHROPIC_MODEL: "k3-256k",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "k3-256k",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "k3-256k",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "k3-256k",
+        // 双键钉 256K：参考 Kimi For Coding 入口的同值说明。
+        // 显式 262144 覆盖 backend 默认的 262144（与窗口同值时可作不设，
+        // 但显式钉住可屏蔽远程实验下发的更小压缩点）
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144",
+      },
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+  },
+  {
+    name: "Kimi For Coding HighSpeed",
+    primePartner: true,
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
+    settingsConfig: {
+      env: {
+        // Kimi Code 服务（Kimi For Coding 订阅渠道），id 来自
+        // https://www.kimi.com/code/docs/kimi-code/models
+        ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+        ANTHROPIC_AUTH_TOKEN: "",
+        // kimi-for-coding-highspeed 是 kimi-for-coding 的高速版，~5–6×
+        // 输出速度，~3× token 消耗，需 Allegretto+ 订阅档
+        ANTHROPIC_MODEL: "kimi-for-coding-highspeed",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-for-coding-highspeed",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-for-coding-highspeed",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding-highspeed",
+        // 双键钉 256K：参考 Kimi For Coding 入口的同值说明
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144",
       },
