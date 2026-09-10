@@ -1855,10 +1855,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "qwen3.8-max": {
           name: "Qwen3.8 Max",
           limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
         },
         "qwen3.8-flash": {
           name: "Qwen3.8 Flash",
           limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
         },
       },
     },
@@ -1901,10 +1903,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "qwen3.8-max": {
           name: "Qwen3.8 Max",
           limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
         },
         "qwen3.8-flash": {
           name: "Qwen3.8 Flash",
           limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
         },
         "qwen3.7-max": { name: "Qwen3.7 Max" },
       },
@@ -1981,10 +1985,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "qwen3.8-max": {
           name: "Qwen3.8 Max",
           limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
         },
         "qwen3.8-flash": {
           name: "Qwen3.8 Flash",
           limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
         },
         "qwen3.7-max": { name: "Qwen3.7 Max" },
       },
