@@ -999,10 +999,15 @@ impl ProxyService {
             return Ok(());
         }
 
-        let mut resolved_config = config.clone();
+        // 端口是全局字段，不能通过旧接口回写各应用独立的重试和超时配置。
+        let mut resolved_config = self
+            .db
+            .get_global_proxy_config()
+            .await
+            .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
         resolved_config.listen_port = actual_port;
         self.db
-            .update_proxy_config(resolved_config)
+            .update_global_proxy_config(resolved_config)
             .await
             .map_err(|e| format!("保存动态代理端口失败: {e}"))
     }
@@ -1803,20 +1808,16 @@ impl ProxyService {
         // 2. 恢复原始 Live 配置
         self.restore_live_configs().await?;
 
-        // 3. 更新 proxy_config 表中的 live_takeover_active 标志（兼容旧版）
-        //    注意：保留 proxy_config.enabled 状态，下次启动时自动恢复
-        if let Ok(mut config) = self.db.get_proxy_config().await {
-            config.live_takeover_active = false;
-            let _ = self.db.update_proxy_config(config).await;
-        }
+        // 保留各应用的 enabled 和故障转移配置，下次启动时自动恢复。
+        // live_takeover_active 已废弃，无需通过旧接口回写配置。
 
-        // 4. 删除备份（Live 配置已恢复，备份不再需要）
+        // 3. 删除备份（Live 配置已恢复，备份不再需要）
         self.db
             .delete_all_live_backups()
             .await
             .map_err(|e| format!("删除备份失败: {e}"))?;
 
-        // 5. 重置健康状态
+        // 4. 重置健康状态
         self.db
             .clear_all_provider_health()
             .await
@@ -4151,6 +4152,88 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    async fn seed_distinct_app_proxy_configs(db: &Database) -> Vec<Value> {
+        let mut configs = Vec::new();
+        for (app, retries) in [("claude", 6), ("codex", 0), ("gemini", 2), ("grokbuild", 3)] {
+            let mut config = db.get_proxy_config_for_app(app).await.unwrap();
+            config.enabled = retries % 2 == 0;
+            config.auto_failover_enabled = retries % 2 != 0;
+            config.max_retries = retries;
+            config.streaming_first_byte_timeout = 30 + retries;
+            config.streaming_idle_timeout = 90 + retries;
+            config.non_streaming_timeout = 300 + retries;
+            config.circuit_failure_threshold = 5 + retries;
+            configs.push(serde_json::to_value(&config).unwrap());
+            db.update_proxy_config_for_app(config).await.unwrap();
+        }
+        configs
+    }
+
+    async fn assert_app_proxy_configs_unchanged(db: &Database, configs: &[Value]) {
+        for expected in configs {
+            let app = expected["appType"].as_str().unwrap();
+            let actual = db.get_proxy_config_for_app(app).await.unwrap();
+            assert_eq!(serde_json::to_value(actual).unwrap(), *expected, "{app}");
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn shutdown_preserves_app_proxy_configs() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().unwrap();
+        let db = Arc::new(Database::memory().unwrap());
+        let configs = seed_distinct_app_proxy_configs(&db).await;
+        let service = ProxyService::new(db.clone());
+
+        let backup = json!({"env": {"ANTHROPIC_BASE_URL": "https://example.com"}});
+        db.save_live_backup("claude", &backup.to_string())
+            .await
+            .unwrap();
+
+        service.stop_with_restore_keep_state().await.unwrap();
+
+        assert_app_proxy_configs_unchanged(&db, &configs).await;
+        assert_eq!(
+            read_json_file::<Value>(&get_claude_settings_path()).unwrap(),
+            backup
+        );
+        assert!(db.get_live_backup("claude").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn ephemeral_port_preserves_app_proxy_configs() {
+        let db = Arc::new(Database::memory().unwrap());
+        let configs = seed_distinct_app_proxy_configs(&db).await;
+        let service = ProxyService::new(db.clone());
+        let mut config = db.get_proxy_config().await.unwrap();
+        config.listen_port = 0;
+        let mut expected_global = db.get_global_proxy_config().await.unwrap();
+        expected_global.listen_port = 23456;
+
+        service
+            .persist_ephemeral_listen_port_if_needed(&config, 23456)
+            .await
+            .unwrap();
+
+        assert_app_proxy_configs_unchanged(&db, &configs).await;
+        assert_eq!(
+            serde_json::to_value(db.get_global_proxy_config().await.unwrap()).unwrap(),
+            serde_json::to_value(expected_global).unwrap()
+        );
+
+        config.listen_port = 23456;
+        service
+            .persist_ephemeral_listen_port_if_needed(&config, 34567)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_global_proxy_config().await.unwrap().listen_port,
+            23456
+        );
+        assert_app_proxy_configs_unchanged(&db, &configs).await;
     }
 
     #[tokio::test]
