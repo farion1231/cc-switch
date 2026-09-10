@@ -168,6 +168,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut latest_usage: Option<Value> = None;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
+        // Anthropic 要求 thinking 块必须排在 text 块之前；text 块开始后再到达的
+        // reasoning 只能丢弃，否则会产出 thinking/text/thinking 乱序序列，客户端
+        // 会丢弃整段正文（#6903）。
+        let mut text_block_started = false;
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
 
@@ -267,46 +271,51 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         }
 
                                         // 处理 reasoning（thinking）
+                                        // text 块开始后到达的 reasoning 必须丢弃：
+                                        // Anthropic 不允许 thinking 出 text 之后，
+                                        // 新开 thinking 块会让客户端丢弃整段正文。
                                         if let Some(reasoning) = &choice.delta.reasoning {
-                                            if current_non_tool_block_type != Some("thinking") {
-                                                if let Some(index) = current_non_tool_block_index.take() {
+                                            if !text_block_started {
+                                                if current_non_tool_block_type != Some("thinking") {
+                                                    if let Some(index) = current_non_tool_block_index.take() {
+                                                        let event = json!({
+                                                            "type": "content_block_stop",
+                                                            "index": index
+                                                        });
+                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+                                                    let index = next_content_index;
+                                                    next_content_index += 1;
                                                     let event = json!({
-                                                        "type": "content_block_stop",
-                                                        "index": index
+                                                        "type": "content_block_start",
+                                                        "index": index,
+                                                        "content_block": {
+                                                            "type": "thinking",
+                                                            "thinking": ""
+                                                        }
                                                     });
-                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    current_non_tool_block_type = Some("thinking");
+                                                    current_non_tool_block_index = Some(index);
+                                                }
+
+                                                if let Some(index) = current_non_tool_block_index {
+                                                    let event = json!({
+                                                        "type": "content_block_delta",
+                                                        "index": index,
+                                                        "delta": {
+                                                            "type": "thinking_delta",
+                                                            "thinking": reasoning
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
                                                         serde_json::to_string(&event).unwrap_or_default());
                                                     yield Ok(Bytes::from(sse_data));
                                                 }
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                let event = json!({
-                                                    "type": "content_block_start",
-                                                    "index": index,
-                                                    "content_block": {
-                                                        "type": "thinking",
-                                                        "thinking": ""
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
-                                                current_non_tool_block_type = Some("thinking");
-                                                current_non_tool_block_index = Some(index);
-                                            }
-
-                                            if let Some(index) = current_non_tool_block_index {
-                                                let event = json!({
-                                                    "type": "content_block_delta",
-                                                    "index": index,
-                                                    "delta": {
-                                                        "type": "thinking_delta",
-                                                        "thinking": reasoning
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
                                             }
                                         }
 
@@ -339,6 +348,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                     yield Ok(Bytes::from(sse_data));
                                                     current_non_tool_block_type = Some("text");
                                                     current_non_tool_block_index = Some(index);
+                                                    text_block_started = true;
                                                 }
 
                                                 if let Some(index) = current_non_tool_block_index {
@@ -1244,5 +1254,29 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_trailing_reasoning_after_text_does_not_open_second_thinking_block() {
+        // Some upstreams (e.g. Kimi) emit a trailing reasoning delta after the
+        // text block. Anthropic requires thinking blocks to precede text blocks,
+        // so opening another thinking block yields an invalid sequence
+        // (thinking, text, thinking) and clients discard the whole body (#6903).
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"reasoning_content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        let block_types: Vec<&str> = events
+            .iter()
+            .filter(|e| event_type(e) == Some("content_block_start"))
+            .filter_map(|e| e.pointer("/content_block/type").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(block_types, vec!["thinking", "text"]);
     }
 }
