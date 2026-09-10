@@ -689,6 +689,14 @@
     "languageOptionTraditionalChinese": "繁體中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
+    "homePage": {
+      "title": "ホームページ表示",
+      "description": "アプリ起動時に表示するホームページを選択します",
+      "default": "デフォルトホーム",
+      "usage": "使用統計",
+      "defaultHint": "起動時にプロバイダー一覧を表示します",
+      "usageHint": "起動時に使用統計を表示します。プロバイダー一覧はヘッダーのプロバイダーボタンに格納されます"
+    },
     "windowBehavior": "ウィンドウ動作",
     "windowBehaviorHint": "最小化動作や Claude プラグイン連携を設定します。",
     "launchOnStartup": "起動時に自動実行",
@@ -3258,5 +3266,8 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "providers": {
+    "manage": "プロバイダー管理"
   }
 }

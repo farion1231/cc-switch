@@ -404,6 +404,9 @@ export interface Settings {
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
 
+  // 首页显示模式：default（默认供应商列表首页）或 usage（使用统计首页）
+  homePageMode?: "default" | "usage";
+
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
   claudeConfigDir?: string;

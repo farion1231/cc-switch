@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { providersApi, settingsApi } from "@/lib/api";
+import { enqueueSettingsSave } from "@/lib/settingsSaveQueue";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import {
   invalidatePiDirectoryCaches,
@@ -183,58 +184,61 @@ export function useSettings(): UseSettingsResult {
   );
 
   // 即时保存设置（用于 General 标签页的实时更新）
-  // 保存基础配置 + 独立的系统 API 调用（开机自启）
+  // 保存基础配置 + 独立的系统 API 调用（开机自启）。
+  // 实际写入走全局共享串行队列（enqueueSettingsSave）：任务执行时才读取
+  // 最新后端设置并合并本次字段，避免与使用统计首页/首页模式等入口的保存
+  // 并发时基于旧快照互相覆盖；副作用以队列返回的 fresh（保存前最新后端）
+  // 与本次 updates 对比触发。
   const autoSaveSettings = useCallback(
     async (updates: Partial<SettingsFormState>): Promise<SaveResult | null> => {
-      const mergedSettings = settings ? { ...settings, ...updates } : null;
-      if (!mergedSettings) return null;
+      if (!settings) return null;
 
       try {
-        const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
-        const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
-        const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
-        const sanitizedGrokDir = sanitizeDir(mergedSettings.grokConfigDir);
-        const sanitizedOpencodeDir = sanitizeDir(
-          mergedSettings.opencodeConfigDir,
-        );
-        const sanitizedOpenclawDir = sanitizeDir(
-          mergedSettings.openclawConfigDir,
-        );
-        const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        // 目录字段先做规范化；webdav/s3 由各自独立命令管理，不参与全量保存
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
-          ...restSettings
-        } = mergedSettings;
-
-        const payload: Settings = {
-          ...restSettings,
-          claudeConfigDir: sanitizedClaudeDir,
-          codexConfigDir: sanitizedCodexDir,
-          geminiConfigDir: sanitizedGeminiDir,
-          grokConfigDir: sanitizedGrokDir,
-          opencodeConfigDir: sanitizedOpencodeDir,
-          openclawConfigDir: sanitizedOpenclawDir,
-          piConfigDir: sanitizedPiDir,
-          language: mergedSettings.language,
+          ...restUpdates
+        } = updates;
+        // 目录字段仅在本次 updates 确实携带时才做规范化写入；否则不放进
+        // payload，避免把 undefined 铺到最新后端设置上，误清用户的目录覆盖
+        const sanitizedUpdates: Partial<Settings> = {
+          ...restUpdates,
+          ...(updates.claudeConfigDir !== undefined && {
+            claudeConfigDir: sanitizeDir(updates.claudeConfigDir),
+          }),
+          ...(updates.codexConfigDir !== undefined && {
+            codexConfigDir: sanitizeDir(updates.codexConfigDir),
+          }),
+          ...(updates.geminiConfigDir !== undefined && {
+            geminiConfigDir: sanitizeDir(updates.geminiConfigDir),
+          }),
+          ...(updates.grokConfigDir !== undefined && {
+            grokConfigDir: sanitizeDir(updates.grokConfigDir),
+          }),
+          ...(updates.opencodeConfigDir !== undefined && {
+            opencodeConfigDir: sanitizeDir(updates.opencodeConfigDir),
+          }),
+          ...(updates.openclawConfigDir !== undefined && {
+            openclawConfigDir: sanitizeDir(updates.openclawConfigDir),
+          }),
+          ...(updates.piConfigDir !== undefined && {
+            piConfigDir: sanitizeDir(updates.piConfigDir),
+          }),
         };
 
-        // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
-        // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
-        const prevPluginEnabled = queryClient.getQueryData<Settings>([
-          "settings",
-        ])?.enableClaudePluginIntegration;
-
-        // 保存到配置文件
-        await saveMutation.mutateAsync(payload);
+        const res = await enqueueSettingsSave(sanitizedUpdates);
+        if (!res.ok || !res.fresh) {
+          throw new Error("settings save failed");
+        }
 
         // 如果开机自启状态改变，调用系统 API
         if (
-          payload.launchOnStartup !== undefined &&
-          payload.launchOnStartup !== data?.launchOnStartup
+          updates.launchOnStartup !== undefined &&
+          updates.launchOnStartup !== res.fresh.launchOnStartup
         ) {
           try {
-            await settingsApi.setAutoLaunch(payload.launchOnStartup);
+            await settingsApi.setAutoLaunch(updates.launchOnStartup);
           } catch (error) {
             console.error("Failed to update auto-launch:", error);
             toast.error(
@@ -250,7 +254,7 @@ export function useSettings(): UseSettingsResult {
         const nextSkipClaudeOnboarding = updates.skipClaudeOnboarding;
         if (
           nextSkipClaudeOnboarding !== undefined &&
-          nextSkipClaudeOnboarding !== (data?.skipClaudeOnboarding ?? false)
+          nextSkipClaudeOnboarding !== (res.fresh.skipClaudeOnboarding ?? false)
         ) {
           try {
             if (nextSkipClaudeOnboarding) {
@@ -276,8 +280,8 @@ export function useSettings(): UseSettingsResult {
         }
 
         await syncClaudePluginIfChanged(
-          payload.enableClaudePluginIntegration,
-          prevPluginEnabled,
+          updates.enableClaudePluginIntegration,
+          res.fresh.enableClaudePluginIntegration,
         );
 
         // 持久化语言偏好
@@ -299,6 +303,12 @@ export function useSettings(): UseSettingsResult {
           console.warn("[useSettings] Failed to refresh tray menu", error);
         }
 
+        // 刷新设置缓存
+        await queryClient.invalidateQueries({ queryKey: ["settings"] });
+        await queryClient.invalidateQueries({
+          queryKey: ["opencode", "runtime-models"],
+        });
+
         return { requiresRestart: false };
       } catch (error) {
         console.error("[useSettings] Failed to auto-save settings", error);
@@ -311,7 +321,7 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [data, queryClient, saveMutation, settings, syncClaudePluginIfChanged, t],
+    [queryClient, settings, syncClaudePluginIfChanged, t],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）

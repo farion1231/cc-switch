@@ -689,6 +689,14 @@
     "languageOptionTraditionalChinese": "繁體中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
+    "homePage": {
+      "title": "首页显示",
+      "description": "选择应用启动时显示的首页",
+      "default": "默认首页",
+      "usage": "使用统计",
+      "defaultHint": "启动时显示供应商列表",
+      "usageHint": "启动时直接显示使用统计页面，供应商列表收纳到顶部的供应商按钮中"
+    },
     "windowBehavior": "窗口行为",
     "windowBehaviorHint": "配置窗口最小化与 Claude 插件联动策略。",
     "launchOnStartup": "开机自启",
@@ -3258,5 +3266,8 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "providers": {
+    "manage": "供应商管理"
   }
 }

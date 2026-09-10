@@ -25,13 +25,15 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Store,
   Loader2,
   RefreshCw,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, Settings as SettingsType, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import { enqueueSettingsSave } from "@/lib/settingsSaveQueue";
 import {
   piApi,
   providersApi,
@@ -77,6 +79,7 @@ import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import { RoutingActivationBrand } from "@/components/proxy/RoutingActivationBrand";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
+import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import PromptPanel, {
   type PromptPanelHandle,
   type PromptPrimaryAction,
@@ -115,6 +118,7 @@ import {
 
 type View =
   | "providers"
+  | "usageHome"
   | "settings"
   | "prompts"
   | "skills"
@@ -150,6 +154,7 @@ const getInitialApp = (): AppId => {
 const VIEW_STORAGE_KEY = "cc-switch-last-view";
 const VALID_VIEWS: View[] = [
   "providers",
+  "usageHome",
   "settings",
   "prompts",
   "skills",
@@ -217,6 +222,22 @@ function App() {
   const getFirstVisibleApp = (): AppId => {
     return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
   };
+
+  // 当前首页视图：默认首页（供应商列表）或使用统计首页
+  const homeView: View =
+    settingsData?.homePageMode === "usage" ? "usageHome" : "providers";
+
+  // 跟随"首页显示"设置：仅在 homeView 真正变化时，把停留在旧首页
+  // （providers/usageHome）的视图带到新首页。不依赖 settingsData 对象，
+  // 避免每次 settings 刷新（如 Add/Edit 弹窗保存后 invalidate）把用户从
+  // 供应商管理页踢回首页。
+  useEffect(() => {
+    setCurrentView((prev) => {
+      if (prev === homeView) return prev;
+      if (prev === "providers" || prev === "usageHome") return homeView;
+      return prev;
+    });
+  }, [homeView]);
 
   useEffect(() => {
     if (!visibleApps[activeApp]) {
@@ -300,6 +321,7 @@ function App() {
   const isOpenClawView =
     activeApp === "openclaw" &&
     (currentView === "providers" ||
+      currentView === "usageHome" ||
       currentView === "workspace" ||
       currentView === "sessions" ||
       currentView === "openclawEnv" ||
@@ -645,6 +667,8 @@ function App() {
   }, [activeApp]);
 
   const currentViewRef = useRef(currentView);
+  const homeViewRef = useRef<View>(homeView);
+  homeViewRef.current = homeView;
   const managementBusy =
     mcpManagementBusy || skillsNavigationBusy || promptNavigationBusy;
   const managementBusyRef = useRef(false);
@@ -671,13 +695,15 @@ function App() {
       if (document.body.style.overflow === "hidden") return;
 
       const view = currentViewRef.current;
-      if (view === "providers") return;
+      if (view === homeViewRef.current) return;
       if (managementBusyRef.current) return;
 
       if (isTextEditableTarget(event.target)) return;
 
       event.preventDefault();
-      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
+      setCurrentView(
+        view === "skillsDiscovery" ? "skills" : homeViewRef.current,
+      );
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -690,6 +716,19 @@ function App() {
   const openHermesWebUI = useOpenHermesWebUI(() =>
     setLaunchDashboardOpen(true),
   );
+
+  // 首页级设置（使用统计刷新间隔、会话同步开关）自动保存。
+  // 与设置页共用全局串行队列（任务执行时读取最新后端设置再合并本次字段），
+  // 避免并发基于旧快照的全量保存互相覆盖。
+  const handleSettingsAutoSave = async (
+    updates: Partial<SettingsType>,
+  ): Promise<boolean> => {
+    const res = await enqueueSettingsSave(updates);
+    if (res.ok) {
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    }
+    return res.ok;
+  };
 
   const handleOpenWebsite = async (url: string) => {
     try {
@@ -1007,11 +1046,30 @@ function App() {
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
+        case "usageHome":
+          return (
+            <div className="px-6 pt-4">
+              <UsageDashboard
+                refreshIntervalMs={
+                  settingsData?.usageDashboardRefreshIntervalMs
+                }
+                onRefreshIntervalChange={(usageDashboardRefreshIntervalMs) =>
+                  handleSettingsAutoSave({ usageDashboardRefreshIntervalMs })
+                }
+                sessionAutoSyncEnabled={
+                  settingsData?.sessionAutoSyncEnabled ?? true
+                }
+                onSessionAutoSyncEnabledChange={(sessionAutoSyncEnabled) =>
+                  handleSettingsAutoSave({ sessionAutoSyncEnabled })
+                }
+              />
+            </div>
+          );
         case "settings":
           return (
             <SettingsPage
               open={true}
-              onOpenChange={() => setCurrentView("providers")}
+              onOpenChange={() => setCurrentView(homeView)}
               onImportSuccess={handleImportSuccess}
               defaultTab={settingsDefaultTab}
             />
@@ -1021,7 +1079,7 @@ function App() {
             <PromptPanel
               ref={promptPanelRef}
               open={true}
-              onOpenChange={() => setCurrentView("providers")}
+              onOpenChange={() => setCurrentView(homeView)}
               appId={sharedFeatureApp}
               onInteractionBlockedChange={setPromptManagementBusy}
               onNavigationBlockedChange={setPromptNavigationBusy}
@@ -1057,14 +1115,12 @@ function App() {
           return (
             <UnifiedMcpPanel
               ref={mcpPanelRef}
-              onOpenChange={() => setCurrentView("providers")}
+              onOpenChange={() => setCurrentView(homeView)}
               onInteractionBlockedChange={setMcpManagementBusy}
             />
           );
         case "agents":
-          return (
-            <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
-          );
+          return <AgentsPanel onOpenChange={() => setCurrentView(homeView)} />;
         case "universal":
           return (
             <div className="px-6 pt-4">
@@ -1277,7 +1333,7 @@ function App() {
             className="flex items-center gap-1"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
-            {currentView !== "providers" ? (
+            {currentView !== homeView ? (
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -1286,9 +1342,7 @@ function App() {
                   aria-label={t("common.back")}
                   onClick={() =>
                     setCurrentView(
-                      currentView === "skillsDiscovery"
-                        ? "skills"
-                        : "providers",
+                      currentView === "skillsDiscovery" ? "skills" : homeView,
                     )
                   }
                   className={cn(
@@ -1300,6 +1354,11 @@ function App() {
                 </Button>
                 <h1 className="text-lg font-semibold">
                   {currentView === "settings" && t("settings.title")}
+                  {currentView === "providers" &&
+                    homeView === "usageHome" &&
+                    t("providers.manage", {
+                      defaultValue: "供应商管理",
+                    })}
                   {currentView === "prompts" &&
                     t("prompts.title", {
                       appName: t(`apps.${sharedFeatureApp}`),
@@ -1369,7 +1428,7 @@ function App() {
           </div>
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
-            {currentView === "providers" &&
+            {currentView === homeView &&
               (activeApp === "claude-desktop" || proxyAppId) && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
@@ -1389,7 +1448,7 @@ function App() {
                   ) : null}
                 </div>
               )}
-            {currentView === "providers" &&
+            {currentView === homeView &&
               (settingsData?.showProfileSwitcher ?? true) && (
                 <div
                   className="flex shrink-0 items-center"
@@ -1401,6 +1460,8 @@ function App() {
             {/* 弹性中段：空间不足时由 AppSwitcher 自行收纳溢出应用；
                 justify-end + overflow-hidden 只裁剪 resize 瞬间的过渡帧 */}
             <div className="flex flex-1 min-w-0 items-center justify-end overflow-hidden py-4">
+              {/* 使用统计首页展示全应用用量，与 activeApp 无关，不显示 CLI 切换；
+                  供应商列表页按应用过滤，保留 AppSwitcher */}
               {currentView === "providers" && (
                 <AppSwitcher
                   activeApp={activeApp}
@@ -1561,7 +1622,7 @@ function App() {
                     )}
                   </>
                 )}
-                {currentView === "providers" && (
+                {currentView === homeView && (
                   <>
                     <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                       <AnimatePresence mode="wait">
@@ -1621,6 +1682,19 @@ function App() {
                                   <McpIcon size={16} />
                                 </Button>
                               )}
+                              {homeView === "usageHome" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("providers")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("providers.manage", {
+                                    defaultValue: "供应商管理",
+                                  })}
+                                >
+                                  <Store className="w-4 h-4" />
+                                </Button>
+                              )}
                             </>
                           ) : activeApp === "openclaw" ? (
                             <>
@@ -1669,6 +1743,19 @@ function App() {
                               >
                                 <History className="w-4 h-4" />
                               </Button>
+                              {homeView === "usageHome" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("providers")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("providers.manage", {
+                                    defaultValue: "供应商管理",
+                                  })}
+                                >
+                                  <Store className="w-4 h-4" />
+                                </Button>
+                              )}
                             </>
                           ) : (
                             <>
@@ -1722,22 +1809,36 @@ function App() {
                                   <McpIcon size={16} />
                                 </Button>
                               )}
+                              {homeView === "usageHome" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("providers")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("providers.manage", {
+                                    defaultValue: "供应商管理",
+                                  })}
+                                >
+                                  <Store className="w-4 h-4" />
+                                </Button>
+                              )}
                             </>
                           )}
                         </motion.div>
                       </AnimatePresence>
                     </div>
-
-                    <Button
-                      onClick={() => setIsAddOpen(true)}
-                      size="icon"
-                      className={`ml-2 ${addActionButtonClass}`}
-                      aria-label={t("provider.addNewProvider")}
-                      title={t("provider.addNewProvider")}
-                    >
-                      <Plus className="w-5 h-5" />
-                    </Button>
                   </>
+                )}
+                {currentView === "providers" && (
+                  <Button
+                    onClick={() => setIsAddOpen(true)}
+                    size="icon"
+                    className={`ml-2 ${addActionButtonClass}`}
+                    aria-label={t("provider.addNewProvider")}
+                    title={t("provider.addNewProvider")}
+                  >
+                    <Plus className="w-5 h-5" />
+                  </Button>
                 )}
               </div>
             </div>

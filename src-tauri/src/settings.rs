@@ -416,6 +416,11 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
 
+    // ===== 首页显示 =====
+    /// 首页显示模式：default（默认供应商列表首页）或 usage（使用统计首页）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_page_mode: Option<String>,
+
     // ===== 设备级目录覆盖 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
@@ -542,6 +547,7 @@ impl Default for AppSettings {
             common_config_confirmed: None,
             language: None,
             visible_apps: None,
+            home_page_mode: None,
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,

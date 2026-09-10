@@ -689,6 +689,14 @@
     "languageOptionTraditionalChinese": "繁體中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
+    "homePage": {
+      "title": "首頁顯示",
+      "description": "選擇應用程式啟動時顯示的首頁",
+      "default": "預設首頁",
+      "usage": "使用統計",
+      "defaultHint": "啟動時顯示供應商列表",
+      "usageHint": "啟動時直接顯示使用統計頁面，供應商列表收納到頂部的供應商按鈕中"
+    },
     "windowBehavior": "視窗行為",
     "windowBehaviorHint": "設定視窗最小化與 Claude 外掛程式連動策略。",
     "launchOnStartup": "開機自動啟動",
@@ -3259,5 +3267,8 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "providers": {
+    "manage": "供應商管理"
   }
 }

@@ -48,6 +48,18 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+    // current_provider_* 由 provider 切换命令（settings::set_current_provider）
+    // 单独管理，前端设置表单从不编辑它们。save_settings 的全量 payload 可能
+    // 携带陈旧的 currentProvider 快照（如使用统计首页在供应商切换期间保存），
+    // 若按 incoming 透传会把刚切换的供应商回退，故无条件保留现有值。
+    incoming.current_provider_claude = existing.current_provider_claude.clone();
+    incoming.current_provider_claude_desktop = existing.current_provider_claude_desktop.clone();
+    incoming.current_provider_codex = existing.current_provider_codex.clone();
+    incoming.current_provider_gemini = existing.current_provider_gemini.clone();
+    incoming.current_provider_grokbuild = existing.current_provider_grokbuild.clone();
+    incoming.current_provider_opencode = existing.current_provider_opencode.clone();
+    incoming.current_provider_openclaw = existing.current_provider_openclaw.clone();
+    incoming.current_provider_hermes = existing.current_provider_hermes.clone();
     incoming
 }
 
@@ -617,6 +629,67 @@ mod tests {
         let merged = merge_settings_for_save(incoming, &existing);
 
         assert!(merged.local_migrations.is_none());
+    }
+
+    #[test]
+    fn save_settings_should_preserve_current_provider_over_incoming() {
+        // current_provider_* 由 provider 切换命令（set_current_provider）单独管理，
+        // save_settings 的全量 payload 即使携带陈旧的 currentProvider 快照，
+        // 也不应覆盖现有值（否则首页/设置保存会回退刚切换的供应商）。
+        let existing = AppSettings {
+            current_provider_claude: Some("new-provider".to_string()),
+            current_provider_claude_desktop: Some("desktop-new".to_string()),
+            current_provider_codex: Some("codex-new".to_string()),
+            current_provider_gemini: Some("gemini-new".to_string()),
+            current_provider_grokbuild: Some("grok-new".to_string()),
+            current_provider_opencode: Some("opencode-new".to_string()),
+            current_provider_openclaw: Some("openclaw-new".to_string()),
+            current_provider_hermes: Some("hermes-new".to_string()),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            current_provider_claude: Some("stale-old".to_string()),
+            current_provider_claude_desktop: Some("stale-old".to_string()),
+            current_provider_codex: Some("stale-old".to_string()),
+            current_provider_gemini: Some("stale-old".to_string()),
+            current_provider_grokbuild: Some("stale-old".to_string()),
+            current_provider_opencode: Some("stale-old".to_string()),
+            current_provider_openclaw: Some("stale-old".to_string()),
+            current_provider_hermes: Some("stale-old".to_string()),
+            ..AppSettings::default()
+        };
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged.current_provider_claude.as_deref(),
+            Some("new-provider")
+        );
+        assert_eq!(
+            merged.current_provider_claude_desktop.as_deref(),
+            Some("desktop-new")
+        );
+        assert_eq!(merged.current_provider_codex.as_deref(), Some("codex-new"));
+        assert_eq!(
+            merged.current_provider_gemini.as_deref(),
+            Some("gemini-new")
+        );
+        assert_eq!(
+            merged.current_provider_grokbuild.as_deref(),
+            Some("grok-new")
+        );
+        assert_eq!(
+            merged.current_provider_opencode.as_deref(),
+            Some("opencode-new")
+        );
+        assert_eq!(
+            merged.current_provider_openclaw.as_deref(),
+            Some("openclaw-new")
+        );
+        assert_eq!(
+            merged.current_provider_hermes.as_deref(),
+            Some("hermes-new")
+        );
     }
 }
 
