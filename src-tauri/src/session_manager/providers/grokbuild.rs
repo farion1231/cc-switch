@@ -190,6 +190,7 @@ fn parse_summary(path: &Path) -> Option<SessionMeta> {
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("grok --resume {session_id}")),
+        account_label: None,
     })
 }
 
