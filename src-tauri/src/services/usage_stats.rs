@@ -6,7 +6,8 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{
-    fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL,
+    fresh_input_sql, real_total_tokens_sql, INPUT_TOKEN_SEMANTICS_FRESH,
+    INPUT_TOKEN_SEMANTICS_TOTAL,
 };
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -1328,10 +1329,15 @@ impl Database {
         };
 
         // UNION detail logs + rollup data, then aggregate
+        //
+        // total_tokens 用「真实消耗」口径（fresh_input + output + cache_creation
+        // + cache_read），与 Hero 摘要的 real_total 一致。历史实现只算
+        // fresh_input + output，在高缓存命中场景下明细表会比 Hero 低一到两个
+        // 数量级（上游 #3323）。
         let detail_pname = provider_name_coalesce("l", "p");
         let rollup_pname = provider_name_coalesce("r", "p2");
-        let fresh_input_detail = fresh_input_sql("l");
-        let fresh_input_rollup = fresh_input_sql("r");
+        let real_total_detail = real_total_tokens_sql("l");
+        let real_total_rollup = real_total_tokens_sql("r");
         let sql = format!(
             "SELECT
                 provider_id, app_type, provider_name,
@@ -1346,7 +1352,7 @@ impl Database {
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({real_total_detail}), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
                     COALESCE(SUM(l.latency_ms), 0) as latency_sum
@@ -1358,7 +1364,7 @@ impl Database {
                 SELECT r.provider_id, r.app_type,
                     {rollup_pname} as provider_name,
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({real_total_rollup}), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
                     COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
@@ -1487,8 +1493,11 @@ impl Database {
         // 定价算的，金额与定价表自洽），NULL/'' 回落 model。默认 response 计价
         // 模式下两者相同，行为不变；request 模式 + 路由接管下，钱挂在实际计价
         // 基准名下，而不是上游回显/客户端别名名下。
-        let fresh_input_detail = fresh_input_sql("l");
-        let fresh_input_rollup = fresh_input_sql("r");
+        //
+        // total_tokens 同供应商统计，用「真实消耗」口径（含缓存创建 + 缓存
+        // 读取），与 Hero 摘要的 real_total 对齐（上游 #3323）。
+        let real_total_detail = real_total_tokens_sql("l");
+        let real_total_rollup = real_total_tokens_sql("r");
         let detail_model = effective_model_sql("l");
         let rollup_model = effective_model_sql("r");
         let sql = format!(
@@ -1500,7 +1509,7 @@ impl Database {
             FROM (
                 SELECT {detail_model} as model,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({real_total_detail}), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
                 FROM proxy_request_logs l
                 {detail_join}
@@ -1509,7 +1518,7 @@ impl Database {
                 UNION ALL
                 SELECT {rollup_model},
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({real_total_rollup}), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
                 FROM usage_daily_rollups r
                 {rollup_join}
@@ -3810,6 +3819,168 @@ mod tests {
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].model, "claude-3-sonnet");
         assert_eq!(stats[0].request_count, 1);
+
+        Ok(())
+    }
+
+    /// 回归测试：供应商 / 模型统计的 total_tokens 必须与 Hero 的
+    /// real_total_tokens 同口径（含 cache_read + cache_creation）。
+    ///
+    /// 上游 #3323：历史实现只算 fresh_input + output，在真实的高缓存命中场景
+    /// （命中率 95%+）下明细表会比 Hero 低一到两个数量级。这里刻意把缓存列
+    /// 造得远大于 fresh 列，任何回退到 fresh+output 的改动都会立刻失败。
+    #[test]
+    fn test_provider_and_model_stats_include_cache_tokens_like_hero() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // 明细行：Anthropic 语义，200 fresh / 50 out / 9000 缓存读 / 750 缓存写
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "cache-heavy-1",
+                    "p1",
+                    "claude",
+                    "claude-opus-4-5",
+                    200,
+                    50,
+                    9000,
+                    750,
+                    "0.01",
+                    100,
+                    200,
+                    1000
+                ],
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        // 200 + 50 + 750 + 9000
+        assert_eq!(summary.real_total_tokens, 10_000);
+
+        let provider_stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(provider_stats.len(), 1);
+        assert_eq!(
+            provider_stats[0].total_tokens, summary.real_total_tokens,
+            "供应商统计的 total_tokens 应与 Hero 的 real_total_tokens 一致"
+        );
+
+        let model_stats = db.get_model_stats(None, None, None, None, None)?;
+        assert_eq!(model_stats.len(), 1);
+        assert_eq!(
+            model_stats[0].total_tokens, summary.real_total_tokens,
+            "模型统计的 total_tokens 应与 Hero 的 real_total_tokens 一致"
+        );
+
+        // 旧口径会得到 250，这个断言用来钉死回归方向
+        assert_ne!(provider_stats[0].total_tokens, 250);
+        assert_ne!(model_stats[0].total_tokens, 250);
+
+        Ok(())
+    }
+
+    /// 明细行 + 日报聚合行混合时，两条 UNION 分支都要用真实消耗口径。
+    #[test]
+    fn test_provider_and_model_stats_include_cache_tokens_in_rollups() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // 日报行：Anthropic 语义，1000 fresh / 500 out / 40000 缓存读 / 2500 缓存写
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "2024-01-02",
+                    "claude",
+                    "p1",
+                    "claude-opus-4-5",
+                    10,
+                    10,
+                    1000,
+                    500,
+                    40000,
+                    2500,
+                    "0.5",
+                    120
+                ],
+            )?;
+        }
+
+        let start = Local
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        let end = Local
+            .with_ymd_and_hms(2024, 1, 3, 23, 59, 59)
+            .unwrap()
+            .timestamp();
+
+        let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"), None, None)?;
+        // 1000 + 500 + 2500 + 40000
+        assert_eq!(summary.real_total_tokens, 44_000);
+
+        let provider_stats =
+            db.get_provider_stats(Some(start), Some(end), Some("claude"), None, None)?;
+        assert_eq!(provider_stats.len(), 1);
+        assert_eq!(provider_stats[0].total_tokens, summary.real_total_tokens);
+
+        let model_stats = db.get_model_stats(Some(start), Some(end), Some("claude"), None, None)?;
+        assert_eq!(model_stats.len(), 1);
+        assert_eq!(model_stats[0].total_tokens, summary.real_total_tokens);
+
+        Ok(())
+    }
+
+    /// cache-inclusive 供应商（codex / gemini / grokbuild）的 input_tokens 已含
+    /// 缓存，明细表不能因为改用真实消耗口径而把缓存重复计入。
+    #[test]
+    fn test_provider_stats_does_not_double_count_cache_inclusive_input() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_token_semantics, total_cost_usd, latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "codex-total-1",
+                    "p1",
+                    "codex",
+                    "gpt-5.2",
+                    1000,
+                    50,
+                    300,
+                    200,
+                    INPUT_TOKEN_SEMANTICS_TOTAL,
+                    "0.01",
+                    100,
+                    200,
+                    1000
+                ],
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        // fresh = 1000 - 300 - 200 = 500；500 + 50 + 200 + 300 = 1050
+        assert_eq!(summary.real_total_tokens, 1050);
+
+        let provider_stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(provider_stats[0].total_tokens, 1050);
+
+        let model_stats = db.get_model_stats(None, None, None, None, None)?;
+        assert_eq!(model_stats[0].total_tokens, 1050);
 
         Ok(())
     }
