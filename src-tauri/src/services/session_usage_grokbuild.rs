@@ -295,7 +295,7 @@ fn sync_single_grok_file(
         // 不落同步状态：下一轮重读整个文件，把沉降后的事件补入。
         result.deferred_files += 1;
     } else {
-        update_sync_state(db, &file_path_str, file_modified, events.len() as i64)?;
+        update_sync_state(db, &file_path_str, file_modified, events.len() as i64, None)?;
     }
 
     Ok(result)

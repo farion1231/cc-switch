@@ -217,6 +217,10 @@ struct ParsedCodexFile {
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
     line_offset: i64,
+    /// 只到最后一个完整行末尾的已消费字节数（写入 `last_byte_offset`）。
+    /// mtime 相等时靠它判断文件是否真的没有新增——半行不计入，补全后
+    /// 重扫不会被行号游标跳过（见 `parse_codex_file` 的半行注释）。
+    consumed_bytes: i64,
     has_billable_tokens: bool,
 }
 
@@ -492,21 +496,39 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 /// - `pricing`：模型定价 pass 级缓存。定价表在 pass 进行中被修改时本 pass
 ///   仍用旧价，下一个同步 pass 生效。
 struct CodexSyncPass {
-    cursors: HashMap<String, (i64, i64)>,
+    cursors: HashMap<String, CodexCursor>,
     pricing: HashMap<String, Option<ModelPricing>>,
+}
+
+/// Codex rollout 的同步游标。`byte_offset` 复用 `session_log_sync` 的
+/// `last_byte_offset` 列（v18 起存在，无需迁移），只到最后一个完整行末尾；
+/// 升级前的存量行该列为 NULL，跳过去重条件会因此放行重扫（多一轮解析，
+/// 不丢数据）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct CodexCursor {
+    modified: i64,
+    line_offset: i64,
+    byte_offset: Option<i64>,
 }
 
 impl CodexSyncPass {
     fn load(db: &Database) -> Result<Self, AppError> {
         let conn = lock_conn!(db.conn);
         let mut stmt = conn
-            .prepare("SELECT file_path, last_modified, last_line_offset FROM session_log_sync")
+            .prepare(
+                "SELECT file_path, last_modified, last_line_offset, last_byte_offset
+                 FROM session_log_sync",
+            )
             .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
         let cursors = stmt
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
+                    CodexCursor {
+                        modified: row.get(1)?,
+                        line_offset: row.get(2)?,
+                        byte_offset: row.get(3)?,
+                    },
                 ))
             })
             .and_then(|rows| rows.collect::<Result<HashMap<_, _>, _>>())
@@ -521,11 +543,11 @@ impl CodexSyncPass {
 fn get_codex_sync_state(
     db: &Database,
     file_path: &Path,
-    cursors: &HashMap<String, (i64, i64)>,
-) -> Result<(i64, i64), AppError> {
+    cursors: &HashMap<String, CodexCursor>,
+) -> Result<CodexCursor, AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
-    let state = cursors.get(&file_path_str).copied().unwrap_or((0, 0));
-    if state != (0, 0)
+    let state = cursors.get(&file_path_str).copied().unwrap_or_default();
+    if state != CodexCursor::default()
         || file_path
             .parent()
             .and_then(Path::file_name)
@@ -541,20 +563,25 @@ fn get_codex_sync_state(
     let slash_suffix = format!("/{file_name}");
     let backslash_suffix = format!("\\{file_name}");
     // 与原 SQL 等价：ORDER BY last_line_offset DESC, last_modified DESC LIMIT 1
-    // → 在快照上按 (offset, modified) 取最大。
+    // → 在快照上按 (offset, modified) 取最大。archived 文件是源文件的副本、
+    // 内容一致，字节游标一并继承。
     let inherited = cursors
         .iter()
         .filter(|(path, _)| {
             path.as_str() != file_path_str
                 && (path.ends_with(&slash_suffix) || path.ends_with(&backslash_suffix))
         })
-        .map(|(_, &(modified, offset))| (offset, modified))
+        .map(|(_, cursor)| (cursor.line_offset, cursor.modified, cursor.byte_offset))
         .max();
 
     match inherited {
-        Some((offset, modified)) => {
-            update_sync_state(db, &file_path_str, modified, offset)?;
-            Ok((modified, offset))
+        Some((line_offset, modified, byte_offset)) => {
+            update_sync_state(db, &file_path_str, modified, line_offset, byte_offset)?;
+            Ok(CodexCursor {
+                modified,
+                line_offset,
+                byte_offset,
+            })
         }
         None => Ok(state),
     }
@@ -783,7 +810,7 @@ fn parse_codex_file(
 ) -> Result<ParsedCodexFile, AppError> {
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
     let mut root_meta_seen = false;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
@@ -803,14 +830,30 @@ fn parse_codex_file(
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
     let mut line_offset = 0i64;
+    let mut consumed_bytes = 0i64;
     let mut has_billable_tokens = false;
 
-    for line_result in reader.lines() {
-        line_offset += 1;
-        let line = match line_result {
-            Ok(line) => line,
-            Err(_) => continue,
+    // 按字节读到换行为止，而不是 `lines()`：`lines()` 把未以 `\n` 终结的
+    // 半行也计入行号，写入方补全后该行因 `line_offset` 已被覆盖而永久跳过
+    // （丢行 bug，与 Claude 路径修复前同族）。这里只把完整行计入
+    // `line_offset` 与 `consumed_bytes`，半行留给下一轮重扫——重扫的行由
+    // request_id 去重兜底，不会双算。
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        buf.clear();
+        let read = match reader.read_until(b'\n', &mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            // IO 读错误：已读部分照常处理，游标停在最后一个完整行，
+            // 下一轮 mtime 门放行后从该处续读
+            Err(_) => break,
         };
+        if !buf.ends_with(b"\n") {
+            break;
+        }
+        line_offset += 1;
+        consumed_bytes += read as i64;
+        let line = String::from_utf8_lossy(&buf);
         if line.trim().is_empty() {
             continue;
         }
@@ -997,6 +1040,7 @@ fn parse_codex_file(
         parent,
         token_events,
         line_offset,
+        consumed_bytes,
         has_billable_tokens,
     })
 }
@@ -1180,10 +1224,19 @@ fn sync_single_codex_file(
     let file_size = metadata.len();
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_codex_sync_state(db, file_path, &pass.cursors)?;
+    let cursor = get_codex_sync_state(db, file_path, &pass.cursors)?;
+    let (last_modified, last_offset) = (cursor.modified, cursor.line_offset);
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // 文件未变化则跳过。mtime 相等不足以判定未变化：写入方追加后 mtime
+    // 可能因文件系统粒度/缓存延迟暂不更新（Windows 上尤甚，issue #7264），
+    // 必须以字节游标与当前大小的关系兜底——游标覆盖整个文件才算未变化。
+    // 存量行 byte_offset 为 NULL，无从校验时一律放行重扫（见 CodexCursor）。
+    let unchanged = file_modified < last_modified
+        || (file_modified == last_modified
+            && cursor
+                .byte_offset
+                .is_some_and(|offset| file_size as i64 <= offset));
+    if unchanged {
         return Ok(CodexFileSyncResult::default());
     }
 
@@ -1216,7 +1269,13 @@ fn sync_single_codex_file(
 
     let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
     if !parsed.has_billable_tokens {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_sync_state(
+            db,
+            &file_path_str,
+            file_modified,
+            parsed.line_offset,
+            Some(parsed.consumed_bytes),
+        )?;
         return Ok(CodexFileSyncResult::default());
     }
     let Some(root_thread_id) = parsed.root_thread_id.as_deref() else {
@@ -1372,7 +1431,13 @@ fn sync_single_codex_file(
         if is_last_batch {
             // 游标推进与最后一批数据同事务提交：中途崩溃时两者一起回滚，
             // 不会出现"游标已推进但数据缺失"的丢数据窗口。
-            update_sync_state_on_conn(&tx, &file_path_str, file_modified, parsed.line_offset)?;
+            update_sync_state_on_conn(
+                &tx,
+                &file_path_str,
+                file_modified,
+                parsed.line_offset,
+                Some(parsed.consumed_bytes),
+            )?;
         }
         tx.commit()
             .map_err(|e| AppError::Database(format!("提交 Codex 会话写入事务失败: {e}")))?;
@@ -1383,7 +1448,13 @@ fn sync_single_codex_file(
     }
 
     if to_insert.is_empty() {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_sync_state(
+            db,
+            &file_path_str,
+            file_modified,
+            parsed.line_offset,
+            Some(parsed.consumed_bytes),
+        )?;
     }
     Ok(result)
 }
@@ -1548,7 +1619,7 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::session_usage::get_sync_state;
+    use crate::services::session_usage::{get_sync_state, load_sync_cursors};
     use tempfile::tempdir;
 
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
@@ -1694,6 +1765,13 @@ mod tests {
             .collect::<Vec<_>>();
         let mut pass = CodexSyncPass::load(db)?;
         sync_single_codex_file(db, file, &build_rollout_index(&files), &mut pass)
+    }
+
+    fn byte_cursor(db: &Database, path: &Path) -> Option<i64> {
+        load_sync_cursors(db)
+            .unwrap()
+            .get(path.to_string_lossy().as_ref())
+            .and_then(|cursor| cursor.last_byte_offset)
     }
 
     /// revert 产生的替换 rollout 是 `<threadId>_<rolloutId>` 双段文件名，
@@ -2831,7 +2909,7 @@ mod tests {
             )?;
         }
         let source_path = source.to_string_lossy().to_string();
-        update_sync_state(&db, &source_path, 1, 3)?;
+        update_sync_state(&db, &source_path, 1, 3, None)?;
 
         assert_eq!(
             sync_test_file(&db, &archived_file, &[&archived_file])?.imported,
@@ -2860,6 +2938,100 @@ mod tests {
         assert_eq!(usage, (100, 50, 10));
         drop(conn);
         assert_eq!(get_sync_state(&db, &archived_file.to_string_lossy())?.1, 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_append_with_unchanged_mtime_is_not_missed() -> Result<(), AppError> {
+        // 回归（#7264）：写入方追加后 mtime 可能因文件系统粒度/缓存延迟
+        // 暂不更新（Windows 上尤甚），旧的 `file_modified <= last_modified`
+        // 门会整个跳过该文件、用量停止累计。这里显式把 mtime 还原成同步
+        // 时的值来复现该窗口，新增用量必须照常导入。
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let file = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count(100, 50, 10),
+            ],
+        );
+        let first = sync_test_file(&db, &file, &[&file])?;
+        assert_eq!(first.imported, 1);
+        let synced_mtime = fs::metadata(&file).unwrap().modified().unwrap();
+
+        let mut content = fs::read(&file).unwrap();
+        content.extend_from_slice(format!("{}\n", token_count(200, 100, 20)).as_bytes());
+        fs::write(&file, &content).unwrap();
+        // 还原 mtime 需要写属性权限，只读句柄会 Access Denied
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(synced_mtime)
+            .unwrap();
+
+        let second = sync_test_file(&db, &file, &[&file])?;
+        assert_eq!(second.imported, 1, "mtime 未更新不得吞掉新增用量");
+        assert_eq!(byte_cursor(&db, &file), Some(content.len() as i64));
+
+        // 游标覆盖整个文件后，真正未变化的文件仍走跳过快路径
+        let third = sync_test_file(&db, &file, &[&file])?;
+        assert_eq!(third.imported, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_partial_line_completed_later_is_not_lost() -> Result<(), AppError> {
+        // 回归：旧实现用 `lines()`，把未以 `\n` 终结的半行也计入行号游标，
+        // 写入方补全该行后事件因 `line_offset` 已被覆盖被永久跳过。
+        // `consumed_bytes` 只推进到最后一个完整行，补全后必须导入。
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let file = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(&file, &[session_meta(PARENT_ID), turn_context()]);
+        let complete_len = fs::metadata(&file).unwrap().len() as i64;
+
+        let full = token_count(100, 50, 10).to_string();
+        let (head, rest) = full.split_at(full.len() / 2);
+        let mut content = fs::read(&file).unwrap();
+        content.extend_from_slice(head.as_bytes());
+        fs::write(&file, &content).unwrap();
+
+        let first = sync_test_file(&db, &file, &[&file])?;
+        assert_eq!(first.imported, 0, "半行不可解析，不得计入用量");
+        assert_eq!(
+            byte_cursor(&db, &file),
+            Some(complete_len),
+            "游标不得越过未写完的半行"
+        );
+
+        let mut content = fs::read(&file).unwrap();
+        content.extend_from_slice(format!("{rest}\n").as_bytes());
+        fs::write(&file, &content).unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(SystemTime::now() + std::time::Duration::from_secs(2))
+            .unwrap();
+
+        let second = sync_test_file(&db, &file, &[&file])?;
+        assert_eq!(second.imported, 1, "补全后的行必须被导入，不得因游标丢失");
+        assert_eq!(byte_cursor(&db, &file), Some(content.len() as i64));
+
+        let conn = lock_conn!(db.conn);
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)",
+            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:1")],
+            |row| row.get(0),
+        )?;
+        assert!(exists);
+        drop(conn);
 
         Ok(())
     }

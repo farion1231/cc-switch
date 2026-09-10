@@ -153,7 +153,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         }
 
         // 更新会话级同步状态。失败时不要推进文件级状态，确保下次可重试。
-        if let Err(e) = update_sync_state(db, &sync_key, *time_updated, 0) {
+        if let Err(e) = update_sync_state(db, &sync_key, *time_updated, 0, None) {
             let msg = format!("OpenCode 会话同步状态更新失败 {session_id}: {e}");
             log::warn!("[OPENCODE-SYNC] {msg}");
             result.errors.push(msg);
@@ -163,7 +163,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     // 仅在本轮完全成功时推进文件级状态；否则保留下次重试入口。
     if !has_sync_errors {
-        update_sync_state(db, &db_path_str, file_modified, 0)?;
+        update_sync_state(db, &db_path_str, file_modified, 0, None)?;
     }
 
     if result.imported > 0 {
