@@ -63,12 +63,17 @@ impl PromptService {
         // External editors change the live file without updating the saved
         // selection. Refresh only that selection; inactive templates are separate.
         if let Some(prompt) = prompts.values_mut().find(|prompt| prompt.enabled) {
-            if let Some(content) = Self::get_current_file_content(app.clone())? {
-                if prompt.content != content {
+            match Self::get_current_file_content(app.clone()) {
+                Ok(Some(content)) if prompt.content != content => {
                     prompt.content = content;
                     prompt.updated_at = Some(get_unix_timestamp()?);
                     state.db.save_prompt(app.as_str(), prompt)?;
                 }
+                Ok(_) => {}
+                Err(error) => log::warn!(
+                    "Failed to refresh {} prompt from live file; keeping saved prompts: {error}",
+                    app.as_str()
+                ),
             }
         }
         Ok(prompts)

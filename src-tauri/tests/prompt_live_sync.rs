@@ -50,12 +50,33 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
         }
 
         let mut saved = state.db.get_prompts(app.as_str()).unwrap()["active"].clone();
+        saved.content = "saved instructions".into();
+        fs::write(&path, &saved.content).unwrap();
         saved.updated_at = Some(42);
         state.db.save_prompt(app.as_str(), &saved).unwrap();
         assert_eq!(
             PromptService::get_prompts(&state, app.clone()).unwrap()["active"].updated_at,
             Some(42)
         );
+
+        // An editor may save UTF-16: the live read fails, but saved templates
+        // must remain available so the user can repair the file from the UI.
+        let utf16 = [0xff, 0xfe, b'A', 0];
+        fs::write(&path, utf16).unwrap();
+        let prompts = PromptService::get_prompts(&state, app.clone()).unwrap();
+        assert_eq!(prompts["active"].content, saved.content);
+        assert_eq!(prompts["active"].updated_at, Some(42));
+        assert_eq!(prompts["inactive"].content, "original");
+        assert_eq!(fs::read(&path).unwrap(), utf16);
+        assert_eq!(
+            state.db.get_prompts(app.as_str()).unwrap()["active"].updated_at,
+            Some(42)
+        );
+        assert_eq!(
+            state.db.get_prompts(app.as_str()).unwrap()["active"].content,
+            saved.content
+        );
+        assert!(PromptService::get_current_file_content(app.clone()).is_err());
 
         fs::remove_file(&path).unwrap();
         assert_eq!(
@@ -69,7 +90,7 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
         fs::write(&path, "unmanaged instructions").unwrap();
         assert_eq!(
             PromptService::get_prompts(&state, app).unwrap()["active"].content,
-            ""
+            saved.content
         );
         assert_eq!(fs::read_to_string(path).unwrap(), "unmanaged instructions");
     }
