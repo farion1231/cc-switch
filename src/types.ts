@@ -385,9 +385,13 @@ export interface Settings {
   showProfileSwitcher?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
-  // Run official Codex under the shared "custom" provider id so future
-  // sessions share one resume-history bucket with third-party providers
+  // Run official Codex under the configured provider id so future sessions
+  // can share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
+  // Official Codex provider id used by unified history (default: custom)
+  codexOfficialUnifiedProviderId?: string;
+  // Official Codex provider id used while takeover is active (default: cc-switch-official)
+  codexOfficialTakeoverProviderId?: string;
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
   // User has confirmed the failover toggle first-run notice

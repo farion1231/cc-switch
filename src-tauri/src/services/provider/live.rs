@@ -1098,7 +1098,7 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
-    // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
+    // 统一会话开关注入的统一 Provider 路由只属于 live 配置；切换回填时
     // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
     if provider.category.as_deref() == Some("official")
         || crate::proxy::providers::is_codex_official_provider(provider)

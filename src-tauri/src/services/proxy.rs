@@ -16,6 +16,7 @@ use crate::services::provider::{
     write_live_with_common_config_for_codex_oauth_manager,
 };
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::Emitter;
@@ -23,6 +24,30 @@ use tokio::sync::RwLock;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+fn codex_config_fingerprint(config_text: &str) -> String {
+    let signature = config_text
+        .parse::<toml_edit::DocumentMut>()
+        .ok()
+        .and_then(|doc| {
+            let provider_id = doc.get("model_provider")?.as_str()?.trim();
+            let table = doc
+                .get("model_providers")?
+                .as_table_like()?
+                .get(provider_id)?
+                .as_table_like()?;
+            Some(format!(
+                "{provider_id}|{}|{}|{}|{}|{}",
+                table.get("name")?.as_str()?,
+                table.get("base_url")?.as_str()?,
+                table.get("requires_openai_auth")?.as_bool()?,
+                table.get("supports_websockets")?.as_bool()?,
+                table.get("wire_api")?.as_str()?
+            ))
+        })
+        .unwrap_or_else(|| config_text.to_string());
+    format!("{:x}", Sha256::digest(signature.as_bytes()))
+}
 
 /// 代理接管模式下需要从 Claude Live 配置中移除的"模型覆盖"字段。
 ///
@@ -755,6 +780,32 @@ impl ProxyService {
             .map_err(|error| error.to_string())?;
         }
 
+        if crate::proxy::providers::is_codex_official_provider(provider) {
+            let projected_config = effective_settings
+                .get("config")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let projection = CodexTakeoverProjection {
+                provider_id: crate::settings::codex_official_takeover_provider_id(),
+                proxy_base_url: proxy_codex_base_url,
+                config_fingerprint: codex_config_fingerprint(&projected_config),
+                marked_at: chrono::Utc::now().to_rfc3339(),
+            };
+            self.db
+                .save_codex_takeover_projection(&projection)
+                .await
+                .map_err(|e| format!("保存 Codex 官方接管标记失败: {e}"))?;
+        } else {
+            self.db
+                .delete_codex_takeover_projection()
+                .await
+                .map_err(|e| format!("清除 Codex 官方接管标记失败: {e}"))?;
+        }
+        // Persist ownership before replacing live config. If the live write
+        // fails, the stale marker cannot match the unchanged config
+        // fingerprint; the opposite order could leave a custom official route
+        // without ownership evidence when the database write fails.
         self.write_codex_takeover_live_for_provider(&effective_settings, Some(provider))?;
         Ok(())
     }
@@ -2316,19 +2367,36 @@ impl ProxyService {
                 );
             } else {
                 self.write_live_config_for_app(app_type, &config)?;
+                if matches!(app_type, AppType::Codex) {
+                    self.db
+                        .delete_codex_takeover_projection()
+                        .await
+                        .map_err(|e| format!("清除 Codex 官方接管标记失败: {e}"))?;
+                }
                 log::info!("{app_type_str} Live 配置已从备份恢复");
                 return Ok(());
             }
         }
 
         // 2) 兜底：备份缺失，但 Live 仍包含接管占位符（异常退出/历史 bug 场景）
-        if !self.detect_takeover_in_live_config_for_app(app_type) {
+        let takeover_residue = if matches!(app_type, AppType::Codex) {
+            self.codex_live_matches_takeover_projection().await
+        } else {
+            self.detect_takeover_in_live_config_for_app(app_type)
+        };
+        if !takeover_residue {
             return Ok(());
         }
 
         // 2.1) 优先从 SSOT（当前供应商）重建 Live（比"清理字段"更可用）
         match self.restore_live_from_ssot_for_app(app_type) {
             Ok(true) => {
+                if matches!(app_type, AppType::Codex) {
+                    self.db
+                        .delete_codex_takeover_projection()
+                        .await
+                        .map_err(|e| format!("清除 Codex 官方接管标记失败: {e}"))?;
+                }
                 log::info!("{app_type_str} Live 配置已从 SSOT 恢复（无备份兜底）");
                 return Ok(());
             }
@@ -2346,8 +2414,36 @@ impl ProxyService {
 
         // 2.2) 最后兜底：尽力清理占位符与本地代理地址，避免长期卡在代理占位符状态
         self.cleanup_takeover_placeholders_in_live_for_app(app_type)?;
+        if matches!(app_type, AppType::Codex) {
+            self.db
+                .delete_codex_takeover_projection()
+                .await
+                .map_err(|e| format!("清除 Codex 官方接管标记失败: {e}"))?;
+        }
         log::info!("{app_type_str} Live 接管占位符已清理（无备份兜底）");
         Ok(())
+    }
+
+    async fn codex_live_matches_takeover_projection(&self) -> bool {
+        let Ok(config) = self.read_codex_live() else {
+            return false;
+        };
+        let Some(config_text) = config.get("config").and_then(Value::as_str) else {
+            return false;
+        };
+        if let Ok(Some(marker)) = self.db.get_codex_takeover_projection().await {
+            return marker.config_fingerprint == codex_config_fingerprint(config_text)
+                && crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+                    config_text,
+                    &marker.provider_id,
+                );
+        }
+        // 只有旧版固定 ID 的结构化路由可以在没有新标记时兼容清理；
+        // 用户可配置的当前 ID 没有所有权证据时不得直接删除。
+        crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+            config_text,
+            crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
+        )
     }
 
     fn write_live_config_for_app(&self, app_type: &AppType, config: &Value) -> Result<(), String> {
@@ -2367,7 +2463,7 @@ impl ProxyService {
                 Err(_) => false,
             },
             AppType::Codex => match self.read_codex_live() {
-                Ok(config) => Self::is_codex_live_taken_over(&config),
+                Ok(config) => self.is_codex_live_taken_over_with_projection(&config),
                 Err(_) => false,
             },
             AppType::Gemini => match self.read_gemini_live() {
@@ -2507,15 +2603,46 @@ impl ProxyService {
             }
             AppType::Codex => {
                 let config = self.read_codex_live()?;
-                let base_url_matches = config
+                let config_text = config
                     .get("config")
                     .and_then(|value| value.as_str())
-                    .is_some_and(|config_text| {
-                        Self::codex_config_has_base_url_matching(config_text, |url| {
-                            Self::proxy_urls_match(url, &proxy_codex_base_url)
-                        })
+                    .unwrap_or_default();
+                let base_url_matches =
+                    Self::codex_config_has_base_url_matching(config_text, |url| {
+                        Self::proxy_urls_match(url, &proxy_codex_base_url)
                     });
-                Ok(Self::is_codex_live_taken_over(&config) && base_url_matches)
+                let marker = self.db.get_codex_takeover_projection().await.ok().flatten();
+                let marker_matches = marker.as_ref().is_some_and(|marker| {
+                    Self::proxy_urls_match(&marker.proxy_base_url, &proxy_codex_base_url)
+                        && marker.config_fingerprint == codex_config_fingerprint(config_text)
+                });
+                let legacy_route_matches =
+                    crate::codex_config::codex_config_has_official_proxy_route_at(
+                        config_text,
+                        crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
+                        &proxy_codex_base_url,
+                    );
+                if legacy_route_matches && marker.is_none() {
+                    let projection = CodexTakeoverProjection {
+                        provider_id:
+                            crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID
+                                .to_string(),
+                        proxy_base_url: proxy_codex_base_url.clone(),
+                        config_fingerprint: codex_config_fingerprint(config_text),
+                        marked_at: chrono::Utc::now().to_rfc3339(),
+                    };
+                    if let Err(error) = self.db.save_codex_takeover_projection(&projection).await {
+                        log::warn!("建立旧版 Codex 接管标记失败: {error}");
+                    }
+                }
+                // Third-party Codex takeover does not create an official
+                // projection marker. Its ownership evidence is the proxy
+                // placeholder together with the current proxy URL.
+                let third_party_takeover_matches = Self::codex_live_has_proxy_placeholder(&config);
+                Ok(
+                    (marker_matches || legacy_route_matches || third_party_takeover_matches)
+                        && base_url_matches,
+                )
             }
             AppType::Gemini => {
                 let config = self.read_gemini_live()?;
@@ -2576,6 +2703,30 @@ impl ProxyService {
 
     fn cleanup_codex_takeover_placeholders_in_live(&self) -> Result<(), String> {
         let mut config = self.read_codex_live()?;
+        let config_text = config
+            .get("config")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let provider_id = futures::executor::block_on(self.db.get_codex_takeover_projection())
+            .ok()
+            .flatten()
+            .filter(|projection| {
+                projection.config_fingerprint == codex_config_fingerprint(config_text)
+                    && crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+                        config_text,
+                        &projection.provider_id,
+                    )
+            })
+            .map(|projection| projection.provider_id)
+            .or_else(|| {
+                crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+                    config_text,
+                    crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
+                )
+                .then(|| {
+                    crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID.to_string()
+                })
+            });
 
         if let Some(auth) = config.get_mut("auth").and_then(|v| v.as_object_mut()) {
             if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
@@ -2591,9 +2742,17 @@ impl ProxyService {
                     token == PROXY_TOKEN_PLACEHOLDER
                 })
                 .map_err(|e| format!("清理 Codex 接管占位符失败: {e}"))?;
-            let updated = crate::codex_config::remove_codex_official_proxy_route(&updated)
-                .map_err(|e| format!("清理 Codex 官方接管路由失败: {e}"))?;
-            config["config"] = json!(updated);
+            if let Some(provider_id) = provider_id {
+                let updated =
+                    crate::codex_config::remove_codex_official_proxy_route_with_provider_id(
+                        &updated,
+                        &provider_id,
+                    )
+                    .map_err(|e| format!("清理 Codex 官方接管路由失败: {e}"))?;
+                config["config"] = json!(updated);
+            } else {
+                config["config"] = json!(updated);
+            }
         }
 
         self.write_codex_live(&config)?;
@@ -2688,7 +2847,7 @@ impl ProxyService {
         }
 
         if let Ok(config) = self.read_codex_live() {
-            if Self::is_codex_live_taken_over(&config) {
+            if self.is_codex_live_taken_over_with_projection(&config) {
                 return true;
             }
         }
@@ -2747,12 +2906,45 @@ impl ProxyService {
             == Some(PROXY_TOKEN_PLACEHOLDER)
     }
 
-    fn is_codex_live_taken_over(config: &Value) -> bool {
-        Self::codex_live_has_proxy_placeholder(config)
-            || config
-                .get("config")
-                .and_then(|v| v.as_str())
-                .is_some_and(crate::codex_config::codex_config_has_official_proxy_route)
+    /// 检测官方 Codex 接管时优先使用接管投影标记中的 Provider ID。
+    ///
+    /// 当前设置中的 ID 可能已经在接管期间被用户修改，但 Live 配置仍然
+    /// 保留旧 ID。只按当前设置判断会把仍在接管的配置误判成普通配置，随后
+    /// 热切换可能覆盖代理路由。配置指纹用于确认该路由仍是 CC Switch 写入的，
+    /// 避免仅因 Provider ID 相同而误认第三方配置。
+    fn is_codex_live_taken_over_with_projection(&self, config: &Value) -> bool {
+        if Self::codex_live_has_proxy_placeholder(config) {
+            return true;
+        }
+
+        let Some(config_text) = config.get("config").and_then(Value::as_str) else {
+            return false;
+        };
+
+        match futures::executor::block_on(self.db.get_codex_takeover_projection())
+            .ok()
+            .flatten()
+        {
+            Some(projection) => {
+                projection.config_fingerprint == codex_config_fingerprint(config_text)
+                    && crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+                        config_text,
+                        &projection.provider_id,
+                    )
+            }
+            None => {
+                let legacy_provider_id =
+                    crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID;
+                if crate::settings::codex_official_takeover_provider_id() == legacy_provider_id {
+                    crate::codex_config::codex_config_has_official_proxy_route(config_text)
+                } else {
+                    crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+                        config_text,
+                        legacy_provider_id,
+                    )
+                }
+            }
+        }
     }
 
     fn is_gemini_live_taken_over(config: &Value) -> bool {
@@ -2781,7 +2973,7 @@ impl ProxyService {
     fn live_has_proxy_placeholder_for_app(app_type: &AppType, config: &Value) -> bool {
         match app_type {
             AppType::Claude => Self::is_claude_live_taken_over(config),
-            AppType::Codex => Self::is_codex_live_taken_over(config),
+            AppType::Codex => Self::codex_live_has_proxy_placeholder(config),
             AppType::Gemini => Self::is_gemini_live_taken_over(config),
             AppType::GrokBuild => Self::is_grok_live_taken_over(config),
             _ => false,
@@ -4153,6 +4345,58 @@ mod tests {
             .expect("set test proxy config to an ephemeral port");
     }
 
+    #[test]
+    #[serial]
+    fn codex_takeover_detection_uses_recorded_provider_id_after_setting_change() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let old_provider_id = crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID;
+        let config = format!(
+            r#"model_provider = "{old_provider_id}"
+
+[model_providers.{old_provider_id}]
+name = "OpenAI"
+base_url = "http://127.0.0.1:15721/v1"
+requires_openai_auth = true
+supports_websockets = false
+wire_api = "responses"
+"#
+        );
+        crate::codex_config::write_codex_live_atomic(&json!({}), Some(&config))
+            .expect("write taken-over Codex live config");
+        futures::executor::block_on(db.save_codex_takeover_projection(&CodexTakeoverProjection {
+            provider_id: old_provider_id.to_string(),
+            proxy_base_url: "http://127.0.0.1:15721/v1".to_string(),
+            config_fingerprint: codex_config_fingerprint(&config),
+            marked_at: "2026-09-08T00:00:00Z".to_string(),
+        }))
+        .expect("save takeover projection");
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_official_takeover_provider_id: "custom-takeover".to_string(),
+            ..Default::default()
+        })
+        .expect("change takeover provider id");
+
+        assert!(
+            service.detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "active takeover should still be detected through the recorded provider id"
+        );
+
+        let changed_config = config.replace("15721", "15722");
+        crate::codex_config::write_codex_live_atomic(&json!({}), Some(&changed_config))
+            .expect("write changed Codex live config");
+        assert!(
+            !service.detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "a fingerprint mismatch must not be treated as a CC Switch takeover"
+        );
+
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+    }
+
     #[tokio::test]
     async fn unsupported_apps_are_rejected_before_proxy_side_effects() {
         let db = Arc::new(Database::memory().expect("init db"));
@@ -5240,6 +5484,98 @@ wire_api = "responses"
             .await
             .expect("disable takeover");
         assert_eq!(read_auth(), oauth_auth);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_takeover_can_share_an_existing_third_party_provider_id() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_official_takeover_provider_id: "shared-relay".to_string(),
+            ..crate::settings::AppSettings::default()
+        })
+        .expect("set takeover provider id");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+        let third_party_config = r#"model_provider = "shared-relay"
+model = "relay-model"
+
+[model_providers.shared-relay]
+name = "Shared Relay"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+"#;
+        crate::codex_config::write_codex_live_atomic(&json!({}), Some(third_party_config))
+            .expect("seed third-party live config");
+
+        let mut third_party = Provider::with_id(
+            "shared-relay".to_string(),
+            "Shared Relay".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "relay-key" },
+                "config": third_party_config,
+            }),
+            None,
+        );
+        third_party.category = Some("custom".to_string());
+        db.save_provider("codex", &third_party)
+            .expect("save third-party provider");
+
+        let mut official = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("codex", &official)
+            .expect("save official provider");
+        db.set_current_provider("codex", "codex-official")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
+            .expect("set local current provider");
+
+        service
+            .set_takeover_for_app("codex", true)
+            .await
+            .expect("enable official takeover");
+
+        let taken_over = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read takeover config");
+        assert!(
+            crate::codex_config::codex_config_has_official_proxy_route_with_provider_id(
+                &taken_over,
+                "shared-relay",
+            )
+        );
+        let stored_third_party = db
+            .get_provider_by_id("shared-relay", "codex")
+            .expect("read third-party provider")
+            .expect("third-party provider remains");
+        assert_eq!(
+            stored_third_party.settings_config,
+            third_party.settings_config
+        );
+
+        service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable official takeover");
+
+        let restored = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read restored config");
+        assert_eq!(restored, third_party_config);
+        let stored_third_party = db
+            .get_provider_by_id("shared-relay", "codex")
+            .expect("read third-party provider after restore")
+            .expect("third-party provider still remains");
+        assert_eq!(
+            stored_third_party.settings_config,
+            third_party.settings_config
+        );
     }
 
     #[tokio::test]
@@ -7178,10 +7514,10 @@ wire_api = "chat"
         )
         .expect("apply official proxy config");
         let parsed: toml::Value = toml::from_str(&output).expect("valid official route");
-        let route_id = crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID;
-        let route = &parsed["model_providers"][route_id];
+        let route_id = crate::settings::codex_official_takeover_provider_id();
+        let route = &parsed["model_providers"][route_id.as_str()];
 
-        assert_eq!(parsed["model_provider"].as_str(), Some(route_id));
+        assert_eq!(parsed["model_provider"].as_str(), Some(route_id.as_str()));
         assert_eq!(route["base_url"].as_str(), Some(proxy_url));
         assert_eq!(route["requires_openai_auth"].as_bool(), Some(true));
         assert!(parsed.get("experimental_bearer_token").is_none());

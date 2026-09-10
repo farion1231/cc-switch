@@ -269,6 +269,19 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // CC Switch-owned Codex takeover metadata. This is local runtime state,
+        // separate from Codex config.toml and excluded from sync exports.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_takeover_projection (
+                provider_id TEXT NOT NULL,
+                proxy_base_url TEXT NOT NULL,
+                config_fingerprint TEXT NOT NULL,
+                marked_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 17. Usage Daily Rollups 表 (日聚合统计)
         // request_model 保留路由接管的「客户端别名 → 真实模型」映射维度，
         // pricing_model 保留写入时的计价基准（request 计价模式下与 model 分叉），

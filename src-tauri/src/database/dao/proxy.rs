@@ -854,6 +854,59 @@ impl Database {
         Ok(())
     }
 
+    pub async fn save_codex_takeover_projection(
+        &self,
+        projection: &CodexTakeoverProjection,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM codex_takeover_projection", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO codex_takeover_projection
+             (provider_id, proxy_base_url, config_fingerprint, marked_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                &projection.provider_id,
+                &projection.proxy_base_url,
+                &projection.config_fingerprint,
+                &projection.marked_at,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn get_codex_takeover_projection(
+        &self,
+    ) -> Result<Option<CodexTakeoverProjection>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let result = conn.query_row(
+            "SELECT provider_id, proxy_base_url, config_fingerprint, marked_at
+             FROM codex_takeover_projection LIMIT 1",
+            [],
+            |row| {
+                Ok(CodexTakeoverProjection {
+                    provider_id: row.get(0)?,
+                    proxy_base_url: row.get(1)?,
+                    config_fingerprint: row.get(2)?,
+                    marked_at: row.get(3)?,
+                })
+            },
+        );
+        match result {
+            Ok(projection) => Ok(Some(projection)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(AppError::Database(error.to_string())),
+        }
+    }
+
+    pub async fn delete_codex_takeover_projection(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM codex_takeover_projection", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     // ==================== Sync Methods for Tray Menu ====================
 
     /// 同步获取应用的 proxy 启用状态和自动故障转移状态

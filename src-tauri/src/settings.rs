@@ -390,11 +390,19 @@ pub struct AppSettings {
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
-    /// Run official Codex providers under the shared "custom" model_provider id
-    /// so official sessions share one resume-history bucket with third-party
-    /// providers. Opt-in: defaults to false.
+    /// Run official Codex providers under the configured unified model_provider
+    /// id so official sessions can share one resume-history bucket with a
+    /// third-party provider. Opt-in: defaults to false.
     #[serde(default)]
     pub unify_codex_session_history: bool,
+    /// Provider id used by the official Codex route when unified history is enabled.
+    /// Defaults to the historical `custom` bucket.
+    #[serde(default = "default_codex_official_unified_provider_id")]
+    pub codex_official_unified_provider_id: String,
+    /// Provider id used by the official Codex route while local takeover is active.
+    /// Defaults to the historical dedicated takeover bucket.
+    #[serde(default = "default_codex_official_takeover_provider_id")]
+    pub codex_official_takeover_provider_id: String,
     /// User opted in (via the enable dialog checkbox) to migrate existing
     /// official sessions ("openai" bucket) into the shared bucket. Persisted so
     /// a failed migration retries at startup; cleared when the toggle turns off.
@@ -517,6 +525,36 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+pub(crate) fn default_codex_official_unified_provider_id() -> String {
+    "custom".to_string()
+}
+
+pub(crate) fn default_codex_official_takeover_provider_id() -> String {
+    "cc-switch-official".to_string()
+}
+
+fn validate_codex_official_provider_id(value: &str, field: &str) -> Result<(), AppError> {
+    let value = value.trim();
+    let valid_chars = value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    if value.is_empty() || value.len() > 64 || !valid_chars {
+        return Err(AppError::localized(
+            "settings.codexProviderId.invalid",
+            format!("{field} 必须是 1-64 位字母、数字、点、下划线或连字符"),
+            format!("{field} must be 1-64 letters, digits, dots, underscores, or hyphens"),
+        ));
+    }
+    if crate::codex_config::is_reserved_codex_model_provider_id(value) {
+        return Err(AppError::localized(
+            "settings.codexProviderId.reserved",
+            format!("{field} 不能使用 Codex 内置 Provider ID：{value}"),
+            format!("{field} cannot use the Codex built-in Provider ID: {value}"),
+        ));
+    }
+    Ok(())
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -536,6 +574,8 @@ impl Default for AppSettings {
             show_profile_switcher: true,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
+            codex_official_unified_provider_id: default_codex_official_unified_provider_id(),
+            codex_official_takeover_provider_id: default_codex_official_takeover_provider_id(),
             unify_codex_migrate_existing: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
@@ -644,6 +684,20 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
             .map(|s| s.to_string());
+
+        if self.codex_official_unified_provider_id.trim().is_empty() {
+            self.codex_official_unified_provider_id = default_codex_official_unified_provider_id();
+        } else {
+            self.codex_official_unified_provider_id =
+                self.codex_official_unified_provider_id.trim().to_string();
+        }
+        if self.codex_official_takeover_provider_id.trim().is_empty() {
+            self.codex_official_takeover_provider_id =
+                default_codex_official_takeover_provider_id();
+        } else {
+            self.codex_official_takeover_provider_id =
+                self.codex_official_takeover_provider_id.trim().to_string();
+        }
 
         if let Some(sync) = &mut self.webdav_sync {
             sync.normalize();
@@ -778,6 +832,14 @@ pub fn get_settings_for_frontend() -> AppSettings {
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
+    validate_codex_official_provider_id(
+        &new_settings.codex_official_unified_provider_id,
+        "官方统一会话 Provider ID",
+    )?;
+    validate_codex_official_provider_id(
+        &new_settings.codex_official_takeover_provider_id,
+        "官方接管 Provider ID",
+    )?;
     save_settings_file(&new_settings)?;
 
     let mut guard = settings_store().write().unwrap_or_else(|e| {
@@ -786,6 +848,14 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     });
     *guard = new_settings;
     Ok(())
+}
+
+pub fn codex_official_unified_provider_id() -> String {
+    get_settings().codex_official_unified_provider_id
+}
+
+pub fn codex_official_takeover_provider_id() -> String {
+    get_settings().codex_official_takeover_provider_id
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
@@ -1226,6 +1296,35 @@ mod tests {
         assert_eq!(
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
+        );
+    }
+
+    #[test]
+    fn codex_official_provider_ids_accept_custom_bucket_names() {
+        assert!(validate_codex_official_provider_id("my-relay_1.0", "provider").is_ok());
+    }
+
+    #[test]
+    fn codex_official_provider_ids_reject_reserved_and_invalid_names() {
+        assert!(validate_codex_official_provider_id("openai", "provider").is_err());
+        assert!(validate_codex_official_provider_id("contains space", "provider").is_err());
+        assert!(validate_codex_official_provider_id("", "provider").is_err());
+    }
+
+    #[test]
+    fn blank_codex_official_provider_ids_normalize_to_defaults() {
+        let mut settings = AppSettings {
+            codex_official_unified_provider_id: "  ".to_string(),
+            codex_official_takeover_provider_id: "".to_string(),
+            ..AppSettings::default()
+        };
+
+        settings.normalize_paths();
+
+        assert_eq!(settings.codex_official_unified_provider_id, "custom");
+        assert_eq!(
+            settings.codex_official_takeover_provider_id,
+            "cc-switch-official"
         );
     }
 }
