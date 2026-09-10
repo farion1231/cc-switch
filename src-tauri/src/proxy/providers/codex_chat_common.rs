@@ -237,3 +237,135 @@ pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
 fn strip_think_answer_separator(text: &str) -> &str {
     text.trim_start_matches(['\r', '\n', '\t', ' '])
 }
+
+/// 内联思考前缀（`<think>`）的判定结果
+pub(crate) enum ThinkPrefixDecision {
+    /// 前缀尚未确定（可能正处在 `<think>` 的前几个字符上），继续缓冲
+    NeedMore,
+    /// 确认是内联思考
+    Reasoning,
+    /// 不是内联思考，按正文处理
+    Text,
+}
+
+pub(crate) fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
+    let trimmed = buffer.trim_start();
+    if trimmed.is_empty() {
+        return ThinkPrefixDecision::NeedMore;
+    }
+
+    if trimmed.starts_with(THINK_OPEN_TAG) {
+        return ThinkPrefixDecision::Reasoning;
+    }
+
+    if THINK_OPEN_TAG.starts_with(trimmed) {
+        return ThinkPrefixDecision::NeedMore;
+    }
+
+    ThinkPrefixDecision::Text
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum InlineThinkMode {
+    #[default]
+    Detecting,
+    Reasoning,
+    Text,
+}
+
+/// 拆分出的片段：`true` = 思考内容，`false` = 正文
+pub(crate) type InlineThinkPart = (bool, String);
+
+/// 把内联了思考（`<think>…</think>`）的正文流拆成「思考 / 正文」片段序列。
+///
+/// 部分 OpenAI Chat 兼容上游（MiniMax M3、OpenCode Go 等）不用
+/// `reasoning_content` 字段回传思考，而是把它内联在 `delta.content` /
+/// `message.content` 文本前部。下游的 Responses / Anthropic 协议都要求思考
+/// 是独立内容块，直接透传会让思考当正文明文显示（issue #7271），因此两条
+/// 转换路径共用本拆分器。
+///
+/// 开标签可能被切分到多个 chunk，`Detecting` 阶段先缓冲最短前缀，判定不了
+/// 就等下一段；`Reasoning` 期间持续缓冲，直到出现完整 `</think>`。
+#[derive(Debug, Default)]
+pub(crate) struct InlineThinkSplitter {
+    mode: InlineThinkMode,
+    buffer: String,
+}
+
+impl InlineThinkSplitter {
+    /// 送入一段正文，返回按序可直接下发的片段（可能为空）。
+    pub(crate) fn push(&mut self, delta: &str) -> Vec<InlineThinkPart> {
+        match self.mode {
+            InlineThinkMode::Text => inline_think_part(false, delta),
+            InlineThinkMode::Detecting => {
+                self.buffer.push_str(delta);
+                match leading_think_prefix_decision(&self.buffer) {
+                    ThinkPrefixDecision::NeedMore => Vec::new(),
+                    ThinkPrefixDecision::Reasoning => {
+                        self.mode = InlineThinkMode::Reasoning;
+                        self.drain_complete_block()
+                    }
+                    ThinkPrefixDecision::Text => {
+                        self.mode = InlineThinkMode::Text;
+                        inline_think_part(false, &std::mem::take(&mut self.buffer))
+                    }
+                }
+            }
+            InlineThinkMode::Reasoning => {
+                self.buffer.push_str(delta);
+                self.drain_complete_block()
+            }
+        }
+    }
+
+    /// 缓冲里是否还有未判定的内容（`Detecting` 期间的前缀或未闭合的思考）
+    pub(crate) fn has_buffered(&self) -> bool {
+        !self.buffer.trim().is_empty()
+    }
+
+    /// 边界（工具调用 / 流结束）时冲出缓冲：未闭合的 `<think>` 按当前模式解读
+    pub(crate) fn flush(&mut self) -> Vec<InlineThinkPart> {
+        match self.mode {
+            InlineThinkMode::Text => Vec::new(),
+            InlineThinkMode::Detecting => {
+                self.mode = InlineThinkMode::Text;
+                inline_think_part(false, &std::mem::take(&mut self.buffer))
+            }
+            InlineThinkMode::Reasoning => {
+                let buffered = std::mem::take(&mut self.buffer);
+                self.mode = InlineThinkMode::Text;
+                if let Some((reasoning, answer)) = split_leading_think_block(&buffered) {
+                    let mut parts = inline_think_part(true, &reasoning);
+                    parts.extend(inline_think_part(false, &answer));
+                    return parts;
+                }
+
+                let reasoning = strip_leading_think_open_tag(&buffered).unwrap_or(buffered);
+                inline_think_part(true, &reasoning)
+            }
+        }
+    }
+
+    /// 缓冲区出现完整 `</think>` 时拆出思考与正文，否则继续等待
+    fn drain_complete_block(&mut self) -> Vec<InlineThinkPart> {
+        let Some((reasoning, answer)) = split_leading_think_block(&self.buffer) else {
+            return Vec::new();
+        };
+
+        self.mode = InlineThinkMode::Text;
+        self.buffer.clear();
+
+        let mut parts = inline_think_part(true, &reasoning);
+        parts.extend(inline_think_part(false, &answer));
+        parts
+    }
+}
+
+/// 空片段不下发
+fn inline_think_part(is_thinking: bool, text: &str) -> Vec<InlineThinkPart> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![(is_thinking, text.to_string())]
+    }
+}
