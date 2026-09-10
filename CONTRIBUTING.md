@@ -12,7 +12,7 @@ There are many ways to contribute:
 - **Suggest features** — Have an idea? [Submit a feature request](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml).
 - **Improve docs** — Spot a typo or missing info? [Report a doc issue](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml).
 - **Contribute code** — Fix bugs or implement features via pull requests.
-- **Translate** — Help us improve translations for English, Chinese, and Japanese.
+- **Translate** — Help us improve translations for English, Simplified Chinese, Traditional Chinese, and Japanese.
 
 > **Security vulnerabilities**: Please do NOT use public issues. See our [Security Policy](./SECURITY.md) instead.
 
@@ -118,14 +118,16 @@ By submitting a PR, you agree to the following:
 
 ## Internationalization (i18n)
 
-CC Switch supports three languages. When modifying user-facing text:
+CC Switch supports four languages. When modifying user-facing text:
 
-1. Update **all three** locale files:
-   - `src/locales/en/translation.json`
-   - `src/locales/zh/translation.json`
-   - `src/locales/ja/translation.json`
-2. Use the `t()` function from i18next for all UI text.
-3. Never hardcode user-facing strings.
+1. Update **all four** locale files:
+   - `src/i18n/locales/en.json`
+   - `src/i18n/locales/zh.json`
+   - `src/i18n/locales/zh-TW.json`
+   - `src/i18n/locales/ja.json`
+2. Locale parity is enforced by slice tests, not a whole-file guard — e.g. `tests/config/managementListLocales.test.ts` enumerates the management-list key paths every locale file must provide; keys outside such lists are not automatically checked.
+3. Use the `t()` function from i18next for all UI text.
+4. Never hardcode user-facing strings.
 
 ## Questions?
 
@@ -148,7 +150,7 @@ CC Switch supports three languages. When modifying user-facing text:
 - **建议功能** — 有想法？[提交功能请求](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)。
 - **改进文档** — 发现错误或缺失？[报告文档问题](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)。
 - **贡献代码** — 通过 Pull Request 修复 Bug 或实现新功能。
-- **翻译** — 帮助改进英文、中文和日文的翻译。
+- **翻译** — 帮助改进英文、简体中文、繁体中文和日文的翻译。
 
 > **安全漏洞**：请不要使用公开 Issue 报告。请参阅我们的[安全策略](./SECURITY.md)。
 
@@ -252,14 +254,16 @@ chore(deps): update dependencies
 
 ## 国际化（i18n）
 
-CC Switch 支持三种语言。修改用户可见文本时：
+CC Switch 支持四种语言。修改用户可见文本时：
 
-1. **同时更新三个**语言文件：
-   - `src/locales/en/translation.json`
-   - `src/locales/zh/translation.json`
-   - `src/locales/ja/translation.json`
-2. 所有 UI 文本使用 i18next 的 `t()` 函数。
-3. 不要硬编码用户可见的字符串。
+1. **同时更新四个**语言文件：
+   - `src/i18n/locales/en.json`
+   - `src/i18n/locales/zh.json`
+   - `src/i18n/locales/zh-TW.json`
+   - `src/i18n/locales/ja.json`
+2. locale parity 由分片测试强制，并非全量守卫——例如 `tests/config/managementListLocales.test.ts` 枚举每个 locale 文件必须提供的 management 列表键路径；此类清单之外的键不会被自动检查。
+3. 所有 UI 文本使用 i18next 的 `t()` 函数。
+4. 不要硬编码用户可见的字符串。
 
 ## 有疑问？
 
