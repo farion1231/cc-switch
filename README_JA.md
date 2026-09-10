@@ -152,11 +152,6 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch"><img src="assets/partners/logos/atlascloud_banner.png" alt="Atlas Cloud" width="150"></a></td>
-<td>Atlas Cloud は、1 つの API で動画・画像生成や LLM（大規模言語モデル）を利用できる全モーダル対応の AI 推論プラットフォームです。複数のベンダーを個別に管理する手間を省き、一度の接続で 300 以上の厳選されたマルチモーダルモデルにアクセスできます。より低コストで API を利用できる、開発者向けの新しい<a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch">「コーディングプラン」</a>プロモーションをぜひチェックしてください！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch"><img src="assets/partners/logos/ucloud.png" alt="Compshare" width="150"></a></td>
 <td>Compshare のご支援に感謝します！Compshare は UCloud 傘下の AI クラウドプラットフォームで、国内外の安定した包括的なモデル API を 1 つのキーだけで利用可能。月額・都度課金のコストパフォーマンスに優れた国内モデル Coding Plan パッケージを提供し、公式リレーによる安定した海外モデルも利用できます。Claude Code、Codex および API アクセスに対応。エンタープライズ級の高同時接続、24 時間年中無休のテクニカルサポート、セルフサービス請求書発行に対応。<a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch">こちらのリンク</a>から登録すると、無料で 5 元分のプラットフォーム体験クレジットがもらえます！</td>
 </tr>
@@ -169,6 +164,11 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 <tr>
 <td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
 <td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。当日の迅速な請求書発行をサポート。CC Switch ユーザー向けの特別特典：<a href="https://www.sssaicode.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを受けられます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://soleapi.com/r/ccswitch"><img src="assets/partners/logos/soleapi-banner.png" alt="SoleAPI" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている SoleAPI に感謝します！SoleAPI は開発者と企業向けの AI モデルゲートウェイです。1 つの API キーで Claude・GPT・Gemini など 30 以上の主要モデルを利用できます。OpenAI / Anthropic プロトコルにネイティブ対応しており、Base URL を差し替えるだけで Claude Code、Codex、Cursor などのコーディングツールや既存の SDK をそのまま接続できます。レイテンシと稼働状況に基づくリアルタイムのスマートルーティングにより、上流障害時はミリ秒単位で予備チャネルへ自動切替。サービス可用性 99.99%、24 時間 365 日のテクニカルサポートを提供し、すべての呼び出しは 1 つの請求にまとまり、リクエストごとのトークン数と料金を透明に確認できます。本プロジェクトの<a href="https://soleapi.com/r/ccswitch">専用リンク</a>から登録すると無料のお試しクレジットを進呈。友人を招待してチャージされると、継続的にキャッシュバックを獲得できます！</td>
 </tr>
 
 <tr>
@@ -562,7 +562,8 @@ pnpm test:unit --coverage
 │   ├── lib/
 │   │   ├── api/                # Tauri API ラッパー（型安全）
 │   │   └── query/              # TanStack Query 設定
-│   ├── locales/                # 翻訳 (zh/zh-TW/en/ja)
+│   ├── i18n/                   # 国際化
+│   │   └── locales/            # 翻訳 (zh/zh-TW/en/ja)
 │   ├── config/                 # プリセット (providers/mcp)
 │   └── types/                  # TypeScript 型定義
 ├── src-tauri/                  # バックエンド (Rust)

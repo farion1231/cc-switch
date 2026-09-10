@@ -166,7 +166,7 @@ describe("Codex Chat provider presets", () => {
         "DouBaoSeed",
         { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
       ],
-      ["Bailian", { contextWindows: { "qwen3-coder-plus": 1048576 } }],
+      ["千问AI平台", { contextWindows: { "qwen3.8-max": 983616 } }],
       // 腾讯 TokenHub 官方 Codex 文档确认 hy3 原生 Responses（2026-07-14）
       [
         "Tencent Hunyuan",
@@ -261,7 +261,9 @@ describe("Codex Chat provider presets", () => {
     // Zen 网关的合法 effort 档位是逐模型的（models.dev reasoning_options，
     // 2026-08）：统一并集映射会把 Codex 默认的 medium 发给只声明 high|max 的
     // glm-5.2（默认路径），此测试锁住逐模型表，防回退。
-    const preset = codexProviderPresets.find((item) => item.name === "OpenCode Go");
+    const preset = codexProviderPresets.find(
+      (item) => item.name === "OpenCode Go",
+    );
 
     expect(preset, "OpenCode Go preset").toBeDefined();
     expect(preset?.codexChatReasoning?.effortValueMode).toBe("zen");

@@ -3360,12 +3360,16 @@ impl CodexStandaloneEndpoint {
         }
     }
 
-    /// Full-URL suffixes whose sibling endpoint is unambiguous. Both Images
-    /// endpoints share one list: a provider configured with either Images URL
-    /// can serve the other.
+    /// Full-URL suffixes that unambiguously locate this endpoint's sibling.
+    ///
+    /// Order matters: a longer suffix must precede any suffix it ends with
+    /// (`/responses/compact` before `/responses`), otherwise the shorter one
+    /// wins and the rewrite keeps a stray `/compact` segment.
     fn source_suffixes(self) -> &'static [&'static str] {
         match self {
             Self::AlphaSearch => &["/responses/compact", "/responses"],
+            // Both Images routes live next to each other, so a full URL pasted
+            // for either one is a valid source for the other.
             Self::ImagesGenerations | Self::ImagesEdits => &[
                 "/images/generations",
                 "/images/edits",
@@ -4905,6 +4909,49 @@ mod tests {
     }
 
     #[test]
+    fn images_generations_preserves_existing_full_images_url() {
+        let url = rewrite_codex_standalone_full_url(
+            "https://relay.example/v1/images/generations?api-version=2026-07",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesGenerations,
+        )
+        .expect("full Images URL should be preserved");
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0"
+        );
+    }
+
+    #[test]
+    fn images_generations_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesGenerations,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /images/generations")
+        ));
+    }
+
+    #[test]
+    fn codex_standalone_endpoint_recognizes_images_edits() {
+        assert!(matches!(
+            CodexStandaloneEndpoint::from_effective_endpoint(
+                "/images/edits?client_version=0.145.0"
+            ),
+            Some(CodexStandaloneEndpoint::ImagesEdits)
+        ));
+        // Codex ImageGen never calls the variations route; keep it unrouted.
+        assert!(CodexStandaloneEndpoint::from_effective_endpoint("/images/variations").is_none());
+    }
+
+    #[test]
     fn images_edits_rewrites_known_full_codex_urls() {
         let cases = [
             (
@@ -4939,7 +4986,7 @@ mod tests {
     }
 
     #[test]
-    fn images_edits_preserves_existing_full_images_edits_url() {
+    fn images_edits_preserves_existing_full_edits_url() {
         let url = rewrite_codex_standalone_full_url(
             "https://relay.example/v1/images/edits?api-version=2026-07",
             Some("client_version=0.145.0"),
@@ -4966,37 +5013,6 @@ mod tests {
             error,
             ProxyError::ConfigError(message)
                 if message.contains("cannot derive /images/edits")
-        ));
-    }
-
-    #[test]
-    fn images_generations_preserves_existing_full_images_url() {
-        let url = rewrite_codex_standalone_full_url(
-            "https://relay.example/v1/images/generations?api-version=2026-07",
-            Some("client_version=0.145.0"),
-            CodexStandaloneEndpoint::ImagesGenerations,
-        )
-        .expect("full Images URL should be preserved");
-
-        assert_eq!(
-            url,
-            "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0"
-        );
-    }
-
-    #[test]
-    fn images_generations_rejects_opaque_full_url_instead_of_misrouting_payload() {
-        let error = rewrite_codex_standalone_full_url(
-            "https://relay.example/custom/rpc-endpoint",
-            Some("client_version=0.145.0"),
-            CodexStandaloneEndpoint::ImagesGenerations,
-        )
-        .expect_err("opaque endpoint must fail closed");
-
-        assert!(matches!(
-            error,
-            ProxyError::ConfigError(message)
-                if message.contains("cannot derive /images/generations")
         ));
     }
 

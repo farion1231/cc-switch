@@ -84,6 +84,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#111111",
   },
+  soleapi: {
+    name: "soleapi",
+    displayName: "SoleAPI",
+    category: "ai-provider",
+    keywords: ["soleapi", "sole", "aggregator", "relay", "gateway", "claude"],
+    defaultColor: "currentColor",
+  },
   sudocode: {
     name: "sudocode",
     displayName: "SudoCode.chat",
@@ -542,12 +549,26 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["perplexity"],
     defaultColor: "#20808D",
   },
+  qianwenai: {
+    name: "qianwenai",
+    displayName: "千问AI平台",
+    category: "ai-provider",
+    keywords: ["qianwenai", "qianwen", "qwen", "aliyun", "alibaba"],
+    defaultColor: "#624AFF",
+  },
   qwen: {
     name: "qwen",
     displayName: "qwen",
     category: "other",
     keywords: [],
     defaultColor: "currentColor",
+  },
+  qwencloud: {
+    name: "qwencloud",
+    displayName: "QwenCloud",
+    category: "ai-provider",
+    keywords: ["qwencloud", "qwen", "aliyun", "alibaba"],
+    defaultColor: "#6336E7",
   },
   stability: {
     name: "stability",
