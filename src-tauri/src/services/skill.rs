@@ -768,6 +768,7 @@ impl SkillService {
         skill: &DiscoverableSkill,
         current_app: &AppType,
     ) -> Result<InstalledSkill> {
+        crate::settings::ensure_skills_management_enabled()?;
         let ssot_dir = Self::get_ssot_dir()?;
 
         // 允许多级目录（如 a/b/c），但必须是安全的相对路径。
@@ -954,6 +955,7 @@ impl SkillService {
     /// 2. 从 SSOT 删除
     /// 3. 从数据库删除
     pub fn uninstall(db: &Arc<Database>, id: &str) -> Result<SkillUninstallResult> {
+        crate::settings::ensure_skills_management_enabled()?;
         let _state_guard = skill_state_write_guard();
 
         // 获取 skill 信息
@@ -1574,6 +1576,7 @@ impl SkillService {
         db: &Arc<Database>,
         target: SkillStorageLocation,
     ) -> Result<MigrationResult> {
+        crate::settings::ensure_skills_management_enabled()?;
         let _state_guard = skill_state_write_guard();
         let current = crate::settings::get_skill_storage_location();
         if current == target {
@@ -1836,6 +1839,7 @@ impl SkillService {
     /// 启用：复制到应用目录
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
+        crate::settings::ensure_skills_management_enabled()?;
         let _state_guard = skill_state_write_guard();
         // 获取当前 skill
         let mut skill = db
@@ -1867,6 +1871,7 @@ impl SkillService {
     ///
     /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
     pub fn scan_unmanaged(db: &Arc<Database>) -> Result<Vec<UnmanagedSkill>> {
+        crate::settings::ensure_skills_management_enabled()?;
         let _state_guard = skill_state_read_guard();
         let managed_skills = db.get_all_installed_skills()?;
         let managed_dirs: HashSet<String> = managed_skills
@@ -1934,6 +1939,7 @@ impl SkillService {
         db: &Arc<Database>,
         imports: Vec<ImportSkillSelection>,
     ) -> Result<Vec<InstalledSkill>> {
+        crate::settings::ensure_skills_management_enabled()?;
         let _state_guard = skill_state_write_guard();
         let ssot_dir = Self::get_ssot_dir()?;
         let agents_lock = parse_agents_lock();
@@ -2457,6 +2463,9 @@ impl SkillService {
 
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
+        if !crate::settings::skills_management_enabled() {
+            return Ok(());
+        }
         let _state_guard = skill_state_read_guard();
         Self::sync_to_app_unlocked(db, app)
     }
@@ -3642,6 +3651,7 @@ impl SkillService {
         zip_path: &Path,
         current_app: &AppType,
     ) -> Result<Vec<InstalledSkill>> {
+        crate::settings::ensure_skills_management_enabled()?;
         // 解压到临时目录
         let temp_guard = Self::extract_local_zip(zip_path)?;
         let temp_dir = temp_guard.path();

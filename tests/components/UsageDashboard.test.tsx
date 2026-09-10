@@ -179,4 +179,18 @@ describe("UsageDashboard", () => {
       expect(screen.getByTestId("select-30000")).toBeInTheDocument(),
     );
   });
+
+  it("hides session management controls when sessions are unmanaged", () => {
+    renderDashboard({ managesSessions: false });
+
+    expect(
+      screen.queryByText("usage.sessionSync.title"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.rebuildCodex.title"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("settings.advanced.pricing.title"),
+    ).toBeInTheDocument();
+  });
 });

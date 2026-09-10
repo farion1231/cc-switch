@@ -21,6 +21,7 @@ pub(crate) fn update_pi_provider_usage_script(
 }
 
 #[tauri::command]
-pub(crate) fn get_pi_session_discovery() -> PiSessionDiscovery {
-    crate::session_manager::providers::pi::session_discovery()
+pub(crate) fn get_pi_session_discovery() -> Result<PiSessionDiscovery, String> {
+    crate::settings::ensure_sessions_management_enabled().map_err(|error| error.to_string())?;
+    Ok(crate::session_manager::providers::pi::session_discovery())
 }

@@ -12,6 +12,8 @@ pub fn import_skill_from_deeplink(
     state: &AppState,
     request: DeepLinkImportRequest,
 ) -> Result<String, AppError> {
+    crate::settings::ensure_skills_management_enabled()?;
+
     // Verify this is a skill request
     if request.resource != "skill" {
         return Err(AppError::InvalidInput(format!(

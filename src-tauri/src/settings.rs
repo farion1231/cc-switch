@@ -21,6 +21,37 @@ fn default_true() -> bool {
     true
 }
 
+/// Controls which non-provider resources CC Switch is allowed to manage.
+///
+/// All fields default to `true` for backward compatibility with settings files
+/// written before this scope existed.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagementScope {
+    #[serde(default = "default_true")]
+    pub mcp: bool,
+    #[serde(default = "default_true")]
+    pub skills: bool,
+    #[serde(default = "default_true")]
+    pub sessions: bool,
+}
+
+impl Default for ManagementScope {
+    fn default() -> Self {
+        Self {
+            mcp: true,
+            skills: true,
+            sessions: true,
+        }
+    }
+}
+
+impl ManagementScope {
+    pub fn manages_all_resources(self) -> bool {
+        self.mcp && self.skills && self.sessions
+    }
+}
+
 /// 主页面显示的应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -345,6 +376,11 @@ pub struct CodexOfficialHistoryUnifyMigration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
+    // ===== 管理范围 =====
+    /// CC Switch 可管理的非供应商资源。关闭后不得扫描、导入、同步或改写对应 live 数据。
+    #[serde(default)]
+    pub management_scope: ManagementScope,
+
     // ===== 设备级 UI 设置 =====
     #[serde(default = "default_show_in_tray")]
     pub show_in_tray: bool,
@@ -520,6 +556,7 @@ fn default_session_auto_sync_enabled() -> bool {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            management_scope: ManagementScope::default(),
             show_in_tray: true,
             minimize_to_tray_on_close: true,
             use_app_window_controls: false,
@@ -776,6 +813,66 @@ pub fn get_settings_for_frontend() -> AppSettings {
     settings
 }
 
+pub fn mcp_management_enabled() -> bool {
+    get_settings().management_scope.mcp
+}
+
+pub fn skills_management_enabled() -> bool {
+    get_settings().management_scope.skills
+}
+
+pub fn sessions_management_enabled() -> bool {
+    get_settings().management_scope.sessions
+}
+
+pub fn ensure_mcp_management_enabled() -> Result<(), AppError> {
+    if mcp_management_enabled() {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "management.mcp.disabled",
+            "CC Switch 的 MCP 管理已关闭",
+            "MCP management is disabled in CC Switch",
+        ))
+    }
+}
+
+pub fn ensure_skills_management_enabled() -> Result<(), AppError> {
+    if skills_management_enabled() {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "management.skills.disabled",
+            "CC Switch 的 Skills 管理已关闭",
+            "Skills management is disabled in CC Switch",
+        ))
+    }
+}
+
+pub fn ensure_sessions_management_enabled() -> Result<(), AppError> {
+    if sessions_management_enabled() {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "management.sessions.disabled",
+            "CC Switch 的会话管理已关闭",
+            "Session management is disabled in CC Switch",
+        ))
+    }
+}
+
+pub fn ensure_all_resource_management_enabled() -> Result<(), AppError> {
+    if get_settings().management_scope.manages_all_resources() {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "management.full_data.disabled",
+            "完整数据同步或恢复需要启用 MCP、Skills 和会话管理",
+            "Full data sync or restore requires MCP, Skills, and Session management to be enabled",
+        ))
+    }
+}
+
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
@@ -865,7 +962,8 @@ pub fn mark_codex_official_history_unify_migrated_if_enabled(
 ) -> Result<bool, AppError> {
     let mut written = false;
     mutate_settings(|settings| {
-        if settings.unify_codex_session_history
+        if settings.management_scope.sessions
+            && settings.unify_codex_session_history
             && settings.unify_codex_migrate_existing.unwrap_or(false)
         {
             settings
@@ -983,13 +1081,11 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
 }
 
 pub fn unify_codex_session_history() -> bool {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .unify_codex_session_history
+    let settings = settings_store().read().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    settings.management_scope.sessions && settings.unify_codex_session_history
 }
 
 // ===== 当前供应商管理函数 =====
@@ -1218,6 +1314,46 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn old_settings_default_to_managing_all_resource_types() {
+        let settings: AppSettings =
+            serde_json::from_value(serde_json::json!({})).expect("deserialize old settings");
+
+        assert_eq!(settings.management_scope, ManagementScope::default());
+    }
+
+    #[test]
+    fn management_scope_accepts_independent_disabled_values() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "managementScope": {
+                "mcp": false,
+                "skills": true,
+                "sessions": false
+            }
+        }))
+        .expect("deserialize management scope");
+
+        assert_eq!(
+            settings.management_scope,
+            ManagementScope {
+                mcp: false,
+                skills: true,
+                sessions: false,
+            }
+        );
+    }
+
+    #[test]
+    fn full_resource_management_requires_every_scope() {
+        assert!(ManagementScope::default().manages_all_resources());
+        assert!(!ManagementScope {
+            mcp: true,
+            skills: false,
+            sessions: true,
+        }
+        .manages_all_resources());
     }
 
     #[test]

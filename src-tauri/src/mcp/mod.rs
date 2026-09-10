@@ -19,6 +19,71 @@ mod hermes;
 mod opencode;
 mod validation;
 
+pub(crate) fn replace_toml_mcp_sections(
+    current: &str,
+    incoming: &str,
+) -> Result<String, crate::error::AppError> {
+    use toml_edit::{DocumentMut, Item};
+
+    let current_doc = if current.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        current.parse::<DocumentMut>().map_err(|e| {
+            crate::error::AppError::Message(format!("Invalid current TOML configuration: {e}"))
+        })?
+    };
+    let mut incoming_doc = if incoming.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        incoming.parse::<DocumentMut>().map_err(|e| {
+            crate::error::AppError::Message(format!("Invalid incoming TOML configuration: {e}"))
+        })?
+    };
+
+    let current_standard = current_doc.as_table().get("mcp_servers").cloned();
+    incoming_doc.as_table_mut().remove("mcp_servers");
+    if let Some(item) = current_standard {
+        incoming_doc.as_table_mut().insert("mcp_servers", item);
+    }
+
+    let current_legacy = current_doc
+        .as_table()
+        .get("mcp")
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get("servers"))
+        .cloned();
+
+    let remove_empty_mcp = incoming_doc
+        .as_table_mut()
+        .get_mut("mcp")
+        .and_then(Item::as_table_like_mut)
+        .map(|table| {
+            table.remove("servers");
+            table.is_empty()
+        })
+        .unwrap_or(false);
+    if remove_empty_mcp {
+        incoming_doc.as_table_mut().remove("mcp");
+    }
+    if let Some(servers) = current_legacy {
+        if !incoming_doc.as_table().contains_key("mcp") {
+            incoming_doc["mcp"] = Item::Table(toml_edit::Table::new());
+        }
+        let mcp = incoming_doc
+            .as_table_mut()
+            .get_mut("mcp")
+            .and_then(Item::as_table_like_mut)
+            .ok_or_else(|| {
+                crate::error::AppError::Message(
+                    "TOML configuration has a non-table 'mcp' value".to_string(),
+                )
+            })?;
+        mcp.insert("servers", servers);
+    }
+
+    Ok(incoming_doc.to_string())
+}
+
 // 重新导出公共 API
 pub use claude::{
     import_from_claude, remove_server_from_claude, sync_enabled_to_claude,
