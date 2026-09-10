@@ -292,6 +292,12 @@ pub fn remove_pi_ai_provider(provider_id: &str) -> Result<(), AppError> {
     if !settings_path.exists() {
         return Ok(());
     }
+    let credential_ref = read_native_state()?
+        .providers
+        .get(provider_id)
+        .and_then(|provider| provider.config.get("apiKeyEnv"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     update_yaml_document(&settings_path, |document| {
         if let Yaml::Hash(root) = document {
             if let Some(Yaml::Hash(section)) = root.get_mut(&mapping_key(PI_AI_NAMESPACE)) {
@@ -301,7 +307,11 @@ pub fn remove_pi_ai_provider(provider_id: &str) -> Result<(), AppError> {
             }
         }
         Ok(())
-    })
+    })?;
+    if let Some(reference) = credential_ref {
+        update_credential_reference(&reference, None)?;
+    }
+    Ok(())
 }
 
 pub fn set_current_model(provider_id: &str, model_id: &str) -> Result<(), AppError> {
@@ -901,6 +911,13 @@ mod tests {
             let state = read_native_state().unwrap();
             assert!(state.providers.contains_key("sibling"));
             assert!(!state.providers.contains_key("company"));
+            let credentials = parse_yaml_document(&home.join(".credentials.yaml")).unwrap();
+            let refs = credentials
+                .as_hash()
+                .and_then(|root| root.get(&mapping_key("refs")))
+                .and_then(Yaml::as_hash)
+                .unwrap();
+            assert!(!refs.contains_key(&mapping_key("COMPANY_API_KEY")));
         });
     }
 }

@@ -250,6 +250,10 @@ export function ProviderList({
         const count = await providersApi.importClaudeDesktopFromClaude();
         return count > 0;
       }
+      if (appId === "deepseek-harness") {
+        const count = await providersApi.importDeepSeekHarnessFromLive();
+        return count > 0;
+      }
       return providersApi.importDefault(appId);
     },
     onSuccess: (imported) => {

@@ -4471,6 +4471,10 @@ impl ProviderService {
         if app_type.is_additive_mode() {
             return Ok(String::new());
         }
+        if app_type == AppType::DeepSeekHarness {
+            return crate::deepseek_harness_config::read_native_state()
+                .map(|state| state.current_provider.unwrap_or_default());
+        }
         crate::settings::get_effective_current_provider(&state.db, &app_type)
             .map(|opt| opt.unwrap_or_default())
     }

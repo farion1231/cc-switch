@@ -137,6 +137,7 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
     }
 
     const directBaseUrl =
+      object.baseURL ||
       object.baseUrl ||
       object.base_url ||
       object.options?.baseURL ||

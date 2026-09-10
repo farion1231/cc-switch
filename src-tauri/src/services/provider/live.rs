@@ -1494,6 +1494,9 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
+    if matches!(app_type, AppType::DeepSeekHarness) {
+        return Ok(());
+    }
     if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
@@ -1678,7 +1681,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi) {
+        if matches!(app_type, AppType::Pi | AppType::DeepSeekHarness) {
             continue;
         }
         let result = if app_type.is_additive_mode() {
