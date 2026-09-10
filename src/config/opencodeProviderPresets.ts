@@ -43,6 +43,13 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
 > = {
   "@ai-sdk/openai-compatible": [
     {
+      id: "MiniMax-M3",
+      name: "MiniMax M3",
+      contextLimit: 1000000,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image"], output: ["text"] },
+    },
+    {
       id: "MiniMax-M2.7",
       name: "MiniMax M2.7",
       contextLimit: 204800,
@@ -1018,34 +1025,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "AtlasCloud",
-      options: {
-        baseURL: "https://api.atlascloud.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "zai-org/glm-5.1": { name: "GLM 5.1" },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
     name: "CCSub",
     websiteUrl: "https://www.ccsub.net",
     apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
@@ -1413,6 +1392,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "aggregator",
     icon: "amux",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "AtlasCloud",
+      options: {
+        baseURL: "https://api.atlascloud.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "zai-org/glm-5.1": { name: "GLM 5.1" },
+      },
+    },
+    category: "aggregator",
+    icon: "atlascloud",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -2242,11 +2247,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.7": { name: "MiniMax M2.7" },
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -2274,11 +2283,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.7": { name: "MiniMax M2.7" },
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",

@@ -152,11 +152,6 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch"><img src="assets/partners/logos/atlascloud_banner.png" alt="Atlas Cloud" width="150"></a></td>
-<td>Atlas Cloud ist eine vollmodale KI-Inferenzplattform, die Entwicklern über eine einzige KI-API Zugriff auf Videogenerierung, Bildgenerierung und LLM-APIs bietet. Statt mehrere Anbieterintegrationen zu verwalten, verbinden Sie sich einmal und erhalten einheitlichen Zugriff auf mehr als 300 kuratierte Modelle über alle Modalitäten hinweg. Sehen Sie sich die neue <a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch">Coding-Plan</a>-Aktion von Atlas Cloud für kostengünstigeren API-Zugang an!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch"><img src="assets/partners/logos/ucloud.png" alt="Compshare" width="150"></a></td>
 <td>Danke an Compshare für die Unterstützung dieses Projekts! Compshare ist die KI-Cloud-Plattform von UCloud, die mit nur einem Schlüssel stabile und umfassende in- und ausländische Modell-APIs bereitstellt. Sie bietet kostengünstige Coding-Plan-Pakete für inländische Modelle mit monatlicher und nutzungsbasierter Abrechnung sowie stabile, offiziell gerelayte ausländische Modelle. Unterstützt Claude Code, Codex und API-Zugriff. Unternehmensgerechte hohe Nebenläufigkeit, technischer Support rund um die Uhr und Self-Service-Rechnungsstellung. Wer sich über <a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch">diesen Link</a> registriert, erhält ein kostenloses Plattform-Testguthaben von 5 CNY!</td>
 </tr>
