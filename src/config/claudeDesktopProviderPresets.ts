@@ -1118,45 +1118,59 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#2932E1",
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     category: "cn_official",
     baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
-    icon: "bailian",
+    modelRoutes: brandedRoutes("qwen3.7-plus", "qwen3.8-max", "qwen3.8-flash"),
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   {
-    name: "Bailian For Coding",
+    name: "千问AI平台 Coding Plan",
     websiteUrl: "https://bailian.console.aliyun.com",
     category: "cn_official",
     baseUrl: "https://coding.dashscope.aliyuncs.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    icon: "bailian",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    category: "cn_official",
+    baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes("qwen3.7-plus", "qwen3.8-max", "qwen3.8-flash"),
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   // ===== QwenCloud（DashScope 国际站）=====
-  // 与国内百炼不同，官方文档要求把 ANTHROPIC_MODEL 显式设成 qwen 模型名，
-  // 端点不认 claude-* 别名，所以走 brandedRoutes 而不是 passthroughRoutes。
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // 官方文档要求把 ANTHROPIC_MODEL 显式设成 qwen 模型名，端点不认
+  // claude-* 别名，所以走 brandedRoutes 而不是 passthroughRoutes。
   {
     name: "QwenCloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     category: "cn_official",
     baseUrl: "https://dashscope-intl.aliyuncs.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "qwen3.7-max",
-      "qwen3.7-max",
-      "qwen3.6-flash",
-      true,
-    ),
-    icon: "qwen",
+    // 不挂 [1m]：qwen3.8 系官方窗口是 983616，不足 1M，
+    // Desktop 对模型能力校验是精确的，误标会被上游拒绝
+    modelRoutes: brandedRoutes("qwen3.7-plus", "qwen3.8-max", "qwen3.8-flash"),
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
@@ -1167,19 +1181,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 挂 [1m]：本条钉的是 qwen3.7-plus，官方窗口 1000000
     modelRoutes: brandedRoutes(
       "qwen3.7-plus",
       "qwen3.7-plus",
       "qwen3.7-plus",
       true,
     ),
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
     name: "QwenCloud Token Plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     category: "cn_official",
     baseUrl:
       "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
@@ -1187,8 +1203,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     // 不挂 [1m]：qwen3.8 系官方窗口是 983616，不足 1M，
     // Desktop 对模型能力校验是精确的，误标会被上游拒绝
-    modelRoutes: brandedRoutes("qwen3.8-max", "qwen3.8-max", "qwen3.6-flash"),
-    icon: "qwen",
+    modelRoutes: brandedRoutes("qwen3.7-plus", "qwen3.8-max", "qwen3.8-flash"),
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {

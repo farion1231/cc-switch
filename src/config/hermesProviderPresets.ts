@@ -1553,30 +1553,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
-      name: "bailian",
+      name: "qianwenai",
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
-        { id: "qwen3-max", name: "Qwen3 Max" },
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },
       ],
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
     suggestedDefaults: {
-      model: { default: "qwen3-coder-plus", provider: "bailian" },
+      model: { default: "qwen3.8-max", provider: "qianwenai" },
     },
   },
   {
-    name: "Bailian For Coding",
+    name: "千问AI平台 Coding Plan",
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
-      name: "bailian_coding",
+      name: "qianwenai_coding_plan",
       base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
@@ -1586,35 +1588,63 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
     suggestedDefaults: {
-      model: { default: "qwen3-coder-plus", provider: "bailian_coding" },
+      model: {
+        default: "qwen3-coder-plus",
+        provider: "qianwenai_coding_plan",
+      },
+    },
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    settingsConfig: {
+      name: "qianwenai_token_plan",
+      base_url:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },
+      ],
+    },
+    category: "cn_official",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+    suggestedDefaults: {
+      model: { default: "qwen3.8-max", provider: "qianwenai_token_plan" },
     },
   },
   // ===== QwenCloud（DashScope 国际站）=====
-  // 三条线都用 anthropic_messages；地址不带 /v1（与官方 hermes 文档一致，
-  // 这点和 OpenCode / OpenClaw 的 /apps/anthropic/v1 不同，勿互相照搬）。
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // QwenCloud 与 Token Plan 都用 anthropic_messages，地址不带 /v1（与官方
+  // hermes 文档一致，这点和 OpenCode / OpenClaw 不同，勿互相照搬）。
   {
     name: "QwenCloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       name: "qwencloud",
       base_url: "https://dashscope-intl.aliyuncs.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },
         { id: "qwen3.7-max", name: "Qwen3.7 Max", context_length: 1000000 },
-        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
-        { id: "qwen3.6-plus", name: "Qwen3.6 Plus", context_length: 1000000 },
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     suggestedDefaults: {
-      model: { default: "qwen3.7-max", provider: "qwencloud" },
+      model: { default: "qwen3.8-max", provider: "qwencloud" },
     },
   },
   {
@@ -1637,7 +1667,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     suggestedDefaults: {
       model: { default: "qwen3.7-plus", provider: "qwencloud_coding" },
@@ -1645,8 +1675,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "QwenCloud Token Plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       name: "qwencloud_token_plan",
       base_url:
@@ -1663,7 +1694,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     suggestedDefaults: {
       model: { default: "qwen3.8-max", provider: "qwencloud_token_plan" },
