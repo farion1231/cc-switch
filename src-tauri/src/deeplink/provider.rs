@@ -486,7 +486,7 @@ fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Valu
 
     json!({
         "config": format!(
-            "[models]\ndefault = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
+            "[models]\ndefault = {model_value}\nsession_summary = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
             crate::grok_config::DEFAULT_API_BACKEND,
             crate::grok_config::DEFAULT_CONTEXT_WINDOW,
         )
@@ -956,6 +956,37 @@ fn extract_codex_base_url(toml_value: &toml::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grokbuild_deeplink_pins_session_summary_to_selected_model() {
+        for (model, expected) in [
+            (Some("  custom-model  "), "custom-model"),
+            (Some("vendor/model.with-dots"), "vendor/model.with-dots"),
+            (None, crate::grok_config::DEFAULT_MODEL),
+            (Some("  "), crate::grok_config::DEFAULT_MODEL),
+        ] {
+            let request = DeepLinkImportRequest {
+                resource: "provider".to_string(),
+                app: Some("grokbuild".to_string()),
+                name: Some("Relay".to_string()),
+                endpoint: Some("https://relay.example.com/v1".to_string()),
+                api_key: Some("test-key".to_string()),
+                model: model.map(str::to_string),
+                ..Default::default()
+            };
+            let provider = build_provider_from_request(&AppType::GrokBuild, &request)
+                .expect("provider should build");
+            let config: toml::Value = provider.settings_config["config"]
+                .as_str()
+                .expect("config string")
+                .parse()
+                .expect("valid TOML");
+
+            assert_eq!(config["models"]["default"].as_str(), Some(expected));
+            assert_eq!(config["models"]["session_summary"].as_str(), Some(expected));
+            assert_eq!(config["model"][expected]["model"].as_str(), Some(expected));
+        }
+    }
 
     fn hermes_request() -> DeepLinkImportRequest {
         DeepLinkImportRequest {
