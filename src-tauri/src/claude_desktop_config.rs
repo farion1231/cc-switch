@@ -116,6 +116,7 @@ pub struct ResolvedModelRoute {
     pub upstream_model: String,
     pub label_override: Option<String>,
     pub supports_1m: bool,
+    pub prefer_1m: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +124,7 @@ struct InferenceModelSpec {
     name: String,
     label_override: Option<String>,
     supports_1m: bool,
+    prefer_1m: bool,
 }
 
 pub fn apply_provider(db: &Database, provider: &Provider) -> Result<(), AppError> {
@@ -260,14 +262,22 @@ pub fn is_claude_safe_model_id(model: &str) -> bool {
         })
 }
 
-fn inference_model_json(spec: &InferenceModelSpec) -> Value {
-    if spec.supports_1m || spec.label_override.is_some() {
+fn inference_model_json(spec: &InferenceModelSpec, is_default: bool) -> Value {
+    // prefer1m 只在默认条目（inferenceModels 第一条）上生效：协议规定
+    // prefer1m 仅对列表第一条目（默认模型）有意义，非首条即使配置了也不写。
+    // 另须 supports1m 为 true 才有意义（解析阶段已保证 prefer_1m 隐含
+    // supports_1m，这里再双保险一次）。
+    let prefer_1m = is_default && spec.supports_1m && spec.prefer_1m;
+    if spec.supports_1m || spec.label_override.is_some() || prefer_1m {
         let mut item = json!({ "name": spec.name });
         if let Some(label_override) = spec.label_override.as_deref() {
             item["labelOverride"] = json!(label_override);
         }
         if spec.supports_1m {
             item["supports1m"] = json!(true);
+        }
+        if prefer_1m {
+            item["prefer1m"] = json!(true);
         }
         item
     } else {
@@ -507,6 +517,9 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
     let mut result = Vec::new();
     for (route_id, route) in routes {
         let supports_1m = route.supports_1m.unwrap_or(false);
+        // prefer1m 只在声明了 1M 能力时有效；未声明 supports1m 时强制关闭，
+        // 避免把无效的 prefer1m 写进 profile。
+        let prefer_1m = supports_1m && route.prefer_1m.unwrap_or(false);
         let route_id = route_id.trim();
         if route_id.is_empty() {
             continue;
@@ -543,14 +556,19 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             supports_1m,
+            prefer_1m,
         });
     }
 
-    // Sort supports_1m=true first within each name so the subsequent dedup_by
-    // (which keeps the first occurrence) preserves the 1M-capable variant.
+    // 固定档位顺序：sonnet → opus → haiku → fable（Claude 官方层级，主档
+    // sonnet 第一，inferenceModels 首条目即默认条目），未知角色按原有相对
+    // 顺序排在最后。同一名称内 supports_1m=true 优先，保证随后 dedup_by
+    // 保留 1M 变体。
     result.sort_by(|a, b| {
-        a.name
-            .cmp(&b.name)
+        claude_role_rank(&a.name)
+            .unwrap_or(usize::MAX)
+            .cmp(&claude_role_rank(&b.name).unwrap_or(usize::MAX))
+            .then_with(|| a.name.cmp(&b.name))
             .then_with(|| b.supports_1m.cmp(&a.supports_1m))
     });
     result.dedup_by(|a, b| a.name == b.name);
@@ -581,6 +599,8 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
     entries.sort_by_key(|(left, _)| *left);
     for (route_id, route) in entries {
         let supports_1m = route.supports_1m.unwrap_or(false);
+        // prefer1m 只在声明了 1M 能力时有效；未声明 supports1m 时强制关闭。
+        let prefer_1m = supports_1m && route.prefer_1m.unwrap_or(false);
         let route_id = route_id.trim();
         let upstream_model = route.model.trim();
         if route_id.is_empty() || upstream_model.is_empty() {
@@ -604,10 +624,19 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
                     (!is_claude_safe_model_id(route_id)).then(|| upstream_model.to_string())
                 }),
             supports_1m,
+            prefer_1m,
         });
     }
 
-    result.sort_by(|a, b| a.route_id.cmp(&b.route_id));
+    // 固定档位顺序：sonnet → opus → haiku → fable（主档 sonnet 第一，
+    // inferenceModels 首条目即默认条目，prefer1m 才能落在主力档），未知角色
+    // 按原有相对顺序排在最后。稳定排序保持同档内的名称序不变，因此
+    // map_proxy_request_model 的角色关键词回落（取同档第一条）行为不变。
+    result.sort_by(|a, b| {
+        claude_role_rank(&a.route_id)
+            .unwrap_or(usize::MAX)
+            .cmp(&claude_role_rank(&b.route_id).unwrap_or(usize::MAX))
+    });
     result.dedup_by(|a, b| a.route_id == b.route_id);
 
     if result.is_empty() {
@@ -747,10 +776,55 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     body["model"] = json!(upstream_model);
-    if should_normalize_mimo_anthropic_thinking_history(provider, &upstream_model) {
+    apply_vision_routing(&mut body, provider, &upstream_model);
+    // 视觉路由可能已替换模型；MiMo 规范化决策必须基于最终路由模型，
+    // 否则视觉模型请求会被错误套用 MiMo 历史重写（Codex review P2）。
+    let routed_model = body["model"].as_str().unwrap_or(&upstream_model);
+    if should_normalize_mimo_anthropic_thinking_history(provider, routed_model) {
         normalize_mimo_anthropic_thinking_history(&mut body);
     }
     Ok(body)
+}
+
+/// 视觉自动路由：供应商配置了 `claudeDesktopVisionModel` 且请求包含图片块时，
+/// 把映射后的上游模型替换为视觉模型。纯文本请求不受影响，因此用户无需在
+/// Claude Desktop 里手动切换模型，带图对话也能无缝连续。
+fn apply_vision_routing(body: &mut Value, provider: &Provider, upstream_model: &str) {
+    let Some(vision_model) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.claude_desktop_vision_model.as_deref())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    else {
+        return;
+    };
+    if vision_model == upstream_model || !body_contains_image(body) {
+        return;
+    }
+    body["model"] = json!(vision_model);
+    log::info!("[ClaudeDesktop] 视觉自动路由: {upstream_model} -> {vision_model}");
+}
+
+/// 判断 Anthropic Messages 请求体是否包含图片块。
+///
+/// 图片出现在 `messages[].content[]` 的 `{"type": "image", ...}` 块中，
+/// 也可能内嵌在 tool_result 的内容里，因此对 messages 子树做递归扫描。
+/// tool_use 的 input 是业务参数，不参与检测（见 P2 修复：避免业务数据里
+/// type: "image" 之类的字段被误判为发图）。
+fn body_contains_image(body: &Value) -> bool {
+    fn walk(value: &Value) -> bool {
+        match value {
+            Value::Object(map) => match map.get("type").and_then(Value::as_str) {
+                Some("image") => true,
+                Some("tool_use") => false,
+                _ => map.values().any(walk),
+            },
+            Value::Array(items) => items.iter().any(walk),
+            _ => false,
+        }
+    }
+    body.get("messages").map(walk).unwrap_or(false)
 }
 
 fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
@@ -802,6 +876,18 @@ fn claude_role_keyword(model: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// inferenceModels 写入顺序的档位权重：Claude 官方层级主档 sonnet 第一，
+/// 其后 opus → haiku → fable。未知角色返回 None，排序时排在最后（稳定排序
+/// 保持其原有相对顺序）。
+const CLAUDE_DESKTOP_ROLE_ORDER: [&str; 4] = ["sonnet", "opus", "haiku", "fable"];
+
+fn claude_role_rank(model_id: &str) -> Option<usize> {
+    let role = claude_role_keyword(model_id)?;
+    CLAUDE_DESKTOP_ROLE_ORDER
+        .iter()
+        .position(|candidate| *candidate == role)
 }
 
 fn should_normalize_mimo_anthropic_thinking_history(
@@ -996,6 +1082,7 @@ fn apply_provider_to_paths_inner(
                     name: route.route_id.clone(),
                     label_override: route.label_override.clone(),
                     supports_1m: route.supports_1m,
+                    prefer_1m: route.prefer_1m,
                 })
                 .collect::<Vec<_>>();
             build_gateway_profile(&base_url, &api_key, Some(model_specs.as_slice()))
@@ -1038,8 +1125,15 @@ fn build_gateway_profile(
     });
 
     if let Some(model_specs) = model_specs {
-        profile["inferenceModels"] =
-            Value::Array(model_specs.iter().map(inference_model_json).collect());
+        // inferenceModels 列表第一条目是 Claude Desktop 的默认模型，只有它
+        // 可以携带 prefer1m；其余条目即使配置了 prefer_1m 也不写。
+        profile["inferenceModels"] = Value::Array(
+            model_specs
+                .iter()
+                .enumerate()
+                .map(|(index, spec)| inference_model_json(spec, index == 0))
+                .collect(),
+        );
     }
 
     profile
@@ -1407,6 +1501,7 @@ mod tests {
                     model: "kimi-k2".to_string(),
                     label_override: Some("Kimi K2".to_string()),
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             )]),
             ..Default::default()
@@ -1432,6 +1527,7 @@ mod tests {
                     model: "mimo-v2.5-pro".to_string(),
                     label_override: Some("MiMo v2.5 Pro".to_string()),
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             )]),
             ..Default::default()
@@ -1460,6 +1556,7 @@ mod tests {
                     model: "gpt-5.4".to_string(),
                     label_override: Some("GPT-5.4".to_string()),
                     supports_1m: Some(false),
+                    prefer_1m: None,
                 },
             )]),
             ..Default::default()
@@ -1478,11 +1575,29 @@ mod tests {
                     model: "claude-sonnet-4-6".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             )]),
             ..Default::default()
         });
         provider
+    }
+
+    /// 构造一条无 label 的模型路由条目，供顺序类测试拼装多档位映射。
+    fn route_map_entry(
+        route_id: &str,
+        model: &str,
+        supports_1m: bool,
+    ) -> (String, ClaudeDesktopModelRoute) {
+        (
+            route_id.to_string(),
+            ClaudeDesktopModelRoute {
+                model: model.to_string(),
+                label_override: None,
+                supports_1m: Some(supports_1m),
+                prefer_1m: None,
+            },
+        )
     }
 
     #[test]
@@ -1553,6 +1668,264 @@ mod tests {
 
         let err = validate_provider(&provider).expect_err("direct mapping should fail");
         assert!(err.to_string().contains("本地路由模式"));
+    }
+
+    #[test]
+    fn claude_desktop_direct_apply_writes_prefer1m_on_default_entry() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = direct_provider_with_models("direct-prefer-default");
+        let route = provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .get_mut("claude-sonnet-4-6")
+            .expect("route");
+        route.supports_1m = Some(true);
+        route.prefer_1m = Some(true);
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([{ "name": "claude-sonnet-4-6", "supports1m": true, "prefer1m": true }])
+        );
+    }
+
+    #[test]
+    fn claude_desktop_direct_drops_prefer1m_without_supports1m() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = direct_provider_with_models("direct-prefer-invalid");
+        let route = provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .get_mut("claude-sonnet-4-6")
+            .expect("route");
+        route.supports_1m = Some(false);
+        route.prefer_1m = Some(true);
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        // 未声明 supports1m 时 prefer1m 必须被丢弃，条目回到纯字符串形态。
+        assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-4-6"]));
+    }
+
+    #[test]
+    fn claude_desktop_direct_drops_prefer1m_on_non_default_entry() {
+        // 固定档位顺序下首条目（默认条目）是 sonnet 档；haiku 档虽配置了
+        // prefer1m 也因非首条不得写入。
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = direct_provider_with_models("direct-prefer-nondefault");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Direct),
+            api_format: Some("anthropic".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                (
+                    "claude-haiku-4-5".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "claude-haiku-4-5".to_string(),
+                        label_override: None,
+                        supports_1m: Some(true),
+                        prefer_1m: Some(true),
+                    },
+                ),
+                (
+                    "claude-sonnet-4-6".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "claude-sonnet-4-6".to_string(),
+                        label_override: None,
+                        supports_1m: Some(true),
+                        prefer_1m: None,
+                    },
+                ),
+            ]),
+            ..Default::default()
+        });
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([
+                { "name": "claude-sonnet-4-6", "supports1m": true },
+                { "name": "claude-haiku-4-5", "supports1m": true }
+            ])
+        );
+        assert!(profile["inferenceModels"][1].get("prefer1m").is_none());
+    }
+
+    #[test]
+    fn claude_desktop_proxy_writes_prefer1m_on_first_entry_only() {
+        // 固定档位顺序下首条目（默认条目）是 sonnet 档：sonnet 的 prefer1m
+        // 会写入；haiku 的 prefer1m 配置即使存在也不写。
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = proxy_provider("proxy-prefer-first");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                (
+                    "claude-haiku-4-5".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "upstream-haiku".to_string(),
+                        label_override: Some("Haiku".to_string()),
+                        supports_1m: Some(true),
+                        prefer_1m: Some(true),
+                    },
+                ),
+                (
+                    "claude-sonnet-4-6".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "upstream-sonnet".to_string(),
+                        label_override: Some("Sonnet".to_string()),
+                        supports_1m: Some(true),
+                        prefer_1m: Some(true),
+                    },
+                ),
+            ]),
+            ..Default::default()
+        });
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply proxy provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([
+                {
+                    "name": "claude-sonnet-4-6",
+                    "labelOverride": "Sonnet",
+                    "supports1m": true,
+                    "prefer1m": true
+                },
+                {
+                    "name": "claude-haiku-4-5",
+                    "labelOverride": "Haiku",
+                    "supports1m": true
+                }
+            ])
+        );
+        assert!(profile["inferenceModels"][1].get("prefer1m").is_none());
+    }
+
+    #[test]
+    fn claude_desktop_proxy_orders_all_four_tiers_sonnet_first() {
+        // 四档齐全时 inferenceModels 必须按官方层级写：sonnet 主档第一，
+        // 其后 opus → haiku → fable（首条目即 Claude Desktop 默认条目）。
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = proxy_provider("proxy-order-full");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                route_map_entry("claude-fable-5", "upstream-fable", false),
+                route_map_entry("claude-haiku-4-5", "upstream-haiku", false),
+                route_map_entry("claude-opus-5", "upstream-opus", false),
+                route_map_entry("claude-sonnet-5", "upstream-sonnet", false),
+            ]),
+            ..Default::default()
+        });
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply proxy provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([
+                "claude-sonnet-5",
+                "claude-opus-5",
+                "claude-haiku-4-5",
+                "claude-fable-5"
+            ])
+        );
+    }
+
+    #[test]
+    fn claude_desktop_proxy_orders_partial_tiers_with_gaps_skipped() {
+        // 只配置部分档位时按固定层级顺序排列、缺档跳过：opus → haiku → fable。
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = proxy_provider("proxy-order-partial");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                route_map_entry("claude-fable-5", "upstream-fable", false),
+                route_map_entry("claude-haiku-4-5", "upstream-haiku", false),
+                route_map_entry("claude-opus-5", "upstream-opus", false),
+            ]),
+            ..Default::default()
+        });
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply proxy provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!(["claude-opus-5", "claude-haiku-4-5", "claude-fable-5"])
+        );
+    }
+
+    #[test]
+    fn claude_desktop_direct_orders_all_four_tiers_sonnet_first() {
+        // 直连模式同样按官方层级写：sonnet → opus → haiku → fable，
+        // 不再按模型名字母序（原字母序会把 fable 排到第一）。
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = direct_provider_with_models("direct-order-full");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Direct),
+            api_format: Some("anthropic".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                route_map_entry("claude-fable-5", "claude-fable-5", false),
+                route_map_entry("claude-haiku-4-5", "claude-haiku-4-5", false),
+                route_map_entry("claude-opus-5", "claude-opus-5", false),
+                route_map_entry("claude-sonnet-5", "claude-sonnet-5", false),
+            ]),
+            ..Default::default()
+        });
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([
+                "claude-sonnet-5",
+                "claude-opus-5",
+                "claude-haiku-4-5",
+                "claude-fable-5"
+            ])
+        );
+    }
+
+    #[test]
+    fn claude_role_rank_maps_official_tiers_and_leaves_unknown_last() {
+        assert_eq!(claude_role_rank("claude-sonnet-5"), Some(0));
+        assert_eq!(claude_role_rank("anthropic/claude-sonnet-4-6"), Some(0));
+        assert_eq!(claude_role_rank("claude-opus-5"), Some(1));
+        assert_eq!(claude_role_rank("claude-haiku-4-5"), Some(2));
+        assert_eq!(claude_role_rank("claude-fable-5"), Some(3));
+        // 未知角色无固定档位，排序时以 usize::MAX 排在最后。
+        assert_eq!(claude_role_rank("claude-mythos-2"), None);
+        assert_eq!(claude_role_rank("gpt-5"), None);
     }
 
     #[test]
@@ -1631,6 +2004,125 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_proxy_vision_routing_switches_model_for_image_requests() {
+        let image_body = || {
+            json!({
+                "model": "claude-sonnet-4-6",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aGk="}},
+                        {"type": "text", "text": "图里有什么？"}
+                    ]
+                }]
+            })
+        };
+
+        // 未配置视觉模型：带图请求保持原映射结果
+        let provider = proxy_provider("proxy");
+        let mapped = map_proxy_request_model(image_body(), &provider).expect("map route");
+        assert_eq!(mapped["model"], json!("kimi-k2"));
+
+        // 配置视觉模型：带图请求切换到视觉模型
+        let mut vision_provider = proxy_provider("vision");
+        vision_provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_vision_model = Some("qwen3.8-max".to_string());
+        let mapped = map_proxy_request_model(image_body(), &vision_provider).expect("map route");
+        assert_eq!(mapped["model"], json!("qwen3.8-max"));
+
+        // 纯文本请求不受视觉路由影响
+        let text_body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let mapped = map_proxy_request_model(text_body, &vision_provider).expect("map route");
+        assert_eq!(mapped["model"], json!("kimi-k2"));
+
+        // 映射结果本身就是视觉模型时不重复替换
+        let mut same_provider = proxy_provider("same");
+        same_provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_vision_model = Some("kimi-k2".to_string());
+        let mapped = map_proxy_request_model(image_body(), &same_provider).expect("map route");
+        assert_eq!(mapped["model"], json!("kimi-k2"));
+
+        // tool_result 内嵌的图片块同样触发路由
+        let tool_body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "t1",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aGk="}}
+                    ]
+                }]
+            }]
+        });
+        let mapped = map_proxy_request_model(tool_body, &vision_provider).expect("map route");
+        assert_eq!(mapped["model"], json!("qwen3.8-max"));
+
+        // tool_use 的业务参数里恰好出现 type: "image" 字段不应触发路由（P2 修复）
+        let tool_use_body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "tu1",
+                    "name": "process_record",
+                    "input": {"kind": "image_meta", "type": "image", "url": "https://example.com/x.png"}
+                }]
+            }]
+        });
+        let mapped = map_proxy_request_model(tool_use_body, &vision_provider).expect("map route");
+        assert_eq!(mapped["model"], json!("kimi-k2"));
+
+        // MiMo 上游 + 视觉路由到非 MiMo 模型：MiMo 历史重写必须基于最终路由模型，
+        // 不应把视觉模型请求错误套用 redacted_thinking 替换（Codex review P2）。
+        let mut mimo_upstream_provider = proxy_provider("proxy");
+        let mimo_meta = mimo_upstream_provider.meta.as_mut().expect("meta");
+        mimo_meta.api_format = Some("anthropic".to_string());
+        mimo_meta.claude_desktop_model_routes = std::collections::HashMap::from([(
+            "claude-sonnet-4-6".to_string(),
+            ClaudeDesktopModelRoute {
+                model: "mimo-large".to_string(),
+                label_override: None,
+                supports_1m: None,
+                prefer_1m: None,
+            },
+        )]);
+        mimo_meta.claude_desktop_vision_model = Some("qwen3.8-max".to_string());
+        let mimo_body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aGk="}}
+                ]},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "t1", "name": "f", "input": {}},
+                    {"type": "redacted_thinking", "data": "..."}
+                ]}
+            ]
+        });
+        let mapped =
+            map_proxy_request_model(mimo_body, &mimo_upstream_provider).expect("map route");
+        assert_eq!(mapped["model"], json!("qwen3.8-max"));
+        let blocks = mapped["messages"][1]["content"]
+            .as_array()
+            .expect("content array");
+        assert!(blocks
+            .iter()
+            .any(|block| block["type"] == json!("redacted_thinking")));
+    }
+
+    #[test]
     fn claude_desktop_proxy_maps_dated_role_alias_via_keyword() {
         // 复现反馈：Claude Desktop 子 agent 请求带发布日期后缀的完整官方名
         // （claude-haiku-4-5-20251001），与 manifest 的简短 route_id（claude-haiku-4-5）
@@ -1647,6 +2139,7 @@ mod tests {
                     model: "deepseek-v4-pro".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
             (
@@ -1655,6 +2148,7 @@ mod tests {
                     model: "deepseek-v4-pro".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
             (
@@ -1663,6 +2157,7 @@ mod tests {
                     model: "deepseek-v4-flash".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
         ]);
@@ -1703,6 +2198,7 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
             (
@@ -1711,6 +2207,7 @@ mod tests {
                     model: "upstream-sonnet".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
         ]);
@@ -1752,6 +2249,7 @@ mod tests {
                 model: "upstream-sonnet".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                prefer_1m: None,
             },
         )]);
 
@@ -1779,6 +2277,7 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
             (
@@ -1787,6 +2286,7 @@ mod tests {
                     model: "upstream-fable".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
         ]);
@@ -1817,6 +2317,7 @@ mod tests {
                 model: "upstream-opus-new".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                prefer_1m: None,
             },
         )]);
         provider
@@ -1838,6 +2339,7 @@ mod tests {
                 model: "upstream-opus-legacy".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                prefer_1m: None,
             },
         )]);
         provider
@@ -1961,6 +2463,7 @@ mod tests {
                         model: "deepseek-v4-pro".to_string(),
                         label_override: None,
                         supports_1m: Some(true),
+                        prefer_1m: None,
                     },
                 ),
                 (
@@ -1969,6 +2472,7 @@ mod tests {
                         model: "legacy-upstream".to_string(),
                         label_override: None,
                         supports_1m: Some(false),
+                        prefer_1m: None,
                     },
                 ),
                 (
@@ -1977,6 +2481,7 @@ mod tests {
                         model: "claude-sonnet-5".to_string(),
                         label_override: None,
                         supports_1m: Some(false),
+                        prefer_1m: None,
                     },
                 ),
             ]),
@@ -2029,6 +2534,7 @@ mod tests {
                     model: "upstream-sonnet".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
             (
@@ -2037,6 +2543,7 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    prefer_1m: None,
                 },
             ),
         ]);
