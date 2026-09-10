@@ -763,20 +763,32 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "siliconflow",
       "https://api.siliconflow.cn/v1",
-      "Pro/MiniMaxAI/MiniMax-M2.5",
+      "deepseek-ai/DeepSeek-V4-Flash",
     ),
     endpointCandidates: ["https://api.siliconflow.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      // 2026-08-15 盘点：M2.7 在 SiliconFlow 从未上架（两站目录+404 三重佐证），
-      // .cn 站换 M2.5（目录 JSON contextLen=196608）；档位不填——enable_thinking
-      // 能否真正关闭 M2.5 无官方明文（模型卡 Playground schema 不构成证据）
+      // 国内 M2.5 于 2026-09-11 下线；siliconflow.cn/models 当前可用的
+      // V4 Flash 为 0731 版本。平台 Chat API 只区分 high/max，不能照抄原厂档位：
+      // https://docs.siliconflow.cn/docs/api/chat-completions-post
       {
-        model: "Pro/MiniMaxAI/MiniMax-M2.5",
-        displayName: "Pro / MiniMax M2.5",
-        contextWindow: 196608,
+        model: "deepseek-ai/DeepSeek-V4-Flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high", "max"],
+        defaultReasoningLevel: "high",
       },
     ]),
+    // 显式覆盖平台旧的 supportsEffort:false 推断，使目录中的两档实际下发。
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "enable_thinking",
+      effortParam: "reasoning_effort",
+      effortValueMode: "deepseek",
+      outputFormat: "reasoning_content",
+    },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "siliconflow",
@@ -1109,7 +1121,7 @@ requires_openai_auth = true`,
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
-model = "zai-org/glm-5.1"
+model = "zai-org/glm-5.2"
 disable_response_storage = true
 
 [model_providers.custom]
@@ -1120,12 +1132,25 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.atlascloud.ai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // Coding Plan 当前收录的最新 GLM 是 5.2（2026-09-10）；按量目录的
+      // 5.3 不在套餐内。窗口来自 https://api.atlascloud.ai/v1/models。
       {
-        model: "zai-org/glm-5.1",
-        displayName: "GLM 5.1",
-        contextWindow: 200000,
+        model: "zai-org/glm-5.2",
+        displayName: "GLM 5.2",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
       },
     ]),
+    // 平台未确认该模型的思考开关/effort 契约；单档仅表示思考模式，
+    // 显式覆盖以免后端按 GLM 模型名注入原厂 thinking 字段。
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: false,
+      thinkingParam: "none",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
     icon: "atlascloud",
   },
   {
@@ -2497,27 +2522,26 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "novita",
       "https://api.novita.ai/openai/v1",
-      "zai-org/glm-5.1",
+      "zai-org/glm-5.3",
     ),
     endpointCandidates: ["https://api.novita.ai/openai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      // 平台真开关=顶层 enable_thinking 布尔（Novita API 参考+FAQ 双证）→
-      // 两态。glm-5.1 响应该字段是"官方替代公告+Z.AI 模型卡"两跳推断，无逐字
-      // 直证（2026-08-15 盘点，中置信；同平台 MiniMax-M1 是不可关思考的反例）
+      // 官方可用目录（2026-09-10）：https://api.novita.ai/openai/v1/models
+      // GLM-5.3 为 text-only、1M；平台未逐模型确认 enable_thinking/effort。
       {
-        model: "zai-org/glm-5.1",
-        displayName: "GLM-5.1",
-        contextWindow: 202800,
-        reasoningLevels: ["none", "high"],
+        model: "zai-org/glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
       },
     ]),
-    // 方言修正（2026-08-15 盘点）：thinking:{type} 是 Z.AI 自家端点形态，
-    // Novita「Create chat completion」参数枚举与全站文档零出现
+    // 不沿用旧模型的开关推断；保留显式覆盖，阻止按模型名注入原厂参数。
     codexChatReasoning: {
-      supportsThinking: true,
+      supportsThinking: false,
       supportsEffort: false,
-      thinkingParam: "enable_thinking",
+      thinkingParam: "none",
       effortParam: "none",
       outputFormat: "reasoning_content",
     },
@@ -2598,27 +2622,29 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "nvidia",
       "https://integrate.api.nvidia.com/v1",
-      "moonshotai/kimi-k2.5",
+      "moonshotai/kimi-k3",
     ),
     endpointCandidates: ["https://integrate.api.nvidia.com/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
-        model: "moonshotai/kimi-k2.5",
-        displayName: "Kimi K2.5",
-        contextWindow: 262144,
+        model: "moonshotai/kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
       },
     ]),
-    // 假开关撤销（2026-08-15 盘点）：NIM 官方 OpenAPI（moonshotai-kimi-k2-5-infer）
-    // 请求体 additionalProperties:false 且合法字段表无顶层 thinking——原
-    // thinking:{type} 注入要么被吞要么直接被拒；真参数 chat_template_kwargs:
-    // {thinking:bool} 不在 thinkingParam 值域内。⚠️整块保留、thinkingParam
-    // 显式置 none：删块会让后端推断按模型名命中 kimi 分支、假开关原地复活
+    // NIM K3 始终思考，只接受 reasoning_effort: low/high/max，无 thinking：
+    // https://docs.api.nvidia.com/nim/re/reference/moonshotai-kimi-k3-infer
+    // API 未传 effort 时默认 max；此预设显式 high，与 config.toml 保持一致。
     codexChatReasoning: {
       supportsThinking: false,
-      supportsEffort: false,
+      supportsEffort: true,
       thinkingParam: "none",
-      effortParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "passthrough",
       outputFormat: "reasoning_content",
     },
     category: "aggregator",
@@ -2634,14 +2660,14 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "opencode_go",
       "https://opencode.ai/zen/go/v1",
-      "glm-5.2",
+      "glm-5.3",
     ),
     endpointCandidates: ["https://opencode.ai/zen/go/v1"],
     apiFormat: "openai_chat",
     // OpenCode Zen 网关：统一接受顶层 reasoning_effort（其自家客户端同款参数），
     // 但合法档位逐模型（见各条目 reasoningLevels，镜像 models.dev；opencode
     // 客户端同样严格按模型声明发值）——代理转换层按表钳制，未声明 effort 的
-    // 模型（toggle 型如 glm-5.1）不发该字段。不发厂商原生 thinking 字段。
+    // 模型不发该字段。不发厂商原生 thinking 字段。
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: true,
@@ -2651,17 +2677,30 @@ requires_openai_auth = true`,
       outputFormat: "reasoning_content",
     },
     modelCatalog: modelCatalog([
+      // https://opencode.ai/docs/go/ 确认以下新模型均走 Chat；窗口/模态/档位
+      // 同步其官方依赖 https://models.dev/api.json（2026-09-10）。
       {
-        model: "glm-5.2",
-        displayName: "GLM 5.2",
-        contextWindow: 204800,
-        reasoningLevels: ["high", "max"],
+        model: "glm-5.3",
+        displayName: "GLM 5.3",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
       },
-      { model: "glm-5.1", displayName: "GLM 5.1", contextWindow: 204800 },
       {
-        model: "kimi-k2.7-code",
-        displayName: "Kimi K2.7 Code",
-        contextWindow: 262144,
+        model: "glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["max"],
       },
       {
         model: "deepseek-v4-pro",

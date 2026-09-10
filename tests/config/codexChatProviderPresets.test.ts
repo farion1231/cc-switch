@@ -73,7 +73,7 @@ const expectedChatPresets = new Map<
     "SiliconFlow",
     {
       baseUrl: "https://api.siliconflow.cn/v1",
-      contextWindows: { "Pro/MiniMaxAI/MiniMax-M2.5": 196608 },
+      contextWindows: { "deepseek-ai/DeepSeek-V4-Flash": 1048576 },
     },
   ],
   [
@@ -84,17 +84,38 @@ const expectedChatPresets = new Map<
     },
   ],
   [
+    "AtlasCloud",
+    {
+      baseUrl: "https://api.atlascloud.ai/v1",
+      contextWindows: { "zai-org/glm-5.2": 1048576 },
+    },
+  ],
+  [
     "Novita AI",
     {
       baseUrl: "https://api.novita.ai/openai/v1",
-      contextWindows: { "zai-org/glm-5.1": 202800 },
+      contextWindows: { "zai-org/glm-5.3": 1048576 },
     },
   ],
   [
     "Nvidia",
     {
       baseUrl: "https://integrate.api.nvidia.com/v1",
-      contextWindows: { "moonshotai/kimi-k2.5": 262144 },
+      contextWindows: { "moonshotai/kimi-k3": 1048576 },
+    },
+  ],
+  [
+    "OpenCode Go",
+    {
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      contextWindows: {
+        "glm-5.3": 1000000,
+        "glm-5.3-flash": 1000000,
+        "kimi-k3": 1048576,
+        "deepseek-v4-pro": 1048576,
+        "deepseek-v4-flash": 1048576,
+        "mimo-v2.5-pro": 1048576,
+      },
     },
   ],
 ]);
@@ -267,8 +288,8 @@ describe("Codex Chat provider presets", () => {
 
   it("ships per-model reasoningLevels for OpenCode Go mirroring models.dev", () => {
     // Zen 网关的合法 effort 档位是逐模型的（models.dev reasoning_options，
-    // 2026-08）：统一并集映射会把 Codex 默认的 medium 发给只声明 high|max 的
-    // glm-5.2（默认路径），此测试锁住逐模型表，防回退。
+    // 2026-09-10）：统一并集映射会把 high 发给仅声明 max 的 kimi-k3，
+    // 此测试锁住逐模型表，防回退。
     const preset = codexProviderPresets.find(
       (item) => item.name === "OpenCode Go",
     );
@@ -283,9 +304,9 @@ describe("Codex Chat provider presets", () => {
         ]),
       ),
     ).toEqual({
-      "glm-5.2": ["high", "max"],
-      "glm-5.1": null, // toggle 型，无 effort 声明
-      "kimi-k2.7-code": null,
+      "glm-5.3": ["low", "high", "max"],
+      "glm-5.3-flash": ["low", "high", "max"],
+      "kimi-k3": ["max"],
       "deepseek-v4-pro": ["high", "max"],
       "deepseek-v4-flash": ["low", "high", "max"],
       "mimo-v2.5-pro": null,
