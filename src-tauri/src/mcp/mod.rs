@@ -38,3 +38,7 @@ pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_serv
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
+
+// 纯 doc 级删除：供代理接管备份复用同一套语义，见 ProxyService::remove_mcp_server_from_live_backup
+pub(crate) use codex::remove_mcp_server_from_doc as remove_mcp_server_from_codex_doc;
+pub(crate) use grokbuild::remove_mcp_server_from_doc as remove_mcp_server_from_grokbuild_doc;
