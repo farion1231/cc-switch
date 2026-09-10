@@ -38,6 +38,7 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import type {
   RemoteSnapshotInfo,
   S3SyncSettings,
+  S3UrlStyle,
   WebDavSyncSettings,
 } from "@/types";
 
@@ -171,6 +172,11 @@ function buildPasswordPreservationKey(values: {
   });
 }
 
+/** Check if the endpoint is an AWS endpoint (matches backend is_aws_endpoint). */
+function isAwsEndpoint(endpoint: string): boolean {
+  return !endpoint || endpoint.includes("amazonaws.com");
+}
+
 // ─── Types ──────────────────────────────────────────────────
 
 type ActionState =
@@ -273,7 +279,7 @@ export function WebdavSyncSection({
   }));
 
   // ─── S3 form state ─────────────────────────────────────────
-  const [s3Preset, setS3Preset] = useState("aws-s3");
+  const [s3Preset, setS3Preset] = useState(s3Config?.preset ?? "aws-s3");
   const [s3Region, setS3Region] = useState(s3Config?.region ?? "");
   const [s3Bucket, setS3Bucket] = useState(s3Config?.bucket ?? "");
   const [s3AccessKeyId, setS3AccessKeyId] = useState(
@@ -289,6 +295,9 @@ export function WebdavSyncSection({
   const [s3Profile, setS3Profile] = useState(s3Config?.profile ?? "default");
   const [s3AutoSync, setS3AutoSync] = useState(s3Config?.autoSync ?? false);
   const [s3Enabled, setS3Enabled] = useState(s3Config?.enabled ?? false);
+  const [s3UrlStyle, setS3UrlStyle] = useState<S3UrlStyle>(
+    s3Config?.urlStyle ?? "auto",
+  );
   const [s3SecretTouched, setS3SecretTouched] = useState(false);
   const [s3Dirty, setS3Dirty] = useState(false);
   const [s3JustSaved, setS3JustSaved] = useState(false);
@@ -375,6 +384,7 @@ export function WebdavSyncSection({
   // Sync S3 form when s3Config is loaded/updated from backend
   useEffect(() => {
     if (!s3Config || s3Dirty) return;
+    setS3Preset(s3Config.preset ?? "aws-s3");
     setS3Region(s3Config.region ?? "");
     setS3Bucket(s3Config.bucket ?? "");
     setS3AccessKeyId(s3Config.accessKeyId ?? "");
@@ -384,6 +394,7 @@ export function WebdavSyncSection({
     setS3Profile(s3Config.profile ?? "default");
     setS3AutoSync(s3Config.autoSync ?? false);
     setS3Enabled(s3Config.enabled ?? false);
+    setS3UrlStyle(s3Config.urlStyle ?? "auto");
     setS3SecretTouched(false);
   }, [s3Config, s3Dirty]);
 
@@ -672,6 +683,7 @@ export function WebdavSyncSection({
     return {
       enabled: s3Enabled,
       autoSync: s3AutoSync,
+      preset: s3Preset.trim() || "aws-s3",
       region: s3Region.trim(),
       bucket: s3Bucket.trim(),
       accessKeyId: s3AccessKeyId.trim(),
@@ -679,10 +691,12 @@ export function WebdavSyncSection({
       endpoint: s3Endpoint.trim() || undefined,
       remoteRoot: s3RemoteRoot.trim() || "cc-switch-sync",
       profile: s3Profile.trim() || "default",
+      urlStyle: s3UrlStyle,
     };
   }, [
     s3Enabled,
     s3AutoSync,
+    s3Preset,
     s3Region,
     s3Bucket,
     s3AccessKeyId,
@@ -690,6 +704,7 @@ export function WebdavSyncSection({
     s3Endpoint,
     s3RemoteRoot,
     s3Profile,
+    s3UrlStyle,
   ]);
 
   // ─── S3 Handlers ──────────────────────────────────────────
@@ -1391,6 +1406,41 @@ export function WebdavSyncSection({
                 disabled={isS3Loading}
               />
             </div>
+
+            {/* URL Style selector - show for custom endpoints (AWS always uses virtual-hosted) */}
+            {!isAwsEndpoint(s3Endpoint) && (
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-foreground shrink-0">
+                  {t("settings.s3Sync.urlStyle")}
+                  <span className="block text-[10px] font-normal text-muted-foreground">
+                    {t("settings.s3Sync.urlStyleHint")}
+                  </span>
+                </label>
+                <Select
+                  value={s3UrlStyle}
+                  onValueChange={(value) => {
+                    setS3UrlStyle(value as S3UrlStyle);
+                    markS3Dirty();
+                  }}
+                  disabled={isS3Loading}
+                >
+                  <SelectTrigger className="text-xs flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">
+                      {t("settings.s3Sync.urlStyleAuto")}
+                    </SelectItem>
+                    <SelectItem value="virtualHosted">
+                      {t("settings.s3Sync.urlStyleVirtualHosted")}
+                    </SelectItem>
+                    <SelectItem value="pathStyle">
+                      {t("settings.s3Sync.urlStylePathStyle")}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {/* Auto Sync toggle */}
             <div className="flex items-start gap-4">
