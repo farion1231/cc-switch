@@ -147,6 +147,11 @@ pub fn is_sse_response(response: &ProxyResponse) -> bool {
     response.is_sse()
 }
 
+#[inline]
+fn should_repair_anthropic_sse_tail(status: http::StatusCode, app_type: &str) -> bool {
+    status.is_success() && matches!(app_type, "claude" | "claude-desktop")
+}
+
 /// 处理流式响应
 pub async fn handle_streaming(
     response: ProxyResponse,
@@ -181,8 +186,16 @@ pub async fn handle_streaming(
         builder = builder.header(key, value);
     }
 
-    // 创建字节流
+    // Native Anthropic-compatible gateways occasionally end a structurally
+    // complete tool call with a clean EOF before its lifecycle tail. Restrict
+    // repair to direct Claude passthrough; converted streams own their terminal
+    // events in their respective converters.
     let stream = response.bytes_stream();
+    let stream = if should_repair_anthropic_sse_tail(status, ctx.app_type_str) {
+        super::anthropic_sse_tail::repair_anthropic_sse_tail(stream).boxed()
+    } else {
+        stream.boxed()
+    };
 
     // 创建使用量收集器；关闭 usage logging 时不要在流式热路径上解析每个 SSE event。
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
@@ -932,6 +945,26 @@ mod tests {
             Some("message_start")
         );
         assert_eq!(super::strip_sse_field("id:1", "data"), None);
+    }
+
+    #[test]
+    fn anthropic_tail_repair_is_limited_to_successful_claude_passthrough() {
+        assert!(should_repair_anthropic_sse_tail(
+            http::StatusCode::OK,
+            "claude"
+        ));
+        assert!(should_repair_anthropic_sse_tail(
+            http::StatusCode::OK,
+            "claude-desktop"
+        ));
+        assert!(!should_repair_anthropic_sse_tail(
+            http::StatusCode::OK,
+            "codex"
+        ));
+        assert!(!should_repair_anthropic_sse_tail(
+            http::StatusCode::BAD_GATEWAY,
+            "claude"
+        ));
     }
 
     #[test]
