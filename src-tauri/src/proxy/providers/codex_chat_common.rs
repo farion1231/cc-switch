@@ -1,7 +1,6 @@
 use serde_json::{json, Map, Value};
 
-const THINK_OPEN_TAG: &str = "<think>";
-const THINK_CLOSE_TAG: &str = "</think>";
+const THINK_TAG_PAIRS: [(&str, &str); 2] = [("<think>", "</think>"), ("<thinking>", "</thinking>")];
 
 // 穷举上游可能的 reasoning 回传字段，优先级：reasoning_content > reasoning(字符串/对象) > reasoning_details。
 // 不依赖 provider meta 的 outputFormat 声明，因此对各家 Chat 兼容接口都能兜底提取。
@@ -208,30 +207,118 @@ pub(crate) fn is_empty_value(value: &Value) -> bool {
     }
 }
 
-pub(crate) fn split_leading_think_block(text: &str) -> Option<(String, String)> {
+/// `strip_separator` 只对整段内容开头的 think 块成立：那里的换行是推理与正文之间的
+/// 分隔噪音。正文中间的 think 块后面紧跟的空白属于正文本身，抹掉会把
+/// `foo<thinking>x</thinking> bar` 粘成 `foobar`。
+pub(crate) fn split_leading_think_block(
+    text: &str,
+    strip_separator: bool,
+) -> Option<(String, String)> {
     let leading_ws_len = text.len() - text.trim_start().len();
     let after_ws = &text[leading_ws_len..];
-    if !after_ws.starts_with(THINK_OPEN_TAG) {
-        return None;
-    }
+    let open_tag = THINK_TAG_PAIRS
+        .iter()
+        .find_map(|(open_tag, _)| after_ws.starts_with(open_tag).then_some(*open_tag))?;
 
-    let body_start = leading_ws_len + THINK_OPEN_TAG.len();
-    let close_relative = text[body_start..].find(THINK_CLOSE_TAG)?;
-    let close_start = body_start + close_relative;
-    let answer_start = close_start + THINK_CLOSE_TAG.len();
+    let body_start = leading_ws_len + open_tag.len();
+    // 上游偶尔会用不配对的标签收尾（如 <think> 开、</thinking> 闭）。只认配对的闭合标签
+    // 会让整段连正文一起被当成推理吞掉，所以取最早出现的任一闭合标签。
+    let (close_start, close_tag) = THINK_TAG_PAIRS
+        .iter()
+        .filter_map(|(_, close_tag)| {
+            text[body_start..]
+                .find(close_tag)
+                .map(|relative| (body_start + relative, *close_tag))
+        })
+        .min_by_key(|(close_start, _)| *close_start)?;
+    let answer_start = close_start + close_tag.len();
+
+    let answer = &text[answer_start..];
+    let answer = if strip_separator {
+        strip_think_answer_separator(answer)
+    } else {
+        answer
+    };
 
     Some((
         text[body_start..close_start].trim().to_string(),
-        strip_think_answer_separator(&text[answer_start..]).to_string(),
+        answer.to_string(),
     ))
 }
 
 pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
     let leading_ws_len = text.len() - text.trim_start().len();
     let after_ws = &text[leading_ws_len..];
-    after_ws
-        .strip_prefix(THINK_OPEN_TAG)
-        .map(|value| value.trim().to_string())
+    THINK_TAG_PAIRS.iter().find_map(|(open_tag, _)| {
+        after_ws
+            .strip_prefix(open_tag)
+            .map(|value| value.trim().to_string())
+    })
+}
+
+/// 最早出现的开标签位置。用于在正文中间发现新的 think 段（上游会在一次响应里
+/// 交替输出「推理 → 正文 → 推理 → 正文」）。
+pub(crate) fn find_think_open_tag(text: &str) -> Option<(usize, &'static str)> {
+    THINK_TAG_PAIRS
+        .iter()
+        .filter_map(|(open_tag, _)| text.find(open_tag).map(|index| (index, *open_tag)))
+        .min_by_key(|(index, _)| *index)
+}
+
+/// 末尾可能是半截开标签（如流式切到 `...正文<thin`）时，需要扣住不下发的字节数。
+/// 否则先当正文发出去，等标签补全就晚了。
+pub(crate) fn pending_think_open_prefix_len(text: &str) -> usize {
+    let longest = THINK_TAG_PAIRS
+        .iter()
+        .map(|(open_tag, _)| open_tag.len())
+        .max()
+        .unwrap_or(0);
+
+    (1..longest.saturating_sub(1).min(text.len()) + 1)
+        .rev()
+        .filter(|len| text.is_char_boundary(text.len() - len))
+        .find(|len| {
+            let suffix = &text[text.len() - len..];
+            THINK_TAG_PAIRS
+                .iter()
+                .any(|(open_tag, _)| open_tag.len() > suffix.len() && open_tag.starts_with(suffix))
+        })
+        .unwrap_or(0)
+}
+
+/// 剥离正文里的全部 think 段，返回（合并后的推理, 剩余正文）。非流式路径用。
+pub(crate) fn split_all_think_blocks(text: &str) -> Option<(String, String)> {
+    let mut reasoning_parts: Vec<String> = Vec::new();
+    let mut answer = String::new();
+    let mut rest = text.to_string();
+    let mut stripped_any = false;
+
+    while let Some((open_at, _)) = find_think_open_tag(&rest) {
+        // 开标签前只有空白时仍属于整段开头；这些空白和闭合标签后的空白都是
+        // 推理/正文分隔噪音，不能进入可见正文。
+        let prefix = &rest[..open_at];
+        let is_leading = answer.is_empty() && prefix.trim().is_empty();
+        let Some((reasoning, tail)) = split_leading_think_block(&rest[open_at..], is_leading)
+        else {
+            // 开标签没有闭合，剩下的整段留给正文，交由调用方兜底。
+            break;
+        };
+        stripped_any = true;
+        if !is_leading {
+            answer.push_str(prefix);
+        }
+        if !reasoning.is_empty() {
+            reasoning_parts.push(reasoning);
+        }
+        rest = tail;
+    }
+
+    if !stripped_any {
+        return None;
+    }
+
+    answer.push_str(&rest);
+    Some((reasoning_parts.join("\n\n"), answer))
 }
 
 fn strip_think_answer_separator(text: &str) -> &str {
