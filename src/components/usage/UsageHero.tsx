@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useUsageSummaryByApp } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import { APP_ICON_MAP } from "@/config/appConfig";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import type { AppId } from "@/lib/api/types";
 import {
   Activity,
@@ -68,6 +69,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
   opencode: {
     accent: "text-purple-600 dark:text-purple-400",
     iconBg: "bg-purple-500/10",
+  },
+  "cherry-studio": {
+    accent: "text-red-600 dark:text-red-400",
+    iconBg: "bg-red-500/10",
   },
   pi: {
     accent: "text-fuchsia-600 dark:text-fuchsia-400",
@@ -139,6 +144,9 @@ function AppGlyph({
   appType?: string;
   accentClass: string;
 }) {
+  if (appType === "cherry-studio") {
+    return <ProviderIcon icon="cherry-studio" name="Cherry Studio" size={20} />;
+  }
   if (appType && appType in APP_ICON_MAP) {
     const base = APP_ICON_MAP[appType as AppId].icon;
     if (isValidElement<{ size?: number }>(base)) {

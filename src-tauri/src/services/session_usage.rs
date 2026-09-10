@@ -137,6 +137,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
+        "Cherry Studio",
+        crate::services::session_usage_cherry_studio::sync_cherry_studio_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
         "Grok Build",
         crate::services::session_usage_grokbuild::sync_grokbuild_usage(db),
     );

@@ -195,6 +195,7 @@ export type AppType =
   | "gemini"
   | "grokbuild"
   | "opencode"
+  | "cherry-studio"
   | "pi";
 
 export type AppTypeFilter = "all" | AppType;
@@ -205,6 +206,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "gemini",
   "grokbuild",
   "opencode",
+  "cherry-studio",
   "pi",
 ];
 

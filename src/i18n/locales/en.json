@@ -1719,6 +1719,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
+      "cherry-studio": "Cherry Studio",
       "grokbuild": "Grok Build",
       "pi": "Pi"
     },
@@ -1727,7 +1728,7 @@
       "title": "Auto-Scan Session Logs",
       "description": "Periodically scans each client's local session logs to track usage; when off, logs are only scanned on manual sync",
       "syncNow": "Sync Now",
-      "syncCompleted": "Sync completed: {{imported}} imported, {{files}} files scanned, {{errors}} errors",
+      "syncCompleted": "Sync completed: {{imported}} imported, {{files}} files scanned, {{errors}} errors, {{deferred}} deferred files",
       "syncFailed": "Session usage sync failed: {{error}}"
     },
     "rebuildCodex": {

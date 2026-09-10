@@ -1719,6 +1719,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
+      "cherry-studio": "Cherry Studio",
       "grokbuild": "Grok Build",
       "pi": "Pi"
     },
@@ -1727,7 +1728,7 @@
       "title": "セッションログの自動スキャン",
       "description": "各クライアントのローカルセッションログを定期的にスキャンして使用量を集計します。オフにすると手動同期時のみスキャンします",
       "syncNow": "今すぐ同期",
-      "syncCompleted": "同期完了：{{imported}} 件追加、{{files}} ファイルをスキャン、エラー {{errors}} 件",
+      "syncCompleted": "同期完了：{{imported}} 件追加、{{files}} ファイルをスキャン、エラー {{errors}} 件、保留ファイル {{deferred}} 件",
       "syncFailed": "セッション使用量の同期に失敗しました：{{error}}"
     },
     "rebuildCodex": {

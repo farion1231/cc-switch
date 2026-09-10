@@ -1720,6 +1720,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
+      "cherry-studio": "Cherry Studio",
       "grokbuild": "Grok Build",
       "pi": "Pi"
     },
@@ -1728,7 +1729,7 @@
       "title": "自動掃描工作階段記錄",
       "description": "定期掃描各用戶端的本機工作階段記錄以統計用量；關閉後僅在手動同步時掃描",
       "syncNow": "立即同步",
-      "syncCompleted": "同步完成：新增 {{imported}} 筆，掃描 {{files}} 個檔案，錯誤 {{errors}}",
+      "syncCompleted": "同步完成：新增 {{imported}} 筆，掃描 {{files}} 個檔案，錯誤 {{errors}}，暫緩檔案 {{deferred}}",
       "syncFailed": "工作階段用量同步失敗：{{error}}"
     },
     "rebuildCodex": {
