@@ -42,7 +42,8 @@
     "deleting": "刪除中...",
     "auto": "自動",
     "enabled": "已啟用",
-    "notSet": "未設定"
+    "notSet": "未設定",
+    "collapse": "收合"
   },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
@@ -288,6 +289,7 @@
     "openclawNoModels": "該供應商沒有設定模型",
     "openclawModelNotFound": "所選模型已不存在，請重新整理後再試",
     "backfillWarning": "切換成功，但舊供應商設定回填失敗，您手動修改的設定可能未儲存",
+    "codexAuthCleanupFailed": "切換成功，但未能刪除 auth.json，官方登入憑證仍留在磁碟上；如需徹底移除請手動刪除 Codex 設定目錄中的 auth.json",
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
     "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
@@ -751,6 +753,7 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
+          "otty": "Otty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
           "warp": "Warp"
@@ -977,7 +980,8 @@
       "effectiveApiRequired": "模型 {{id}} 必須直接設定或從供應商繼承 API",
       "effectiveBaseUrlRequired": "模型 {{id}} 必須直接設定或從供應商繼承基礎 URL",
       "duplicateModel": "模型 ID {{id}} 重複",
-      "modelRequired": "請至少新增一個模型"
+      "modelRequired": "請至少新增一個模型",
+      "providerKeyDuplicate": "該供應商標識已存在"
     },
     "current": {
       "readFailed": "無法讀取 Pi 供應商設定",
@@ -1203,13 +1207,10 @@
       "packycode": "PackyCode 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「cc-switch」優惠碼，可以享受 9 折優惠",
       "apikeyfun": "APIKEY.FUN 為 CC Switch 的使用者提供了特別優惠，透過專屬連結註冊，可享受最高儲值永久 95 折優惠。",
       "apinebula": "APINEBULA 為 CC Switch 使用者提供特別優惠：使用專屬連結註冊並在儲值時填寫「ccswitch」優惠碼，可享 9 折優惠。",
-      "atlascloud": "Atlas Cloud 是一個全模態 AI 推理平台，透過單一 API 為開發者提供影片生成、圖像生成及 LLM 接入。立即查看全新「編程計畫」優惠，取得更具性價比的 API 接入。",
       "patewayai": "PatewayAI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊可以獲得 3 美元額度。",
       "claudeapi": "ClaudeAPI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊可以領取測試額度。",
       "claudecn": "ClaudeCN 是一家實體企業營運的企業級 AI 中繼平台，支援企業採購流程，可對公打款、簽約，服務合規有保障。",
       "runapi": "RunAPI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊，首次儲值即可享受 9 折優惠。",
-      "minimax_cn": "MiniMax Coding Plan 特惠，Starter 方案 9.9 元起",
-      "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 方案現僅 $2 / 月（2 折優惠！）",
       "opencode_go": "使用此連結訂閱 OpenCode Go，首月僅需 $5，並可獲得額外的 $5 額度！",
       "dmxapi": "Claude Code 專屬模型 3.4 折優惠進行中！",
       "cubence": "Cubence 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「CCSWITCH」優惠碼，每次儲值均可享受 9 折優惠",
@@ -1235,7 +1236,9 @@
       "zetaapi": "ZetaAPI 主打模型不摻水、不降智，價格低至官方價 35 折。CC Switch 使用者專屬福利：透過此連結註冊，首次充值使用優惠碼 CC-SWITCH 即可享受九折優惠！",
       "teamorouter": "TeamoRouter 是企業級 Agentic LLM 閘道，價格最高可達 90% 折扣。為 CC Switch 的使用者提供了特別福利：新使用者透過此連結註冊，首次充值享 10% 折扣！",
       "ppio": "PPIO 是中國領先的獨立 Agentic Cloud 服務商，一個 API Key 調用全部旗艦開源模型。透過此連結註冊並完成實名認證，即可獲得 ¥10 代金券。",
-      "xycai": "XycAi 企業級 Token 工廠：200+ 全球模型一鍵接入，SLA 自動賠付，異常快取 100% 退還！"
+      "xycai": "XycAi 企業級 Token 工廠：200+ 全球模型一鍵接入，SLA 自動賠付，異常快取 100% 退還！",
+      "9527code": "9527 CODE 是企業級滿血 AI 中轉平台，為 Claude Code、Codex 等主流模型提供高速穩定的中轉服務。持續營運一年，服務穩定性達 99.9%，提供 7×24 小時人工技術支援。新人福利聯絡客服贈送體驗額度，推薦返現無上限！",
+      "soleapi": "SoleAPI 是面向開發者與企業的 AI 模型閘道，一個 API Key 直達 Claude、GPT、Gemini 等 30+ 主流模型，原生相容 OpenAI 與 Anthropic 協定，智慧選路毫秒級故障切換，可用性 99.99%，7×24 技術支援。透過專屬連結註冊即送體驗額度，邀請好友儲值持續返現！"
     },
     "presets": {
       "ucloud": "優雲智算",
@@ -1420,6 +1423,7 @@
     "reauthLogin": "重新登入",
     "reauthSelectHint": "該帳號需重新登入以啟用託管綁定。",
     "reauthNow": "立即重新登入",
+    "duplicateAccount": "該 ChatGPT 帳號已新增，請直接使用現有帳號。",
     "loggedInAccounts": "已登入帳號",
     "defaultAccount": "預設",
     "selected": "已選取",
@@ -1720,6 +1724,13 @@
       "pi": "Pi"
     },
     "rawInputLabel": "原始",
+    "sessionSync": {
+      "title": "自動掃描工作階段記錄",
+      "description": "定期掃描各用戶端的本機工作階段記錄以統計用量；關閉後僅在手動同步時掃描",
+      "syncNow": "立即同步",
+      "syncCompleted": "同步完成：新增 {{imported}} 筆，掃描 {{files}} 個檔案，錯誤 {{errors}}",
+      "syncFailed": "工作階段用量同步失敗：{{error}}"
+    },
     "rebuildCodex": {
       "title": "Codex 用量維護",
       "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
@@ -2191,6 +2202,7 @@
     }
   },
   "profiles": {
+    "switcherAriaLabel": "專案：{{name}}",
     "switcherTooltip": {
       "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案",
       "claude-desktop": "專案：一鍵切換 Claude Desktop 的供應商",
@@ -2874,6 +2886,7 @@
     },
     "switchFailed": "切換失敗：{{error}}",
     "takeover": {
+      "ariaLabel": "{{appLabel}} 本地路由",
       "hint": "選擇要路由的應用程式，啟用後該應用程式的請求將透過本地路由轉發",
       "enabled": "{{app}} 路由已啟用",
       "disabled": "{{app}} 路由已關閉",
