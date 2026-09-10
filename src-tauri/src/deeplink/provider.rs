@@ -486,7 +486,10 @@ fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Valu
 
     json!({
         "config": format!(
-            "[models]\ndefault = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
+            // session_summary as well as default: Grok Build resolves the
+            // session-title model separately, so an import that set only
+            // `default` left titles going to the client's fallback model.
+            "[models]\ndefault = {model_value}\nsession_summary = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
             crate::grok_config::DEFAULT_API_BACKEND,
             crate::grok_config::DEFAULT_CONTEXT_WINDOW,
         )
@@ -969,6 +972,36 @@ mod tests {
         }
     }
 
+    /// Grok Build resolves `[models].session_summary` separately from
+    /// `[models].default`. An import that wrote only the default left the
+    /// session-title request going to the client's own fallback model, so a
+    /// custom provider could answer the conversation while titles quietly went
+    /// somewhere else — or failed on their own where that fallback is not
+    /// reachable. (#7003)
+    #[test]
+    fn grokbuild_deeplink_points_session_summary_at_the_imported_model() {
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("grokbuild".to_string()),
+            name: Some("Custom".to_string()),
+            model: Some("custom-model".to_string()),
+            endpoint: Some("https://relay.example.invalid/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_grokbuild_settings(&request);
+        let rendered = settings["config"].as_str().expect("config string");
+
+        assert!(
+            rendered.contains("default = \"custom-model\""),
+            "the imported model must be the default profile: {rendered}"
+        );
+        assert!(
+            rendered.contains("session_summary = \"custom-model\""),
+            "session titles must use the imported model too: {rendered}"
+        );
+    }
     /// deeplink 同时声明 `api_key` 与 `env_key` 时，导入结果只保留用户可见的
     /// `api_key`：既不能带上解析后的明文环境变量，也不能把 `env_key` 这个间接
     /// 引用本身写进供应商配置。
