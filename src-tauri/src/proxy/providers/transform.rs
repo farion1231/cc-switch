@@ -3,6 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
+use super::codex_chat_common::split_leading_think_block;
 use crate::proxy::{
     error::ProxyError,
     json_canonical::canonical_json_string,
@@ -501,6 +502,30 @@ fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
     schema
 }
 
+/// 把一段文本追加进 Anthropic content 数组。
+///
+/// 部分 OpenAI Chat 兼容上游（MiniMax M3、OpenCode Go 等）不用
+/// `reasoning_content` 回传思考，而是内联在文本前部（`<think>…</think>`）。
+/// 直接当正文透传会让思考明文显示（issue #7271），这里拆成 thinking + text
+/// 两个块，与流式路径行为一致。
+fn push_text_with_inline_think(content: &mut Vec<Value>, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+
+    match split_leading_think_block(text) {
+        Some((thinking, answer)) => {
+            if !thinking.is_empty() {
+                content.push(json!({"type": "thinking", "thinking": thinking}));
+            }
+            if !answer.is_empty() {
+                content.push(json!({"type": "text", "text": answer}));
+            }
+        }
+        None => content.push(json!({"type": "text", "text": text})),
+    }
+}
+
 /// OpenAI 响应 → Anthropic 响应
 pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     let choices = body
@@ -529,18 +554,14 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     // 文本/拒绝内容
     if let Some(msg_content) = message.get("content") {
         if let Some(text) = msg_content.as_str() {
-            if !text.is_empty() {
-                content.push(json!({"type": "text", "text": text}));
-            }
+            push_text_with_inline_think(&mut content, text);
         } else if let Some(parts) = msg_content.as_array() {
             for part in parts {
                 let part_type = part.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 match part_type {
                     "text" | "output_text" => {
                         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                            if !text.is_empty() {
-                                content.push(json!({"type": "text", "text": text}));
-                            }
+                            push_text_with_inline_think(&mut content, text);
                         }
                     }
                     "refusal" => {
@@ -1320,6 +1341,100 @@ mod tests {
         assert_eq!(result["stop_reason"], "end_turn");
         assert_eq!(result["usage"]["input_tokens"], 10);
         assert_eq!(result["usage"]["output_tokens"], 5);
+    }
+
+    /// #7271：上游把思考内联在 content 里（MiniMax M3 / OpenCode Go）时，
+    /// 非流式响应也必须拆成 thinking + text 块，标签不能残留。
+    #[test]
+    fn test_openai_to_anthropic_splits_inline_think_content() {
+        let input = json!({
+            "id": "chatcmpl-inline-think",
+            "object": "chat.completion",
+            "model": "minimax-m3",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "<think>The bat costs $1.05 more.</think>\n\nThe ball costs $0.05."
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 30, "total_tokens": 50}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(
+            result["content"][0]["thinking"],
+            "The bat costs $1.05 more."
+        );
+        assert_eq!(result["content"][1]["type"], "text");
+        assert_eq!(result["content"][1]["text"], "The ball costs $0.05.");
+
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(
+            !serialized.contains("<think>"),
+            "think tag leaked: {serialized}"
+        );
+    }
+
+    /// content 数组形式的文本同样拆分
+    #[test]
+    fn test_openai_to_anthropic_splits_inline_think_in_content_parts() {
+        let input = json!({
+            "id": "chatcmpl-parts-think",
+            "object": "chat.completion",
+            "model": "minimax-m3",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "<think>quick check</think>Answer: 42."}
+                    ]
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(result["content"][0]["thinking"], "quick check");
+        assert_eq!(result["content"][1]["type"], "text");
+        assert_eq!(result["content"][1]["text"], "Answer: 42.");
+    }
+
+    /// 没有完整思考块的正文保持原样：非行首的 `<think>` 是普通文本，
+    /// 未闭合的 `<think>`（上游截断）与 codex 非流式路径一样按正文下发。
+    #[test]
+    fn test_openai_to_anthropic_keeps_content_without_complete_think_block() {
+        let inline = json!({
+            "id": "chatcmpl-inline-literal",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Explain <think> literally."},
+                "finish_reason": "stop"
+            }]
+        });
+        let result = openai_to_anthropic(inline).unwrap();
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "Explain <think> literally.");
+
+        let unterminated = json!({
+            "id": "chatcmpl-unterminated",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "<think>cut off"},
+                "finish_reason": "length"
+            }]
+        });
+        let result = openai_to_anthropic(unterminated).unwrap();
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "<think>cut off");
     }
 
     #[test]

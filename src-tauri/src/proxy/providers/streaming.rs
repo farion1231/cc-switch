@@ -2,6 +2,7 @@
 //!
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
+use super::codex_chat_common::{InlineThinkPart, InlineThinkSplitter};
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -145,6 +146,104 @@ fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Val
     })
 }
 
+/// 非工具内容块（thinking / text）的开启状态
+#[derive(Default)]
+struct NonToolBlockState {
+    kind: Option<&'static str>,
+    index: Option<u32>,
+}
+
+impl NonToolBlockState {
+    /// 关闭当前打开的非工具块（若有）
+    fn close(&mut self) -> Vec<Bytes> {
+        self.kind = None;
+        self.index
+            .take()
+            .map(|index| {
+                vec![sse_event(
+                    &json!({"type": "content_block_stop", "index": index}),
+                )]
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// 序列化一个 Anthropic SSE 帧（事件名取 JSON 的 type 字段）
+fn sse_event(event: &Value) -> Bytes {
+    let event_type = event
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("message");
+    let data = serde_json::to_string(event).unwrap_or_default();
+    Bytes::from(format!("event: {event_type}\ndata: {data}\n\n"))
+}
+
+/// 把一段思考或正文写进 Anthropic SSE 事件流：与当前打开的块类型不同时先停旧块
+/// 再开新块，然后发对应的 content_block_delta。空文本不产出事件。
+fn emit_non_tool_delta(
+    state: &mut NonToolBlockState,
+    next_content_index: &mut u32,
+    is_thinking: bool,
+    text: &str,
+) -> Vec<Bytes> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    let kind: &'static str = if is_thinking { "thinking" } else { "text" };
+    let mut events = Vec::new();
+    if state.kind != Some(kind) {
+        events.extend(state.close());
+        let index = *next_content_index;
+        *next_content_index += 1;
+        let content_block = if is_thinking {
+            json!({"type": "thinking", "thinking": ""})
+        } else {
+            json!({"type": "text", "text": ""})
+        };
+        events.push(sse_event(&json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": content_block
+        })));
+        state.kind = Some(kind);
+        state.index = Some(index);
+    }
+
+    if let Some(index) = state.index {
+        let delta = if is_thinking {
+            json!({"type": "thinking_delta", "thinking": text})
+        } else {
+            json!({"type": "text_delta", "text": text})
+        };
+        events.push(sse_event(&json!({
+            "type": "content_block_delta",
+            "index": index,
+            "delta": delta
+        })));
+    }
+
+    events
+}
+
+/// 按序下发一组「思考 / 正文」片段
+fn emit_inline_think_parts(
+    state: &mut NonToolBlockState,
+    next_content_index: &mut u32,
+    parts: Vec<InlineThinkPart>,
+) -> Vec<Bytes> {
+    let mut events = Vec::new();
+    for (is_thinking, text) in parts {
+        events.extend(emit_non_tool_delta(
+            state,
+            next_content_index,
+            is_thinking,
+            &text,
+        ));
+    }
+    events
+}
+
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -166,8 +265,9 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut has_sent_message_stop = false;
         let mut stream_ended_with_error = false;
         let mut latest_usage: Option<Value> = None;
-        let mut current_non_tool_block_type: Option<&'static str> = None;
-        let mut current_non_tool_block_index: Option<u32> = None;
+        let mut non_tool_block = NonToolBlockState::default();
+        // 上游把思考内联在 content 里（`<think>…</think>`）时拆成 thinking 块
+        let mut inline_think = InlineThinkSplitter::default();
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
 
@@ -187,6 +287,15 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                             if let Some(data) = strip_sse_field(l, "data") {
                                 if data.trim() == "[DONE]" {
                                     log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
+
+                                    // 冲出内联思考缓冲，避免把未下发的思考文本留在流外
+                                    for event in emit_inline_think_parts(
+                                        &mut non_tool_block,
+                                        &mut next_content_index,
+                                        inline_think.flush(),
+                                    ) {
+                                        yield Ok(event);
+                                    }
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
                                     if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
@@ -268,91 +377,26 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                         // 处理 reasoning（thinking）
                                         if let Some(reasoning) = &choice.delta.reasoning {
-                                            if current_non_tool_block_type != Some("thinking") {
-                                                if let Some(index) = current_non_tool_block_index.take() {
-                                                    let event = json!({
-                                                        "type": "content_block_stop",
-                                                        "index": index
-                                                    });
-                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                }
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                let event = json!({
-                                                    "type": "content_block_start",
-                                                    "index": index,
-                                                    "content_block": {
-                                                        "type": "thinking",
-                                                        "thinking": ""
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
-                                                current_non_tool_block_type = Some("thinking");
-                                                current_non_tool_block_index = Some(index);
-                                            }
-
-                                            if let Some(index) = current_non_tool_block_index {
-                                                let event = json!({
-                                                    "type": "content_block_delta",
-                                                    "index": index,
-                                                    "delta": {
-                                                        "type": "thinking_delta",
-                                                        "thinking": reasoning
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
+                                            for event in emit_non_tool_delta(
+                                                &mut non_tool_block,
+                                                &mut next_content_index,
+                                                true,
+                                                reasoning,
+                                            ) {
+                                                yield Ok(event);
                                             }
                                         }
 
-                                        // 处理文本内容
+                                        // 处理文本内容（含上游内联的 <think> 块）
                                         if let Some(content) = &choice.delta.content {
                                             if !content.is_empty() {
-                                                if current_non_tool_block_type != Some("text") {
-                                                    if let Some(index) = current_non_tool_block_index.take() {
-                                                        let event = json!({
-                                                            "type": "content_block_stop",
-                                                            "index": index
-                                                        });
-                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                            serde_json::to_string(&event).unwrap_or_default());
-                                                        yield Ok(Bytes::from(sse_data));
-                                                    }
-
-                                                    let index = next_content_index;
-                                                    next_content_index += 1;
-                                                    let event = json!({
-                                                        "type": "content_block_start",
-                                                        "index": index,
-                                                        "content_block": {
-                                                            "type": "text",
-                                                            "text": ""
-                                                        }
-                                                    });
-                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                    current_non_tool_block_type = Some("text");
-                                                    current_non_tool_block_index = Some(index);
-                                                }
-
-                                                if let Some(index) = current_non_tool_block_index {
-                                                    let event = json!({
-                                                        "type": "content_block_delta",
-                                                        "index": index,
-                                                        "delta": {
-                                                            "type": "text_delta",
-                                                            "text": content
-                                                        }
-                                                    });
-                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
+                                                let parts = inline_think.push(content);
+                                                for event in emit_inline_think_parts(
+                                                    &mut non_tool_block,
+                                                    &mut next_content_index,
+                                                    parts,
+                                                ) {
+                                                    yield Ok(event);
                                                 }
                                             }
                                         }
@@ -360,16 +404,19 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 处理工具调用
                                         if let Some(tool_calls) = &choice.delta.tool_calls {
                                             if !tool_calls.is_empty() {
-                                                if let Some(index) = current_non_tool_block_index.take() {
-                                                    let event = json!({
-                                                        "type": "content_block_stop",
-                                                        "index": index
-                                                    });
-                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
+                                                // 工具块开始前先把内联思考的缓冲冲出：
+                                                // 否则未闭合的思考会被后面的工具块吞掉
+                                                let parts = inline_think.flush();
+                                                for event in emit_inline_think_parts(
+                                                    &mut non_tool_block,
+                                                    &mut next_content_index,
+                                                    parts,
+                                                ) {
+                                                    yield Ok(event);
                                                 }
-                                                current_non_tool_block_type = None;
+                                                for event in non_tool_block.close() {
+                                                    yield Ok(event);
+                                                }
 
                                                 for tool_call in tool_calls {
                                                     let (
@@ -528,16 +575,18 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                             has_emitted_message_delta = true;
 
-                                            if let Some(index) = current_non_tool_block_index.take() {
-                                                let event = json!({
-                                                    "type": "content_block_stop",
-                                                    "index": index
-                                                });
-                                                let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
+                                            // 收尾前冲出内联思考缓冲（未闭合的思考按思考下发）
+                                            let parts = inline_think.flush();
+                                            for event in emit_inline_think_parts(
+                                                &mut non_tool_block,
+                                                &mut next_content_index,
+                                                parts,
+                                            ) {
+                                                yield Ok(event);
                                             }
-                                            current_non_tool_block_type = None;
+                                            for event in non_tool_block.close() {
+                                                yield Ok(event);
+                                            }
 
                                             // Late start for blocks that accumulated args before id/name arrived.
                                             let mut late_tool_starts: Vec<(u32, String, String, String)> =
@@ -647,6 +696,12 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         // 流自然结束但未收到 [DONE] 时，确保发送缓存的 message_delta 和 message_stop。
         // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
         if !stream_ended_with_error {
+            // 自然结束（未收到 [DONE]）也要冲出内联思考缓冲
+            let parts = inline_think.flush();
+            for event in emit_inline_think_parts(&mut non_tool_block, &mut next_content_index, parts) {
+                yield Ok(event);
+            }
+
             let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
                 pending_message_delta.take()
             {
@@ -722,18 +777,21 @@ mod tests {
     use serde_json::Value;
     use std::collections::HashMap;
 
-    async fn collect_anthropic_events(input: &str) -> Vec<Value> {
+    async fn collect_anthropic_raw(input: &str) -> String {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
         let converted = create_anthropic_sse_stream(upstream);
         let chunks: Vec<_> = converted.collect().await;
-        let merged = chunks
+        chunks
             .into_iter()
             .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
-            .collect::<String>();
+            .collect::<String>()
+    }
 
-        merged
+    async fn collect_anthropic_events(input: &str) -> Vec<Value> {
+        collect_anthropic_raw(input)
+            .await
             .split("\n\n")
             .filter_map(|block| {
                 let data = block
@@ -1244,5 +1302,143 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
+    }
+
+    /// 拼接所有指定类型的 content_block_delta 文本
+    fn delta_text(events: &[Value], delta_type: &str) -> String {
+        let field = if delta_type == "thinking_delta" {
+            "thinking"
+        } else {
+            "text"
+        };
+        events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_delta"))
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(|v| v.as_str()) == Some(delta_type)
+            })
+            .filter_map(|event| {
+                event
+                    .pointer(&format!("/delta/{field}"))
+                    .and_then(|v| v.as_str())
+            })
+            .collect()
+    }
+
+    /// 指定类型的 content_block_start 块索引
+    fn block_indices(events: &[Value], block_type: &str) -> Vec<u64> {
+        events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .filter(|event| {
+                event
+                    .pointer("/content_block/type")
+                    .and_then(|v| v.as_str())
+                    == Some(block_type)
+            })
+            .filter_map(|event| event.get("index").and_then(|v| v.as_u64()))
+            .collect()
+    }
+
+    /// #7271：上游把思考内联在 content 里（MiniMax M3 / OpenCode Go 走 OpenAI
+    /// Chat 协议）时必须拆成 thinking 块，且标签本身不能泄漏到下游，否则
+    /// Claude Code 会把整段思考当正文明文显示。
+    #[tokio::test]
+    async fn test_inline_think_content_becomes_thinking_block() {
+        let input = concat!(
+            // 开标签被切在两个 chunk 之间：Detecting 阶段必须缓冲等待
+            "data: {\"id\":\"chatcmpl_think\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<thi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_think\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"nk>Weighing costs</thi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_think\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"nk>The bat costs $1.05.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_think\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\" The ball costs $0.05.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_think\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":30,\"completion_tokens\":20}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let raw = collect_anthropic_raw(input).await;
+        let events = collect_anthropic_events(input).await;
+
+        assert!(
+            !raw.contains("<think>"),
+            "inline think open tag leaked: {raw}"
+        );
+        assert!(
+            !raw.contains("</think>"),
+            "inline think close tag leaked: {raw}"
+        );
+
+        assert_eq!(block_indices(&events, "thinking"), vec![0]);
+        assert_eq!(block_indices(&events, "text"), vec![1]);
+        assert_eq!(delta_text(&events, "thinking_delta"), "Weighing costs");
+        assert_eq!(
+            delta_text(&events, "text_delta"),
+            "The bat costs $1.05. The ball costs $0.05."
+        );
+    }
+
+    /// 未闭合的 `<think>`（上游截断或直接进入工具调用）在工具块开始前冲出：
+    /// 思考内容仍以 thinking 块下发，既不能吞掉，也不能泄漏标签。
+    #[tokio::test]
+    async fn test_inline_think_flushed_before_tool_calls() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<think>Need to run pwd\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":8}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let raw = collect_anthropic_raw(input).await;
+        let events = collect_anthropic_events(input).await;
+
+        assert!(
+            !raw.contains("<think>"),
+            "inline think open tag leaked: {raw}"
+        );
+        assert_eq!(block_indices(&events, "thinking"), vec![0]);
+        assert_eq!(delta_text(&events, "thinking_delta"), "Need to run pwd");
+        assert_eq!(block_indices(&events, "text").len(), 0);
+        assert!(events.iter().any(|event| {
+            event
+                .pointer("/content_block/name")
+                .and_then(|v| v.as_str())
+                == Some("Bash")
+        }));
+        assert!(events.iter().any(|event| {
+            event.pointer("/delta/stop_reason").and_then(|v| v.as_str()) == Some("tool_use")
+        }));
+    }
+
+    /// 没有内联思考的普通文本不受拆分器影响（含 `<` 开头的非 think 文本）。
+    #[tokio::test]
+    async fn test_plain_content_not_affected_by_inline_think_detection() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_plain\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"<\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_plain\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"div>hello\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_plain\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_plain\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(block_indices(&events, "thinking").len(), 0);
+        assert_eq!(delta_text(&events, "text_delta"), "<div>hello world");
+    }
+
+    /// 只有思考没有正文时只下发 thinking 块，不产生空 text 块。
+    #[tokio::test]
+    async fn test_inline_think_without_answer_emits_no_text_block() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_think_only\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<think>only reasoning</think>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_think_only\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(block_indices(&events, "thinking"), vec![0]);
+        assert_eq!(delta_text(&events, "thinking_delta"), "only reasoning");
+        assert!(delta_text(&events, "text_delta").is_empty());
+        assert_eq!(block_indices(&events, "text").len(), 0);
     }
 }
