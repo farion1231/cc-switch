@@ -4195,6 +4195,214 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_coalesces_when_reasoning_sits_between_commentary_and_call() {
+        let mut call = test_function_call("call_1");
+        call["reasoning_content"] = json!("need to update the file");
+
+        let result = convert_test_input(vec![
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Part 1 written. Appending sections 4-5."}
+                ]
+            }),
+            json!({
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": "need to update the file"}
+                ]
+            }),
+            call,
+            test_function_output("call_1", json!("Success")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(
+            messages[0]["content"],
+            "Part 1 written. Appending sections 4-5."
+        );
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[0]["reasoning_content"], "need to update the file");
+    }
+
+    #[test]
+    fn responses_request_to_chat_backfills_reasoning_placeholder_for_coalesced_call() {
+        let result = convert_test_input(vec![
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Running the build now."}
+                ]
+            }),
+            test_function_call("call_build"),
+            test_function_output("call_build", json!("Build succeeded")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(messages[0]["content"], "Running the build now.");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_build");
+        assert_eq!(messages[0]["reasoning_content"], "tool call");
+    }
+
+    #[test]
+    fn responses_request_to_chat_coalesces_custom_tool_call_with_commentary() {
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "Apply a patch to files."
+            }],
+            "input": [
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "Applying the next patch."}
+                    ]
+                }),
+                json!({
+                    "type": "custom_tool_call",
+                    "id": "ctc_1",
+                    "call_id": "call_patch",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** End Patch"
+                }),
+                json!({
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_patch",
+                    "output": {"text": "Success"}
+                })
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(messages[0]["content"], "Applying the next patch.");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_patch");
+        assert_eq!(messages[1]["tool_call_id"], "call_patch");
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_media_before_coalesced_commentary_tool_call() {
+        let data_url = large_test_image_data_url();
+        let result = convert_test_input(vec![
+            test_function_call("call_media"),
+            test_function_output(
+                "call_media",
+                json!({
+                    "content": [{
+                        "type": "input_image",
+                        "image_url": data_url
+                    }]
+                }),
+            ),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Viewing the image now."}
+                ]
+            }),
+            test_function_call("call_next"),
+            test_function_output("call_next", json!("Next result")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["assistant", "tool", "user", "assistant", "tool"]
+        );
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_media");
+        let media_content = messages[2]["content"].as_array().unwrap();
+        assert!(media_content.iter().any(|part| part
+            .get("image_url")
+            .and_then(|value| value.get("url"))
+            .and_then(Value::as_str)
+            .is_some_and(|url| url == &data_url)));
+        assert_eq!(messages[3]["content"], "Viewing the image now.");
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "call_next");
+        assert_eq!(messages[4]["tool_call_id"], "call_next");
+    }
+
+    #[test]
+    fn responses_request_to_chat_multi_round_history_has_no_text_only_assistant_turns() {
+        let mut items = vec![json!({
+            "type": "message",
+            "role": "user",
+            "content": "Fix the failing build."
+        })];
+        for index in 1..=3 {
+            let call_id = format!("call_round_{index}");
+            items.push(json!({
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": format!("round {index} reasoning")}
+                ]
+            }));
+            items.push(json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": format!("Step {index}: checking the logs.")}
+                ]
+            }));
+            let mut call = test_function_call(&call_id);
+            call["reasoning_content"] = json!(format!("round {index} reasoning"));
+            items.push(call);
+            items.push(test_function_output(
+                &call_id,
+                json!(format!("round {index} result")),
+            ));
+        }
+        items.push(json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "Build fixed."}
+            ]
+        }));
+
+        let result = convert_test_input(items);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec![
+                "user",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant"
+            ]
+        );
+        for (index, message) in messages.iter().enumerate() {
+            if message["role"] == "assistant" && index + 1 < messages.len() {
+                assert!(
+                    message["tool_calls"]
+                        .as_array()
+                        .is_some_and(|calls| !calls.is_empty()),
+                    "assistant at index {index} must carry tool calls"
+                );
+            }
+        }
+        assert_eq!(messages[1]["content"], "Step 1: checking the logs.");
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_round_1");
+        assert_eq!(messages[1]["reasoning_content"], "round 1 reasoning");
+        assert_eq!(messages[7]["content"], "Build fixed.");
+        assert!(messages[7].get("tool_calls").is_none());
+    }
+
+    #[test]
     fn responses_request_to_chat_clamps_only_residual_base64ish_strings() {
         let data_url = large_test_image_data_url();
         let long_text = format!("{}end", "ordinary OCR text with spaces. ".repeat(3_500));
