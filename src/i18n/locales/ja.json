@@ -1649,6 +1649,10 @@
     "noModelExtraFields": "モデルプロパティ（variants、cost など）、+ をクリックして追加",
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK オプション",
+    "advancedProperties": "詳細プロパティ",
+    "noAdvancedProperties": "options と同じ階層の詳細プロパティ。+ をクリックして追加",
+    "advancedPropertyKeyPlaceholder": "modalities",
+    "advancedPropertyValuePlaceholder": "{\"input\":[\"text\",\"image\"],\"output\":[\"text\"]}",
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },

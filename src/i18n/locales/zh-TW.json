@@ -1650,6 +1650,10 @@
     "noModelExtraFields": "模型屬性 (variants, cost 等)，點擊 + 新增",
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK 選項",
+    "advancedProperties": "進階屬性",
+    "noAdvancedProperties": "與 options 同層的進階屬性，點擊 + 新增",
+    "advancedPropertyKeyPlaceholder": "modalities",
+    "advancedPropertyValuePlaceholder": "{\"input\":[\"text\",\"image\"],\"output\":[\"text\"]}",
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },

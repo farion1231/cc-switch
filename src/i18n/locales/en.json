@@ -1649,6 +1649,10 @@
     "noModelExtraFields": "Model properties (variants, cost, etc.), click + to add",
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK Options",
+    "advancedProperties": "Advanced Properties",
+    "noAdvancedProperties": "Advanced properties (top-level fields alongside options), click + to add",
+    "advancedPropertyKeyPlaceholder": "modalities",
+    "advancedPropertyValuePlaceholder": "{\"input\":[\"text\",\"image\"],\"output\":[\"text\"]}",
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
