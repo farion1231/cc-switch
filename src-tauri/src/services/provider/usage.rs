@@ -18,6 +18,8 @@ pub(crate) async fn execute_and_format_usage_result(
     access_token: Option<&str>,
     user_id: Option<&str>,
     template_type: Option<&str>,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
 ) -> Result<UsageResult, AppError> {
     match usage_script::execute_usage_script(
         script_code,
@@ -27,6 +29,7 @@ pub(crate) async fn execute_and_format_usage_result(
         access_token,
         user_id,
         template_type,
+        proxy_url,
     )
     .await
     {
@@ -128,7 +131,7 @@ pub async fn query_usage(
     app_type: AppType,
     provider_id: &str,
 ) -> Result<UsageResult, AppError> {
-    let (script_code, timeout, api_key, base_url, access_token, user_id, template_type) = {
+    let (script_code, timeout, api_key, base_url, access_token, user_id, template_type, proxy_url) = {
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let provider = providers.get(provider_id).ok_or_else(|| {
             AppError::localized(
@@ -165,6 +168,16 @@ pub async fn query_usage(
             usage_script.base_url.as_deref(),
         );
 
+        // 供应商级外部 API 代理：JS 脚本路径的 HTTP 请求同样遵循 outboundProxyUrl，
+        // 与官方余额 / coding plan / 本地代理转发保持同一覆盖语义（空回退全局）。
+        let proxy_url = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.outbound_proxy_url.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+
         (
             usage_script.code.clone(),
             usage_script.timeout.unwrap_or(10),
@@ -173,6 +186,7 @@ pub async fn query_usage(
             usage_script.access_token.clone(),
             usage_script.user_id.clone(),
             usage_script.template_type.clone(),
+            proxy_url,
         )
     };
 
@@ -184,6 +198,7 @@ pub async fn query_usage(
         access_token.as_deref(),
         user_id.as_deref(),
         template_type.as_deref(),
+        proxy_url.as_deref(),
     )
     .await
 }
@@ -201,6 +216,8 @@ pub async fn test_usage_script(
     access_token: Option<&str>,
     user_id: Option<&str>,
     template_type: Option<&str>,
+    // 供应商级外部 API 代理（outboundProxyUrl），用于测试路径覆盖全局代理
+    proxy_url: Option<&str>,
 ) -> Result<UsageResult, AppError> {
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let provider = providers.get(provider_id).ok_or_else(|| {
@@ -214,6 +231,14 @@ pub async fn test_usage_script(
     // Resolve like the real query so testing matches what a saved script does:
     // explicit values win, empty ones fall back to the provider config.
     let (api_key, base_url) = resolve_script_credentials(&app_type, provider, api_key, base_url);
+    // 测试路径同样遵循供应商级代理，与真实查询行为一致。
+    let proxy_url = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.outbound_proxy_url.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
 
     execute_and_format_usage_result(
         script_code,
@@ -223,6 +248,7 @@ pub async fn test_usage_script(
         access_token,
         user_id,
         template_type,
+        proxy_url.as_deref(),
     )
     .await
 }

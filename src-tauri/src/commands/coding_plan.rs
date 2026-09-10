@@ -11,6 +11,7 @@ pub async fn get_coding_plan_quota(
     coding_plan_provider: Option<String>,
     team_organization_id: Option<String>,
     team_project_id: Option<String>,
+    #[allow(non_snake_case)] proxyUrl: Option<String>,
 ) -> Result<SubscriptionQuota, String> {
     crate::services::coding_plan::get_coding_plan_quota(
         &base_url,
@@ -20,6 +21,7 @@ pub async fn get_coding_plan_quota(
         coding_plan_provider.as_deref(),
         team_organization_id.as_deref(),
         team_project_id.as_deref(),
+        proxyUrl.as_deref(),
     )
     .await
 }

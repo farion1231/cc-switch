@@ -1333,6 +1333,8 @@
     "quickSetModels": "Quick Set",
     "quickSetSuccess": "Model name applied to all roles",
     "advancedOptionsToggle": "Advanced Options",
+    "outboundProxyUrl": "Outbound API Proxy",
+    "outboundProxyUrlHint": "Balance queries and API calls for this provider will go through this proxy, overriding the global proxy. Leave empty to use the global proxy.",
     "advancedOptionsHint": "Includes API format, auth field, and model mapping. Defaults work for most use cases.",
     "categoryOfficial": "Official",
     "categoryCnOfficial": "Opensource Official",

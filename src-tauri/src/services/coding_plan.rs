@@ -110,8 +110,12 @@ fn make_error(msg: String) -> SubscriptionQuota {
 
 // ── Kimi For Coding ─────────────────────────────────────────
 
-async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_kimi(
+    api_key: &str,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
+) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     let resp = client
         .get("https://api.kimi.com/coding/v1/usages")
@@ -326,8 +330,13 @@ fn zhipu_quota_base(base_url: &str) -> &'static str {
     }
 }
 
-async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_zhipu(
+    base_url: &str,
+    api_key: &str,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
+) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
     let url = format!(
         "{}/api/monitor/usage/quota/limit",
         zhipu_quota_base(base_url)
@@ -420,8 +429,13 @@ fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
 
 // ── MiniMax ─────────────────────────────────────────────────
 
-async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_minimax(
+    api_key: &str,
+    is_cn: bool,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
+) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     let api_domain = if is_cn {
         "api.minimaxi.com"
@@ -505,8 +519,13 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
 
 // ── ZenMux ──────────────────────────────────────────────────
 
-async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_zenmux(
+    base_url: &str,
+    api_key: &str,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
+) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     let resp = client
         .get(base_url)
@@ -756,8 +775,12 @@ fn parse_opencode_go_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     tiers
 }
 
-async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_opencode_go(
+    api_key: &str,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
+) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     // 用量端点只认 `Authorization: Bearer`——与推理侧 /messages 只认
     // x-api-key 正好相反，不能互换。
@@ -1028,8 +1051,10 @@ async fn volcengine_openapi_call(
     access_key_id: &str,
     secret_access_key: &str,
     action: &str,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
 ) -> VolcCall {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::client_for(proxy_url);
     // canonical query 同时用于签名与实际 URL，确保两者逐字一致（否则签名不匹配）。
     let canonical_query = volcengine_canonical_query(action, region);
     let url = format!("https://{VOLCENGINE_OPENAPI_HOST}/?{canonical_query}");
@@ -1231,6 +1256,8 @@ async fn query_volcengine(
     base_url: &str,
     access_key_id: &str,
     secret_access_key: &str,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
 ) -> Result<SubscriptionQuota, String> {
     let region = volcengine_region(base_url);
     let mut soft_errors: Vec<String> = Vec::new();
@@ -1243,7 +1270,7 @@ async fn query_volcengine(
     };
 
     // 1) Agent Plan：GetAFPUsage
-    match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage").await {
+    match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage", proxy_url).await {
         VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
         VolcCall::Transient(detail) => return Err(format!("GetAFPUsage: {detail}")),
         VolcCall::Soft(detail) => soft_errors.push(format!("GetAFPUsage: {detail}")),
@@ -1269,6 +1296,7 @@ async fn query_volcengine(
         access_key_id,
         secret_access_key,
         "GetCodingPlanUsage",
+        proxy_url,
     )
     .await
     {
@@ -1331,8 +1359,10 @@ async fn query_zhipu_team(
     api_key: &str,
     organization_id: &str,
     project_id: &str,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
 ) -> Result<SubscriptionQuota, String> {
-    query_zhipu_team_at(ZHIPU_TEAM_QUOTA_URL, api_key, organization_id, project_id).await
+    query_zhipu_team_at(ZHIPU_TEAM_QUOTA_URL, api_key, organization_id, project_id, proxy_url).await
 }
 
 /// 团队版额度查询。`quota_url_base` 为不含 query 的 quota 端点；团队版与个人版同路径，
@@ -1342,8 +1372,10 @@ async fn query_zhipu_team_at(
     api_key: &str,
     organization_id: &str,
     project_id: &str,
+    // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
+    proxy_url: Option<&str>,
 ) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::client_for(proxy_url);
     let url = format!("{quota_url_base}?type=2");
 
     let resp = client
@@ -1409,6 +1441,7 @@ pub async fn get_coding_plan_quota(
     coding_plan_provider: Option<&str>,
     team_organization_id: Option<&str>,
     team_project_id: Option<&str>,
+    proxy_url: Option<&str>,
 ) -> Result<SubscriptionQuota, String> {
     // 智谱团队版：base_url 与个人版智谱（open.bigmodel.cn）相同，detect_provider 无法
     // 区分，必须靠显式 coding_plan_provider == "zhipu_team" 路由。需 api_key + 组织 ID
@@ -1424,7 +1457,7 @@ pub async fn get_coding_plan_quota(
                 "Zhipu team plan needs the API key + organization ID + project ID",
             ));
         }
-        return query_zhipu_team(api_key, organization_id, project_id).await;
+        return query_zhipu_team(api_key, organization_id, project_id, proxy_url).await;
     }
 
     let provider = match detect_provider(base_url) {
@@ -1443,7 +1476,7 @@ pub async fn get_coding_plan_quota(
                 "Volcengine usage query needs the account AccessKey ID + Secret (not the inference API key)",
             ));
         }
-        return query_volcengine(base_url, ak, sk).await;
+        return query_volcengine(base_url, ak, sk, proxy_url).await;
     }
 
     // 其余供应商：数据面 Bearer api_key。
@@ -1453,14 +1486,14 @@ pub async fn get_coding_plan_quota(
     }
 
     match provider {
-        CodingPlanProvider::Kimi => query_kimi(api_key).await,
+        CodingPlanProvider::Kimi => query_kimi(api_key, proxy_url).await,
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => {
-            query_zhipu(base_url, api_key).await
+            query_zhipu(base_url, api_key, proxy_url).await
         }
-        CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
-        CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
-        CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
-        CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
+        CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true, proxy_url).await,
+        CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false, proxy_url).await,
+        CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key, proxy_url).await,
+        CodingPlanProvider::OpencodeGo => query_opencode_go(api_key, proxy_url).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
@@ -2418,7 +2451,7 @@ mod tests {
         );
         let (base, captured, handle) = spawn_request_capturing_server(Some(resp));
 
-        let quota = query_zhipu_team_at(&base, "team-key", "org-xxx", "proj_xxx")
+        let quota = query_zhipu_team_at(&base, "team-key", "org-xxx", "proj_xxx", None)
             .await
             .expect("2xx + 合法 body 应成功");
         handle.join().expect("server thread");

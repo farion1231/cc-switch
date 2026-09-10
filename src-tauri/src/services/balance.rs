@@ -71,8 +71,8 @@ fn make_auth_error(status: reqwest::StatusCode) -> UsageResult {
 // GET https://api.deepseek.com/user/balance
 // Response: { balance_infos: [{ currency, total_balance, granted_balance, topped_up_balance }], is_available }
 
-async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_deepseek(api_key: &str, proxy_url: Option<&str>) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     let resp = client
         .get("https://api.deepseek.com/user/balance")
@@ -149,8 +149,8 @@ async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
 // GET https://api.stepfun.com/v1/accounts
 // Response: { object, type, balance, total_cash_balance, total_voucher_balance }
 
-async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_stepfun(api_key: &str, proxy_url: Option<&str>) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     let resp = client
         .get("https://api.stepfun.com/v1/accounts")
@@ -207,8 +207,12 @@ async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
 // GET https://api.siliconflow.cn/v1/user/info (or .com for EN)
 // Response: { code, data: { balance, chargeBalance, totalBalance, status } }
 
-async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_siliconflow(
+    api_key: &str,
+    is_cn: bool,
+    proxy_url: Option<&str>,
+) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     let domain = if is_cn {
         "api.siliconflow.cn"
@@ -284,8 +288,8 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
 // GET https://openrouter.ai/api/v1/credits
 // Response: { data: { total_credits, total_usage } }
 
-async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_openrouter(api_key: &str, proxy_url: Option<&str>) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     let resp = client
         .get("https://openrouter.ai/api/v1/credits")
@@ -350,8 +354,8 @@ async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
 // Response: { availableBalance, cashBalance, creditLimit, outstandingInvoices }
 // 金额单位：0.0001 USD
 
-async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_novita(api_key: &str, proxy_url: Option<&str>) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::client_for(proxy_url);
 
     let resp = client
         .get("https://api.novita.ai/v3/user/balance")
@@ -423,7 +427,11 @@ fn parse_f64_field(obj: &serde_json::Value, field: &str) -> Option<f64> {
 
 /// 查询余额。瞬时传输失败返回 `Err`（前端 reject → retry + 保留上次成功值），
 /// 确定性失败返回 `Ok(success:false)`（见模块级文档）。
-pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, String> {
+pub async fn get_balance(
+    base_url: &str,
+    api_key: &str,
+    proxy_url: Option<&str>,
+) -> Result<UsageResult, String> {
     if api_key.trim().is_empty() {
         return Ok(UsageResult {
             success: false,
@@ -444,11 +452,11 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
     };
 
     match provider {
-        BalanceProvider::DeepSeek => query_deepseek(api_key).await,
-        BalanceProvider::StepFun => query_stepfun(api_key).await,
-        BalanceProvider::SiliconFlow => query_siliconflow(api_key, true).await,
-        BalanceProvider::SiliconFlowEn => query_siliconflow(api_key, false).await,
-        BalanceProvider::OpenRouter => query_openrouter(api_key).await,
-        BalanceProvider::NovitaAI => query_novita(api_key).await,
+        BalanceProvider::DeepSeek => query_deepseek(api_key, proxy_url).await,
+        BalanceProvider::StepFun => query_stepfun(api_key, proxy_url).await,
+        BalanceProvider::SiliconFlow => query_siliconflow(api_key, true, proxy_url).await,
+        BalanceProvider::SiliconFlowEn => query_siliconflow(api_key, false, proxy_url).await,
+        BalanceProvider::OpenRouter => query_openrouter(api_key, proxy_url).await,
+        BalanceProvider::NovitaAI => query_novita(api_key, proxy_url).await,
     }
 }

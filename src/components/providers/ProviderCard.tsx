@@ -28,6 +28,7 @@ import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge"
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import {
   extractCodexBaseUrl,
+  extractCodexModelName,
   extractCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -165,6 +166,60 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
   return fallbackText;
 };
 
+/**
+ * 从供应商配置中提取“配置的模型版本”用于列表展示。
+ * 关键决策：各应用的模型存放字段不同，必须按 app 分派，而不是全局盲扫：
+ * - claude / claude-desktop: settingsConfig.env.ANTHROPIC_MODEL（Claude 官方约定的环境变量字段）
+ * - gemini: settingsConfig.env.GEMINI_MODEL（Gemini CLI 约定字段）
+ * - codex: settingsConfig.config 为 TOML 文本，顶层 model = "..."，复用既有的
+ *   extractCodexModelName 解析器（它是项目内唯一的 TOML model 权威提取点）
+ * - openclaw / hermes / pi: settingsConfig.models 为模型数组，取第一个条目的 id
+ *   作为代表（列表徽标只需示意首个配置模型，完整列表在编辑表单中）
+ * - opencode: settingsConfig.models 为 Record<id, model>，取第一个键
+ * 提取不到任何模型时返回 undefined，卡片上不渲染徽标。
+ */
+const extractConfiguredModel = (
+  provider: Provider,
+  appId: AppId,
+): string | undefined => {
+  const config = provider.settingsConfig as Record<string, any> | undefined;
+  if (config == null || typeof config !== "object") return undefined;
+
+  const firstString = (value: unknown): string | undefined =>
+    typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+
+  if (appId === "claude" || appId === "claude-desktop") {
+    return firstString(config.env?.ANTHROPIC_MODEL);
+  }
+  if (appId === "gemini") {
+    return firstString(config.env?.GEMINI_MODEL);
+  }
+  if (appId === "codex") {
+    if (typeof config.config !== "string") return undefined;
+    return extractCodexModelName(config.config);
+  }
+  if (appId === "openclaw" || appId === "hermes" || appId === "pi") {
+    if (!Array.isArray(config.models)) return undefined;
+    for (const model of config.models) {
+      if (model && typeof model === "object") {
+        const id = firstString((model as Record<string, unknown>).id);
+        if (id != null) return id;
+      }
+    }
+    return undefined;
+  }
+  if (appId === "opencode") {
+    if (config.models == null || typeof config.models !== "object") {
+      return undefined;
+    }
+    const firstKey = Object.keys(config.models).find(
+      (key) => key.trim() !== "",
+    );
+    return firstKey;
+  }
+  return undefined;
+};
+
 export function ProviderCard({
   provider,
   isCurrent,
@@ -245,6 +300,12 @@ export function ProviderCard({
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
+
+  // 配置的模型版本：仅在配置中真实声明了模型时展示，避免官方/OAuth 供应商出现空徽标
+  const configuredModelLabel = useMemo(
+    () => extractConfiguredModel(provider, appId),
+    [provider, appId],
+  );
 
   const openclawDefaultModelOptions = useMemo(() => {
     if (appId !== "openclaw") return [];
@@ -595,8 +656,21 @@ export function ProviderCard({
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
             ) : null}
+
           </div>
         </div>
+
+        {/* 配置的模型版本：展示在卡片中央、字体加大并居中，比地址行下方更直观 */}
+        {configuredModelLabel != null && (
+          <div className="flex min-w-0 flex-1 items-center justify-center px-2">
+            <span
+              className="inline-flex max-w-full items-center truncate text-base font-medium text-foreground"
+              title={configuredModelLabel}
+            >
+              {configuredModelLabel}
+            </span>
+          </div>
+        )}
 
         <div className="flex items-center ml-auto min-w-0 gap-3">
           <div className="ml-auto">

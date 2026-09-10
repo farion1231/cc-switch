@@ -19,6 +19,7 @@ import {
   type ManagedAuthProvider,
 } from "@/lib/api";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useTestProxy } from "@/hooks/useGlobalProxy";
 import type {
   ProviderCategory,
   ProviderMeta,
@@ -422,6 +423,7 @@ function ProviderFormFull({
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setOutboundProxyUrl(initialData?.meta?.outboundProxyUrl ?? "");
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -621,6 +623,10 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
+  const [outboundProxyUrl, setOutboundProxyUrl] = useState<string>(
+    () => initialData?.meta?.outboundProxyUrl ?? "",
+  );
+  const testProxy = useTestProxy();
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
       formatRequestOverrideObject(
@@ -1773,6 +1779,7 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
+      outboundProxyUrl: outboundProxyUrl.trim() || undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
@@ -2785,6 +2792,43 @@ function ProviderFormFull({
                 onPricingConfigChange={setPricingConfig}
               />
             )}
+
+          {/* 外部 API 代理：所有 app / 分类可用，放在提交按钮前 */}
+          <div className="rounded-lg border border-border-default p-4 space-y-2">
+            <div className="space-y-1">
+              <Label htmlFor="outboundProxyUrl">
+                {t("providerForm.outboundProxyUrl", {
+                  defaultValue: "外部 API 代理",
+                })}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.outboundProxyUrlHint", {
+                  defaultValue:
+                    "该供应商的余额查询与 API 调用将走此代理，覆盖全局外部代理。留空则使用全局代理。",
+                })}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <ImeSafeInput
+                id="outboundProxyUrl"
+                className="flex-1"
+                placeholder="http://127.0.0.1:7890"
+                value={outboundProxyUrl}
+                onValueChange={setOutboundProxyUrl}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!outboundProxyUrl.trim() || testProxy.isPending}
+                onClick={() => testProxy.mutate(outboundProxyUrl.trim())}
+              >
+                {testProxy.isPending
+                  ? t("common.testing", { defaultValue: "测试中..." })
+                  : t("settings.globalProxy.test", { defaultValue: "测试" })}
+              </Button>
+            </div>
+          </div>
 
           {showButtons && (
             <div className="flex justify-end gap-2">

@@ -18,6 +18,8 @@ export const subscriptionApi = {
     codingPlanProvider?: string,
     teamOrganizationId?: string,
     teamProjectId?: string,
+    // 供应商级外部 API 代理 URL（outboundProxyUrl），覆盖全局外部代理；不传走全局。
+    proxyUrl?: string,
   ): Promise<SubscriptionQuota> =>
     invoke("get_coding_plan_quota", {
       baseUrl,
@@ -27,10 +29,13 @@ export const subscriptionApi = {
       codingPlanProvider,
       teamOrganizationId,
       teamProjectId,
+      proxyUrl,
     }),
   getBalance: (
     baseUrl: string,
     apiKey: string,
+    // 供应商级外部 API 代理 URL（outboundProxyUrl），覆盖全局外部代理；不传走全局。
+    proxyUrl?: string,
   ): Promise<import("@/types").UsageResult> =>
-    invoke("get_balance", { baseUrl, apiKey }),
+    invoke("get_balance", { baseUrl, apiKey, proxyUrl }),
 };

@@ -568,7 +568,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const baseUrl = providerCredentials.baseUrl ?? "";
         const apiKey = providerCredentials.apiKey ?? "";
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const result = await subscriptionApi.getBalance(baseUrl, apiKey);
+        // 官方余额查询遵循供应商级外部 API 代理（outboundProxyUrl）
+        const result = await subscriptionApi.getBalance(baseUrl, apiKey, provider?.meta?.outboundProxyUrl);
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
             .map((d) =>
@@ -607,6 +608,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           ? (script.apiKey ?? "")
           : (providerCredentials.apiKey ?? "");
         const { subscriptionApi } = await import("@/lib/api/subscription");
+        // 供应商级外部 API 代理覆盖全局代理：余额 / coding plan 查询均透传。
+        const outboundProxyUrl = provider?.meta?.outboundProxyUrl;
         const quota = await subscriptionApi.getCodingPlanQuota(
           baseUrl,
           apiKey,
@@ -615,6 +618,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           isZhipuTeam ? script.codingPlanProvider : undefined,
           isZhipuTeam ? script.teamOrganizationId : undefined,
           isZhipuTeam ? script.teamProjectId : undefined,
+          outboundProxyUrl,
         );
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
@@ -687,6 +691,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         script.accessToken,
         script.userId,
         selectedTemplate as "custom" | "general" | "newapi" | undefined,
+        provider?.meta?.outboundProxyUrl,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
