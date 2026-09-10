@@ -95,6 +95,7 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
 
   it("Qwen presets should declare image/video input only for qwen3.8 models", () => {
     const mediaPresets = [
+      "千问AI平台",
       "千问AI平台 Token Plan",
       "QwenCloud",
       "QwenCloud Token Plan",

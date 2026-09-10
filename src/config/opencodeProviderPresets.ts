@@ -1817,7 +1817,18 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
         setCacheKey: true,
       },
-      models: {},
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+      },
     },
     category: "cn_official",
     icon: "qianwenai",
