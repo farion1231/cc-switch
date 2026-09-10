@@ -72,6 +72,13 @@ const XIAOMI_THINKING_COMPAT = {
   thinkingFormat: "deepseek",
 } as const;
 
+// DashScope's /compatible-mode/v1 returns reasoning in Qwen's own envelope and
+// rejects the `developer` role, so neither OpenAI nor DeepSeek thinking applies.
+const QWEN_THINKING_COMPAT = {
+  thinkingFormat: "qwen",
+  supportsDeveloperRole: false,
+} as const;
+
 const KIMI_K3_COMPAT = {
   supportsStore: false,
   supportsDeveloperRole: false,
@@ -1027,9 +1034,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("qwen/qwen3.8-max", {
-          id: "qwen3.8-max",
-        }),
+        {
+          ...piModel("qwen/qwen3.8-max", {
+            id: "qwen3.8-max",
+          }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
@@ -1050,8 +1060,14 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
-        piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
+        {
+          ...piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
@@ -1072,9 +1088,18 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
-        piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
-        piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+        {
+          ...piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
@@ -1116,9 +1141,18 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
-        piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
-        piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+        {
+          ...piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
