@@ -2046,6 +2046,13 @@ requires_openai_auth = true
         db.save_live_backup("claude-desktop", "{}")
             .await
             .expect("seed live backup");
+        // ephemeral 端口：避免与本机正在运行的 App（默认 15721）冲突
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
         {
             let mut config = db
                 .get_proxy_config_for_app("claude-desktop")
@@ -2057,7 +2064,7 @@ requires_openai_auth = true
                 .expect("update app proxy config");
         }
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -2105,7 +2112,10 @@ requires_openai_auth = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!(
+                "http://127.0.0.1:{}/claude-desktop",
+                proxy_info.port
+            )),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -4110,6 +4120,102 @@ wire_api = "responses"
             );
         });
     }
+
+    fn cursor_third_party_provider(id: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            "Cursor ThirdParty".to_string(),
+            json!({
+                "baseUrl": "https://api.kimi.com/v1",
+                "apiKey": "sk-kimi",
+                "modelCatalog": {
+                    "models": [
+                        { "model": "custom-k3", "displayName": "k3" }
+                    ]
+                }
+            }),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn switch_cursor_third_party_force_enables_takeover_and_public_route() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        let state = Arc::new(AppState::new(db.clone()));
+        // 端口置 0（临时端口），避免与本地/其他测试的 15721 冲突
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("set ephemeral proxy port");
+
+        let provider = cursor_third_party_provider("cursor-tp");
+        db.save_provider(AppType::Cursor.as_str(), &provider)
+            .expect("save cursor provider");
+
+        // Cursor 的 Base URL 走云端账户同步、本地写不进去，所以切换供应商时
+        // 必须强制开启「路由接管 + 公网路由」，否则该供应商在 Cursor 里不可用
+        // （与命令层一致走 spawn_blocking：switch 内部用 block_on 驱动异步操作）
+        let switch_state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            ProviderService::switch(&switch_state, AppType::Cursor, "cursor-tp")
+        })
+        .await
+        .expect("join switch task")
+        .expect("cursor provider switch should succeed");
+
+        let settings = crate::settings::get_settings();
+        assert!(
+            settings.public_route_enabled,
+            "切换 Cursor 第三方供应商必须强制开启公网路由"
+        );
+        assert!(
+            settings
+                .public_route_api_key
+                .as_deref()
+                .is_some_and(|k| !k.is_empty()),
+            "强制开启公网路由时必须保证鉴权密钥存在"
+        );
+
+        let taken_over = db
+            .get_live_backup(AppType::Cursor.as_str())
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+            || state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&AppType::Cursor);
+        assert!(taken_over, "切换 Cursor 第三方供应商必须强制开启路由接管");
+
+        state.proxy_service.stop().await.expect("stop proxy server");
+    }
+
+    #[test]
+    #[serial]
+    fn switch_cursor_official_provider_does_not_force_public_route() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            let mut provider = cursor_third_party_provider("cursor-official");
+            provider.category = Some("official".to_string());
+            state
+                .db
+                .save_provider(AppType::Cursor.as_str(), &provider)
+                .expect("save cursor official provider");
+
+            ProviderService::switch(state, AppType::Cursor, "cursor-official")
+                .expect("cursor official switch should succeed");
+
+            assert!(
+                !crate::settings::get_settings().public_route_enabled,
+                "官方供应商无需公网路由，不应强制开启"
+            );
+        });
+    }
 }
 
 impl ProviderService {
@@ -5108,13 +5214,14 @@ impl ProviderService {
         // restore backup. Serialize them per app, then decide from the locked
         // current state so a just-started takeover cannot be overwritten by a
         // normal live write.
-        let _switch_guard = if app_type.supports_local_proxy() {
-            Some(futures::executor::block_on(
-                state.proxy_service.lock_switch_for_app(app_type.as_str()),
-            ))
-        } else {
-            None
-        };
+        let _switch_guard =
+            if app_type.supports_local_proxy() || matches!(app_type, AppType::Cursor) {
+                Some(futures::executor::block_on(
+                    state.proxy_service.lock_switch_for_app(app_type.as_str()),
+                ))
+            } else {
+                None
+            };
 
         // Backup or live placeholders mean the live file is owned by proxy
         // takeover, even if the proxy server is temporarily stopped or is in the
@@ -5143,7 +5250,7 @@ impl ProviderService {
             ));
         }
 
-        if should_hot_switch {
+        let mut result = if should_hot_switch {
             // Proxy takeover mode: hot-switch without restoring upstream Live config.
             // The proxy layer may still refresh proxy-safe Live fields so client labels
             // follow the selected provider while endpoints remain local.
@@ -5162,11 +5269,73 @@ impl ProviderService {
 
             // The proxy server will route requests to the new provider via is_current.
             // MCP sync is intentionally skipped while Live config is owned by takeover.
-            return Ok(SwitchResult::default());
+            SwitchResult::default()
+        } else {
+            // Normal mode: full switch with Live config write
+            Self::switch_normal(state, app_type.clone(), id, &providers)?
+        };
+
+        // Cursor 第三方供应商：强制开启路由接管 + 公网路由（见函数注释）。
+        // set_takeover_for_app 会竞争同一把 per-app 切换锁，必须先释放守卫。
+        drop(_switch_guard);
+        Self::force_public_route_for_cursor(state, &app_type, _provider, &mut result.warnings);
+        Ok(result)
+    }
+
+    /// Cursor 的 Base URL / 模型设置走云端账户同步，本地无法程序化写入
+    /// （2026-08-05 实测确认），所以第三方供应商只有经「路由接管 + 公网路由
+    /// 隧道」才能在 Cursor 里实际可用。切换 Cursor 第三方供应商时强制开启两者。
+    ///
+    /// 失败不阻断切换本身：记录 warning 引导用户去「设置 → 路由」手动处理。
+    /// 官方供应商（category = official）不强制——其不经过本地代理。
+    fn force_public_route_for_cursor(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+        warnings: &mut Vec<String>,
+    ) {
+        if !matches!(app_type, AppType::Cursor) || provider.category.as_deref() == Some("official")
+        {
+            return;
+        }
+        use futures::executor::block_on;
+
+        // 1) 路由接管（内部会自动启动本地代理；已接管时幂等）
+        if let Err(e) = block_on(state.proxy_service.set_takeover_for_app("cursor", true)) {
+            log::warn!("[Cursor] 切换供应商后强制开启路由接管失败: {e}");
+            warnings.push(format!(
+                "已切换供应商，但开启 Cursor 路由接管失败：{e}。请到「设置 → 路由」手动开启接管与公网路由，否则 Cursor 无法使用该供应商。"
+            ));
+            return;
         }
 
-        // Normal mode: full switch with Live config write
-        Self::switch_normal(state, app_type, id, &providers)
+        // 2) 公网路由开关 + 保证隧道鉴权密钥存在
+        let mut settings = crate::settings::get_settings();
+        settings.public_route_enabled = true;
+        if settings
+            .public_route_api_key
+            .as_deref()
+            .map(str::is_empty)
+            .unwrap_or(true)
+        {
+            settings.public_route_api_key = Some(crate::settings::generate_public_route_api_key());
+        }
+        if let Err(e) = crate::settings::update_settings(settings) {
+            log::warn!("[Cursor] 保存公网路由设置失败: {e}");
+            warnings.push(format!(
+                "已开启 Cursor 路由接管，但保存公网路由设置失败：{e}。请到「设置 → 路由 → 公网路由」手动开启。"
+            ));
+        } else {
+            // 3) 启动公网隧道。单测环境跳过真实 cloudflared 进程（避免下载
+            //    二进制 / 残留子进程）；隧道失败同样不阻断切换。
+            #[cfg(not(test))]
+            if let Err(e) = block_on(state.proxy_service.start_public_route_tunnel()) {
+                log::warn!("[Cursor] 公网隧道启动失败: {e}");
+                warnings.push(format!(
+                    "已开启 Cursor 路由接管与公网路由，但公网隧道启动失败：{e}。可到「设置 → 路由 → 公网路由」查看原因并重试。"
+                ));
+            }
+        }
     }
 
     /// Normal switch flow (non-proxy mode)
@@ -5681,6 +5850,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Cursor => Ok(String::new()), // Cursor doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
         }
     }
@@ -5699,6 +5869,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Cursor => Ok(String::new()), // Cursor doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
         }
     }
@@ -6465,6 +6636,16 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Cursor => {
+                // Cursor: accept any JSON object (env vars)
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.cursor.settings.not_object",
+                        "Cursor 配置必须是 JSON 对象",
+                        "Cursor configuration must be a JSON object",
+                    ));
+                }
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -6692,6 +6873,37 @@ impl ProviderService {
                     .get("baseUrl")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Cursor => {
+                // Cursor uses a flat canonical settingsConfig: { baseUrl, apiKey, model }
+                let settings = &provider.settings_config;
+                let api_key = settings
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.cursor.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = settings
+                    .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.cursor.base_url.missing",
+                            "缺少 Base URL 配置",
+                            "Missing Base URL configuration",
+                        )
+                    })?
                     .to_string();
 
                 Ok((api_key, base_url))

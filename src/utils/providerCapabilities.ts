@@ -101,6 +101,19 @@ export function supportsOfficialProxyTakeover(
 }
 
 /**
+ * Cursor 非 official 供应商在开启 Cursor 路由接管后，需公网路由隧道才能
+ * 被 Cursor 云端访问（Cursor 云端 SSRF 拦私网）。未开启接管时可直连第三方
+ * OpenAI 格式接口，无需公网路由。
+ * 当前仅用于 ProviderCard badge（切换警告走 providerNeedsRouting）。
+ */
+export function providerNeedsPublicRoute(
+  appId: AppId,
+  provider: Pick<Provider, "category">,
+): boolean {
+  return appId === "cursor" && provider.category !== "official";
+}
+
+/**
  * 供应商在指定应用下是否必须开启路由接管才能正常工作（badge 与切换警告共用的权威谓词）。
  *
  * 权威信号是 `providerType`：托管 OAuth 供应商的凭据由本地代理按请求注入
@@ -112,6 +125,9 @@ export function supportsOfficialProxyTakeover(
  *   direct 逃生口（后端同样拒绝），始终需要本地路由。
  * - claude / codex / grokbuild 的托管 OAuth 同样恒需路由；非 OAuth 则按
  *   各自原生格式及完整 URL 模式判断是否需要本地处理。
+ * - Cursor 非 official 供应商可直连第三方 OpenAI 格式接口，不强制路由；
+ *   仅在用户开启 Cursor 路由接管时才需要配合公网路由隧道
+ *   （见 providerNeedsPublicRoute，用于 badge 提示）。
  */
 export function providerNeedsRouting(
   appId: AppId,

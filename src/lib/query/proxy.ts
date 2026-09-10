@@ -65,6 +65,95 @@ export function useSetProxyTakeoverForApp() {
   });
 }
 
+// ========== 公网路由 Hooks ==========
+
+/**
+ * 获取公网路由状态（隧道运行时轮询，用于拿到公网地址）
+ */
+export function usePublicRouteStatus() {
+  return useQuery({
+    queryKey: ["publicRouteStatus"],
+    queryFn: () => proxyApi.getPublicRouteStatus(),
+    // 启用期间持续轮询，等待隧道就绪（公网地址出现）
+    refetchInterval: (query) => (query.state.data?.enabled ? 2000 : false),
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+/**
+ * 保存公网路由隧道配置（模式 + 命名隧道参数）
+ */
+export function useSetPublicRouteTunnelConfig() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (config: {
+      mode: string;
+      namedTunnel?: string | null;
+      namedHostname?: string | null;
+    }) => proxyApi.setPublicRouteTunnelConfig(config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["publicRouteStatus"] });
+    },
+  });
+}
+
+/**
+ * 列出 Cloudflare 账户下已有的命名隧道
+ */
+export function useListNamedTunnels(enabled: boolean) {
+  return useQuery({
+    queryKey: ["namedTunnels"],
+    queryFn: () => proxyApi.listNamedTunnels(),
+    enabled,
+    retry: false,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * 启用公网路由
+ */
+export function useEnablePublicRoute() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => proxyApi.enablePublicRoute(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["publicRouteStatus"] });
+    },
+  });
+}
+
+/**
+ * 禁用公网路由
+ */
+export function useDisablePublicRoute() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => proxyApi.disablePublicRoute(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["publicRouteStatus"] });
+    },
+  });
+}
+
+/**
+ * 重新生成公网路由隧道鉴权密钥（ccsk-*）。
+ * 返回最新状态（含新 key）；Cursor 的 key 无法自动写入，前端负责复制并引导重新粘贴。
+ */
+export function useRegeneratePublicRouteApiKey() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => proxyApi.regeneratePublicRouteApiKey(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["publicRouteStatus"] });
+    },
+  });
+}
+
 // ========== v3+ 全局/应用级配置 Hooks ==========
 
 /**

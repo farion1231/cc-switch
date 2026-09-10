@@ -85,6 +85,8 @@ describe("useProxyStatus", () => {
           grokbuild: false,
           opencode: false,
           openclaw: false,
+          hermes: false,
+          cursor: false,
         });
       }
 

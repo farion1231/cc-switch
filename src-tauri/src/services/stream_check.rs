@@ -185,6 +185,14 @@ impl StreamCheckService {
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
+            // Cursor stores base_url in flat format: { baseUrl, apiKey, model }
+            AppType::Cursor => provider
+                .settings_config
+                .get("baseUrl")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.trim_end_matches('/').to_string())
+                .ok_or_else(|| AppError::Message("Cursor 供应商缺少 baseUrl 配置".to_string())),
             _ => get_adapter(app_type)
                 .ok_or_else(|| {
                     AppError::InvalidInput(format!(

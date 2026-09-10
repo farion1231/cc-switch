@@ -67,7 +67,8 @@ impl Database {
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cursor BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -97,6 +98,7 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cursor BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -124,7 +126,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -549,6 +551,16 @@ impl Database {
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
                     }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（添加 Cursor IDE 支持）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（proxy_config 添加 Cursor 支持）");
+                        Self::migrate_v19_to_v20(conn)?;
+                        Self::set_user_version(conn, 20)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -880,7 +892,7 @@ impl Database {
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1442,7 +1454,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "CREATE TABLE proxy_config_v14 (
-                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
                 proxy_enabled INTEGER NOT NULL DEFAULT 0,
                 listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
                 listen_port INTEGER NOT NULL DEFAULT 15721,
@@ -1596,6 +1608,101 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// v18 -> v19: 添加 Cursor IDE 支持（新增 enabled_cursor 列）
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        // ALTER TABLE … ADD COLUMN 在 SQLite 中不能 IF NOT EXISTS，
+        // 手动检查 sqlite_master 中的列列表以避免重复运行报错。
+        fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, AppError> {
+            let result: String = conn
+                .query_row(
+                    &format!("SELECT sql FROM sqlite_master WHERE type='table' AND name='{table}'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AppError::Database(format!("查询 {table} 表结构失败: {e}")))?;
+            Ok(result.contains(column))
+        }
+
+        // 为 mcp_servers 表添加 enabled_cursor 列（表不存在时跳过：
+        // 旧版本最小化测试夹具不建该表；真实库中表自 v1 起存在）
+        if Self::table_exists(conn, "mcp_servers")?
+            && !column_exists(conn, "mcp_servers", "enabled_cursor")?
+        {
+            conn.execute(
+                "ALTER TABLE mcp_servers ADD COLUMN enabled_cursor BOOLEAN NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| {
+                AppError::Database(format!("添加 mcp_servers.enabled_cursor 列失败: {e}"))
+            })?;
+            log::info!("Migration v19: Added enabled_cursor column to mcp_servers table");
+        }
+
+        // 为 skills 表添加 enabled_cursor 列
+        if Self::table_exists(conn, "skills")? && !column_exists(conn, "skills", "enabled_cursor")?
+        {
+            conn.execute(
+                "ALTER TABLE skills ADD COLUMN enabled_cursor BOOLEAN NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("添加 skills.enabled_cursor 列失败: {e}")))?;
+            log::info!("Migration v19: Added enabled_cursor column to skills table");
+        }
+
+        Ok(())
+    }
+
+    /// v19 -> v20: proxy_config 表添加 Cursor 支持
+    fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
+        // proxy_config 表不存在时跳过（旧版本最小化测试夹具不建该表）
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+        // proxy_config 表的 CHECK 约束不包含 'cursor'，需要重建表来更新约束
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS proxy_config_v20 (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            INSERT OR IGNORE INTO proxy_config_v20 SELECT * FROM proxy_config;
+
+            -- Insert Cursor default row
+            INSERT OR IGNORE INTO proxy_config_v20 (
+                app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests
+            ) VALUES ('cursor', 3, 60, 120, 600, 4, 2, 60, 0.6, 10);
+
+            DROP TABLE proxy_config;
+            ALTER TABLE proxy_config_v20 RENAME TO proxy_config;"
+        )
+        .map_err(|e| AppError::Database(format!("迁移 proxy_config 支持 Cursor 失败: {e}")))?;
+
+        log::info!("Migration v20: Added Cursor support to proxy_config table");
         Ok(())
     }
 

@@ -89,6 +89,7 @@ impl ConfigService {
         Self::sync_current_provider_for_app(config, &AppType::Codex)?;
         Self::sync_current_provider_for_app(config, &AppType::Gemini)?;
         Self::sync_current_provider_for_app(config, &AppType::GrokBuild)?;
+        Self::sync_current_provider_for_app(config, &AppType::Cursor)?;
         Ok(())
     }
 
@@ -137,6 +138,9 @@ impl ConfigService {
             }
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
+            }
+            AppType::Cursor => {
+                crate::cursor_config::set_provider(&provider.settings_config)?;
             }
             AppType::Pi => {
                 // Pi owns its shared models/settings documents; this legacy

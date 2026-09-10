@@ -50,6 +50,7 @@ export interface ProxyTakeoverStatus {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  cursor: boolean;
 }
 
 export interface ProviderHealth {
@@ -122,6 +123,32 @@ export interface GlobalProxyConfig {
   listenAddress: string;
   listenPort: number;
   enableLogging: boolean;
+}
+
+// 公网路由状态（隧道 + 配置，后端 serde camelCase）
+// 隧道是共享基础设施：把本地路由暴露到公网，Cursor 等支持自定义
+// Base URL 的应用都可以接入（当前以 Cursor 为主要消费者）。
+export interface PublicRouteStatus {
+  enabled: boolean;
+  /** 公网路由隧道鉴权密钥（ccsk-*），需填到 Cursor 的 OpenAI API Key 输入框 */
+  apiKey: string | null;
+  tunnelRunning: boolean;
+  publicUrl: string | null;
+  localUrl: string | null;
+  tunnelError: string | null;
+  currentProviderName: string | null;
+  /** 隧道模式："quick"（免账号，URL 每次变化）| "named"（固定域名） */
+  tunnelMode: string;
+  /** 命名隧道名（tunnelMode = named 时） */
+  namedTunnel: string | null;
+  /** 命名隧道域名（tunnelMode = named 时） */
+  namedHostname: string | null;
+}
+
+// 命名隧道信息（cloudflared tunnel list）
+export interface NamedTunnel {
+  id: string;
+  name: string;
 }
 
 // 应用级代理配置（每个 app 独立）
