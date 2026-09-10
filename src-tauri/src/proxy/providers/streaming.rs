@@ -145,6 +145,28 @@ fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Val
     })
 }
 
+fn close_open_content_blocks(
+    current_non_tool_block_index: &mut Option<u32>,
+    current_non_tool_block_type: &mut Option<&'static str>,
+    open_tool_block_indices: &mut HashSet<u32>,
+) -> Vec<Value> {
+    let mut events = Vec::new();
+
+    if let Some(index) = current_non_tool_block_index.take() {
+        events.push(json!({"type": "content_block_stop", "index": index}));
+    }
+    *current_non_tool_block_type = None;
+
+    let mut tool_indices: Vec<u32> = open_tool_block_indices.drain().collect();
+    tool_indices.sort_unstable();
+    events.extend(
+        tool_indices
+            .into_iter()
+            .map(|index| json!({"type": "content_block_stop", "index": index})),
+    );
+    events
+}
+
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -190,6 +212,16 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
                                     if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
+                                        for event in close_open_content_blocks(
+                                            &mut current_non_tool_block_index,
+                                            &mut current_non_tool_block_type,
+                                            &mut open_tool_block_indices,
+                                        ) {
+                                            let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                serde_json::to_string(&event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse_data));
+                                        }
+
                                         let event = build_message_delta_event(stop_reason, usage_json);
                                         let sse_data = format!("event: message_delta\ndata: {}\n\n",
                                             serde_json::to_string(&event).unwrap_or_default());
@@ -528,17 +560,6 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                             has_emitted_message_delta = true;
 
-                                            if let Some(index) = current_non_tool_block_index.take() {
-                                                let event = json!({
-                                                    "type": "content_block_stop",
-                                                    "index": index
-                                                });
-                                                let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
-                                            }
-                                            current_non_tool_block_type = None;
-
                                             // Late start for blocks that accumulated args before id/name arrived.
                                             let mut late_tool_starts: Vec<(u32, String, String, String)> =
                                                 Vec::new();
@@ -601,22 +622,6 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 }
                                             }
 
-                                            if !open_tool_block_indices.is_empty() {
-                                                let mut tool_indices: Vec<u32> =
-                                                    open_tool_block_indices.iter().copied().collect();
-                                                tool_indices.sort_unstable();
-                                                for index in tool_indices {
-                                                    let event = json!({
-                                                        "type": "content_block_stop",
-                                                        "index": index
-                                                    });
-                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                }
-                                                open_tool_block_indices.clear();
-                                            }
-
                                             // 缓存 message_delta，等到 [DONE] 时发送（以便收集完整的 usage）
                                             pending_message_delta = Some((stop_reason, usage_json));
                                         }
@@ -650,6 +655,16 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
             let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
                 pending_message_delta.take()
             {
+                for event in close_open_content_blocks(
+                    &mut current_non_tool_block_index,
+                    &mut current_non_tool_block_type,
+                    &mut open_tool_block_indices,
+                ) {
+                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                        serde_json::to_string(&event).unwrap_or_default());
+                    yield Ok(Bytes::from(sse_data));
+                }
+
                 let event = build_message_delta_event(stop_reason, usage_json);
                 let sse_data = format!("event: message_delta\ndata: {}\n\n",
                     serde_json::to_string(&event).unwrap_or_default());
@@ -1017,6 +1032,54 @@ mod tests {
             .filter(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop"))
             .count();
         assert_eq!(message_stops, 1, "message_stop must only be emitted once");
+    }
+
+    #[tokio::test]
+    async fn test_repeated_finish_reason_does_not_split_text_content_block() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_qwen\",\"model\":\"qwen3.7-plus\",\"choices\":[{\"delta\":{\"content\":\"Hi! How can\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_qwen\",\"choices\":[{\"delta\":{\"content\":\" I help you\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_qwen\",\"choices\":[{\"delta\":{\"content\":\" today?\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let text_starts: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|value| value.as_str())
+                        == Some("text")
+            })
+            .collect();
+        let text_deltas: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event
+                    .pointer("/delta/type")
+                    .and_then(|value| value.as_str())
+                    == Some("text_delta")
+            })
+            .collect();
+        let text_stops = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_stop") && event["index"] == 0)
+            .count();
+
+        assert_eq!(text_starts.len(), 1);
+        assert_eq!(text_stops, 1);
+        assert_eq!(text_deltas.len(), 3);
+        assert_eq!(
+            text_deltas
+                .iter()
+                .filter_map(|event| event
+                    .pointer("/delta/text")
+                    .and_then(|value| value.as_str()))
+                .collect::<String>(),
+            "Hi! How can I help you today?"
+        );
     }
 
     #[tokio::test]
