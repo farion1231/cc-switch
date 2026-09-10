@@ -461,6 +461,13 @@ pub struct ProviderMeta {
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
+    /// Claude Desktop proxy 模式的主路由：UI 第一行模型的 route ID。
+    /// 角色缺失回退时优先使用它，避免按字母排序回退到非用户主模型。
+    #[serde(
+        rename = "claudeDesktopPrimaryRoute",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_desktop_primary_route: Option<String>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,

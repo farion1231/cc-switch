@@ -736,6 +736,16 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
                         })
                         .flatten()
                 })
+                // 用户可以只配置一个模型，或删去不需要的角色。Claude Desktop 的
+                // 内部任务仍可能请求 Opus/Haiku 等角色；这时回退到用户显式配置的主
+                // 路由（UI 第一行，保存时持久化到 meta）。路由表按 route_id 字母序
+                // 排序，直接取第一条可能落到非用户主模型（如 opus 排在 sonnet 前），
+                // 因此优先使用显式主路由；旧配置没有该字段时才退回排序首条。
+                .or_else(|| {
+                    primary_route_id(provider)
+                        .and_then(|primary| routes.iter().find(|route| route.route_id == primary))
+                        .or_else(|| routes.first())
+                })
                 .map(|route| route.upstream_model.clone())
         })
         .ok_or_else(|| {
@@ -763,6 +773,18 @@ fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
         return trimmed[..trimmed.len() - marker.len()].trim_end();
     }
     trimmed
+}
+
+/// 用户在 UI 中显式配置的主路由（第一行模型的 route ID）。旧配置没有该字段
+/// 时返回 None，调用方退回按字母排序的首条路由以保持向后兼容。
+fn primary_route_id(provider: &Provider) -> Option<String> {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.claude_desktop_primary_route.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn legacy_raw_route_upstream_model(provider: &Provider, requested: &str) -> Option<String> {
@@ -1040,6 +1062,11 @@ fn build_gateway_profile(
     if let Some(model_specs) = model_specs {
         profile["inferenceModels"] =
             Value::Array(model_specs.iter().map(inference_model_json).collect());
+        // CCSwitch 会完整重写此 profile。保留 Claude Desktop 的 1M 偏好，避免
+        // 用户每次保存供应商后都需要重新在客户端中手动开启它。
+        if model_specs.iter().any(|spec| spec.supports_1m) {
+            profile["modelPrefer1mContext"] = json!(true);
+        }
     }
 
     profile
@@ -1571,6 +1598,7 @@ mod tests {
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
+        assert_eq!(profile["modelPrefer1mContext"], json!(true));
         assert_ne!(profile["inferenceGatewayApiKey"], json!("test-token"));
         assert!(profile["inferenceGatewayApiKey"]
             .as_str()
@@ -1607,6 +1635,7 @@ mod tests {
                 profile["inferenceModels"],
                 json!([{ "name": "claude-sonnet-4-6", "labelOverride": "GPT-5.4" }])
             );
+            assert!(profile.get("modelPrefer1mContext").is_none());
         }
     }
 
@@ -1625,9 +1654,9 @@ mod tests {
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
 
-        let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
+        let err = map_proxy_request_model(json!({"model": "gpt-5"}), &provider)
             .expect_err("unknown route should fail");
-        assert!(err.to_string().contains("claude-opus-4-8"));
+        assert!(err.to_string().contains("gpt-5"));
     }
 
     #[test]
@@ -1739,8 +1768,8 @@ mod tests {
     }
 
     #[test]
-    fn claude_desktop_proxy_fable_without_opus_route_still_errors() {
-        // 没有 opus 档可回落时保持精确报错语义，不静默落到其他档。
+    fn claude_desktop_proxy_missing_role_falls_back_to_primary_route() {
+        // 用户只配置一个模型时，Desktop 的 Fable 等内部请求应回退到主模型。
         let mut provider = proxy_provider("proxy");
         provider
             .meta
@@ -1755,12 +1784,85 @@ mod tests {
             },
         )]);
 
-        let err = map_proxy_request_model(
+        let mapped = map_proxy_request_model(
             json!({"model": "claude-fable-5", "messages": []}),
             &provider,
         )
-        .expect_err("fable without an opus route should fail");
-        assert!(err.to_string().contains("claude-fable-5"));
+        .expect("fable without a dedicated route should use the primary model");
+        assert_eq!(mapped["model"], json!("upstream-sonnet"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_fallback_uses_explicit_primary_route() {
+        // 回归:路由表按 route_id 字母序排序后 claude-opus-* 排在 claude-sonnet-*
+        // 之前。用户把 Sonnet 配为主模型(第一行)、Opus 配在第二行时,缺失角色
+        // 的回退必须命中显式主路由,而不是排序首条的 Opus。
+        let mut provider = proxy_provider("proxy");
+        {
+            let meta = provider.meta.as_mut().expect("meta");
+            meta.claude_desktop_model_routes = std::collections::HashMap::from([
+                (
+                    "claude-sonnet-5".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "upstream-sonnet".to_string(),
+                        label_override: None,
+                        supports_1m: Some(true),
+                    },
+                ),
+                (
+                    "claude-opus-5".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "upstream-opus".to_string(),
+                        label_override: None,
+                        supports_1m: Some(true),
+                    },
+                ),
+            ]);
+            meta.claude_desktop_primary_route = Some("claude-sonnet-5".to_string());
+        }
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5", "messages": []}),
+            &provider,
+        )
+        .expect("missing role should fall back to the explicit primary route");
+        assert_eq!(mapped["model"], json!("upstream-sonnet"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_fallback_without_primary_keeps_sorted_first() {
+        // 旧配置没有 claudeDesktopPrimaryRoute 字段时,保持原行为:回退到
+        // 字母序首条路由(此处为 Opus),保证向后兼容。
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-sonnet-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-sonnet".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-opus-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-opus".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+        ]);
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5", "messages": []}),
+            &provider,
+        )
+        .expect("legacy config should keep the sorted-first fallback");
+        assert_eq!(mapped["model"], json!("upstream-opus"));
     }
 
     #[test]
