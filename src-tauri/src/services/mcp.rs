@@ -75,16 +75,35 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
-        if let Some(server) = state
+        let previous_enabled = match state.db.get_all_mcp_servers()?.get(server_id) {
+            Some(server) => server.apps.is_enabled_for(&app),
+            None => return Ok(()),
+        };
+        let Some(server) = state
             .db
             .update_mcp_server_app_enabled(server_id, &app, enabled)?
-        {
-            // 同步到对应应用
-            if enabled {
-                Self::sync_server_to_app(state, &server, &app)?;
-            } else {
-                Self::remove_server_from_app(state, server_id, &app)?;
+        else {
+            return Ok(());
+        };
+
+        // 数据库是 UI 的事实来源。若 live 配置投影失败，恢复该应用的
+        // 原勾选状态，不能留下“已勾选但 config.toml 中没有”的假启用状态。
+        let projection = if enabled {
+            Self::sync_server_to_app(state, &server, &app)
+        } else {
+            Self::remove_server_from_app(state, server_id, &app)
+        };
+        if let Err(projection_error) = projection {
+            if let Err(rollback_error) =
+                state
+                    .db
+                    .update_mcp_server_app_enabled(server_id, &app, previous_enabled)
+            {
+                return Err(AppError::Message(format!(
+                    "MCP 投影失败: {projection_error}; 回滚数据库状态失败: {rollback_error}"
+                )));
             }
+            return Err(projection_error);
         }
 
         Ok(())

@@ -7,6 +7,7 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
 use crate::error::AppError;
@@ -17,6 +18,14 @@ fn should_sync_codex_mcp() -> bool {
     // Codex 未安装/未初始化时：~/.codex 目录不存在。
     // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
     crate::codex_config::get_codex_config_dir().exists()
+}
+
+/// Serialize the read-modify-write operations on Codex's shared config.toml.
+/// Individual MCP toggles can arrive concurrently from the UI; without this
+/// guard, each writer can parse the same old document and lose the other's row.
+fn codex_mcp_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
@@ -287,6 +296,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
+    let _guard = codex_mcp_write_lock().lock()?;
     use toml_edit::{Item, Table};
 
     // 1) 收集启用项（Codex 维度）
@@ -424,6 +434,7 @@ pub fn sync_single_server_to_codex(
     if !should_sync_codex_mcp() {
         return Ok(());
     }
+    let _guard = codex_mcp_write_lock().lock()?;
 
     // 读取现有的 config.toml
     let config_path = crate::codex_config::get_codex_config_path();
@@ -467,6 +478,7 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
+    let _guard = codex_mcp_write_lock().lock()?;
     let config_path = crate::codex_config::get_codex_config_path();
 
     if !config_path.exists() {
