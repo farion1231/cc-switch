@@ -66,6 +66,9 @@ pub struct DeepLinkImportRequest {
     /// Optional model name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Whether the imported Codex provider supports downstream WebSocket transport
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_websockets: Option<bool>,
     /// Optional notes/description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
