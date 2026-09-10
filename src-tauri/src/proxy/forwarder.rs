@@ -2674,10 +2674,7 @@ impl RequestForwarder {
 
         let model = body.get("model").and_then(|value| value.as_str());
         if let Some(model_id) = model {
-            if self
-                .is_copilot_openai_vendor_model(provider, model_id)
-                .await
-            {
+            if self.is_copilot_responses_model(provider, model_id).await {
                 return "openai_responses".to_string();
             }
         }
@@ -2728,7 +2725,7 @@ impl RequestForwarder {
         }
     }
 
-    async fn is_copilot_openai_vendor_model(&self, provider: &Provider, model_id: &str) -> bool {
+    async fn is_copilot_responses_model(&self, provider: &Provider, model_id: &str) -> bool {
         let Some(app_handle) = &self.app_handle else {
             log::debug!("[Copilot] AppHandle unavailable, fallback to chat/completions");
             return false;
@@ -2741,26 +2738,22 @@ impl RequestForwarder {
             .as_ref()
             .and_then(|m| m.managed_account_id_for("github_copilot"));
 
-        let vendor_result = match account_id.as_deref() {
-            Some(id) => {
-                copilot_auth
-                    .get_model_vendor_for_account(id, model_id)
-                    .await
-            }
-            None => copilot_auth.get_model_vendor(model_id).await,
+        let model_result = match account_id.as_deref() {
+            Some(id) => copilot_auth.get_model_for_account(id, model_id).await,
+            None => copilot_auth.get_model(model_id).await,
         };
 
-        match vendor_result {
-            Ok(Some(vendor)) => vendor.eq_ignore_ascii_case("openai"),
+        match model_result {
+            Ok(Some(model)) => copilot_model_uses_responses(&model),
             Ok(None) => {
                 log::debug!(
-                    "[Copilot] Model vendor unavailable for {model_id}, fallback to chat/completions"
+                    "[Copilot] Model metadata unavailable for {model_id}, fallback to chat/completions"
                 );
                 false
             }
             Err(err) => {
                 log::warn!(
-                    "[Copilot] Failed to resolve model vendor for {model_id}, fallback to chat/completions: {err}"
+                    "[Copilot] Failed to resolve model metadata for {model_id}, fallback to chat/completions: {err}"
                 );
                 false
             }
@@ -3211,6 +3204,14 @@ fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Opt
     };
 
     (rewritten, passthrough_query)
+}
+
+fn copilot_model_uses_responses(model: &super::providers::copilot_auth::CopilotModel) -> bool {
+    model
+        .supported_endpoints
+        .iter()
+        .any(|endpoint| endpoint == "/responses")
+        || model.supported_endpoints.is_empty() && model.vendor.eq_ignore_ascii_case("openai")
 }
 
 fn rewrite_claude_transform_endpoint(
@@ -4343,6 +4344,38 @@ mod tests {
             Some("openai_chat"),
             true
         ));
+    }
+
+    #[test]
+    fn copilot_responses_capability_overrides_vendor() {
+        use super::super::providers::copilot_auth::CopilotModel;
+
+        let responses_only = CopilotModel {
+            id: "vendor-model".to_string(),
+            name: "Vendor Model".to_string(),
+            vendor: "Other".to_string(),
+            model_picker_enabled: true,
+            supported_endpoints: vec!["/responses".to_string()],
+        };
+        assert!(copilot_model_uses_responses(&responses_only));
+
+        let legacy_openai = CopilotModel {
+            id: "legacy-openai-model".to_string(),
+            name: "Legacy OpenAI Model".to_string(),
+            vendor: "OpenAI".to_string(),
+            model_picker_enabled: true,
+            supported_endpoints: vec![],
+        };
+        assert!(copilot_model_uses_responses(&legacy_openai));
+
+        let chat_only_openai = CopilotModel {
+            id: "chat-only-model".to_string(),
+            name: "Chat Only Model".to_string(),
+            vendor: "OpenAI".to_string(),
+            model_picker_enabled: true,
+            supported_endpoints: vec!["/chat/completions".to_string()],
+        };
+        assert!(!copilot_model_uses_responses(&chat_only_openai));
     }
 
     #[test]
