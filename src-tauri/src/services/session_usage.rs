@@ -502,6 +502,9 @@ fn sync_single_file(
     let mut read_error: Option<String> = None;
     let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
     let mut current_session_id: Option<String> = None;
+    // 会话内出现过的真实模型（assistant 行 message.model 与 cost-state 的
+    // modelUsage 键），用于给 message.model 为空串的行归因。
+    let mut model_hints: Vec<String> = Vec::new();
 
     loop {
         buf.clear();
@@ -539,6 +542,16 @@ fn sync_single_file(
             }
         }
 
+        // cost-state 的 modelUsage 键是 Claude Code 自己记账的会话级
+        // 模型清单，是网关回显空 model 时唯一的模型线索来源之一。
+        if value.get("type").and_then(|t| t.as_str()) == Some("cost-state") {
+            if let Some(mu) = value.get("modelUsage").and_then(|v| v.as_object()) {
+                for key in mu.keys() {
+                    model_hints.push(normalize_session_model_hint(key));
+                }
+            }
+        }
+
         // 只处理 assistant 类型的消息
         if value.get("type").and_then(|t| t.as_str()) != Some("assistant") {
             continue;
@@ -559,13 +572,25 @@ fn sync_single_file(
             None => continue,
         };
 
+        let raw_model = message
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(ref m) = raw_model {
+            if !is_placeholder_model(m) {
+                model_hints.push(m.clone());
+            }
+        }
+        // 空/占位 model 的真实值在解析循环结束后由
+        // resolve_session_fallback_model 统一回填（线索在后面出现的
+        // cost-state / assistant 行里也成立，不能只看当前行之前的内容）。
+        let model = raw_model.unwrap_or_else(String::new);
+
         let parsed = ParsedAssistantUsage {
             message_id: msg_id.clone(),
-            model: message
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
+            model,
             input_tokens: usage
                 .get("input_tokens")
                 .and_then(|v| v.as_u64())
@@ -619,6 +644,18 @@ fn sync_single_file(
     // 避免逐条插入时反复抢占连接锁
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
+
+    // 网关回显空 model 的行归因：本批次收集到的会话级模型线索若收敛到
+    // 唯一非占位模型，则把所有空 model 的行归到该模型；否则保守归 unknown。
+    // （<synthetic> 等占位值不参与竞争，避免把真实模型顶掉。）
+    let session_fallback_model = resolve_session_fallback_model(&model_hints);
+    for msg in messages.values_mut() {
+        if msg.model.is_empty() {
+            msg.model = session_fallback_model
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+        }
+    }
 
     let conn = lock_conn!(db.conn);
     let tx = conn
@@ -786,6 +823,48 @@ pub(crate) fn update_sync_state_on_conn(
     .and_then(|mut stmt| stmt.execute(rusqlite::params![file_path, last_modified, last_offset, now]))
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())
+}
+
+/// 判断模型名是否为占位值（空/unknown/synthetic 等），占位值不参与
+/// 会话级模型归因的竞争。
+fn is_placeholder_model(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    normalized.is_empty()
+        || matches!(
+            normalized.as_str(),
+            "unknown" | "null" | "none" | "<synthetic>"
+        )
+}
+
+/// 归一化 cost-state modelUsage 键：Claude Code 的会话记账键会带
+/// `[1M]`/`[1m]` 上下文后缀与大小写差异，与 assistant 行里的模型名
+/// 约束到同一形态后再做唯一性判断，避免同模型多写法被当成多模型而
+/// 放弃归因。
+fn normalize_session_model_hint(raw: &str) -> String {
+    raw.trim()
+        .trim_end_matches("[1m]")
+        .trim_end_matches("[1M]")
+        .trim()
+        .to_string()
+}
+
+/// 从本轮收集的模型线索里解析会话级兜底模型：去掉占位值后若收敛到
+/// 唯一模型则返回它，否则（多个真实模型或无线索）返回 None。
+/// 多模型会话中空 model 行无法精准归因，保守回落 unknown 而不是猜错。
+fn resolve_session_fallback_model(hints: &[String]) -> Option<String> {
+    let real: Vec<String> = hints
+        .iter()
+        .filter(|h| !is_placeholder_model(h))
+        .map(|h| normalize_session_model_hint(h))
+        .filter(|h| !h.is_empty())
+        .map(|h| h.to_ascii_lowercase())
+        .collect();
+    let first = real.first()?;
+    if real.iter().all(|m| m == first) {
+        Some(first.clone())
+    } else {
+        None
+    }
 }
 
 /// 插入单条会话日志到 proxy_request_logs，返回是否成功插入 (true=新插入, false=已存在)。
@@ -1542,6 +1621,85 @@ mod tests {
         drop(conn);
 
         fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_recovers_model_from_empty_gateway_echo() -> Result<(), AppError> {
+        // 回归：部分 Anthropic 兼容网关在流式响应的 message_start 里回显
+        // "model":""（非流式则有值），Claude Code 原样写入会话 JSONL。
+        // 旧逻辑 model 字段只要存在（哪怕是空串）就原样落库，导致使用
+        // 统计"模型"列为空、模型无法定价、跨源去重通配也不生效。
+        //
+        // 修复语义：空串视同缺失，先尝试会话级回填（同文件已知模型唯一
+        // 时归因），无线索或多模型时保守归 "unknown"。
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("session-empty-model.jsonl");
+
+        // 场景 1：会话里只有一种真实模型（cost-state 记账键带 [1m] 后缀），
+        // 空串行应归因到该模型
+        let cs = r#"{"type":"cost-state","sessionId":"session-a","modelUsage":{"glm-5.3[1m]":{"inputTokens":100,"outputTokens":50}},"totalCostUSD":0.5}"#;
+        let empty_a = r#"{"type":"assistant","message":{"id":"msg_empty_a","model":"","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":1,"cache_creation_input_tokens":2},"stop_reason":"end_turn"},"timestamp":"2026-09-06T08:00:00Z","sessionId":"session-a"}"#;
+        let filled_a = r#"{"type":"assistant","message":{"id":"msg_filled_a","model":"glm-5.3","usage":{"input_tokens":20,"output_tokens":6,"cache_read_input_tokens":1,"cache_creation_input_tokens":2},"stop_reason":"end_turn"},"timestamp":"2026-09-06T08:00:01Z","sessionId":"session-a"}"#;
+        fs::write(&file, format!("{cs}\n{empty_a}\n{filled_a}\n")).unwrap();
+        sync_single_file(&db, &file, None)?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            let model: String = conn.query_row(
+                "SELECT model FROM proxy_request_logs WHERE request_id = 'session:msg_empty_a'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                model, "glm-5.3",
+                "唯一已知模型存在时，空 model 行应归因到该模型"
+            );
+        }
+        fs::remove_dir_all(&tmp).ok();
+
+        // 场景 2：会话无法确定唯一模型（多模型混跑）→ 保守归 unknown
+        let tmp2 = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp2).unwrap();
+        let file2 = tmp2.join("session-empty-model-multi.jsonl");
+        let filled_b1 = r#"{"type":"assistant","message":{"id":"msg_filled_b1","model":"glm-5.3","usage":{"input_tokens":20,"output_tokens":6,"cache_read_input_tokens":1,"cache_creation_input_tokens":2},"stop_reason":"end_turn"},"timestamp":"2026-09-06T09:00:00Z","sessionId":"session-b"}"#;
+        let filled_b2 = r#"{"type":"assistant","message":{"id":"msg_filled_b2","model":"kimi-k3","usage":{"input_tokens":20,"output_tokens":6,"cache_read_input_tokens":1,"cache_creation_input_tokens":2},"stop_reason":"end_turn"},"timestamp":"2026-09-06T09:00:01Z","sessionId":"session-b"}"#;
+        let empty_b = r#"{"type":"assistant","message":{"id":"msg_empty_b","model":"","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":1,"cache_creation_input_tokens":2},"stop_reason":"end_turn"},"timestamp":"2026-09-06T09:00:02Z","sessionId":"session-b"}"#;
+        fs::write(&file2, format!("{filled_b1}\n{filled_b2}\n{empty_b}\n")).unwrap();
+        sync_single_file(&db, &file2, None)?;
+        {
+            let conn = lock_conn!(db.conn);
+            let model: String = conn.query_row(
+                "SELECT model FROM proxy_request_logs WHERE request_id = 'session:msg_empty_b'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                model, "unknown",
+                "多模型会话中空 model 行无法精准归因，应保守回落 unknown"
+            );
+        }
+        fs::remove_dir_all(&tmp2).ok();
+
+        // 场景 3：完全无线索 → unknown（而非空串）
+        let tmp3 = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp3).unwrap();
+        let file3 = tmp3.join("session-empty-model-only.jsonl");
+        let empty_c = r#"{"type":"assistant","message":{"id":"msg_empty_c","model":"","usage":{"input_tokens":7,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"stop_reason":"end_turn"},"timestamp":"2026-09-06T10:00:00Z","sessionId":"session-c"}"#;
+        fs::write(&file3, format!("{empty_c}\n")).unwrap();
+        sync_single_file(&db, &file3, None)?;
+        {
+            let conn = lock_conn!(db.conn);
+            let model: String = conn.query_row(
+                "SELECT model FROM proxy_request_logs WHERE request_id = 'session:msg_empty_c'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(model, "unknown", "无线索时空 model 应归为 unknown");
+        }
+        fs::remove_dir_all(&tmp3).ok();
         Ok(())
     }
 }
