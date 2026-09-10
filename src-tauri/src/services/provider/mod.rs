@@ -2040,6 +2040,11 @@ requires_openai_auth = true
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
             .expect("set local current provider");
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set test proxy config to an ephemeral port");
 
         // Claude Desktop keeps backup state from takeover startup; this sentinel only
         // marks takeover as active so provider updates rewrite the 3P profile.
@@ -2057,7 +2062,7 @@ requires_openai_auth = true
                 .expect("update app proxy config");
         }
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -2105,7 +2110,10 @@ requires_openai_auth = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!(
+                "http://127.0.0.1:{}/claude-desktop",
+                proxy_info.port
+            )),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -4980,6 +4988,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::DeepSeekHarness => crate::deepseek_harness_config::remove_provider()?,
                     _ => {}
                 }
             }
@@ -5048,6 +5057,9 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::DeepSeekHarness => {
+                crate::deepseek_harness_config::remove_provider()?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -5417,6 +5429,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::DeepSeekHarness => crate::deepseek_harness_config::remove_provider(),
                     _ => Ok(()),
                 };
 
@@ -5682,6 +5695,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::DeepSeekHarness => Ok(String::new()),
         }
     }
 
@@ -5700,6 +5714,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::DeepSeekHarness => Ok(String::new()),
         }
     }
 
@@ -6465,6 +6480,18 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::DeepSeekHarness => {
+                serde_json::from_value::<
+                    crate::deepseek_harness_config::DeepSeekHarnessProviderConfig,
+                >(provider.settings_config.clone())
+                .map_err(|error| {
+                    AppError::localized(
+                        "provider.deepseek_harness.settings.invalid",
+                        format!("DeepSeek Harness 配置无效：{error}"),
+                        format!("Invalid DeepSeek Harness configuration: {error}"),
+                    )
+                })?;
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -6690,6 +6717,30 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::DeepSeekHarness => {
+                let api_key = provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.deepseek_harness.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("baseURL")
+                    .or_else(|| provider.settings_config.get("baseUrl"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

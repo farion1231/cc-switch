@@ -145,7 +145,7 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
-            AppType::Pi => {}
+            AppType::Pi | AppType::DeepSeekHarness => {}
         }
         Ok(())
     }
@@ -182,7 +182,7 @@ impl McpService {
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
             }
-            AppType::Pi => {}
+            AppType::Pi | AppType::DeepSeekHarness => {}
         }
         Ok(())
     }

@@ -608,6 +608,7 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::DeepSeekHarness => {}
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -625,6 +626,9 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::DeepSeekHarness => {
+                crate::deepseek_harness_config::get_dsh_home().join("skills")
+            }
         })
     }
 
@@ -2463,7 +2467,10 @@ impl SkillService {
 
     /// Caller must hold either the Skills state read or write guard.
     fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        if matches!(
+            app,
+            AppType::ClaudeDesktop | AppType::Pi | AppType::DeepSeekHarness
+        ) {
             return Ok(());
         }
 
@@ -5791,6 +5798,10 @@ mod tests {
             "skills dir must live under the overridden test home, got {}",
             dir.display()
         );
+
+        let dsh_dir = SkillService::get_app_skills_dir(&AppType::DeepSeekHarness)
+            .expect("resolve deepseek harness skills dir");
+        assert_eq!(dsh_dir, temp.path().join(".dsh").join("skills"));
     }
 
     #[test]
