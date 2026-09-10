@@ -423,11 +423,7 @@ impl AppType {
     pub fn is_additive_mode(&self) -> bool {
         matches!(
             self,
-            AppType::OpenCode
-                | AppType::OpenClaw
-                | AppType::Hermes
-                | AppType::Pi
-                | AppType::DeepSeekHarness
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi
         )
     }
 
