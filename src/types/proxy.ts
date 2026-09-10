@@ -124,6 +124,12 @@ export interface GlobalProxyConfig {
   enableLogging: boolean;
 }
 
+// Subagent 跨供应商路由规则
+export interface SubagentRoute {
+  providerId: string;
+  model: string | null;
+}
+
 // 应用级代理配置（每个 app 独立）
 export interface AppProxyConfig {
   appType: string;
@@ -138,4 +144,5 @@ export interface AppProxyConfig {
   circuitTimeoutSeconds: number;
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
+  subagentRoute: SubagentRoute | null;
 }

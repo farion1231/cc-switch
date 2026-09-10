@@ -1322,6 +1322,8 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
+    "subagentRouteSelfTarget": "This provider",
+    "subagentRouteTakeoverRequiredHint": "Takes effect only when proxy takeover is enabled.",
     "modelDisplayNameLabel": "Display name",
     "modelDisplayNamePlaceholder": "e.g. DeepSeek V4 Pro",
     "modelNoDisplayName": "Not shown in /model",
@@ -2918,6 +2920,12 @@
       "reorderSuccess": "Queue order updated",
       "reorderFailed": "Failed to update order",
       "toggleFailed": "Failed to update status"
+    },
+    "subagentRoute": {
+      "modelPlaceholder": "Model name sent to the target provider (e.g. glm-5.5-flash)",
+      "targetMissingWarning": "The routed provider no longer exists. Pick another one or disable the switch.",
+      "modelRequiredHint": "Fill in a model name so the proxy can tell subagent requests apart.",
+      "restartHint": "Saved. Restart Claude Code so the new subagent model takes effect on running sessions."
     },
     "autoFailover": {
       "info": "When the failover queue has multiple providers, the system will try them in priority order when requests fail. When a provider reaches the consecutive failure threshold, the circuit breaker will open and skip it temporarily.",

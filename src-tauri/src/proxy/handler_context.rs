@@ -8,6 +8,7 @@ use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
     server::ProxyState,
+    subagent_route,
     types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
 };
@@ -41,6 +42,11 @@ pub struct RequestContext {
     pub provider: Provider,
     /// 完整的 Provider 列表（用于故障转移）
     providers: Vec<Provider>,
+    /// Subagent 改道的模型名覆盖；由 handler 在转发前取走并写入 body.model
+    ///
+    /// 识别发生在 RequestContext::new（用原始请求模型名），覆盖发生在其后，
+    /// 顺序不可反（spec §5.4）。
+    model_override: Option<String>,
     /// 请求开始时的"当前供应商"（用于判断是否需要同步 UI/托盘）
     ///
     /// 这里使用本地 settings 的设备级 current provider。
@@ -143,6 +149,17 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
+        // Subagent 跨供应商改道（仅 claude；spec §5）
+        let plan = subagent_route::plan_subagent_route(
+            providers,
+            &app_type,
+            app_config.subagent_route.as_ref(),
+            &request_model,
+            |id| state.db.get_provider_by_id(id, app_type_str).ok().flatten(),
+        );
+        let model_override = plan.model_override;
+        let providers = plan.providers;
+
         let provider = providers
             .first()
             .cloned()
@@ -162,6 +179,7 @@ impl RequestContext {
             app_config,
             provider,
             providers,
+            model_override,
             current_provider_id,
             request_model,
             outbound_model: None,
@@ -249,6 +267,11 @@ impl RequestContext {
     /// 返回在创建上下文时已选择的 providers，避免重复调用 select_providers()
     pub fn get_providers(&self) -> Vec<Provider> {
         self.providers.clone()
+    }
+
+    /// 取走 Subagent 改道的模型名覆盖（若有）
+    pub fn take_model_override(&mut self) -> Option<String> {
+        self.model_override.take()
     }
 
     /// 计算请求延迟（毫秒）

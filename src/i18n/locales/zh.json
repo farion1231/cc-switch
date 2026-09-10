@@ -1322,6 +1322,8 @@
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
     "modelRoleSubagent": "Subagent",
+    "subagentRouteSelfTarget": "本供应商",
+    "subagentRouteTakeoverRequiredHint": "需开启代理接管才会生效",
     "modelDisplayNameLabel": "显示名称",
     "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
     "modelNoDisplayName": "不显示在 /model 菜单",
@@ -2918,6 +2920,12 @@
       "reorderSuccess": "队列顺序已更新",
       "reorderFailed": "更新顺序失败",
       "toggleFailed": "状态更新失败"
+    },
+    "subagentRoute": {
+      "modelPlaceholder": "发送给目标供应商的模型名（如 glm-5.5-flash）",
+      "targetMissingWarning": "路由目标供应商已不存在，请重新选择或关闭开关。",
+      "modelRequiredHint": "请填写模型名，代理据此区分 subagent 请求。",
+      "restartHint": "已保存。正在运行的 Claude Code 需重启后才会使用新的 subagent 模型。"
     },
     "autoFailover": {
       "info": "当故障转移队列中配置了多个供应商时，系统会在请求失败时按优先级顺序依次尝试。当某个供应商连续失败达到阈值时，熔断器会打开并在一段时间内跳过该供应商。",

@@ -118,6 +118,12 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useSettingsQuery } from "@/lib/query";
 import {
+  useAppProxyConfig,
+  useProxyTakeoverStatus,
+  useUpdateAppProxyConfig,
+} from "@/lib/query/proxy";
+import { useProvidersQuery } from "@/lib/query/queries";
+import {
   CLAUDE_DEFAULT_CONFIG,
   CODEX_DEFAULT_CONFIG,
   GEMINI_DEFAULT_CONFIG,
@@ -537,6 +543,79 @@ function ProviderFormFull({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
   });
+
+  // ── Claude SubAgent 路由（设备级规则，存于 proxy_config.subagent_route）──
+  const { data: claudeProxyConfig } = useAppProxyConfig("claude");
+  const updateClaudeProxyConfig = useUpdateAppProxyConfig();
+  // 不轮询：与全局 useProxyStatus 的消费方式一致，仅在挂载与失效时刷新
+  const { data: claudeTakeoverStatus } = useProxyTakeoverStatus(false);
+  const claudeTakeoverActive = claudeTakeoverStatus?.claude ?? false;
+  const { data: claudeProvidersData } = useProvidersQuery(appId);
+
+  // 路由草稿：target 为 "" 表示「本供应商」（保存时清除规则）
+  const [subagentRouteDraft, setSubagentRouteDraft] = useState({
+    target: "",
+    model: "",
+  });
+
+  // 表单加载/切换供应商时回显现有规则（即使规则目标不是正在编辑的供应商也如实回显）
+  useEffect(() => {
+    if (appId !== "claude") {
+      setSubagentRouteDraft({ target: "", model: "" });
+      return;
+    }
+    if (claudeProxyConfig) {
+      setSubagentRouteDraft({
+        target: claudeProxyConfig.subagentRoute?.providerId ?? "",
+        model: claudeProxyConfig.subagentRoute?.model ?? "",
+      });
+    } else {
+      setSubagentRouteDraft({ target: "", model: "" });
+    }
+  }, [appId, initialData, supportsFullUrl, claudeProxyConfig]);
+
+  // 目标供应商候选：排除正在编辑的供应商，按名称排序
+  const claudeRouteProviderOptions = useMemo(() => {
+    if (appId !== "claude") return [];
+    return Object.values(claudeProvidersData?.providers ?? {})
+      .filter((p) => p.id !== providerId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((p) => ({ id: p.id, name: p.name }));
+  }, [appId, claudeProvidersData, providerId]);
+
+  // 规则目标是否仍存在（针对完整供应商列表判断，候选列表排除了正在编辑的供应商）
+  const claudeRouteTargetExists = useMemo(() => {
+    if (appId !== "claude" || !subagentRouteDraft.target) return true;
+    return Object.values(claudeProvidersData?.providers ?? {}).some(
+      (p) => p.id === subagentRouteDraft.target,
+    );
+  }, [appId, claudeProvidersData, subagentRouteDraft.target]);
+
+  // 目标 B 的端点：镜像表单自身的提取方式（env.ANTHROPIC_BASE_URL + AUTH_TOKEN 回退 API_KEY）
+  const claudeRouteTargetEndpoint = useMemo(() => {
+    if (appId !== "claude" || !subagentRouteDraft.target) return null;
+    const target = Object.values(claudeProvidersData?.providers ?? {}).find(
+      (p) => p.id === subagentRouteDraft.target,
+    );
+    if (!target) return null;
+    const env = (target.settingsConfig as { env?: Record<string, string> })
+      ?.env;
+    const baseUrl = env?.ANTHROPIC_BASE_URL ?? "";
+    // 与 ClaudeFormFields.handleFetchModels 相同的预设匹配：
+    // baseUrl 仍是某预设的默认值时，用该预设的 modelsUrl 覆写拉取地址
+    const matchedPreset = providerPresets.find((p) => {
+      const presetEnv = (p.settingsConfig as { env?: Record<string, string> })
+        ?.env;
+      return presetEnv?.ANTHROPIC_BASE_URL === baseUrl;
+    });
+    return {
+      baseUrl,
+      apiKey: env?.ANTHROPIC_AUTH_TOKEN ?? env?.ANTHROPIC_API_KEY ?? "",
+      isFullUrl: target.meta?.isFullUrl ?? false,
+      modelsUrl: matchedPreset?.modelsUrl,
+      customUserAgent: target.meta?.customUserAgent ?? "",
+    };
+  }, [appId, claudeProvidersData, subagentRouteDraft.target]);
 
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
     if (appId !== "claude") return "anthropic";
@@ -1846,6 +1925,40 @@ function ProviderFormFull({
     payload.meta = nextMeta;
 
     await onSubmit(payload);
+
+    // 供应商保存成功后，再提交 SubAgent 路由草稿（仅在发生变化时）。
+    // 必须展开完整 loadedConfig：后端是整行 UPDATE，只传部分字段会把
+    // 其他代理配置抹掉（见 tests/components/AutoFailoverConfigPanel.test.tsx）。
+    if (appId === "claude" && claudeProxyConfig) {
+      const target = subagentRouteDraft.target;
+      const trimmedModel = subagentRouteDraft.model.trim();
+      const nextRoute = target
+        ? { providerId: target, model: trimmedModel || null }
+        : null;
+      const loadedRoute = claudeProxyConfig.subagentRoute;
+      const routeChanged =
+        (loadedRoute?.providerId ?? "") !== (nextRoute?.providerId ?? "") ||
+        (loadedRoute?.model ?? null) !== (nextRoute?.model ?? null);
+      if (routeChanged) {
+        try {
+          await updateClaudeProxyConfig.mutateAsync({
+            ...claudeProxyConfig,
+            subagentRoute: nextRoute,
+          });
+          if (claudeTakeoverActive) {
+            // 接管生效时注入 live env 的模型需重启 Claude Code 才生效
+            toast.info(t("proxy.subagentRoute.restartHint"), {
+              duration: 10000,
+              closeButton: true,
+            });
+          }
+        } catch (error) {
+          // 失败 toast 已由 useUpdateAppProxyConfig 的 onError 弹出；
+          // 这里不回滚供应商保存，仅留痕
+          console.error("[ProviderForm] Failed to save subagent route:", error);
+        }
+      }
+    }
   };
 
   const shouldShowSpeedTest =
@@ -2434,6 +2547,18 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              subagentRouteTarget={subagentRouteDraft.target}
+              onSubagentRouteTargetChange={(target) =>
+                setSubagentRouteDraft((prev) => ({ ...prev, target }))
+              }
+              subagentRouteModel={subagentRouteDraft.model}
+              onSubagentRouteModelChange={(model) =>
+                setSubagentRouteDraft((prev) => ({ ...prev, model }))
+              }
+              subagentRouteOptions={claudeRouteProviderOptions}
+              subagentRouteTargetEndpoint={claudeRouteTargetEndpoint}
+              subagentRouteTargetExists={claudeRouteTargetExists}
+              subagentRouteTakeoverActive={claudeTakeoverActive}
             />
           )}
 

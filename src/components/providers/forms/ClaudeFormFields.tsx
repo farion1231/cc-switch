@@ -48,6 +48,8 @@ import {
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertTriangle } from "lucide-react";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
@@ -67,6 +69,20 @@ import {
 
 interface EndpointCandidate {
   url: string;
+}
+
+/** 路由目标下拉中「本供应商」的内部哨兵值（Radix Select 不允许空字符串 value） */
+const SUBAGENT_ROUTE_SELF_TARGET = "__self__";
+
+/** 路由目标 B 的端点信息（由 ProviderForm 从 B 的 settings_config 提取） */
+export interface SubagentRouteTargetEndpoint {
+  baseUrl: string;
+  apiKey: string;
+  isFullUrl: boolean;
+  /** B 的 baseUrl 命中预设时该预设的 modelsUrl 覆写（ProviderForm 按预设匹配填入） */
+  modelsUrl?: string;
+  /** B 的自定义 User-Agent（meta.customUserAgent），与表单自身拉取保持一致 */
+  customUserAgent?: string;
 }
 
 interface ClaudeFormFieldsProps {
@@ -159,6 +175,22 @@ interface ClaudeFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+
+  // SubAgent 路由（仅 Claude 表单由 ProviderForm 传入；不传则保持原有 Subagent 行为）
+  /** 当前路由目标（"" = 本供应商）；提交由 ProviderForm 负责，本组件只维护草稿回调 */
+  subagentRouteTarget?: string;
+  onSubagentRouteTargetChange?: (target: string) => void;
+  /** 路由模型名（target 为其他供应商时编辑路由规则而非 env） */
+  subagentRouteModel?: string;
+  onSubagentRouteModelChange?: (model: string) => void;
+  /** 目标供应商候选（已排除正在编辑的供应商） */
+  subagentRouteOptions?: Array<{ id: string; name: string }>;
+  /** 目标供应商 B 的端点（用于拉取 B 的模型列表；customUserAgent 参与拉取，请求头覆写不参与） */
+  subagentRouteTargetEndpoint?: SubagentRouteTargetEndpoint | null;
+  /** 规则目标供应商是否仍存在（false 时渲染失效警告） */
+  subagentRouteTargetExists?: boolean;
+  /** Claude 代理接管是否生效（未开启时渲染接管提示） */
+  subagentRouteTakeoverActive?: boolean;
 }
 
 export function ClaudeFormFields({
@@ -225,6 +257,14 @@ export function ClaudeFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  subagentRouteTarget,
+  onSubagentRouteTargetChange,
+  subagentRouteModel,
+  onSubagentRouteModelChange,
+  subagentRouteOptions,
+  subagentRouteTargetEndpoint,
+  subagentRouteTargetExists,
+  subagentRouteTakeoverActive,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasRequestOverrides = Boolean(
@@ -313,6 +353,50 @@ export function ClaudeFormFields({
       })
       .finally(() => setIsFetchingModels(false));
   }, [baseUrl, apiKey, isFullUrl, customUserAgent, showModelFetchResult, t]);
+
+  // SubAgent 路由（target = 其他供应商 B）的模型拉取：与表单自身拉取相互独立
+  const [routeFetchedModels, setRouteFetchedModels] = useState<FetchedModel[]>(
+    [],
+  );
+  const [isFetchingRouteModels, setIsFetchingRouteModels] = useState(false);
+  const isSubagentRoutingEnabled = onSubagentRouteTargetChange !== undefined;
+  const isRoutingOtherProvider =
+    isSubagentRoutingEnabled && !!subagentRouteTarget;
+
+  // 切换路由目标后丢弃上一个 B 的拉取结果，避免串列表
+  useEffect(() => {
+    setRouteFetchedModels([]);
+    setIsFetchingRouteModels(false);
+  }, [subagentRouteTarget]);
+
+  const handleFetchRouteModels = useCallback(() => {
+    const endpoint = subagentRouteTargetEndpoint;
+    if (!endpoint || !endpoint.baseUrl || !endpoint.apiKey) {
+      showFetchModelsError(null, t, {
+        hasApiKey: !!endpoint?.apiKey,
+        hasBaseUrl: !!endpoint?.baseUrl,
+      });
+      return;
+    }
+    setIsFetchingRouteModels(true);
+    // 与表单自身拉取一致：带上预设 modelsUrl 覆写与 B 的自定义 User-Agent
+    fetchModelsForConfig(
+      endpoint.baseUrl,
+      endpoint.apiKey,
+      endpoint.isFullUrl,
+      endpoint.modelsUrl,
+      endpoint.customUserAgent,
+    )
+      .then((models) => {
+        setRouteFetchedModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err) => {
+        console.warn("[ModelFetch] Subagent route target failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => setIsFetchingRouteModels(false));
+  }, [subagentRouteTargetEndpoint, showModelFetchResult, t]);
 
   const handleFetchCopilotModels = useCallback(() => {
     if (!isCopilotAuthenticated) {
@@ -987,6 +1071,139 @@ export function ClaudeFormFields({
                 const modelBase = stripClaudeOneMMarker(row.model);
                 const usesOneM =
                   row.supportsOneM && hasClaudeOneMMarker(row.model);
+
+                // SubAgent 路由行：目标供应商下拉 + 模型名输入（其余四行保持原样）
+                if (row.role === "subagent" && isSubagentRoutingEnabled) {
+                  const routeUsesOneM = hasClaudeOneMMarker(
+                    subagentRouteModel ?? "",
+                  );
+                  return (
+                    <div key={row.role} className="space-y-2">
+                      <div className="grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_minmax(0,1fr)_104px]">
+                        <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
+                          {row.label}
+                        </div>
+                        <Select
+                          value={
+                            subagentRouteTarget
+                              ? subagentRouteTarget
+                              : SUBAGENT_ROUTE_SELF_TARGET
+                          }
+                          onValueChange={(value) =>
+                            onSubagentRouteTargetChange?.(
+                              value === SUBAGENT_ROUTE_SELF_TARGET ? "" : value,
+                            )
+                          }
+                        >
+                          <SelectTrigger data-testid="subagent-route-provider-trigger">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={SUBAGENT_ROUTE_SELF_TARGET}>
+                              {t("providerForm.subagentRouteSelfTarget", {
+                                defaultValue: "本供应商",
+                              })}
+                            </SelectItem>
+                            {(subagentRouteOptions ?? []).map((option) => (
+                              <SelectItem key={option.id} value={option.id}>
+                                {option.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {isRoutingOtherProvider ? (
+                          <ModelInputWithFetch
+                            id="claudeCodeSubagentRouteModel"
+                            value={subagentRouteModel ?? ""}
+                            onChange={(value) =>
+                              // 与其他行输入一致的 [1M] 保留语义：
+                              // 按路由草稿的标记态重包，勾选后打字不丢标记
+                              onSubagentRouteModelChange?.(
+                                setClaudeOneMMarker(value, routeUsesOneM),
+                              )
+                            }
+                            placeholder={t(
+                              "proxy.subagentRoute.modelPlaceholder",
+                            )}
+                            fetchedModels={routeFetchedModels}
+                            isLoading={isFetchingRouteModels}
+                            onFetch={handleFetchRouteModels}
+                          />
+                        ) : (
+                          renderModelInput(
+                            row.inputId,
+                            modelBase,
+                            row.modelField,
+                            t("providerForm.modelPlaceholder", {
+                              defaultValue: "",
+                            }),
+                            (value) =>
+                              handleRoleModelChange(
+                                row,
+                                setClaudeOneMMarker(value, usesOneM),
+                              ),
+                          )
+                        )}
+                        {isRoutingOtherProvider ? (
+                          <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                            <Checkbox
+                              checked={routeUsesOneM}
+                              onCheckedChange={(checked) =>
+                                onSubagentRouteModelChange?.(
+                                  setClaudeOneMMarker(
+                                    subagentRouteModel ?? "",
+                                    checked === true,
+                                  ),
+                                )
+                              }
+                            />
+                            {t("providerForm.modelOneMLabel", {
+                              defaultValue: "1M",
+                            })}
+                          </label>
+                        ) : (
+                          <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                            <Checkbox
+                              checked={usesOneM}
+                              onCheckedChange={(checked) =>
+                                handleRoleOneMChange(row, checked === true)
+                              }
+                            />
+                            {t("providerForm.modelOneMLabel", {
+                              defaultValue: "1M",
+                            })}
+                          </label>
+                        )}
+                      </div>
+                      {!subagentRouteTakeoverActive && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("providerForm.subagentRouteTakeoverRequiredHint", {
+                            defaultValue: "需开启代理接管才会生效",
+                          })}
+                        </p>
+                      )}
+                      {isRoutingOtherProvider &&
+                        subagentRouteTargetExists === false && (
+                          <Alert>
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertDescription>
+                              {t("proxy.subagentRoute.targetMissingWarning")}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      {isRoutingOtherProvider &&
+                        subagentRouteTargetExists !== false &&
+                        !(subagentRouteModel ?? "").trim() && (
+                          <Alert>
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertDescription>
+                              {t("proxy.subagentRoute.modelRequiredHint")}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                    </div>
+                  );
+                }
 
                 return (
                   <div
