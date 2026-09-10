@@ -1403,6 +1403,7 @@ pub fn run() {
             commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,
+            commands::set_last_active_app,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,

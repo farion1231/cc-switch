@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -29,7 +29,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, Settings as AppSettings, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
@@ -139,13 +139,53 @@ const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 
 const STORAGE_KEY = "cc-switch-last-app";
-const getInitialApp = (): AppId => {
-  const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
-  if (saved && APP_IDS.includes(saved)) {
-    return saved;
+// 后端写入失败时在此记下待同步的选择。settings 里的值此时已知是旧的，
+// 下次启动必须以本地值为准，否则一次写入失败就会永久丢掉用户的选择。
+const PENDING_STORAGE_KEY = "cc-switch-last-app-pending";
+
+const readStoredApp = (key: string): AppId | null => {
+  try {
+    const saved = localStorage.getItem(key) as AppId | null;
+    return saved && APP_IDS.includes(saved) ? saved : null;
+  } catch {
+    return null;
   }
-  return "claude";
 };
+
+const getStoredApp = (): AppId | null => readStoredApp(STORAGE_KEY);
+const getPendingApp = (): AppId | null => readStoredApp(PENDING_STORAGE_KEY);
+
+const setPendingApp = (app: AppId | null) => {
+  try {
+    if (app) {
+      localStorage.setItem(PENDING_STORAGE_KEY, app);
+    } else {
+      localStorage.removeItem(PENDING_STORAGE_KEY);
+    }
+  } catch (error) {
+    console.warn("Failed to record pending active app", error);
+  }
+};
+
+let activeAppPersistence: Promise<unknown> = Promise.resolve();
+let lastRequestedActiveApp: AppId | null = null;
+
+const persistLastActiveApp = (app: AppId) => {
+  lastRequestedActiveApp = app;
+  activeAppPersistence = activeAppPersistence
+    .then(() => settingsApi.setLastActiveApp(app))
+    .then(() => {
+      // 只有在没有更晚的选择时才清标记，避免旧请求清掉新请求留下的待同步值。
+      if (lastRequestedActiveApp === app) setPendingApp(null);
+    })
+    .catch((error) => {
+      if (lastRequestedActiveApp === app) setPendingApp(app);
+      console.warn("Failed to persist active app in settings", error);
+    });
+};
+
+const getInitialApp = (): AppId =>
+  getPendingApp() ?? getStoredApp() ?? "claude";
 
 const VIEW_STORAGE_KEY = "cc-switch-last-view";
 const VALID_VIEWS: View[] = [
@@ -178,6 +218,7 @@ function App() {
   const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
+  const [hasRestoredActiveApp, setHasRestoredActiveApp] = useState(false);
   const sharedFeatureApp: AppId =
     activeApp === "claude-desktop" ? "claude" : activeApp;
   const [currentView, setCurrentView] = useState<View>(getInitialView);
@@ -214,15 +255,84 @@ function App() {
     [settingsData?.visibleApps],
   );
 
-  const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
-  };
+  const firstVisibleApp = useMemo<AppId>(
+    () => APP_IDS.find((app) => visibleApps[app]) ?? "claude",
+    [visibleApps],
+  );
+
+  const setActiveAppLocally = useCallback((app: AppId) => {
+    setActiveApp(app);
+    try {
+      localStorage.setItem(STORAGE_KEY, app);
+    } catch (error) {
+      console.warn("Failed to persist active app in localStorage", error);
+    }
+  }, []);
+
+  const userSelectedApp = useRef(false);
+  const handleAppSwitch = useCallback(
+    (app: AppId) => {
+      userSelectedApp.current = true;
+      setActiveAppLocally(app);
+      queryClient.setQueryData<AppSettings>(["settings"], (current) =>
+        current ? { ...current, lastActiveApp: app } : current,
+      );
+      persistLastActiveApp(app);
+    },
+    [queryClient, setActiveAppLocally],
+  );
+
+  const restoredPersistedApp = useRef(false);
+  useEffect(() => {
+    if (!settingsData || restoredPersistedApp.current) return;
+    restoredPersistedApp.current = true;
+
+    if (userSelectedApp.current) {
+      queryClient.setQueryData<AppSettings>(["settings"], (current) =>
+        current ? { ...current, lastActiveApp: activeApp } : current,
+      );
+      setHasRestoredActiveApp(true);
+      return;
+    }
+
+    // 上次写入失败时后端存的是旧值，此处不能把它当权威。
+    const pendingApp = getPendingApp();
+    const persistedApp =
+      pendingApp ?? settingsData.lastActiveApp ?? getStoredApp();
+    const resolvedApp =
+      persistedApp && visibleApps[persistedApp]
+        ? persistedApp
+        : firstVisibleApp;
+    setActiveAppLocally(resolvedApp);
+    if (persistedApp && settingsData.lastActiveApp !== resolvedApp) {
+      // 顺带重试上次失败的写入。
+      persistLastActiveApp(resolvedApp);
+    } else if (pendingApp) {
+      // 后端其实已是该值（只是上次回包失败），清掉标记即可。
+      setPendingApp(null);
+    }
+    setHasRestoredActiveApp(true);
+  }, [
+    activeApp,
+    firstVisibleApp,
+    queryClient,
+    setActiveAppLocally,
+    settingsData,
+    visibleApps,
+  ]);
 
   useEffect(() => {
+    if (!hasRestoredActiveApp) return;
     if (!visibleApps[activeApp]) {
-      setActiveApp(getFirstVisibleApp());
+      handleAppSwitch(firstVisibleApp);
     }
-  }, [visibleApps, activeApp]);
+  }, [
+    visibleApps,
+    activeApp,
+    firstVisibleApp,
+    handleAppSwitch,
+    hasRestoredActiveApp,
+  ]);
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
@@ -1404,7 +1514,7 @@ function App() {
               {currentView === "providers" && (
                 <AppSwitcher
                   activeApp={activeApp}
-                  onSwitch={setActiveApp}
+                  onSwitch={handleAppSwitch}
                   visibleApps={visibleApps}
                 />
               )}

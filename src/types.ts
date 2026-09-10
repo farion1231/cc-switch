@@ -1,3 +1,5 @@
+import type { AppId } from "@/lib/api/types";
+
 export type ProviderCategory =
   | "official" // 官方
   | "cn_official" // 开源官方（原"国产官方"）
@@ -403,6 +405,8 @@ export interface Settings {
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
+  // 上次聚焦的应用（设备级持久化，避免依赖 WebView localStorage）
+  lastActiveApp?: AppId;
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
