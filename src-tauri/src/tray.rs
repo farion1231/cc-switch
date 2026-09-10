@@ -152,17 +152,38 @@ pub struct TrayAppSection {
     pub log_name: &'static str,
 }
 
+impl TrayAppSection {
+    /// Claude Desktop 的配置文件仅支持 macOS 和 Windows。
+    fn is_supported_on_current_platform(&self) -> bool {
+        !matches!(&self.app_type, AppType::ClaudeDesktop)
+            || cfg!(any(target_os = "macos", target_os = "windows"))
+    }
+}
+
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
 
-pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
+pub const TRAY_SECTIONS: [TrayAppSection; 5] = [
     TrayAppSection {
         app_type: AppType::Claude,
         prefix: "claude_",
         empty_id: "claude_empty",
         header_label: "Claude",
         log_name: "Claude",
+    },
+    TrayAppSection {
+        // 前缀必须用连字符 `claude-desktop_`：`handle_provider_tray_event` 按
+        // 顺序 strip_prefix 匹配，若改成 `claude_desktop_`，事件 id
+        // `claude_desktop_<id>` 会被前面的 `claude_` 段先吃掉、误切到 Claude Code。
+        // `claude_`（下划线）不是 `claude-desktop_`（连字符）的前缀，故无冲突。
+        // Claude Desktop 的切换与 Claude Code 共用 ProviderService::switch（3P profile 写入），
+        // 托盘只是补齐入口；其余菜单构建/标签刷新/用量拉取均按 app_type 通用处理。
+        app_type: AppType::ClaudeDesktop,
+        prefix: "claude-desktop_",
+        empty_id: "claude-desktop_empty",
+        header_label: "Claude Desktop",
+        log_name: "Claude Desktop",
     },
     TrayAppSection {
         app_type: AppType::Codex,
@@ -486,6 +507,9 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
 /// 处理供应商托盘事件
 pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
     for section in TRAY_SECTIONS.iter() {
+        if !section.is_supported_on_current_platform() {
+            continue;
+        }
         if let Some(suffix) = event_id.strip_prefix(section.prefix) {
             // 处理 Auto 点击
             if suffix == AUTO_SUFFIX {
@@ -730,7 +754,9 @@ pub fn create_tray_menu(
 
     // 每个应用类型折叠为子菜单，避免供应商过多时菜单过长
     for section in TRAY_SECTIONS.iter() {
-        if !visible_apps.is_visible(&section.app_type) {
+        if !section.is_supported_on_current_platform()
+            || !visible_apps.is_visible(&section.app_type)
+        {
             continue;
         }
 
@@ -936,6 +962,9 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     };
 
     for section in TRAY_SECTIONS.iter() {
+        if !section.is_supported_on_current_platform() {
+            continue;
+        }
         let Some(submenu) = handles.get(&section.app_type) else {
             continue;
         };
@@ -1080,8 +1109,8 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 /// `schedule_tray_refresh` 做合并。内部 10 秒节流防止鼠标悬停反复进出时
 /// 雪崩请求；互斥锁被毒化时以上次状态为准继续推进，不会永久阻塞。
 ///
-/// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多发
-/// `TRAY_SECTIONS.len()` 次外部请求；只有显式启用的用量查询（含官方订阅、
+/// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多为每个
+/// 支持且可见的分区发起一次外部请求；只有显式启用的用量查询（含官方订阅、
 /// coding_plan / balance / Copilot / 自定义脚本）才会发请求。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
@@ -1113,7 +1142,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     let mut script_futures = Vec::new();
 
     for section in TRAY_SECTIONS.iter() {
-        if !visible_apps.is_visible(&section.app_type) {
+        if !section.is_supported_on_current_platform()
+            || !visible_apps.is_visible(&section.app_type)
+        {
             continue;
         }
 
@@ -1288,6 +1319,51 @@ mod tests {
         assert_eq!(section.prefix, "grokbuild_");
         assert_eq!(section.empty_id, "grokbuild_empty");
         assert_eq!(section.header_label, "Grok Build");
+    }
+
+    #[test]
+    fn tray_sections_include_claude_desktop_provider_switching() {
+        let section = TRAY_SECTIONS
+            .iter()
+            .find(|section| section.app_type == AppType::ClaudeDesktop)
+            .expect("Claude Desktop tray section should exist");
+
+        assert_eq!(section.prefix, "claude-desktop_");
+        assert_eq!(section.empty_id, "claude-desktop_empty");
+        assert_eq!(section.header_label, "Claude Desktop");
+    }
+
+    #[test]
+    fn tray_sections_only_include_platform_supported_apps() {
+        let claude_desktop = TRAY_SECTIONS
+            .iter()
+            .find(|section| section.app_type == AppType::ClaudeDesktop)
+            .expect("Claude Desktop tray section should exist");
+
+        assert_eq!(
+            claude_desktop.is_supported_on_current_platform(),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+    }
+
+    #[test]
+    fn tray_section_prefixes_have_no_collision() {
+        // handle_provider_tray_event 按顺序 strip_prefix 匹配 section.prefix，
+        // 任一前缀不能是另一个的前缀，否则较短前缀会先吃掉较长前缀的事件 id。
+        // 重点防御：`claude_` 不能是 `claude-desktop_`（或 `claude_desktop_`）的前缀。
+        for (i, a) in TRAY_SECTIONS.iter().enumerate() {
+            for (j, b) in TRAY_SECTIONS.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                assert!(
+                    !b.prefix.starts_with(a.prefix),
+                    "tray prefix collision: {:?} is a prefix of {:?}",
+                    a.prefix,
+                    b.prefix
+                );
+            }
+        }
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {
