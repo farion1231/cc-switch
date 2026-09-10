@@ -3297,9 +3297,9 @@ pub fn neutralize_codex_official_auth_fallback_for_proxy_oauth(
 /// user-authored shape (0.149 keeps them unauthenticated either way).
 ///
 /// `preserve_official_login` is the post-write login state of `auth.json`.
-/// The direct-switch plan derives it from the preservation setting (which
-/// decides whether the file survives the switch); the takeover writer
-/// derives it from the live file itself — takeover never touches
+/// The direct-switch plan initially derives it from the preservation policy;
+/// the writer corrects it against observable live login state before committing.
+/// The takeover writer also observes the live store — takeover never touches
 /// `auth.json`, but it no longer owns the file's presence (a
 /// preservation-off direct switch deletes it before takeover is enabled),
 /// so the stored card's flag cannot be trusted there either.
@@ -3938,9 +3938,8 @@ fn plan_codex_live_write(
         // without a key the empty config is passed through as-is.
         other => prepare_codex_provider_live_config(auth, other.unwrap_or(""))?,
     };
-    // After injection, so the stamp sees the final credential shape. Only
-    // this direct-switch plan stamps: the takeover subsystem preserves the
-    // login unconditionally and keeps its existing config shapes.
+    // Initial policy-based stamp after injection. The direct writer resolves
+    // observable login state before committing, without changing file preservation.
     let live_config = align_codex_requires_openai_auth_with_login_preservation(
         &live_config,
         preserve_official_login,
@@ -3971,12 +3970,44 @@ pub fn preflight_codex_live_write(
     .map(|_| ())
 }
 
+/// Observe login state without accessing the OS keyring. Unknown stores must
+/// not be treated as signed out merely because auth.json is missing.
+pub(crate) fn codex_live_login_state(config_text: &str) -> Option<bool> {
+    match codex_config_auth_store_mode(config_text) {
+        CodexAuthStoreMode::Ephemeral => Some(false),
+        CodexAuthStoreMode::Keyring | CodexAuthStoreMode::Auto | CodexAuthStoreMode::Unknown => {
+            None
+        }
+        CodexAuthStoreMode::File => {
+            let auth = match fs::read(get_codex_auth_path()) {
+                Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(auth) => auth,
+                    Err(error) => {
+                        log::warn!("Codex auth.json 不可读，按未登录处理: {error}");
+                        return Some(false);
+                    }
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(false),
+                Err(error) => {
+                    log::warn!("Codex auth.json 不可读，按未登录处理: {error}");
+                    return Some(false);
+                }
+            };
+            Some(
+                auth.get("OPENAI_API_KEY").and_then(Value::as_str)
+                    != Some(CODEX_PROXY_AUTH_PLACEHOLDER)
+                    && codex_auth_has_openai_account_material(&auth),
+            )
+        }
+    }
+}
+
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let plan = plan_codex_live_write(
+    let mut plan = plan_codex_live_write(
         category,
         auth,
         config_text,
@@ -3984,6 +4015,17 @@ pub fn write_codex_live_for_provider(
     )?;
     if plan.write_full_auth {
         return write_codex_live_atomic(auth, plan.config_text.as_deref());
+    }
+    // Keeping auth.json is a preservation policy, not evidence that it contains
+    // a login. A fresh installation may have no file to preserve at all.
+    if category != Some("official") && !plan.remove_auth_file {
+        if let Some(config) = plan.config_text.as_deref() {
+            if let Some(has_login) = codex_live_login_state(config) {
+                plan.config_text = Some(align_codex_requires_openai_auth_with_login_preservation(
+                    config, has_login,
+                )?);
+            }
+        }
     }
     write_codex_live_config_atomic(plan.config_text.as_deref())?;
     // Config is already committed at this point, so a cleanup failure
@@ -4349,6 +4391,66 @@ mod tests {
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
             let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn third_party_write_preserves_files_without_assuming_a_login() {
+        let _home = CodexLiveTestHome::new();
+        let mut settings = crate::settings::get_settings();
+        settings.preserve_codex_official_auth_on_switch = true;
+        crate::settings::update_settings(settings).unwrap();
+        let config = "model_provider = \"relay\"\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n";
+        let auth_path = get_codex_auth_path();
+        fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+        for (contents, expected) in [
+            (None, false),
+            (Some("{}"), false),
+            (Some("invalid-json"), false),
+            (Some(r#"{"OPENAI_API_KEY":"PROXY_MANAGED"}"#), false),
+            (
+                Some(r#"{"auth_mode":"chatgpt","tokens":{"access_token":"test-login"}}"#),
+                true,
+            ),
+        ] {
+            if let Some(contents) = contents {
+                fs::write(&auth_path, contents).unwrap();
+            }
+            write_codex_live_for_provider(
+                None,
+                &json!({"OPENAI_API_KEY":"test-provider-key"}),
+                Some(config),
+            )
+            .unwrap();
+            let output: toml::Value =
+                toml::from_str(&fs::read_to_string(get_codex_config_path()).unwrap()).unwrap();
+            let route = &output["model_providers"]["relay"];
+            assert_eq!(
+                route["requires_openai_auth"].as_bool(),
+                Some(expected),
+                "{contents:?}"
+            );
+            assert_eq!(
+                route["experimental_bearer_token"].as_str(),
+                Some("test-provider-key")
+            );
+            assert_eq!(fs::read_to_string(&auth_path).ok().as_deref(), contents);
+        }
+        for (store, expected) in [("ephemeral", false), ("keyring", true), ("auto", true)] {
+            let config = format!("cli_auth_credentials_store = \"{store}\"\n{config}");
+            write_codex_live_for_provider(
+                None,
+                &json!({"OPENAI_API_KEY":"test-provider-key"}),
+                Some(&config),
+            )
+            .unwrap();
+            let output: toml::Value =
+                toml::from_str(&fs::read_to_string(get_codex_config_path()).unwrap()).unwrap();
+            assert_eq!(
+                output["model_providers"]["relay"]["requires_openai_auth"].as_bool(),
+                Some(expected)
+            );
         }
     }
 
