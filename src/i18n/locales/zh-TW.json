@@ -981,7 +981,7 @@
       "effectiveBaseUrlRequired": "模型 {{id}} 必須直接設定或從供應商繼承基礎 URL",
       "duplicateModel": "模型 ID {{id}} 重複",
       "modelRequired": "請至少新增一個模型",
-      "providerKeyDuplicate": "該供應商標識已存在"
+      "providerKeyDuplicate": "該供應商識別碼已存在"
     },
     "current": {
       "readFailed": "無法讀取 Pi 供應商設定",
