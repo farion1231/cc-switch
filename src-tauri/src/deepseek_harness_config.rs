@@ -142,14 +142,18 @@ pub fn set_provider(
         })?;
     }
 
-    if let Some(api_key) = config
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        update_yaml_document(&get_credentials_path(), |document| {
+    let credentials_path = get_credentials_path();
+    let api_key = config.api_key.as_deref().map(str::trim).unwrap_or("");
+    if !api_key.is_empty() {
+        update_yaml_document(&credentials_path, |document| {
             merge_mapping_value(document, API_KEY_REF, Yaml::String(api_key.to_string()));
+            Ok(())
+        })?;
+    } else if credentials_path.exists() {
+        update_yaml_document(&credentials_path, |document| {
+            if let Yaml::Hash(hash) = document {
+                hash.remove(&mapping_key(API_KEY_REF));
+            }
             Ok(())
         })?;
     }
@@ -183,6 +187,11 @@ pub fn remove_provider() -> Result<(), AppError> {
         })?;
     }
     Ok(())
+}
+
+pub fn provider_exists_in_live_config() -> Result<bool, AppError> {
+    let document = parse_yaml_document(&get_settings_path())?;
+    Ok(matches!(document, Yaml::Hash(hash) if hash.contains_key(&mapping_key(SETTINGS_NAMESPACE))))
 }
 
 fn ensure_profile(profile: Option<&str>) -> Result<(), AppError> {
@@ -383,6 +392,32 @@ mod tests {
 
     #[test]
     #[serial]
+    fn clears_stale_credentials_when_api_key_is_removed() {
+        with_temp_home(|home| {
+            std::fs::write(
+                home.join(".credentials.yaml"),
+                "DEEPSEEK_API_KEY: secret\nOTHER_KEY: keep\n",
+            )
+            .unwrap();
+
+            set_provider(
+                "official",
+                &DeepSeekHarnessProviderConfig {
+                    api_key: None,
+                    base_url: Some("https://api.deepseek.com".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+            let credentials = std::fs::read_to_string(home.join(".credentials.yaml")).unwrap();
+            assert!(!credentials.contains("DEEPSEEK_API_KEY"));
+            assert!(credentials.contains("OTHER_KEY: keep"));
+        });
+    }
+
+    #[test]
+    #[serial]
     fn preserves_custom_providers_when_switching_managed_route() {
         with_temp_home(|home| {
             std::fs::write(
@@ -463,6 +498,24 @@ mod tests {
             let credentials = std::fs::read_to_string(home.join(".credentials.yaml")).unwrap();
             assert!(!credentials.contains("DEEPSEEK_API_KEY"));
             assert!(credentials.contains("OTHER_KEY: keep"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn detects_managed_live_route() {
+        with_temp_home(|home| {
+            assert!(!provider_exists_in_live_config().unwrap());
+
+            std::fs::write(
+                home.join("settings.yaml"),
+                "llm-deepseek:\n  baseURL: https://example.com\n",
+            )
+            .unwrap();
+            assert!(provider_exists_in_live_config().unwrap());
+
+            remove_provider().unwrap();
+            assert!(!provider_exists_in_live_config().unwrap());
         });
     }
 }
