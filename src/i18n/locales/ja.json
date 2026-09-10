@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortMax": "最大強度思考",
-    "disableAutoUpgrade": "自動アップグレードを無効化"
+    "disableAutoUpgrade": "自動アップグレードを無効化",
+    "disableArtifact": "Artifact ツールを無効化"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",

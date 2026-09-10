@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "启用 Tool Search",
     "effortMax": "最大强度思考",
-    "disableAutoUpgrade": "禁用自动升级"
+    "disableAutoUpgrade": "禁用自动升级",
+    "disableArtifact": "禁用 Artifact 工具"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",

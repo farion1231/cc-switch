@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
     "effortMax": "Max Effort Thinking",
-    "disableAutoUpgrade": "Disable Auto-Upgrade"
+    "disableAutoUpgrade": "Disable Auto-Upgrade",
+    "disableArtifact": "Disable Artifact Tool"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
