@@ -219,7 +219,7 @@ fn sync_single_gemini_file(
     }
 
     // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, gemini_msg_count)?;
+    update_sync_state(db, &file_path_str, file_modified, gemini_msg_count, None)?;
 
     Ok((imported, skipped))
 }

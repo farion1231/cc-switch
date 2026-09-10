@@ -280,7 +280,13 @@ fn update_pi_sync_state_on_conn(
     revision: PiFileRevision,
     last_line_offset: i64,
 ) -> Result<(), AppError> {
-    update_sync_state_on_conn(conn, file_path, revision.modified_nanos, last_line_offset)?;
+    update_sync_state_on_conn(
+        conn,
+        file_path,
+        revision.modified_nanos,
+        last_line_offset,
+        None,
+    )?;
     // No schema expansion is needed for Pi's append proof. This tagged value
     // is private to Pi rows; no production consumer interprets last_synced_at.
     conn.execute(

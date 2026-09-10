@@ -415,8 +415,15 @@ fn sync_single_file(
     let last_byte_offset = cursor.and_then(|c| c.last_byte_offset);
     let last_fingerprint = cursor.and_then(|c| c.last_tail_fingerprint);
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // 文件未变化则跳过。mtime 相等不足以判定未变化：写入方追加后 mtime
+    // 可能因文件系统粒度/缓存延迟暂不更新（Windows 上尤甚，issue #7264），
+    // 必须以字节游标与当前大小的关系兜底——游标覆盖整个文件才算未变化。
+    // 旧行号游标（byte_offset 为 NULL）无从校验，一律放行交给下方转换
+    // 路径（首轮写入字节游标后恢复正常）。
+    let unchanged = file_modified < last_modified
+        || (file_modified == last_modified
+            && last_byte_offset.is_some_and(|offset| file_size <= offset));
+    if unchanged {
         return Ok(ClaudeFileSync::default());
     }
 
@@ -485,6 +492,10 @@ fn sync_single_file(
     // 截断文件的"新内容行号偏小被跳过"语义。转换必须完整走完才能写游标：
     // 中途读错误若照常落库，last_line_offset 会被清 0、剩余待跳行数丢失，
     // 下轮会把旧代码已导入过的行当新行重导——所以这里出错直接整文件失败。
+    //
+    // 半行除外：旧游标把它也计入行号，但字节游标不得越过它——越过则半行
+    // 补全后从行中间续读、该记录永久丢失。停在半行之前交给主循环按新语义
+    // 处理（重复导入的完整行由 request_id 去重兜底）。
     let mut skipped_legacy_lines: i64 = 0;
     while skipped_legacy_lines < legacy_lines {
         buf.clear();
@@ -492,6 +503,14 @@ fn sync_single_file(
             .read_until(b'\n', &mut buf)
             .map_err(|e| AppError::Config(format!("转换旧行号游标失败: {e}")))?;
         if read == 0 {
+            break;
+        }
+        if !buf.ends_with(b"\n") {
+            // 文件位置已越过半行，回退到它之前（BufReader 的
+            // SeekFrom::Current 已扣除内部缓冲）
+            reader
+                .seek(SeekFrom::Current(-(read as i64)))
+                .map_err(|e| AppError::Config(format!("回退半行游标失败: {e}")))?;
             break;
         }
         push_committed_tail(&mut tail_buf, &buf);
@@ -755,15 +774,19 @@ pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
 
 /// 更新 session_log_sync 表中某条目的同步进度。
 ///
-/// Shared by all session_usage_* parsers.
+/// Shared by all session_usage_* parsers. `byte_offset` 是只到最后一个完整
+/// 行末尾的已消费字节数：字节游标解析器（Codex）传 `Some`，mtime 相等时
+/// 靠它判断文件是否真的没有新增（见 [`sync_single_file`] 的跳过去重条
+/// 件）；纯行号/事件数游标的解析器传 `None`。
 pub(crate) fn update_sync_state(
     db: &Database,
     file_path: &str,
     last_modified: i64,
     last_offset: i64,
+    byte_offset: Option<i64>,
 ) -> Result<(), AppError> {
     let conn = lock_conn!(db.conn);
-    update_sync_state_on_conn(&conn, file_path, last_modified, last_offset)
+    update_sync_state_on_conn(&conn, file_path, last_modified, last_offset, byte_offset)
 }
 
 /// [`update_sync_state`] 的免锁版本，供调用方在已持锁的事务内把游标推进
@@ -773,6 +796,7 @@ pub(crate) fn update_sync_state_on_conn(
     file_path: &str,
     last_modified: i64,
     last_offset: i64,
+    byte_offset: Option<i64>,
 ) -> Result<(), AppError> {
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -780,10 +804,19 @@ pub(crate) fn update_sync_state_on_conn(
         .unwrap_or(0);
 
     conn.prepare_cached(
-        "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT OR REPLACE INTO session_log_sync
+             (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )
-    .and_then(|mut stmt| stmt.execute(rusqlite::params![file_path, last_modified, last_offset, now]))
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            file_path,
+            last_modified,
+            last_offset,
+            now,
+            byte_offset
+        ])
+    })
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())
 }
@@ -1221,6 +1254,45 @@ mod tests {
     }
 
     #[test]
+    fn test_append_with_unchanged_mtime_is_not_missed() -> Result<(), AppError> {
+        // 回归（#7264）：写入方追加后 mtime 可能因文件系统粒度/缓存延迟
+        // 暂不更新，旧的 `file_modified <= last_modified` 门会整个跳过该
+        // 文件、用量停止累计。这里显式把 mtime 还原成同步时的值来复现该
+        // 窗口，新增用量必须照常导入。
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("session.jsonl");
+
+        fs::write(&file, format!("{}\n", assistant_line("msg_a", 5))).unwrap();
+        let first = sync_with_cursor(&db, &file)?;
+        assert_eq!(first.imported, 1);
+        let synced_mtime = fs::metadata(&file).unwrap().modified().unwrap();
+
+        let mut content = fs::read(&file).unwrap();
+        content.extend_from_slice(format!("{}\n", assistant_line("msg_b", 6)).as_bytes());
+        fs::write(&file, &content).unwrap();
+        // 还原 mtime 需要写属性权限，只读句柄会 Access Denied
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(synced_mtime)
+            .unwrap();
+
+        let second = sync_with_cursor(&db, &file)?;
+        assert_eq!(second.imported, 1, "mtime 未更新不得吞掉新增用量");
+        assert_eq!(byte_cursor(&db, &file), Some(content.len() as i64));
+
+        // 游标覆盖整个文件后，真正未变化的文件仍走跳过快路径
+        let third = sync_with_cursor(&db, &file)?;
+        assert_eq!((third.imported, third.skipped), (0, 0));
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
     fn test_complete_tail_without_newline_imports_but_holds_cursor() -> Result<(), AppError> {
         // 尾段是完整 JSON 但没有换行符：应当导入（不丢数据），但游标停在
         // 上一个完整行末尾；补全换行后重扫靠 request_id 去重不双算
@@ -1470,6 +1542,50 @@ mod tests {
         assert_eq!(msg_a_rows, 0, "msg_a 不得被重导");
         let size = fs::metadata(&file).unwrap().len() as i64;
         assert_eq!(byte_cursor(&db, &file), Some(size), "转换后写入字节游标");
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_legacy_line_cursor_conversion_holds_before_incomplete_tail() -> Result<(), AppError> {
+        // 旧行号游标把未终结的半行也计入行号；转换若把半行一并算作已消费，
+        // 字节游标会落在行中间——半行补全后从中间续读，该记录永久丢失
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("session.jsonl");
+
+        let first_line = format!("{}\n", assistant_line("msg_a", 5));
+        let full_second = assistant_line("msg_partial", 6);
+        let (head, rest) = full_second.split_at(full_second.len() / 2);
+        fs::write(&file, format!("{first_line}{head}")).unwrap();
+
+        // 旧版本游标：行号=2（含半行）、无字节游标、mtime 取当前值
+        let mtime = metadata_modified_nanos(&fs::metadata(&file).unwrap());
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
+                 VALUES (?1, ?2, 2, 1)",
+                rusqlite::params![file.to_string_lossy(), mtime],
+            )?;
+        }
+
+        let first = sync_with_cursor(&db, &file)?;
+        assert_eq!(first.imported, 0, "半行不可解析");
+        assert_eq!(
+            byte_cursor(&db, &file),
+            Some(first_line.len() as i64),
+            "转换后的字节游标必须停在半行之前"
+        );
+
+        // 补全半行：该记录必须导入，不得因游标落在行中间而丢失
+        let mut content = fs::read(&file).unwrap();
+        content.extend_from_slice(format!("{rest}\n").as_bytes());
+        fs::write(&file, &content).unwrap();
+        let second = sync_with_cursor(&db, &file)?;
+        assert_eq!(second.imported, 1, "补全后的行必须被导入");
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())
