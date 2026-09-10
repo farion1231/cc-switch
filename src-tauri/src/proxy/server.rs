@@ -491,6 +491,7 @@ mod tests {
         let mock_app = Router::new()
             .route("/v1/images/generations", post(capture_handler.clone()))
             .route("/v1/images/edits", post(capture_handler.clone()))
+            .route("/Gateway/v1/images/edits", post(capture_handler.clone()))
             .route("/v1/alpha/search", post(capture_handler));
         let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -516,6 +517,30 @@ mod tests {
         let client = reqwest::Client::new();
 
         let cases = [
+            (
+                "pasted-mixed-case-chat-completions",
+                format!("http://{mock_addr}/v1/Chat/Completions?api-version=CaseValue"),
+                "/v1/images/edits",
+                "/v1/images/edits?api-version=CaseValue&client_version=0.145.0",
+            ),
+            (
+                "pasted-mixed-case-images-generations",
+                format!("http://{mock_addr}/Gateway/v1/Images/Generations/?api-version=CaseValue#fragment"),
+                "/v1/images/edits",
+                "/Gateway/v1/images/edits?api-version=CaseValue&client_version=0.145.0",
+            ),
+            (
+                "pasted-mixed-case-images-edits",
+                format!("http://{mock_addr}/v1/Images/Edits/"),
+                "/v1/images/generations",
+                "/v1/images/generations?client_version=0.145.0",
+            ),
+            (
+                "pasted-mixed-case-responses-compact",
+                format!("http://{mock_addr}/v1/Responses/Compact/"),
+                "/v1/alpha/search",
+                "/v1/alpha/search?client_version=0.145.0",
+            ),
             (
                 "pasted-chat-completions",
                 format!("http://{mock_addr}/v1/chat/completions"),

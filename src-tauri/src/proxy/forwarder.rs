@@ -3381,6 +3381,9 @@ impl CodexStandaloneEndpoint {
     }
 
     fn source_suffix(self, parsed_path: &str) -> Option<&'static str> {
+        // Match the case-insensitive pasted-endpoint check. Only normalize for
+        // matching; the rewrite keeps the original URL prefix and query intact.
+        let parsed_path = parsed_path.to_ascii_lowercase();
         self.source_suffixes()
             .iter()
             .copied()
@@ -4844,6 +4847,10 @@ mod tests {
     fn alpha_search_rewrites_known_full_responses_urls() {
         let cases = [
             (
+                "https://relay.example/Gateway/%2F/v1/Responses/Compact/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/%2F/v1/alpha/search?api-version=CaseValue&client_version=0.144.6",
+            ),
+            (
                 "https://relay.example/v1/responses",
                 "https://relay.example/v1/alpha/search?client_version=0.144.6",
             ),
@@ -4873,6 +4880,10 @@ mod tests {
     #[test]
     fn images_generations_rewrites_known_full_codex_urls() {
         let cases = [
+            (
+                "https://relay.example/Gateway/v1/Images/Edits/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/v1/images/generations?api-version=CaseValue&client_version=0.145.0",
+            ),
             (
                 "https://relay.example/v1/responses",
                 "https://relay.example/v1/images/generations?client_version=0.145.0",
@@ -4954,6 +4965,10 @@ mod tests {
     #[test]
     fn images_edits_rewrites_known_full_codex_urls() {
         let cases = [
+            (
+                "https://relay.example/Gateway/v1/Chat/Completions/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/v1/images/edits?api-version=CaseValue&client_version=0.145.0",
+            ),
             (
                 "https://relay.example/v1/responses",
                 "https://relay.example/v1/images/edits?client_version=0.145.0",
