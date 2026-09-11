@@ -284,6 +284,18 @@ export const settingsApi = {
     return await invoke("set_rectifier_config", { config });
   },
 
+  async getOutboundMaskConfig(): Promise<OutboundMaskConfig> {
+    return await invoke("get_outbound_mask_config");
+  },
+
+  async setOutboundMaskConfig(config: OutboundMaskConfig): Promise<boolean> {
+    return await invoke("set_outbound_mask_config", { config });
+  },
+
+  async listBuiltinMaskRules(): Promise<BuiltinMaskRule[]> {
+    return await invoke("list_builtin_mask_rules");
+  },
+
   async getOptimizerConfig(): Promise<OptimizerConfig> {
     return await invoke("get_optimizer_config");
   },
@@ -327,6 +339,35 @@ export interface RectifierConfig {
   requestThinkingBudget: boolean;
   requestMediaFallback: boolean;
   requestMediaHeuristic: boolean;
+}
+
+/** 自定义脱敏规则的匹配方式 */
+export type MaskRuleKind = "regex" | "literal";
+
+/** 自定义规则非法时的处理策略 */
+export type MaskOnError = "warnAndBypass" | "blockRequest";
+
+export interface MaskCustomRule {
+  enabled: boolean;
+  kind: MaskRuleKind;
+  /** 占位符类型名，如 TERM；留空则回退为 CUSTOM{n} */
+  label: string;
+  pattern: string;
+}
+
+export interface OutboundMaskConfig {
+  enabled: boolean;
+  onError: MaskOnError;
+  /** 内置规则开关，键为规则 id；缺省的键使用规则自带默认值 */
+  builtin: Record<string, boolean>;
+  customRules: MaskCustomRule[];
+}
+
+/** 内置规则的只读描述，由后端提供 */
+export interface BuiltinMaskRule {
+  id: string;
+  label: string;
+  defaultOn: boolean;
 }
 
 export interface OptimizerConfig {

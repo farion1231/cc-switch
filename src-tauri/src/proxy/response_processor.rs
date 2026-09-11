@@ -2,6 +2,7 @@
 //!
 //! 统一处理流式和非流式 API 响应
 
+use super::outbound_mask::{MaskSession, StreamRestorer};
 use super::{
     content_encoding::{decompress_body_with_limit, get_content_encoding, DecompressError},
     forwarder::ActiveConnectionGuard,
@@ -197,6 +198,7 @@ pub async fn handle_streaming(
         usage_collector,
         timeout_config,
         connection_guard,
+        ctx.mask_restorer(),
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -307,6 +309,19 @@ pub async fn handle_non_streaming(
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
     }
 
+    // 出站脱敏还原：把占位符换回原文再交给客户端
+    let body_bytes = match ctx.mask_restorer() {
+        Some(session) => match restore_non_streaming_body(&body_bytes, &session) {
+            Some(restored) => {
+                // 还原后长度必然变化，content-length / content-encoding 随之失真
+                strip_entity_headers_for_rebuilt_body(&mut response_headers);
+                restored
+            }
+            None => body_bytes,
+        },
+        None => body_bytes,
+    };
+
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
     for (key, value) in response_headers.iter() {
@@ -318,6 +333,30 @@ pub async fn handle_non_streaming(
         log::error!("[{}] 构建响应失败: {e}", ctx.tag);
         ProxyError::Internal(format!("Failed to build response: {e}"))
     })
+}
+
+/// 非流式响应的占位符还原。
+///
+/// 未命中占位符时返回 `None`，调用方直接复用原 bytes——这条短路很关键：
+/// 没有占位符就绝不重新序列化，避免无谓开销和 JSON 数字格式被改写的风险。
+///
+/// 命中时优先按 JSON 解析后在字符串值里替换，转义交给 serde_json 处理（原文可能
+/// 含换行或引号）；响应不是 JSON 时退回纯文本替换。
+fn restore_non_streaming_body(body: &Bytes, session: &MaskSession) -> Option<Bytes> {
+    let text = std::str::from_utf8(body).ok()?;
+    if !text.contains("{{") {
+        return None;
+    }
+    if let Ok(mut value) = serde_json::from_str::<Value>(text) {
+        session.restore_json_value(&mut value);
+        return serde_json::to_vec(&value).ok().map(Bytes::from);
+    }
+    let restored = session.restore_plain_text(text);
+    if restored == text {
+        None
+    } else {
+        Some(Bytes::from(restored.into_bytes()))
+    }
 }
 
 /// 通用响应处理入口
@@ -686,11 +725,17 @@ pub fn create_logged_passthrough_stream(
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    mask_session: Option<Arc<MaskSession>>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
+        // 占位符还原的缓冲与 SSE 解析的 buffer 完全独立，两者互不干扰。
+        // `mask_session` 为 None 时（绝大多数请求）这几个变量不参与热路径。
+        let mut restore_remainder: Vec<u8> = Vec::new();
+        let mut restore_buf = String::new();
+        let mut restorer = mask_session.as_ref().map(|_| StreamRestorer::new());
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
@@ -780,7 +825,24 @@ pub fn create_logged_passthrough_stream(
                         }
                     }
 
-                    yield Ok(bytes);
+                    match (&mut restorer, &mask_session) {
+                        (Some(r), Some(sess)) => {
+                            // 字节 → UTF-8 安全字符串 → 还原 → 回到字节。
+                            // 跨 chunk 被切开的占位符由 StreamRestorer 扣住尾巴处理。
+                            restore_buf.clear();
+                            crate::proxy::sse::append_utf8_safe(
+                                &mut restore_buf,
+                                &mut restore_remainder,
+                                &bytes,
+                            );
+                            let out = r.push(&restore_buf, sess);
+                            if !out.is_empty() {
+                                yield Ok(Bytes::from(out.into_bytes()));
+                            }
+                        }
+                        // 未开启脱敏：原样透传，不做任何拷贝或解码
+                        _ => yield Ok(bytes),
+                    }
                 }
                 Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
@@ -791,6 +853,15 @@ pub fn create_logged_passthrough_stream(
                     // 流正常结束
                     break;
                 }
+            }
+        }
+
+        // 流结束，把还扣在缓冲里的尾巴发出去——此时不可能再有后续数据，
+        // 继续等待闭合只会丢内容。
+        if let (Some(r), Some(sess)) = (&mut restorer, &mask_session) {
+            let tail = r.flush(sess);
+            if !tail.is_empty() {
+                yield Ok(Bytes::from(tail.into_bytes()));
             }
         }
 
@@ -859,13 +930,76 @@ mod tests {
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
     use crate::proxy::failover_switch::FailoverSwitchManager;
+    use crate::proxy::outbound_mask::{mask_request_body, MaskSession};
     use crate::proxy::provider_router::ProviderRouter;
     use crate::proxy::providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
     };
-    use crate::proxy::types::{ProxyConfig, ProxyStatus};
+    use crate::proxy::types::{OutboundMaskConfig, ProxyConfig, ProxyStatus};
     use rust_decimal::Decimal;
     use std::collections::HashMap;
+
+    fn masked_session_with(value: &str) -> (MaskSession, String) {
+        let session = MaskSession::new("resp-test");
+        let config = OutboundMaskConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let mut body = serde_json::json!({ "c": value });
+        mask_request_body(&mut body, &config, &session).expect("mask");
+        let placeholder = body["c"].as_str().expect("masked").to_string();
+        (session, placeholder)
+    }
+
+    #[test]
+    fn non_streaming_restore_returns_none_without_placeholders() {
+        let (session, _) = masked_session_with("13800138000");
+        let body = Bytes::from_static(br#"{"text":"nothing to restore"}"#);
+        // 没有占位符时必须短路，避免无谓的反序列化 / 重新序列化
+        assert!(restore_non_streaming_body(&body, &session).is_none());
+    }
+
+    #[test]
+    fn non_streaming_restore_rewrites_json_string_values() {
+        let (session, placeholder) = masked_session_with("13800138000");
+        let body = Bytes::from(
+            serde_json::json!({ "choices": [{ "message": { "content": placeholder } }] })
+                .to_string(),
+        );
+        let restored = restore_non_streaming_body(&body, &session).expect("restored");
+        let parsed: Value = serde_json::from_slice(&restored).expect("valid json");
+        assert_eq!(parsed["choices"][0]["message"]["content"], "13800138000");
+    }
+
+    #[test]
+    fn non_streaming_restore_keeps_json_valid_for_multiline_secrets() {
+        let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----";
+        let (session, placeholder) = masked_session_with(pem);
+        let body = Bytes::from(serde_json::json!({ "text": placeholder }).to_string());
+        let restored = restore_non_streaming_body(&body, &session).expect("restored");
+        // 含换行的原文代回去后必须仍是合法 JSON，否则客户端直接解析失败
+        let parsed: Value = serde_json::from_slice(&restored).expect("valid json");
+        assert_eq!(parsed["text"], pem);
+    }
+
+    #[test]
+    fn non_streaming_restore_falls_back_to_text_for_non_json() {
+        let (session, placeholder) = masked_session_with("a@b.com");
+        let body = Bytes::from(format!("plain text with {placeholder} inside"));
+        let restored = restore_non_streaming_body(&body, &session).expect("restored");
+        assert_eq!(
+            std::str::from_utf8(&restored).unwrap(),
+            "plain text with a@b.com inside"
+        );
+    }
+
+    #[test]
+    fn non_streaming_restore_ignores_non_utf8_body() {
+        let (session, _) = masked_session_with("13800138000");
+        let body = Bytes::from_static(&[0xff, 0xfe, 0x00]);
+        // 二进制响应不能当文本处理，直接放行
+        assert!(restore_non_streaming_body(&body, &session).is_none());
+    }
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
