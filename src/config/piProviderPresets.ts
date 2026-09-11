@@ -2137,14 +2137,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("deepseek/deepseek-v4-flash", {
           id: "deepseek/deepseek-v4-flash",
         }),
-        piModel("volcengine/doubao-seedance-2-5-v2", {
-          id: "volcengine/doubao-seedance-2-5-v2",
-        }),
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "laonongapi",
     icon: "laonongapi",
   },
 ];
