@@ -1664,6 +1664,8 @@
     "customUserAgent": "自定义 User-Agent",
     "customUserAgentInvalid": "User-Agent 不能包含控制字符（如换行符），否则将被忽略。",
     "customUserAgentPresets": "预设",
+    "stripClaudeCodeFingerprint": "剥离 Claude Code 指纹头",
+    "stripClaudeCodeFingerprintHint": "默认关闭。开启后仅在 API 格式转换路径（OpenAI Chat / Responses / Gemini）生效：转发前移除 x-app、x-stainless-*、x-claude-code-* 等客户端指纹头。原生 Anthropic 透传不受影响。",
     "localProxyRequestOverrides": "本地代理请求覆盖",
     "localProxyRequestOverridesInvalid": "本地代理请求覆盖格式错误：{{error}}",
     "localProxyHeaderOverrides": "Header 覆盖",
