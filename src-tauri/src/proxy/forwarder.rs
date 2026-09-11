@@ -3346,9 +3346,9 @@ async fn rewrite_claude_science_tool_alias_response(
         return Ok(ProxyResponse::streamed(status, headers, rewritten));
     }
 
-    let raw = response.bytes().await?;
+    let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
     let decoded = match encoding.as_deref() {
-        Some(encoding) => decompress_body(encoding, &raw)
+        Some(encoding) => decompress_body_with_limit(encoding, &raw, MAX_RESPONSE_BODY_BYTES)
             .map_err(|error| {
                 ProxyError::TransformError(format!(
                     "Failed to decode Claude Science response before tool alias remapping: {error}"
@@ -4486,7 +4486,7 @@ mod tests {
         let rewritten = rewrite_claude_science_tool_alias_response(response, aliases)
             .await
             .expect("rewrite Science stream")
-            .bytes()
+            .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
             .await
             .expect("collect rewritten stream");
         let rewritten = String::from_utf8(rewritten.to_vec()).expect("utf8 SSE");

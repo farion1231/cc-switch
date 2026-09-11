@@ -176,6 +176,12 @@ pub fn strip_one_m_suffix_for_upstream_from_body_with_flag(mut body: Value) -> (
     (body, false)
 }
 
+/// Strip the local `[1m]` routing marker when the caller does not need to
+/// propagate it as an upstream capability.
+pub fn strip_one_m_suffix_for_upstream_from_body(body: Value) -> Value {
+    strip_one_m_suffix_for_upstream_from_body_with_flag(body).0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
