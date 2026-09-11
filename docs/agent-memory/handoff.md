@@ -17,6 +17,7 @@
 - DSH Desktop entry in Local Environment Check.
 - Reusable focused test and macOS package scripts.
 - Live state query (`get_dsh_current_state`) and default-model command (`set_dsh_current_model`) wired to provider cards (set-as-default with model dropdown, remove-from-config, in-config badges).
+- DSH provider add/edit now uses the same shared form shell as OpenCode (preset picker, name/website/notes, provider key, JSON editor, meta/providerType assembly) plus DSH structured fields (credential ref, base URL, API format, model catalog, default model). The previous standalone `DeepSeekHarnessProviderForm` was removed.
 - Zstd session history browsing and deletion in the session manager (`~/.dsh/sessions/**/session.jsonl.zstd`).
 - Reachability (speed test) base-URL resolution for DSH providers.
 - MCP and Skills entries hidden for DSH (DSH 2.0.5 has neither surface).
@@ -41,11 +42,11 @@
 
 ## Latest Artifact
 
-- Version: `3.20.2-dsh.4` (dsh.3 plus the app-visibility fix).
-- Path: `release/CC-Switch-3.20.2-dsh.4-DSH-Codex-arm64.dmg`
-- SHA-256: `ab2ddc8f28d20ebf09fa6df602c64c90ce8ea0974875e35478dc509093f3346c`
-- Installed and launched locally as 3.20.2-dsh.4; OCR-verified that Settings > Main Page Display now includes the DeepSeek Harness toggle. Native `settings.yaml` untouched; session manager lists 19 real DSH sessions.
+- Version: `3.20.2-dsh.5` (dsh.4 plus the OpenCode-style form refactor).
+- Path: `release/CC-Switch-3.20.2-dsh.5-DSH-Codex-arm64.dmg`
+- SHA-256: `1d9a3b65517e01a74d573f18caba09cca03a22a89d5383b586814653de392d0a`
+- Installed and launched locally as 3.20.2-dsh.5; OCR-confirmed the DSH add panel renders the shared shell plus structured fields and config JSON.
 
 ## Next Step
 
-Continue visual acceptance: provider-card hover actions (set-as-default dropdown, remove-from-config) and the DSH entry in Settings > directory overrides. Report any further incompleteness with the specific screen.
+Visual acceptance of the DSH add/edit form (official preset locks Provider Key to `deepseek-official` and hides credential ref/API format; custom preset edits displayName/api/baseURL/apiKeyEnv/models) and retest the earlier parity items.
