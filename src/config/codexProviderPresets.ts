@@ -1356,6 +1356,8 @@ requires_openai_auth = true`,
       // 标注 8/20 下线不收。窗口=千帆平台模型列表页口径（2026-08-06 版，
       // glm-5.1 与官方 OpenCode 接入页 198000 双重印证）
       {
+        // 千帆 Token Plan 托管的 DeepSeek V4 是纯文本部署（Coding Plan 文档明写"暂未支持图像理解能力"，附图 400），
+        // 与官方端点把 v4-flash 路由到识图的 V4.1 Flash 不同——显式声明纯文本，勿依赖全局名单（#7283 follow-up）
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
         contextWindow: 1048576,
@@ -1363,12 +1365,14 @@ requires_openai_auth = true`,
         // =官方仅有的两档真实深度。不声明 default：官方对复杂 Agent 类请求
         // 自动置 max=回落结果，显式钉 high 反而会压低平台该行为
         reasoningLevels: ["none", "high", "max"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high", "max"],
+        inputModalities: ["text"],
       },
       {
         // 平台模型列表无独立条目、思考双清单均未收录——窗口按 v4-flash
@@ -1376,6 +1380,7 @@ requires_openai_auth = true`,
         model: "deepseek-v4-flash-0731",
         displayName: "DeepSeek V4 Flash 0731",
         contextWindow: 1048576,
+        inputModalities: ["text"],
       },
       {
         // 千帆平台标 1M（≠智谱自家 coding 端点 200K 口径，窗口是平台部署
@@ -1939,40 +1944,48 @@ requires_openai_auth = true`,
         reasoningLevels: ["none", "high"],
       },
       {
+        // 腾讯 Token Plan 托管的 DeepSeek V4 是纯文本部署（套餐清单 2026-09-10 版模态=文本；vision-exp 未入本预设），
+        // 与官方端点把 v4-flash 路由到识图的 V4.1 Flash 不同——显式声明纯文本，勿依赖全局名单（#7283 follow-up）
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-flash-0731",
         displayName: "DeepSeek V4 Flash 0731 GA",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-pro-0813",
         displayName: "DeepSeek V4 Pro 0813 GA",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-flash-202605",
         displayName: "DeepSeek V4 Flash Official",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-pro-202606",
         displayName: "DeepSeek V4 Pro Official",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
     ]),
     // reasoning_effort 默认 high 全模型实测容忍；glm-5.3 的 medium/xhigh
@@ -2056,40 +2069,47 @@ requires_openai_auth = true`,
         reasoningLevels: ["high"],
       },
       {
+        // 同国内版：腾讯托管 DeepSeek V4 纯文本，显式声明勿依赖全局名单（#7283 follow-up）
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-flash-0731",
         displayName: "DeepSeek V4 Flash 0731 GA",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-pro-0813",
         displayName: "DeepSeek V4 Pro 0813 GA",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-flash-202605",
         displayName: "DeepSeek V4 Flash Official",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
       {
         model: "deepseek-v4-pro-202606",
         displayName: "DeepSeek V4 Pro Official",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
       },
     ]),
     // reasoning_effort 默认 high 全模型实测容忍；同国内企业专业版
