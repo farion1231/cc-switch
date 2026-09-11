@@ -142,7 +142,6 @@ fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
 #[derive(Debug)]
 struct ParentTokenTimeline {
     events: Vec<TimestampedTokenSignature>,
-    max_timestamp: Option<DateTime<Utc>>,
     has_token_without_timestamp: bool,
 }
 
@@ -158,15 +157,11 @@ impl ParentTokenTimeline {
                 parent_path.display()
             ));
         }
-        if self
-            .max_timestamp
-            .is_none_or(|timestamp| timestamp < cutoff)
-        {
-            return Err(format!(
-                "父 rollout {} 尚未写到 child fork 时刻",
-                parent_path.display()
-            ));
-        }
+        // A completed parent can legitimately stop writing before a child is
+        // forked after an idle gap. Requiring a parent timestamp at or after
+        // the child root timestamp permanently defers that valid shape. The
+        // caller instead validates that the parent file did not change while
+        // its timeline was read, then filters the stable snapshot by cutoff.
         Ok(self
             .events
             .iter()
@@ -1032,27 +1027,29 @@ fn parent_signatures_before(
 ) -> Result<Vec<TokenUsageSignature>, String> {
     let file = fs::File::open(parent_path)
         .map_err(|error| format!("无法打开父 rollout {}: {error}", parent_path.display()))?;
-    let stamp = ParentFileStamp::from_file(&file);
-    let cached_timeline = stamp.and_then(|stamp| {
-        replay_caches().lock().ok().and_then(|caches| {
-            caches
-                .parent_timelines
-                .get(parent_path)
-                .filter(|entry| entry.stamp == stamp)
-                .map(|entry| Arc::clone(&entry.timeline))
-        })
+    let Some(stamp) = ParentFileStamp::from_file(&file) else {
+        return Err(format!(
+            "无法读取父 rollout {} 的稳定文件标识",
+            parent_path.display()
+        ));
+    };
+    let cached_timeline = replay_caches().lock().ok().and_then(|caches| {
+        caches
+            .parent_timelines
+            .get(parent_path)
+            .filter(|entry| entry.stamp == stamp)
+            .map(|entry| Arc::clone(&entry.timeline))
     });
     if let Some(timeline) = cached_timeline {
         return timeline.signatures_before(parent_path, cutoff);
     }
 
     let mut events = Vec::new();
-    let mut max_timestamp: Option<DateTime<Utc>> = None;
     let mut has_token_without_timestamp = false;
 
     // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
     // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
-    for line in BufReader::new(file).lines() {
+    for line in BufReader::new(&file).lines() {
         let Ok(line) = line else {
             continue;
         };
@@ -1060,9 +1057,6 @@ fn parent_signatures_before(
             continue;
         };
         let timestamp = parse_timestamp(value.get("timestamp"));
-        if let Some(timestamp) = timestamp {
-            max_timestamp = Some(max_timestamp.map_or(timestamp, |current| current.max(timestamp)));
-        }
         if value.get("type").and_then(serde_json::Value::as_str) != Some("event_msg")
             || value
                 .get("payload")
@@ -1092,13 +1086,25 @@ fn parent_signatures_before(
         });
     }
 
+    let Some(end_stamp) = ParentFileStamp::from_file(&file) else {
+        return Err(format!(
+            "无法复核父 rollout {} 的稳定文件标识",
+            parent_path.display()
+        ));
+    };
+    if end_stamp != stamp {
+        return Err(format!(
+            "父 rollout {} 在读取期间发生变化",
+            parent_path.display()
+        ));
+    }
+
     let timeline = Arc::new(ParentTokenTimeline {
         events,
-        max_timestamp,
         has_token_without_timestamp,
     });
     let result = timeline.signatures_before(parent_path, cutoff);
-    if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
+    if let Ok(mut caches) = replay_caches().lock() {
         caches.parent_timelines.insert(
             parent_path.to_path_buf(),
             CachedParentTimeline {
@@ -2530,6 +2536,48 @@ mod tests {
                 turn_context(),
                 token_count_at(1_000, 900, 100, "2026-07-10T03:00:06Z"),
                 token_count_at(1_300, 1_050, 150, "2026-07-10T03:00:07Z"),
+            ],
+        );
+
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!(
+            (result.imported, result.skipped, result.deferred),
+            (1, 1, false)
+        );
+
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:2")],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(usage, (300, 150, 50));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_completed_parent_before_fork_strips_replay_and_imports_live_usage(
+    ) -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:01Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, None, Some(PARENT_ID), "2026-07-10T03:05:00Z"),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:05:01Z"),
+                token_count_at(1_300, 1_050, 150, "2026-07-10T03:05:02Z"),
             ],
         );
 
