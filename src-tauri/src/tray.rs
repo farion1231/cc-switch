@@ -1027,8 +1027,13 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
         }
         "lightweight_mode" => {
             if crate::lightweight::is_lightweight_mode() {
+                // 用户在托盘取消勾选：显式退出并清除"记住"的偏好，之后关闭
+                // 主窗口/重启不再自动回到轻量模式。清除放在退出成功之后，
+                // 失败重试时偏好仍在。
                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
                     log::error!("退出轻量模式失败: {e}");
+                } else if let Err(e) = crate::settings::set_lightweight_mode_preference(false) {
+                    log::error!("清除轻量模式偏好失败: {e}");
                 }
             } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
                 log::error!("进入轻量模式失败: {e}");

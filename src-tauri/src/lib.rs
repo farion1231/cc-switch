@@ -396,6 +396,7 @@ pub fn run() {
                 && payload.url().scheme() != "about"
                 && !startup_page_handled.swap(true, Ordering::Relaxed)
                 && !crate::settings::get_settings().silent_startup
+                && !crate::settings::get_settings().lightweight_mode
             {
                 let _ = webview.window().show();
                 log::info!("主页面加载完成，主窗口已显示");
@@ -420,6 +421,19 @@ pub fn run() {
                 }
 
                 let settings = crate::settings::get_settings();
+
+                // 记住的轻量模式：勾选过托盘"轻量模式"后，关闭主窗口视为
+                // 临时打开界面结束，自动销毁窗口回到轻量模式（仅托盘运行），
+                // 而不是隐藏或退出。用户可随时在托盘取消勾选恢复原行为。
+                if settings.lightweight_mode {
+                    api.prevent_close();
+                    if let Err(e) =
+                        crate::lightweight::enter_lightweight_mode(window.app_handle())
+                    {
+                        log::error!("关闭主窗口自动进入轻量模式失败: {e}");
+                    }
+                    return;
+                }
 
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
@@ -1333,7 +1347,11 @@ pub fn run() {
 
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
-            if let Some(window) = app.get_webview_window("main") {
+            if settings.lightweight_mode {
+                // 记住的轻量模式：主窗口保持隐藏，等事件循环 Ready 后立即
+                // 销毁、仅托盘运行（见 run() 的 RunEvent::Ready 分支）。
+                log::info!("记住的轻量模式：主窗口保持隐藏，即将自动进入轻量模式");
+            } else if let Some(window) = app.get_webview_window("main") {
                 // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁
                 // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
                 #[cfg(target_os = "linux")]
@@ -1719,6 +1737,19 @@ pub fn run() {
         .expect("error while running tauri application");
 
     app.run(|app_handle, event| {
+        // 记住的轻量模式：事件循环就绪后立即销毁主窗口、仅托盘运行。
+        // 放在 Ready 而非 setup 里做：此时 ExitRequested 的 StayInTray 拦截
+        // 已生效，销毁窗口触发的退出请求不会结束进程；窗口自创建起从未
+        // 显示，也不会闪现。数据库恢复模式没有托盘可唤回，跳过。
+        if matches!(event, RunEvent::Ready)
+            && crate::settings::get_settings().lightweight_mode
+            && crate::init_status::get_init_error().is_none()
+        {
+            if let Err(e) = crate::lightweight::enter_lightweight_mode(app_handle) {
+                log::error!("启动自动进入轻量模式失败: {e}");
+            }
+        }
+
         // 处理退出请求（所有平台）
         if let RunEvent::ExitRequested { api, code, .. } = &event {
             match classify_exit_request(*code) {
