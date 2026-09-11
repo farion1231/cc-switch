@@ -509,7 +509,7 @@ mod tests {
     fn confirmed_text_only_models_replace_chat_image_url_before_send() {
         let provider = provider(json!({}));
         let mut body = json!({
-            "model": "deepseek-v4-flash",
+            "model": "deepseek-v4-pro",
             "messages": [{
                 "role": "user",
                 "content": [
@@ -533,7 +533,7 @@ mod tests {
     fn confirmed_text_only_models_replace_codex_input_image_before_send() {
         let provider = provider(json!({}));
         let mut body = json!({
-            "model": "deepseek-v4-flash",
+            "model": "deepseek-v4-pro",
             "input": [{
                 "role": "user",
                 "content": [
