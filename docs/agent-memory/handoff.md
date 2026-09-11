@@ -39,6 +39,14 @@
 - Two pi-ai routes sharing one `apiKeyEnv` credential ref: removing one route clears the shared ref (pre-existing credential design).
 - DSH form tests emit pre-existing React `act(...)` warnings but pass.
 
+## Latest Artifact
+
+- Version: `3.20.2-dsh.3` (version bumped for the parity iteration).
+- Path: `release/CC-Switch-3.20.2-dsh.3-DSH-Codex-arm64.dmg`
+- SHA-256: `3dc7b54d47383216515b83bb0856f294d17dfec349bd1e2c14152cd5f3ff8775`
+- Build: `pnpm build:dsh:macos` requires a stale-path clean (`cargo clean --release -p tauri -p tauri-build`) because cached build scripts referenced the repository's previous location. Build then completed sign/DMG/mount/arm64 verification.
+- Installed and launched locally as 3.20.2-dsh.3; native sync mirrored 4 DSH providers (yuzuvalley current, `deepseek-v4-pro`); `~/.dsh/settings.yaml` md5 unchanged from the pre-run backup.
+
 ## Next Step
 
-Run `pnpm build:dsh:macos`, mount-verify the DMG, then install and visually accept: DSH provider page (no MCP/Skills buttons), speed test on a custom route, set-as-default model dropdown, remove-from-config, DSH sessions in the session manager, and the DSH row in Settings > directory overrides.
+Visual acceptance in the running app (screen-recording permission blocked automated screenshots): DSH provider page shows no MCP/Skills buttons; speed test on `k3`; set-as-default model dropdown and remove-from-config on cards; DSH sessions in the session manager; DSH row in Settings > directory overrides.
