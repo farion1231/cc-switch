@@ -119,3 +119,31 @@ pub fn published_explicit_proxy(generation: u64) -> Option<Option<String>> {
 pub fn clear_publish_log() {
     log_cell().lock().unwrap().clear();
 }
+
+/// Records every route resolution performed by `resolve_route_for_url`:
+/// `(generation, loopback_direct, url_is_loopback)`. Used by the concurrency
+/// regression tests to prove that every decision is consistent with the snapshot
+/// generation it actually consumed (never a torn metadata/client pairing).
+static RESOLUTION_LOG: OnceLock<Mutex<Vec<(u64, bool, bool)>>> = OnceLock::new();
+
+fn resolution_cell() -> &'static Mutex<Vec<(u64, bool, bool)>> {
+    RESOLUTION_LOG.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Record a route resolution (called by `resolve_route_for_url`).
+pub fn record_resolution(generation: u64, loopback_direct: bool, url_is_loopback: bool) {
+    resolution_cell()
+        .lock()
+        .unwrap()
+        .push((generation, loopback_direct, url_is_loopback));
+}
+
+/// Snapshot of all recorded resolutions.
+pub fn resolutions() -> Vec<(u64, bool, bool)> {
+    resolution_cell().lock().unwrap().clone()
+}
+
+/// Clear the resolution log between tests.
+pub fn clear_resolution_log() {
+    resolution_cell().lock().unwrap().clear();
+}

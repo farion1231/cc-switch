@@ -19,8 +19,12 @@ use std::time::Duration;
 pub struct RouteState {
     /// 单调递增的发布序号（诊断与测试证据用）。
     generation: u64,
-    /// 当前 proxy 配置对应的 following/pooled 客户端。
+    /// 当前 proxy 配置对应的 following/pooled 客户端
+    /// （非 forwarder 消费者使用；保留 reqwest 默认 redirect 行为）。
     client: Client,
+    /// forwarder 专用客户端（禁用 reqwest 自动 redirect；redirect 由
+    /// forwarder 统一显式状态机处理，跨越所有 hop 共享单一预算与 deadline）。
+    route_client: Client,
     /// 当前配置的 explicit proxy URL；None = 直连/跟随系统代理。
     explicit_proxy_url: Option<String>,
 }
@@ -35,6 +39,7 @@ static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
 
 /// 全局直连 HTTP 客户端（永不使用任何代理，包括系统代理）。
 /// 用于 loopback upstream 目标：本地目标必须直连，否则会被系统代理截获。
+#[cfg(feature = "test-hooks")]
 static DIRECT_CLIENT: OnceCell<Client> = OnceCell::new();
 
 /// 设置 CC Switch 代理服务器的监听端口
@@ -62,12 +67,13 @@ fn get_proxy_port() -> u16 {
 }
 
 /// 构建新一代路由状态快照（尚未发布）。
-fn build_route_state(client: Client, explicit_proxy_url: Option<String>) -> Arc<RouteState> {
-    Arc::new(RouteState {
+fn build_route_state(proxy_url: Option<&str>) -> Result<Arc<RouteState>, String> {
+    Ok(Arc::new(RouteState {
         generation: ROUTE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1,
-        client,
-        explicit_proxy_url,
-    })
+        client: build_client(proxy_url)?,
+        route_client: build_route_client(proxy_url)?,
+        explicit_proxy_url: proxy_url.map(|s| s.to_string()),
+    }))
 }
 
 /// 读取当前路由状态快照。一次读取即原子自洽：元数据与 client 来自同一代。
@@ -83,6 +89,7 @@ pub fn route_snapshot() -> Arc<RouteState> {
             Arc::new(RouteState {
                 generation: 0,
                 client: build_client(None).unwrap_or_default(),
+                route_client: build_client_with(None, false, false).unwrap_or_default(),
                 explicit_proxy_url: None,
             })
         }
@@ -98,8 +105,7 @@ pub fn route_snapshot() -> Arc<RouteState> {
 ///   传入 None 或空字符串表示直连
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let client = build_client(effective_url)?;
-    let state = build_route_state(client, effective_url.map(|s| s.to_string()));
+    let state = build_route_state(effective_url)?;
 
     // 尝试初始化路由状态，如果已存在则记录警告并使用 apply_proxy 更新
     #[cfg(feature = "test-hooks")]
@@ -151,8 +157,7 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// * `proxy_url` - 代理 URL，None 或空字符串表示直连
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
-    let new_state = build_route_state(new_client, effective_url.map(|s| s.to_string()));
+    let new_state = build_route_state(effective_url)?;
 
     // 发布：在写锁临界区内整体替换快照；读者要么看到旧快照要么看到新快照。
     let generation = new_state.generation;
@@ -193,8 +198,7 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 #[allow(dead_code)]
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
-    let new_state = build_route_state(new_client, effective_url.map(|s| s.to_string()));
+    let new_state = build_route_state(effective_url)?;
 
     // 发布：与 apply_proxy 相同——单锁临界区内整体替换快照。
     if let Some(lock) = ROUTE_STATE.get() {
@@ -234,14 +238,36 @@ pub fn get() -> Client {
 ///
 /// 用于 loopback upstream 目标：本地环回地址必须直连，
 /// 避免被系统代理（如 ClashX / v2rayN）截获导致请求无法到达本地服务。
+#[cfg(feature = "test-hooks")]
 pub fn get_direct() -> Client {
     DIRECT_CLIENT
         .get_or_init(|| {
-            build_client_with(None, true).unwrap_or_else(|e| {
+            build_client_with(None, true, true).unwrap_or_else(|e| {
                 log::warn!(
                     "[GlobalProxy] [GP-009] Direct client build failed, using fallback: {e}"
                 );
                 Client::builder().no_proxy().build().unwrap_or_default()
+            })
+        })
+        .clone()
+}
+
+/// forwarder 直连路由客户端：无代理 + 禁用自动 redirect（redirect 由
+/// forwarder 显式状态机处理；见 `resolve_route_for_url`）。
+static DIRECT_ROUTE_CLIENT: OnceCell<Client> = OnceCell::new();
+
+fn get_direct_route_client() -> Client {
+    DIRECT_ROUTE_CLIENT
+        .get_or_init(|| {
+            build_client_with(None, true, false).unwrap_or_else(|e| {
+                log::warn!(
+                    "[GlobalProxy] [GP-010] Direct route client build failed, using fallback: {e}"
+                );
+                Client::builder()
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap_or_default()
             })
         })
         .clone()
@@ -275,27 +301,89 @@ pub fn should_direct_connect_to(url: &str, explicit_proxy_url: Option<&str>) -> 
     explicit_proxy_url.is_none() && is_loopback_upstream_url(url)
 }
 
-/// 选择该 upstream 目标应使用的 Client（唯一原子快照）。
+/// 单个 hop 的显式代理形态（由同一快照的 explicit proxy URL 派生）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RouteProxyKind {
+    /// 无 explicit proxy：直连 / 跟随系统代理。
+    None,
+    /// explicit HTTP(S) 代理。
+    Http,
+    /// explicit SOCKS5 代理。
+    Socks5,
+}
+
+/// 单个 hop 的路由决策：所有字段来自**同一次**原子快照读取。
 ///
-/// 元数据（explicit proxy）与对应 Client 来自同一次 `route_snapshot()` 读取，
-/// 热更新期间不存在撕裂配对（review finding P2-B）。
-pub fn select_client_for_url(url: &str) -> Client {
+/// 同一个 hop 内 reqwest/hyper 分支判断、SOCKS/HTTP/direct 判断、
+/// explicit proxy 元数据、实际使用的 Client 与 loopback-direct 决策不得来自
+/// 不同世代（review finding MAJOR-2：禁止「先读 metadata、再独立选 client」）。
+/// redirect 到下一 hop 时允许重新解析一个新的原子决策（proxy 配置可能在两个
+/// hop 之间改变）。ONE HOP = ONE COHERENT ROUTE SNAPSHOT。
+#[derive(Clone)]
+pub struct RouteDecision {
+    /// 本次决策所用快照的发布序号。
+    pub generation: u64,
+    /// 与 client 同源的 explicit proxy URL（None = 无 explicit proxy）。
+    pub explicit_proxy_url: Option<String>,
+    /// explicit proxy 形态（与 explicit_proxy_url 同源派生）。
+    pub proxy_kind: RouteProxyKind,
+    /// 本目标在此快照下是否应直连（loopback 且无 explicit proxy）。
+    pub loopback_direct: bool,
+    /// 本 hop 应使用的 forwarder 客户端（无自动 redirect）。
+    pub client: Client,
+}
+
+/// 代理形态分类：必须与 `build_client_with` 接受 URL 的方式一致（解析后的
+/// scheme，大小写不敏感；SOCKS 族含 socks4/4a/5/5h——hyper 的 HTTP-CONNECT
+/// 无法表达任何一种 SOCKS URL，必须统一走 reqwest 客户端）。
+fn route_proxy_kind(explicit_proxy_url: Option<&str>) -> RouteProxyKind {
+    match explicit_proxy_url {
+        None => RouteProxyKind::None,
+        Some(url) => match reqwest::Url::parse(url) {
+            Ok(parsed) if parsed.scheme().to_ascii_lowercase().starts_with("socks") => {
+                RouteProxyKind::Socks5
+            }
+            _ => RouteProxyKind::Http,
+        },
+    }
+}
+
+/// 解析该 upstream 目标的一个原子路由决策（ONE HOP = ONE SNAPSHOT）。
+///
+/// 元数据（explicit proxy / proxy kind / loopback-direct）与对应 Client 来自
+/// 同一次 `route_snapshot()` 读取，热更新期间不存在撕裂配对。
+pub fn resolve_route_for_url(url: &str) -> RouteDecision {
     let snapshot = route_snapshot();
     #[cfg(feature = "test-hooks")]
     crate::proxy::test_hooks::pause_point();
-    if should_direct_connect_to(url, snapshot.explicit_proxy_url.as_deref()) {
+    let loopback_direct = should_direct_connect_to(url, snapshot.explicit_proxy_url.as_deref());
+    let proxy_kind = route_proxy_kind(snapshot.explicit_proxy_url.as_deref());
+    #[cfg(feature = "test-hooks")]
+    crate::proxy::test_hooks::record_resolution(
+        snapshot.generation,
+        loopback_direct,
+        is_loopback_upstream_url(url),
+    );
+    let client = if loopback_direct {
         log::debug!(
             "[GlobalProxy] Loopback upstream detected; using direct client (inherited proxy bypassed)"
         );
-        get_direct()
+        get_direct_route_client()
     } else {
-        snapshot.client.clone()
+        snapshot.route_client.clone()
+    };
+    RouteDecision {
+        generation: snapshot.generation,
+        explicit_proxy_url: snapshot.explicit_proxy_url.clone(),
+        proxy_kind,
+        loopback_direct,
+        client,
     }
 }
 
 /// 测试证据入口（test-hooks）：返回 (是否选择直连, 所用快照的发布序号)。
 ///
-/// 与 `select_client_for_url` 使用同一次快照读取，供并发/原子性测试验证
+/// 与 `resolve_route_for_url` 使用同一次快照读取，供并发/原子性测试验证
 /// 「决策必须与其快照世代的发布内容一致」。
 #[cfg(feature = "test-hooks")]
 #[allow(dead_code)]
@@ -319,54 +407,45 @@ pub fn is_proxy_enabled() -> bool {
     get_current_proxy_url().is_some()
 }
 
-/// 构建 HTTP 客户端
+/// 构建 HTTP 客户端（非 forwarder 消费者；保留 reqwest 默认 redirect 行为）。
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
-    build_client_with(proxy_url, false)
+    build_client_with(proxy_url, false, true)
 }
 
-/// redirect 目标类别与当前 client 的一致性策略（review finding P2-A）：
-/// - direct client（force_direct）只跟随 loopback 目标；
-/// - following client 只跟随非 loopback 目标。
+/// 构建 forwarder 路由客户端：禁用 reqwest 自动 redirect。
 ///
-/// 跨类别 hop 在此停止并返回 30x，由 forwarder 依新目标重选 transport 重发，
-/// 保证「只有 loopback hop 被强制直连」而外部 hop 保持继承/显式代理语义。
-/// 跳数上限与 reqwest 默认单链上限一致。
-fn redirect_policy_for(follow_loopback_targets: bool) -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(move |attempt: reqwest::redirect::Attempt| {
-        if attempt.previous().len() >= MAX_REDIRECT_HOPS {
-            return attempt.error("too many redirects");
-        }
-        let next_is_loopback = is_loopback_upstream_url(attempt.url().as_str());
-        if next_is_loopback == follow_loopback_targets {
-            attempt.follow()
-        } else {
-            attempt.stop()
-        }
-    })
+/// forwarder 的 redirect 由统一显式状态机处理（跨越 automatic/manual 边界
+/// 共享同一 logical budget 与 request-level deadline），客户端本身绝不自动
+/// 跟随 redirect（review finding MAJOR-1 的单一预算语义）。
+fn build_route_client(proxy_url: Option<&str>) -> Result<Client, String> {
+    build_client_with(proxy_url, false, false)
 }
-
-/// 与 reqwest 默认策略一致的单链上限。
-const MAX_REDIRECT_HOPS: usize = 10;
 
 /// 构建 HTTP 客户端（force_direct = true 时禁用一切代理）。
 ///
 /// force_direct 为 true 时客户端永不使用任何代理（包括系统代理/环境变量代理），
 /// 用于 loopback upstream：本地目标必须直连，避免被系统代理截获。
-fn build_client_with(proxy_url: Option<&str>, force_direct: bool) -> Result<Client, String> {
+fn build_client_with(
+    proxy_url: Option<&str>,
+    force_direct: bool,
+    follow_redirects: bool,
+) -> Result<Client, String> {
     let mut builder = Client::builder()
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
         .tcp_keepalive(Duration::from_secs(60))
-        // 跨类别 redirect hop 由 forwarder 手工重选 transport 后重发；
-        // 同类别 hop 仍由 reqwest 内部跟随（默认上限 10）。
-        .redirect(redirect_policy_for(force_direct))
         // 禁用 reqwest 自动解压：防止 reqwest 覆盖客户端原始 accept-encoding header。
         // 响应解压由 response_processor 根据 content-encoding 手动处理。
         .no_gzip()
         .no_brotli()
         .no_deflate()
         .no_zstd();
+    if !follow_redirects {
+        // forwarder 路径：redirect 由统一显式状态机处理（单一 logical budget /
+        // request-level deadline），客户端绝不自动跟随。
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
 
     if force_direct {
         // 直连语义：显式禁用一切代理，不进入下方的代理选择逻辑。
