@@ -8,6 +8,7 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
+use crate::proxy::model_router::is_provider_model_route_target;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
@@ -505,6 +506,9 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
         .filter(|model| !model.is_empty())
     {
         if catalog_model_ids.contains(request_model) {
+            return Some(request_model.to_string());
+        }
+        if is_provider_model_route_target(provider, request_model) {
             return Some(request_model.to_string());
         }
     }
@@ -1667,6 +1671,32 @@ wire_api = "anthropic"
             body.get("model").and_then(|v| v.as_str()),
             Some("claude-opus-4-1[1m]")
         );
+    }
+
+    #[test]
+    fn test_apply_codex_upstream_model_preserves_provider_mapping_target() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "default-upstream-model"
+
+[model_providers.custom]
+wire_api = "responses"
+"#,
+            "modelRoutes": [
+                {
+                    "enabled": true,
+                    "matchMode": "prefix",
+                    "source": "gpt-",
+                    "target": "provider-mapped-model"
+                }
+            ]
+        }));
+        let mut body = json!({ "model": "provider-mapped-model", "input": "hi" });
+
+        let result = apply_codex_upstream_model(&provider, &mut body);
+
+        assert_eq!(result.as_deref(), Some("provider-mapped-model"));
+        assert_eq!(body["model"], "provider-mapped-model");
     }
 
     #[test]

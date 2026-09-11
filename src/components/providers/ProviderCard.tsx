@@ -33,6 +33,7 @@ import {
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   resolveCodexOfficialIdentity,
+  hasEnabledModelRoutes,
   supportsOfficialProxyTakeover,
   providerNeedsRouting,
 } from "@/utils/providerCapabilities";
@@ -306,9 +307,15 @@ export function ProviderCard({
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
-  // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
+  // apiFormat 被改动/缺省影响；显式模型路由也需要经过本地路由服务。
   const codexNeedsRouting =
     appId === "codex" && providerNeedsRouting(appId, provider);
+  const modelRoutesNeedRouting = hasEnabledModelRoutes(provider);
+  const needsRoutingBadge =
+    modelRoutesNeedRouting ||
+    (appId === "claude-desktop" && providerNeedsRouting(appId, provider)) ||
+    (appId === "claude" && providerNeedsRouting(appId, provider)) ||
+    codexNeedsRouting;
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
@@ -446,26 +453,7 @@ export function ProviderCard({
                 </span>
               )}
 
-              {appId === "claude-desktop" &&
-                providerNeedsRouting(appId, provider) && (
-                  <ProviderStatusBadge
-                    tone="info"
-                    label={t("provider.needsRouting", {
-                      defaultValue: "需要路由",
-                    })}
-                  />
-                )}
-
-              {appId === "claude" && providerNeedsRouting(appId, provider) && (
-                <ProviderStatusBadge
-                  tone="info"
-                  label={t("provider.needsRouting", {
-                    defaultValue: "需要路由",
-                  })}
-                />
-              )}
-
-              {codexNeedsRouting && (
+              {needsRoutingBadge && (
                 <ProviderStatusBadge
                   tone="info"
                   label={t("provider.needsRouting", {
