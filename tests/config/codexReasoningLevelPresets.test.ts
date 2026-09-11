@@ -43,7 +43,7 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["火山 Coding Plan", "ark-code-latest", ["low", "medium", "high"]],
     // 方舟深度思考文档：本模型无限制的通用四档（minimal=关思考直接回答）
     [
-      "DouBaoSeed",
+      "Volcengine Doubao",
       "doubao-seed-2-1-pro-260628",
       ["minimal", "low", "medium", "high"],
     ],

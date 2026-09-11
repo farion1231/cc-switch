@@ -169,7 +169,7 @@ describe("Codex Chat provider presets", () => {
       ["火山 Coding Plan", { contextWindows: { "ark-code-latest": 256000 } }],
       ["BytePlus", { contextWindows: { "ark-code-latest": 256000 } }],
       [
-        "DouBaoSeed",
+        "Volcengine Doubao",
         { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
       ],
       ["千问AI平台", { contextWindows: { "qwen3.8-max": 983616 } }],
