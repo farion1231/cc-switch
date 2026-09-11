@@ -1070,6 +1070,29 @@
       "selectDefaultModel": "デフォルトモデルを選択"
     }
   },
+  "deepseekHarness": {
+    "providerKey": "Provider Key",
+    "providerKeyRequired": "Provider Key を入力してください",
+    "providerKeyDuplicate": "この Provider Key は既に存在します",
+    "providerKeyFormat": "英数字、ハイフン、アンダースコア、ドットのみ使用できます",
+    "modelsRequired": "モデルを1つ以上追加してください",
+    "credentialRef": "認証情報参照",
+    "credentialRefHint": "DSH の認証情報に API キーを保存するための大文字識別子。",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "API エンドポイントのベース URL。",
+    "apiFormat": "API 形式",
+    "api_openai_completions": "OpenAI Chat Completions",
+    "api_openai_responses": "OpenAI Responses",
+    "api_anthropic_messages": "Anthropic Messages",
+    "modelCatalog": "モデルカタログ",
+    "modelId": "モデル ID",
+    "modelName": "表示名",
+    "contextWindow": "コンテキストウィンドウ",
+    "addModel": "追加",
+    "noModels": "モデルがありません。「追加」をクリックして作成してください。",
+    "defaultModel": "デフォルトモデル",
+    "defaultModelHint": "DSH がデフォルトで使用するモデル。"
+  },
   "appSwitcher": {
     "more": "その他のアプリ"
   },

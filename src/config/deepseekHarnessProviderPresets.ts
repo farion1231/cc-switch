@@ -4,12 +4,18 @@ import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 export interface DeepSeekHarnessModel {
   id: string;
   name: string;
+  contextWindow?: number;
 }
 
 export interface DeepSeekHarnessProviderConfig {
+  // Official (`llm-deepseek`) route fields.
   apiKey?: string;
   baseURL?: string;
   profile?: string;
+  // Custom (`llm-pi-ai.providers.<id>`) route fields.
+  displayName?: string;
+  api?: string;
+  apiKeyEnv?: string;
   models?: DeepSeekHarnessModel[];
 }
 
@@ -59,7 +65,9 @@ export const deepseekHarnessProviderPresets: DeepSeekHarnessProviderPreset[] = [
     settingsConfig: {
       apiKey: "",
       baseURL: "https://api.openai.com/v1",
-      profile: "desktop",
+      displayName: "OpenAI Compatible",
+      api: "openai-completions",
+      apiKeyEnv: "OPENAI_API_KEY",
       models: [],
     },
     category: "custom",

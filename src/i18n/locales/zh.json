@@ -1070,6 +1070,29 @@
       "selectDefaultModel": "选择默认模型"
     }
   },
+  "deepseekHarness": {
+    "providerKey": "Provider Key",
+    "providerKeyRequired": "请填写 Provider Key",
+    "providerKeyDuplicate": "该 Provider Key 已存在",
+    "providerKeyFormat": "仅支持字母、数字、连字符、下划线和点",
+    "modelsRequired": "请至少添加一个模型",
+    "credentialRef": "凭据引用",
+    "credentialRefHint": "用于在 DSH 凭据中保存 API Key 的大写标识符。",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "API 端点的基础地址。",
+    "apiFormat": "API 格式",
+    "api_openai_completions": "OpenAI Chat Completions",
+    "api_openai_responses": "OpenAI Responses",
+    "api_anthropic_messages": "Anthropic Messages",
+    "modelCatalog": "模型目录",
+    "modelId": "模型 ID",
+    "modelName": "显示名称",
+    "contextWindow": "上下文窗口",
+    "addModel": "添加",
+    "noModels": "暂无模型，点击“添加”新增。",
+    "defaultModel": "默认模型",
+    "defaultModelHint": "DSH 默认使用的模型。"
+  },
   "appSwitcher": {
     "more": "更多应用"
   },

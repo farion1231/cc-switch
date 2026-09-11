@@ -37,7 +37,9 @@ describe("DeepSeek Harness provider presets", () => {
       settingsConfig: {
         apiKey: "",
         baseURL: "https://api.openai.com/v1",
-        profile: "desktop",
+        displayName: "OpenAI Compatible",
+        api: "openai-completions",
+        apiKeyEnv: "OPENAI_API_KEY",
         models: [],
       },
     });

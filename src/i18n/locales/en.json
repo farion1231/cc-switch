@@ -1070,6 +1070,29 @@
       "selectDefaultModel": "Select default model"
     }
   },
+  "deepseekHarness": {
+    "providerKey": "Provider Key",
+    "providerKeyRequired": "Provider Key is required",
+    "providerKeyDuplicate": "This Provider Key already exists",
+    "providerKeyFormat": "Use letters, digits, hyphens, underscores, and dots only",
+    "modelsRequired": "Add at least one model",
+    "credentialRef": "Credential Ref",
+    "credentialRefHint": "Uppercase identifier used to store the API key in DSH credentials.",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "The base URL for the API endpoint.",
+    "apiFormat": "API Format",
+    "api_openai_completions": "OpenAI Chat Completions",
+    "api_openai_responses": "OpenAI Responses",
+    "api_anthropic_messages": "Anthropic Messages",
+    "modelCatalog": "Model Catalog",
+    "modelId": "Model ID",
+    "modelName": "Display Name",
+    "contextWindow": "Context Window",
+    "addModel": "Add",
+    "noModels": "No models configured. Click Add to add a model.",
+    "defaultModel": "Default Model",
+    "defaultModelHint": "The model DSH uses by default."
+  },
   "appSwitcher": {
     "more": "More apps"
   },

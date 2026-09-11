@@ -1071,6 +1071,29 @@
       "selectDefaultModel": "選擇預設模型"
     }
   },
+  "deepseekHarness": {
+    "providerKey": "Provider Key",
+    "providerKeyRequired": "請填寫 Provider Key",
+    "providerKeyDuplicate": "此 Provider Key 已存在",
+    "providerKeyFormat": "僅支援字母、數字、連字號、底線與點",
+    "modelsRequired": "請至少新增一個模型",
+    "credentialRef": "憑證參照",
+    "credentialRefHint": "用於在 DSH 憑證中儲存 API Key 的大寫識別碼。",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "API 端點的基礎位址。",
+    "apiFormat": "API 格式",
+    "api_openai_completions": "OpenAI Chat Completions",
+    "api_openai_responses": "OpenAI Responses",
+    "api_anthropic_messages": "Anthropic Messages",
+    "modelCatalog": "模型目錄",
+    "modelId": "模型 ID",
+    "modelName": "顯示名稱",
+    "contextWindow": "上下文視窗",
+    "addModel": "新增",
+    "noModels": "尚無模型，點擊「新增」建立。",
+    "defaultModel": "預設模型",
+    "defaultModelHint": "DSH 預設使用的模型。"
+  },
   "appSwitcher": {
     "more": "更多應用程式"
   },
