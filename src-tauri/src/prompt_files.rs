@@ -27,6 +27,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
+        // WorkBuddy 不使用 prompt 文件；提供路径仅为满足穷尽匹配（前端不暴露 prompts）。
+        AppType::WorkBuddy => crate::workbuddy_config::get_workbuddy_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -34,7 +36,9 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
-        AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
+        AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw | AppType::WorkBuddy => {
+            "AGENTS.md"
+        }
         AppType::Hermes => "SOUL.md",
         AppType::Pi => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),

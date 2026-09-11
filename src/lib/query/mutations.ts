@@ -10,8 +10,10 @@ import {
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
+import { resolveWorkbuddyProviderId } from "@/utils/workbuddyProviderId";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
+import { invalidateWorkbuddyProviderCaches } from "@/hooks/useWorkbuddy";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
@@ -60,7 +62,19 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (
+      if (appId === "workbuddy") {
+        // WorkBuddy 的 live 配置按网关 host 聚合，provider id 必须与后端
+        // provider_id_from_url 的推导结果一致，否则删除 / isInConfig 都会失配。
+        const baseUrl =
+          typeof providerInput.settingsConfig?.baseUrl === "string"
+            ? providerInput.settingsConfig.baseUrl
+            : "";
+        const existingProviders = await providersApi.getAll(appId);
+        id = resolveWorkbuddyProviderId(
+          baseUrl,
+          Object.keys(existingProviders),
+        );
+      } else if (
         appId === "opencode" ||
         appId === "openclaw" ||
         appId === "hermes" ||
@@ -119,6 +133,11 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+
+      if (appId === "workbuddy") {
+        await invalidateWorkbuddyProviderCaches(queryClient);
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -193,6 +212,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "workbuddy") {
+        await invalidateWorkbuddyProviderCaches(queryClient);
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -260,6 +282,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+
+      if (appId === "workbuddy") {
+        await invalidateWorkbuddyProviderCaches(queryClient);
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -347,6 +374,10 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "workbuddy") {
+        await invalidateWorkbuddyProviderCaches(queryClient);
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {

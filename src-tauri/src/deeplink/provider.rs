@@ -157,6 +157,18 @@ pub(crate) fn build_provider_from_request(
                 "Pi providers must be added from the Pi provider page".to_string(),
             ));
         }
+        // WorkBuddy provider ids must be derived from the gateway host so they
+        // match what `workbuddy_config::get_typed_providers` reports for the live
+        // file. The generic deep-link caller assigns a `name-timestamp` id
+        // instead, which would leave the DB row unable to find or remove its own
+        // live models and would re-import a duplicate host-derived row on the
+        // next startup. Route these through the WorkBuddy provider page, which
+        // reserves the derived id (same as Pi).
+        AppType::WorkBuddy => {
+            return Err(AppError::InvalidInput(
+                "WorkBuddy providers must be added from the WorkBuddy provider page".to_string(),
+            ));
+        }
     };
 
     // Build usage script configuration if provided

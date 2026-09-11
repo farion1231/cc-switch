@@ -146,6 +146,10 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Pi => {}
+            AppType::WorkBuddy => {
+                // WorkBuddy manages its own MCP config; CC-Switch does not sync MCP to it.
+                log::debug!("WorkBuddy MCP sync is not supported by CC-Switch, skipping");
+            }
         }
         Ok(())
     }
@@ -183,6 +187,10 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Pi => {}
+            AppType::WorkBuddy => {
+                // WorkBuddy MCP is not managed by CC-Switch, nothing to remove.
+                log::debug!("WorkBuddy MCP remove is not supported by CC-Switch, skipping");
+            }
         }
         Ok(())
     }

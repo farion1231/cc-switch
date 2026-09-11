@@ -142,6 +142,11 @@ impl ConfigService {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
             }
+            AppType::WorkBuddy => {
+                // WorkBuddy uses additive mode; all providers are written to
+                // models.json directly (see write_all_providers), no per-current
+                // live sync needed here.
+            }
         }
 
         Ok(())

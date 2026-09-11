@@ -6,6 +6,7 @@ import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
 import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
+import type { WorkBuddyProviderPreset } from "@/config/workbuddyProviderPresets";
 
 type PresetEntry = {
   id: string;
@@ -14,7 +15,8 @@ type PresetEntry = {
     | CodexProviderPreset
     | GeminiProviderPreset
     | OpenCodeProviderPreset
-    | ClaudeDesktopProviderPreset;
+    | ClaudeDesktopProviderPreset
+    | WorkBuddyProviderPreset;
 };
 
 interface UseApiKeyLinkProps {
@@ -87,7 +89,8 @@ export function useApiKeyLink({
       appId === "gemini" ||
       appId === "opencode" ||
       appId === "openclaw" ||
-      appId === "hermes"
+      appId === "hermes" ||
+      appId === "workbuddy"
         ? shouldShowApiKeyLink
         : false,
     websiteUrl: getWebsiteUrl,
