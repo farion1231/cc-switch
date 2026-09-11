@@ -52,6 +52,19 @@ export const deepseekHarnessProviderPresets: DeepSeekHarnessProviderPreset[] = [
     category: "official",
     icon: "deepseek",
   },
+  {
+    id: "dsh-openai-compatible",
+    name: "OpenAI Compatible",
+    websiteUrl: "https://api.openai.com",
+    settingsConfig: {
+      apiKey: "",
+      baseURL: "https://api.openai.com/v1",
+      profile: "desktop",
+      models: [],
+    },
+    category: "custom",
+    icon: "openai",
+  },
 ];
 
 export function getDeepSeekHarnessPresetEntries() {
