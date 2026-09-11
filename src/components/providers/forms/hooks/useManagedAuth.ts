@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { authApi, settingsApi } from "@/lib/api";
+import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import { copyText } from "@/lib/clipboard";
 import type {
   ManagedAuthProvider,
@@ -185,7 +186,14 @@ export function useManagedAuth(
             void cancelBackendFlow(response.device_code);
             flowGenerationRef.current += 1;
             setPollingState("error");
-            setError(errorMessage);
+            setError(
+              authProvider === "codex_oauth" &&
+                errorMessage === CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR
+                ? t("codexOauth.duplicateAccount", {
+                    defaultValue: "该 ChatGPT 账号已添加，请直接使用现有账号。",
+                  })
+                : errorMessage,
+            );
           }
         }
       };

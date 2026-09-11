@@ -52,7 +52,7 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 腾讯 Token Plan（订阅线 /plan 端点）档位全部真 Key 实测（2026-08-31）：
     // glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 直接 400，
     // 错误信息即枚举来源）；kimi-k2.7-code(-highspeed) 仅接受
-    // thinking:enabled；minimax-m2.5/m2.7 与国内 auto 关思考被静默忽略
+    // thinking:enabled；minimax-m2.7 与国内 auto 关思考被静默忽略
     //（选 none 是假关）→ 只列 high；其余模型 thinking 开关真实生效 → 两态
     ["Tencent Token Plan", "tc-code-latest", ["none", "high"]],
     ["Tencent Token Plan", "hy3", ["none", "high"]],
@@ -93,10 +93,15 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Xiaomi MiMo", "mimo-v2.5", ["none", "high"]],
     ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5-pro", ["none", "high"]],
     ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5", ["none", "high"]],
-    // GLM 走 Chat 路由（supportsEffort:false）：none=真实关思考开关，其余档
-    // 等价开思考；只暴露两态，顺带补上模板四档里缺失的 none（关思考入口）
-    ["Zhipu GLM", "glm-5.2", ["none", "high"]],
-    ["Zhipu GLM en", "glm-5.2", ["none", "high"]],
+    // 智谱官方 Codex 接入页自带 models.json（docs.bigmodel.cn/cn/coding-plan/tool/
+    // codex、docs.z.ai/devpack/tool/codex，2026-09-04 核对）：glm-5.3 档位
+    // low/high/max、默认 max（≠ 后端回落的模板默认 high，故显式声明）；
+    // glm-5-turbo 官方档位为空、默认 max——cc-switch 表达不了空档位（会回落
+    // 到模板 none/high，而 none 在原生直连下没有转换层兜底、会原样发给严格
+    // 网关），按官方默认收成单档 max
+    ["Zhipu GLM", "glm-5.3", ["low", "high", "max"], "max"],
+    ["Zhipu GLM", "glm-5-turbo", ["max"]],
+    ["Zhipu GLM en", "glm-5.3", ["low", "high", "max"], "max"],
     // SiliconFlow .com 的 M3：平台级 enable_thinking 布尔开关（后端按平台
     // 推断兜底），M3 官方可关思考 → 两态
     ["SiliconFlow en", "MiniMaxAI/MiniMax-M3", ["none", "high"]],
@@ -140,6 +145,11 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["OpenCode Go", "glm-5.2", ["high", "max"]],
     ["OpenCode Go", "deepseek-v4-pro", ["high", "max"]],
     ["OpenCode Go", "deepseek-v4-flash", ["low", "high", "max"]],
+    // 千问官方 Codex 页只发布一份 model-catalog.local.json，且该元数据段落
+    // 位于套餐分页之前（help.aliyun.com/zh/model-studio/codex，2026-09-08
+    // 核对）：qwen3.8-max 档位 low/medium/xhigh、默认 xhigh（≠ 模板回落的
+    // none/high，故显式声明）；按量付费与 Token Plan 同源同一份
+    ["千问AI平台", "qwen3.8-max", ["low", "medium", "xhigh"], "xhigh"],
   ];
 
   it.each(EXPECTED)(
@@ -154,14 +164,12 @@ describe("Codex preset pre-filled reasoning levels", () => {
   );
 
   it("keeps deliberately-unfilled presets unfilled", () => {
-    // Bailian qwen3-coder-plus 无 per-model 档位证据。OpenCode Go 的
-    // toggle/未收录模型保持不填：glm-5.1 是 toggle 型（models.dev 无 effort
-    // 声明）、kimi-k2.7-code 官方标注不支持 effort、mimo-v2.5-pro 未收录
-    // models.dev——与 opencode 客户端一致（代理侧无表不发 reasoning_effort
+    // OpenCode Go 的 toggle/未收录模型保持不填：glm-5.1 是 toggle 型（models.dev
+    // 无 effort 声明）、kimi-k2.7-code 官方标注不支持 effort、mimo-v2.5-pro 未
+    // 收录 models.dev——与 opencode 客户端一致（代理侧无表不发 reasoning_effort
     // 字段）。SiliconFlow .cn 的 M2.5 能否真正关思考无官方明文、ModelScope
     // 是否透传思考字段未证实——真机验证前不造两态假开关（2026-08-15 盘点结论）
     const UNFILLED: Array<[string, string]> = [
-      ["Bailian", "qwen3-coder-plus"],
       ["OpenCode Go", "glm-5.1"],
       ["OpenCode Go", "kimi-k2.7-code"],
       ["OpenCode Go", "mimo-v2.5-pro"],

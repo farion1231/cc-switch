@@ -42,7 +42,8 @@
     "deleting": "Deleting...",
     "auto": "Auto",
     "enabled": "Enabled",
-    "notSet": "Not Set"
+    "notSet": "Not Set",
+    "collapse": "Collapse"
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
@@ -978,7 +979,8 @@
       "effectiveApiRequired": "Model {{id}} needs an API, either directly or from the provider",
       "effectiveBaseUrlRequired": "Model {{id}} needs a base URL, either directly or from the provider",
       "duplicateModel": "Model ID {{id}} is duplicated",
-      "modelRequired": "Add at least one model"
+      "modelRequired": "Add at least one model",
+      "providerKeyDuplicate": "This provider key already exists"
     },
     "current": {
       "readFailed": "Could not read Pi's provider configuration",
@@ -1204,13 +1206,10 @@
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
       "apikeyfun": "APIKEY.FUN offers a special deal for CC Switch users. Register through the exclusive link to enjoy up to permanent 5% off top-ups.",
       "apinebula": "APINEBULA offers CC Switch users a special discount: register using the link and enter the \"ccswitch\" promo code during your first top-up to get 10% off.",
-      "atlascloud": "Atlas Cloud is a full-modal AI inference platform that gives developers one API for video generation, image generation, and LLM access. Check out its new Coding Plan promotion for more budget-friendly API access.",
       "patewayai": "PatewayAI offers special benefits for CC Switch users. Register via this link to receive $3 credit.",
       "claudeapi": "ClaudeAPI offers special benefits for CC Switch users. Register via this link to claim test credits.",
       "claudecn": "ClaudeCN is an enterprise-grade AI gateway operated by a registered company, supporting enterprise procurement processes with corporate payments, contracts, and compliance guarantees.",
       "runapi": "RunAPI offers special benefits for CC Switch users. Register via this link and enjoy 10% off your first top-up.",
-      "minimax_cn": "MiniMax Coding Plan Special Offer, Starter from ¥9.9",
-      "minimax_en": "MiniMax Coding Plan Black Friday, Starter is now $2/mo (80% OFF!)",
       "opencode_go": "Subscribe to OpenCode Go via this link — only $5 for your first month, plus an extra $5 in credit!",
       "dmxapi": "Claude Code exclusive model 66% OFF now!",
       "cubence": "Cubence is an official partner of CC Switch. Register using this link and enter \"CCSWITCH\" promo code during recharge to get 10% off every top-up",
@@ -1237,7 +1236,8 @@
       "teamorouter": "TeamoRouter is an enterprise-grade Agentic LLM gateway with pricing up to 90% off. It offers exclusive benefits for CC Switch users: register via this link as a new user for 10% off your first top-up!",
       "ppio": "PPIO is a leading independent Agentic Cloud provider in China, serving every flagship open-source model through a single API key. Register via this link and complete identity verification to receive a ¥10 credit voucher.",
       "xycai": "XycAi is an enterprise-grade token factory: one-click access to 200+ global models, automatic SLA compensation, and 100% refunds for abnormal cache charges!",
-      "9527code": "9527 CODE is an enterprise-grade, full-capability AI relay platform delivering fast, stable relay for Claude Code, Codex and other mainstream models. One year of continuous operation, 99.9% service stability, and 7×24 human technical support. New users can contact support for trial credit, with unlimited referral cashback!"
+      "9527code": "9527 CODE is an enterprise-grade, full-capability AI relay platform delivering fast, stable relay for Claude Code, Codex and other mainstream models. One year of continuous operation, 99.9% service stability, and 7×24 human technical support. New users can contact support for trial credit, with unlimited referral cashback!",
+      "soleapi": "SoleAPI is an AI model gateway for developers and enterprises: one API key reaches 30+ leading models including Claude, GPT and Gemini, natively compatible with the OpenAI and Anthropic protocols, with real-time smart routing, millisecond failover, 99.99% availability and 24/7 support. Sign up via the referral link for free trial credits and ongoing cashback for inviting friends who top up!"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1422,6 +1422,7 @@
     "reauthLogin": "Re-login",
     "reauthSelectHint": "This account needs to sign in again to enable managed binding.",
     "reauthNow": "Re-login now",
+    "duplicateAccount": "This ChatGPT account has already been added. Use the existing account.",
     "loggedInAccounts": "Logged in accounts",
     "defaultAccount": "Default",
     "selected": "Selected",
