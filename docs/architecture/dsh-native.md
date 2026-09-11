@@ -30,7 +30,23 @@ DSH does not inherit Codex OAuth, proxy takeover, failover routing, or protocol 
   records.* ------------------------> preserved, never exposed
 
 Native adapter -> DSH provider service -> providers table -> React query -> cards/forms
+
+~/.dsh/sessions/<encoded-cwd>/<session-id>/session.jsonl.zstd
+  session header + session/title -> session list metadata
+  user/message + assistant/message -> session transcript
 ```
+
+Session history is browse-and-delete only. DSH session events carry no token usage fields, so usage statistics are intentionally not implemented.
+
+The DSH home directory resolves in this order: CC Switch directory override (`dshConfigDir` in Settings) > `$DSH_HOME` > `~/.dsh`. Under `cfg(test)` the settings override is skipped so `DSH_HOME`-based test isolation always wins.
+
+## Commands
+
+- `import_deepseek_harness_providers_from_live` — native-to-DB sync (also runs at startup).
+- `get_dsh_current_state` — native provider ids plus the current provider/model for card badges.
+- `set_dsh_current_model` — writes `agent-default-model` after validating provider/model membership; because DSH couples the two, setting a model on a non-current provider also makes that provider current.
+
+MCP and Skills entries are hidden for DSH because DSH 2.0.5 exposes neither an MCP configuration namespace nor a skills directory.
 
 ## Ownership Boundaries
 
