@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -12,6 +12,9 @@ const PROVIDER_ID: &str = "deepseek-harness";
 const SESSION_FILE_NAME: &str = "session.jsonl.zstd";
 /// Compressed size guard; decompressed content is bounded by the event limit.
 const MAX_SESSION_BYTES: u64 = 64 * 1024 * 1024;
+/// Decompressed size guard against zip-bomb-style payloads; bytes beyond the
+/// limit are silently treated as EOF.
+const MAX_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_EVENTS: usize = 500_000;
 
 pub fn session_roots() -> Vec<PathBuf> {
@@ -99,10 +102,19 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
             meta.session_id
         ));
     }
-    let dir = path
+    let root = root.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve DSH sessions root {}: {error}",
+            root.display()
+        )
+    })?;
+    let source = path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve DSH session {}: {error}", path.display()))?;
+    let dir = source
         .parent()
         .ok_or_else(|| "DSH session has no parent directory".to_string())?;
-    if !dir.starts_with(root) {
+    if !dir.starts_with(&root) {
         return Err("DSH session is outside the sessions root".to_string());
     }
     fs::remove_dir_all(dir)
@@ -143,7 +155,7 @@ fn read_events(path: &Path) -> Result<Vec<Value>, String> {
     let file = File::open(path).map_err(|error| format!("Failed to open DSH session: {error}"))?;
     let decoder = zstd::stream::read::Decoder::new(file)
         .map_err(|error| format!("Failed to decompress DSH session: {error}"))?;
-    let reader = BufReader::new(decoder);
+    let reader = BufReader::new(decoder.take(MAX_DECOMPRESSED_BYTES));
     let mut events = Vec::new();
     for line in reader.lines() {
         let line = line.map_err(|error| format!("Failed to read DSH session: {error}"))?;
@@ -346,11 +358,25 @@ mod tests {
         with_temp_home(|home| {
             let file = write_session(home, "proj", "session-abc", &fixture_events());
             let root = home.join("sessions");
+            let error = delete_session(&root, &file, "wrong-id").expect_err("id mismatch");
+            assert!(error.contains("mismatch"), "unexpected error: {error}");
+            assert!(file.exists());
             let deleted = delete_session(&root, &file, "session-abc").unwrap();
             assert!(deleted);
             assert!(!file.exists());
             assert!(!file.parent().unwrap().exists());
-            assert!(delete_session(&root, &file, "wrong-id").is_err());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn delete_accepts_an_unnormalized_root() {
+        with_temp_home(|home| {
+            let file = write_session(home, "proj", "session-abc", &fixture_events());
+            let root = home.join("sessions").join("proj").join("..");
+            let deleted = delete_session(&root, &file, "session-abc").unwrap();
+            assert!(deleted);
+            assert!(!file.parent().unwrap().exists());
         });
     }
 }
