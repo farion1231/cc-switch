@@ -228,6 +228,10 @@ export interface ProviderMeta {
   maxOutputTokens?: number;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
   customUserAgent?: string;
+  // Strip Claude Code fingerprint headers (x-app / x-stainless-* / x-claude-code-*)
+  // on format-transform paths (openai_chat / openai_responses / gemini_native).
+  // Absent = disabled (default); only an explicit true enables the stripping.
+  stripClaudeCodeFingerprint?: boolean;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
   // Whether this provider is currently projected into an additive app's live config.

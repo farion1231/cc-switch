@@ -1283,6 +1283,8 @@
     "customUserAgentHint": "Only takes effect when local routing/proxy takeover is enabled; replaces the User-Agent in requests forwarded to the provider API.",
     "customUserAgentInvalid": "User-Agent must not contain control characters (e.g. line breaks); otherwise it will be ignored.",
     "customUserAgentPresets": "Presets",
+    "stripClaudeCodeFingerprint": "Strip Claude Code fingerprint headers",
+    "stripClaudeCodeFingerprintHint": "Disabled by default. When enabled, applies only on format-transform paths (OpenAI Chat / Responses / Gemini): removes client fingerprint headers (x-app, x-stainless-*, x-claude-code-*) before forwarding. Native Anthropic passthrough is unaffected.",
     "localProxyRequestOverrides": "Local proxy request overrides",
     "localProxyRequestOverridesHint": "Only takes effect after local routing/proxy takeover; applied to the transformed upstream request.",
     "localProxyRequestOverridesInvalid": "Local proxy request overrides format error: {{error}}",

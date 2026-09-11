@@ -2021,6 +2021,21 @@ impl RequestForwarder {
             None
         };
 
+        // Claude→非 Anthropic 转换路径（openai_chat / openai_responses / gemini）：
+        // 转换后的请求在协议层已经不是 Claude Code 的形态，CLI 的客户端指纹头
+        // （x-app / x-stainless-* / x-claude-code-*）只会向 OpenAI 兼容网关暴露
+        // 使用者身份，对上游没有任何功能价值 → 剥离。Anthropic 原生透传保留
+        //（严格网关会做 Claude Code 指纹校验）；Copilot 的指纹头单独管理。
+        // 供应商 meta 需显式开启（stripClaudeCodeFingerprint=true），缺省不剥离。
+        let strip_claude_code_fingerprint_headers = adapter.name() == "Claude"
+            && needs_transform
+            && !is_copilot
+            && provider
+                .meta
+                .as_ref()
+                .map(|meta| meta.strip_claude_code_fingerprint_enabled())
+                .unwrap_or(false);
+
         // ============================================================
         // 构建有序 HeaderMap — 内联替换，保持客户端原始顺序
         // ============================================================
@@ -2116,6 +2131,15 @@ impl RequestForwarder {
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
             if codex_responses_to_anthropic && is_codex_client_fingerprint_header(key_str) {
+                continue;
+            }
+
+            // --- Claude Code 指纹头 — 不泄露给非 Anthropic 上游 ---
+            // 与上一条互为镜像：转换路径上的上游说另一种协议，客户端指纹头
+            // 纯属身份泄露。名单集中在 is_claude_code_fingerprint_header。
+            if strip_claude_code_fingerprint_headers
+                && is_claude_code_fingerprint_header(key_str)
+            {
                 continue;
             }
 
@@ -3058,6 +3082,18 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
             | "openai-project"
     ) || key_str.starts_with("x-stainless-")
         || key_str.starts_with("x-codex-")
+}
+
+/// Claude Code CLI 发出的、能标识"来自 Claude Code"的头：应用标记（x-app）、
+/// Stainless SDK 遥测（x-stainless-*）、会话标识（x-claude-code-*）。
+/// 在 Claude→非 Anthropic 转换路径上剥离，避免转换后的请求向 OpenAI 兼容
+/// 网关泄露 CLI 指纹。与 Codex→Anthropic 路径的 `is_codex_client_fingerprint_header`
+/// 互为镜像。`key_str` 由 http crate 保证已小写。
+fn is_claude_code_fingerprint_header(key_str: &str) -> bool {
+    key_str == "x-app"
+        || key_str == "claude-code-session-id"
+        || key_str.starts_with("x-stainless-")
+        || key_str.starts_with("x-claude-code-")
 }
 
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
@@ -4533,6 +4569,41 @@ mod tests {
             assert!(
                 !is_codex_client_fingerprint_header(header),
                 "{header} must be preserved while impersonating Claude Code"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_code_fingerprint_headers_are_dropped_for_non_anthropic_upstreams() {
+        // Claude Code 自身的指纹头 → 转换路径上必须剥离。
+        for header in [
+            "x-app",
+            "claude-code-session-id",
+            "x-claude-code-session-id",
+            "x-claude-code-client",
+            "x-stainless-lang",
+            "x-stainless-runtime",
+            "x-stainless-retry-count",
+        ] {
+            assert!(
+                is_claude_code_fingerprint_header(header),
+                "expected {header} to be dropped on non-Anthropic transform paths"
+            );
+        }
+
+        // 协议必需 / 中立头不能被误伤。
+        for header in [
+            "user-agent",
+            "authorization",
+            "anthropic-version",
+            "anthropic-beta",
+            "accept",
+            "content-type",
+            "x-session-id",
+        ] {
+            assert!(
+                !is_claude_code_fingerprint_header(header),
+                "{header} must not be caught by the Claude Code fingerprint denylist"
             );
         }
     }
