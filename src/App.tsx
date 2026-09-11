@@ -237,7 +237,7 @@ function App() {
       return;
     }
     if (
-      currentView === "skills" &&
+      (currentView === "skills" || currentView === "skillsDiscovery") &&
       sharedFeatureApp === "deepseek-harness"
     ) {
       setCurrentView("providers");
@@ -252,7 +252,8 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
-      sharedFeatureApp !== "pi"
+      sharedFeatureApp !== "pi" &&
+      sharedFeatureApp !== "deepseek-harness"
     ) {
       setCurrentView("providers");
     }
@@ -330,7 +331,8 @@ function App() {
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
-    sharedFeatureApp === "pi";
+    sharedFeatureApp === "pi" ||
+    sharedFeatureApp === "deepseek-harness";
   const hasMcpSupport =
     sharedFeatureApp !== "pi" && sharedFeatureApp !== "deepseek-harness";
 
