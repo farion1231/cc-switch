@@ -80,10 +80,35 @@ pub struct NativeState {
 }
 
 pub fn get_dsh_home() -> PathBuf {
-    std::env::var_os("DSH_HOME")
+    resolve_dsh_home(
+        settings_override(),
+        std::env::var_os("DSH_HOME"),
+        get_home_dir().join(".dsh"),
+    )
+}
+
+#[cfg(not(test))]
+fn settings_override() -> Option<PathBuf> {
+    crate::settings::get_dsh_override_dir()
+}
+
+#[cfg(test)]
+fn settings_override() -> Option<PathBuf> {
+    None
+}
+
+fn resolve_dsh_home(
+    settings_override: Option<PathBuf>,
+    env_override: Option<std::ffi::OsString>,
+    default_path: PathBuf,
+) -> PathBuf {
+    if let Some(path) = settings_override {
+        return path;
+    }
+    env_override
         .filter(|value| !value.to_string_lossy().trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| get_home_dir().join(".dsh"))
+        .unwrap_or(default_path)
 }
 
 pub fn get_settings_path() -> PathBuf {
@@ -620,6 +645,37 @@ mod tests {
             None => std::env::remove_var("DSH_HOME"),
         }
         result.unwrap();
+    }
+
+    #[test]
+    fn dsh_home_prefers_settings_override_then_env_then_default() {
+        let override_dir = PathBuf::from("/tmp/dsh-override");
+        let env_dir = PathBuf::from("/tmp/dsh-env");
+        let default_dir = PathBuf::from("/tmp/dsh-default");
+        assert_eq!(
+            resolve_dsh_home(
+                Some(override_dir.clone()),
+                Some(env_dir.clone().into_os_string()),
+                default_dir.clone()
+            ),
+            override_dir
+        );
+        assert_eq!(
+            resolve_dsh_home(
+                None,
+                Some(env_dir.clone().into_os_string()),
+                default_dir.clone()
+            ),
+            env_dir
+        );
+        assert_eq!(
+            resolve_dsh_home(None, Some("".into()), default_dir.clone()),
+            default_dir
+        );
+        assert_eq!(
+            resolve_dsh_home(None, None, default_dir.clone()),
+            default_dir
+        );
     }
 
     #[test]
