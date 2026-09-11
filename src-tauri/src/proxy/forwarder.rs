@@ -195,26 +195,25 @@ impl RequestForwarder {
     ///
     /// 受 `enabled && request_media_fallback` 管辖；其中"启发式模型名单预测"
     /// 再受 `request_media_heuristic` 单独管辖（显式声明 text-only 始终生效）。
-    /// 返回被替换的图片块数量（0 = 未触发或开关关闭）。
+    /// 返回被替换的媒体块数量（0 = 未触发或开关关闭）。
     fn apply_media_prevention(&self, body: &mut Value, provider: &Provider) -> usize {
         if !(self.rectifier_config.enabled && self.rectifier_config.request_media_fallback) {
             return 0;
         }
-        let replaced_images = super::media_sanitizer::replace_images_for_text_only_model(
+        let replaced_media = super::media_sanitizer::replace_images_for_text_only_model(
             body,
             provider,
             self.rectifier_config.request_media_heuristic,
         );
-        if replaced_images > 0 {
+        if replaced_media > 0 {
             let model = body.get("model").and_then(Value::as_str).unwrap_or("");
             log::info!(
-                "[Media] Replaced {replaced_images} image block(s) with {} for text-only provider={}, model={}",
-                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER,
+                "[Media] Replaced {replaced_media} unsupported media block(s) for provider={}, model={}",
                 provider.id,
                 model
             );
         }
-        replaced_images
+        replaced_media
     }
 
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
