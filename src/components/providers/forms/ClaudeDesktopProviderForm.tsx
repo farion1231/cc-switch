@@ -37,6 +37,7 @@ import type {
   ClaudeApiFormat,
   ClaudeDesktopModelRoute,
   ProviderCategory,
+  ProviderApiKey,
   ProviderMeta,
 } from "@/types";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
@@ -262,6 +263,9 @@ export function ClaudeDesktopProviderForm({
   const [apiKey, setApiKey] = useState(
     envString(initialData?.settingsConfig, "ANTHROPIC_AUTH_TOKEN") ||
       envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY"),
+  );
+  const [apiKeys, setApiKeys] = useState<ProviderApiKey[]>(
+    () => initialData?.meta?.apiKeys ?? [],
   );
   const [apiKeyField, setApiKeyField] = useState<ApiKeyField>(() =>
     envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY")
@@ -781,6 +785,12 @@ export function ClaudeDesktopProviderForm({
             ? apiFormat
             : "anthropic",
     };
+    meta.apiKeys = apiKeys
+      .filter(({ key }) => key.trim())
+      .map(({ key, note }) => ({
+        key: key.trim(),
+        ...(note?.trim() ? { note: note.trim() } : {}),
+      }));
 
     meta.claudeDesktopModelRoutes = routeMap;
     meta.providerType = activeProviderType;
@@ -923,6 +933,8 @@ export function ClaudeDesktopProviderForm({
               <ApiKeySection
                 value={apiKey}
                 onChange={setApiKey}
+                apiKeys={apiKeys.length ? apiKeys : [{ key: apiKey }]}
+                onApiKeysChange={setApiKeys}
                 category={apiKeyLinkCategory}
                 shouldShowLink={shouldShowApiKeyLink}
                 websiteUrl={apiKeyLinkWebsiteUrl}

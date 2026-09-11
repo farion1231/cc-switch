@@ -20,6 +20,7 @@ import {
 } from "@/lib/api";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
+  ProviderApiKey,
   ProviderCategory,
   ProviderMeta,
   ClaudeApiFormat,
@@ -338,6 +339,9 @@ function ProviderFormFull({
 
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     initialData ? null : "custom",
+  );
+  const [apiKeys, setApiKeys] = useState<ProviderApiKey[]>(
+    () => initialData?.meta?.apiKeys ?? [],
   );
   const [activePreset, setActivePreset] = useState<{
     id: string;
@@ -1828,6 +1832,12 @@ function ProviderFormFull({
         localIsFullUrl
           ? true
           : undefined,
+      apiKeys: apiKeys
+        .filter(({ key }) => key.trim())
+        .map(({ key, note }) => ({
+          key: key.trim(),
+          ...(note?.trim() ? { note: note.trim() } : {}),
+        })),
     };
 
     if (!isClaudeCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -2368,6 +2378,8 @@ function ProviderFormFull({
               }
               apiKey={apiKey}
               onApiKeyChange={handleApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [{ key: apiKey }]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowClaudeApiKeyLink}
               websiteUrl={claudeWebsiteUrl}
@@ -2449,6 +2461,8 @@ function ProviderFormFull({
               onXaiAccountSelect={setSelectedXaiAccountId}
               codexApiKey={codexApiKey}
               onApiKeyChange={handleCodexApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [{ key: codexApiKey }]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
               websiteUrl={codexWebsiteUrl}
@@ -2521,6 +2535,8 @@ function ProviderFormFull({
               )}
               apiKey={geminiApiKey}
               onApiKeyChange={handleGeminiApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [{ key: geminiApiKey }]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowGeminiApiKeyLink}
               websiteUrl={geminiWebsiteUrl}
@@ -2547,6 +2563,12 @@ function ProviderFormFull({
               onNpmChange={opencodeForm.handleOpencodeNpmChange}
               apiKey={opencodeForm.opencodeApiKey}
               onApiKeyChange={opencodeForm.handleOpencodeApiKeyChange}
+              apiKeys={
+                apiKeys.length
+                  ? apiKeys
+                  : [{ key: opencodeForm.opencodeApiKey }]
+              }
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowOpencodeApiKeyLink}
               websiteUrl={opencodeWebsiteUrl}
@@ -2592,6 +2614,12 @@ function ProviderFormFull({
               onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
               apiKey={openclawForm.openclawApiKey}
               onApiKeyChange={openclawForm.handleOpenclawApiKeyChange}
+              apiKeys={
+                apiKeys.length
+                  ? apiKeys
+                  : [{ key: openclawForm.openclawApiKey }]
+              }
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowOpenclawApiKeyLink}
               websiteUrl={openclawWebsiteUrl}
@@ -2613,6 +2641,10 @@ function ProviderFormFull({
               onBaseUrlChange={hermesForm.handleHermesBaseUrlChange}
               apiKey={hermesForm.hermesApiKey}
               onApiKeyChange={hermesForm.handleHermesApiKeyChange}
+              apiKeys={
+                apiKeys.length ? apiKeys : [{ key: hermesForm.hermesApiKey }]
+              }
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={shouldShowHermesApiKeyLink}
               websiteUrl={hermesWebsiteUrl}

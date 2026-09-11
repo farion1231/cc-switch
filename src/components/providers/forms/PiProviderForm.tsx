@@ -64,7 +64,7 @@ import {
 } from "@/lib/api/model-fetch";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import type { ProviderCategory } from "@/types";
+import type { ProviderApiKey, ProviderCategory } from "@/types";
 import { translatePiProviderMutationError } from "@/utils/errorUtils";
 
 const PI_API_FORMATS = [
@@ -451,6 +451,9 @@ export function PiProviderForm({
   );
   const includeModelsRef = useRef(!isEdit || hasOwn(initialConfig, "models"));
   const [apiKey, setApiKey] = useState(optionalText(initialConfig.apiKey));
+  const [apiKeys, setApiKeys] = useState<ProviderApiKey[]>(
+    () => initialData?.meta?.apiKeys ?? [],
+  );
   const initialHeaders = useMemo(
     () => asObject(initialConfig.headers),
     [initialConfig.headers],
@@ -1248,7 +1251,15 @@ export function PiProviderForm({
         providerKey: isEdit ? providerId : trimmedKey,
         presetId: selectedPresetId ?? undefined,
         presetCategory: category,
-        meta: initialData?.meta,
+        meta: {
+          ...(initialData?.meta ?? {}),
+          apiKeys: apiKeys
+            .filter(({ key }) => key.trim())
+            .map(({ key, note }) => ({
+              key: key.trim(),
+              ...(note?.trim() ? { note: note.trim() } : {}),
+            })),
+        },
       };
       await onSubmit(values);
     } catch (error) {
@@ -1420,6 +1431,8 @@ export function PiProviderForm({
               label={t("pi.form.credential")}
               value={apiKey}
               onChange={handleApiKeyChange}
+              apiKeys={apiKeys.length ? apiKeys : [{ key: apiKey }]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowLink={Boolean(selectedPreset?.apiKeyUrl)}
               websiteUrl={selectedPreset?.apiKeyUrl ?? ""}

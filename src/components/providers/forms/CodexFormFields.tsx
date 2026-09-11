@@ -60,6 +60,7 @@ import type {
   CodexChatReasoning,
   PromptCacheRoutingMode,
   ProviderCategory,
+  ProviderApiKey,
 } from "@/types";
 import type { ManagedAuthProvider } from "@/lib/api";
 import type { AppId } from "@/lib/api";
@@ -79,6 +80,8 @@ interface CodexFormFieldsProps {
   // API Key
   codexApiKey: string;
   onApiKeyChange: (key: string) => void;
+  apiKeys?: ProviderApiKey[];
+  onApiKeysChange?: (keys: ProviderApiKey[]) => void;
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
@@ -373,6 +376,8 @@ export function CodexFormFields({
   onXaiAccountSelect,
   codexApiKey,
   onApiKeyChange,
+  apiKeys,
+  onApiKeysChange,
   category,
   shouldShowApiKeyLink,
   websiteUrl,
@@ -759,6 +764,8 @@ export function CodexFormFields({
           label="API Key"
           value={codexApiKey}
           onChange={onApiKeyChange}
+          apiKeys={apiKeys}
+          onApiKeysChange={onApiKeysChange}
           category={category}
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
