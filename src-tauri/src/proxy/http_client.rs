@@ -7,14 +7,28 @@ use once_cell::sync::OnceCell;
 use reqwest::Client;
 use std::env;
 use std::net::IpAddr;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-/// 全局 HTTP 客户端实例
-static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
+/// 路由状态快照：把「用于选择 transport 的 explicit proxy 元数据」与
+/// 「对应的 following/pooled Client」放进同一个不可分割的快照。
+///
+/// 所有写者（init/apply_proxy/update_proxy）构建完整的新快照后整体替换 Arc，
+/// 读者一次读取即拿到自洽的 (metadata, client) 组合——热更新期间不存在
+/// 「旧元数据 + 新 client」或反向的撕裂配对（review finding P2-B）。
+pub struct RouteState {
+    /// 单调递增的发布序号（诊断与测试证据用）。
+    generation: u64,
+    /// 当前 proxy 配置对应的 following/pooled 客户端。
+    client: Client,
+    /// 当前配置的 explicit proxy URL；None = 直连/跟随系统代理。
+    explicit_proxy_url: Option<String>,
+}
 
-/// 当前代理 URL（用于日志和状态查询）
-static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
+static ROUTE_STATE: OnceCell<RwLock<Arc<RouteState>>> = OnceCell::new();
+
+/// 路由状态发布序号计数器。
+static ROUTE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
@@ -47,6 +61,34 @@ fn get_proxy_port() -> u16 {
         .unwrap_or(15721) // 默认端口作为回退
 }
 
+/// 构建新一代路由状态快照（尚未发布）。
+fn build_route_state(client: Client, explicit_proxy_url: Option<String>) -> Arc<RouteState> {
+    Arc::new(RouteState {
+        generation: ROUTE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1,
+        client,
+        explicit_proxy_url,
+    })
+}
+
+/// 读取当前路由状态快照。一次读取即原子自洽：元数据与 client 来自同一代。
+pub fn route_snapshot() -> Arc<RouteState> {
+    let snapshot = ROUTE_STATE
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|guard| guard.clone());
+    match snapshot {
+        Some(state) => state,
+        None => {
+            log::warn!("[GlobalProxy] [GP-004] Route state not initialized, using fallback");
+            Arc::new(RouteState {
+                generation: 0,
+                client: build_client(None).unwrap_or_default(),
+                explicit_proxy_url: None,
+            })
+        }
+    }
+}
+
 /// 初始化全局 HTTP 客户端
 ///
 /// 应在应用启动时调用一次。
@@ -57,9 +99,12 @@ fn get_proxy_port() -> u16 {
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let client = build_client(effective_url)?;
+    let state = build_route_state(client, effective_url.map(|s| s.to_string()));
 
-    // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
-    if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
+    // 尝试初始化路由状态，如果已存在则记录警告并使用 apply_proxy 更新
+    #[cfg(feature = "test-hooks")]
+    crate::proxy::test_hooks::record_publish(state.generation, state.explicit_proxy_url.as_deref());
+    if ROUTE_STATE.set(RwLock::new(state)).is_err() {
         log::warn!(
             "[GlobalProxy] [GP-003] Already initialized, updating instead: {}",
             effective_url
@@ -69,9 +114,6 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
         // 已初始化，改用 apply_proxy 更新
         return apply_proxy(proxy_url);
     }
-
-    // 初始化代理 URL 记录
-    let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
 
     log::info!(
         "[GlobalProxy] Initialized: {}",
@@ -110,30 +152,28 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let new_client = build_client(effective_url)?;
+    let new_state = build_route_state(new_client, effective_url.map(|s| s.to_string()));
 
-    // 更新客户端
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
+    // 发布：在写锁临界区内整体替换快照；读者要么看到旧快照要么看到新快照。
+    let generation = new_state.generation;
+    if let Some(lock) = ROUTE_STATE.get() {
+        let mut guard = lock.write().map_err(|e| {
             log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
             "Failed to update proxy: lock poisoned".to_string()
         })?;
-        *client = new_client;
+        #[cfg(feature = "test-hooks")]
+        crate::proxy::test_hooks::record_publish(
+            new_state.generation,
+            new_state.explicit_proxy_url.as_deref(),
+        );
+        *guard = new_state;
     } else {
         // 如果还没初始化，则初始化
         return init(proxy_url);
     }
 
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = effective_url.map(|s| s.to_string());
-    }
-
     log::info!(
-        "[GlobalProxy] Applied: {}",
+        "[GlobalProxy] Applied (gen {generation}): {}",
         effective_url
             .map(mask_url)
             .unwrap_or_else(|| "direct connection".to_string())
@@ -154,26 +194,23 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let new_client = build_client(effective_url)?;
+    let new_state = build_route_state(new_client, effective_url.map(|s| s.to_string()));
 
-    // 更新客户端
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
+    // 发布：与 apply_proxy 相同——单锁临界区内整体替换快照。
+    if let Some(lock) = ROUTE_STATE.get() {
+        let mut guard = lock.write().map_err(|e| {
             log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
             "Failed to update proxy: lock poisoned".to_string()
         })?;
-        *client = new_client;
+        #[cfg(feature = "test-hooks")]
+        crate::proxy::test_hooks::record_publish(
+            new_state.generation,
+            new_state.explicit_proxy_url.as_deref(),
+        );
+        *guard = new_state;
     } else {
         // 如果还没初始化，则初始化
         return init(proxy_url);
-    }
-
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = effective_url.map(|s| s.to_string());
     }
 
     log::info!(
@@ -190,14 +227,7 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 ///
 /// 返回配置了代理的客户端（如果已配置代理），否则返回跟随系统代理的客户端。
 pub fn get() -> Client {
-    GLOBAL_CLIENT
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .map(|c| c.clone())
-        .unwrap_or_else(|| {
-            log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
-            build_client(None).unwrap_or_default()
-        })
+    route_snapshot().client.clone()
 }
 
 /// 获取全局直连 HTTP 客户端（永不使用任何代理，包括系统代理/环境变量代理）。
@@ -245,14 +275,42 @@ pub fn should_direct_connect_to(url: &str, explicit_proxy_url: Option<&str>) -> 
     explicit_proxy_url.is_none() && is_loopback_upstream_url(url)
 }
 
+/// 选择该 upstream 目标应使用的 Client（唯一原子快照）。
+///
+/// 元数据（explicit proxy）与对应 Client 来自同一次 `route_snapshot()` 读取，
+/// 热更新期间不存在撕裂配对（review finding P2-B）。
+pub fn select_client_for_url(url: &str) -> Client {
+    let snapshot = route_snapshot();
+    #[cfg(feature = "test-hooks")]
+    crate::proxy::test_hooks::pause_point();
+    if should_direct_connect_to(url, snapshot.explicit_proxy_url.as_deref()) {
+        log::debug!(
+            "[GlobalProxy] Loopback upstream detected; using direct client (inherited proxy bypassed)"
+        );
+        get_direct()
+    } else {
+        snapshot.client.clone()
+    }
+}
+
+/// 测试证据入口（test-hooks）：返回 (是否选择直连, 所用快照的发布序号)。
+///
+/// 与 `select_client_for_url` 使用同一次快照读取，供并发/原子性测试验证
+/// 「决策必须与其快照世代的发布内容一致」。
+#[cfg(feature = "test-hooks")]
+#[allow(dead_code)]
+pub fn select_for_test(url: &str) -> (bool, u64) {
+    let snapshot = route_snapshot();
+    crate::proxy::test_hooks::pause_point();
+    let direct = should_direct_connect_to(url, snapshot.explicit_proxy_url.as_deref());
+    (direct, snapshot.generation)
+}
+
 /// 获取当前代理 URL
 ///
 /// 返回当前配置的代理 URL，None 表示直连。
 pub fn get_current_proxy_url() -> Option<String> {
-    CURRENT_PROXY_URL
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .and_then(|url| url.clone())
+    route_snapshot().explicit_proxy_url.clone()
 }
 
 /// 检查是否正在使用代理
@@ -266,6 +324,30 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
     build_client_with(proxy_url, false)
 }
 
+/// redirect 目标类别与当前 client 的一致性策略（review finding P2-A）：
+/// - direct client（force_direct）只跟随 loopback 目标；
+/// - following client 只跟随非 loopback 目标。
+///
+/// 跨类别 hop 在此停止并返回 30x，由 forwarder 依新目标重选 transport 重发，
+/// 保证「只有 loopback hop 被强制直连」而外部 hop 保持继承/显式代理语义。
+/// 跳数上限与 reqwest 默认单链上限一致。
+fn redirect_policy_for(follow_loopback_targets: bool) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt: reqwest::redirect::Attempt| {
+        if attempt.previous().len() >= MAX_REDIRECT_HOPS {
+            return attempt.error("too many redirects");
+        }
+        let next_is_loopback = is_loopback_upstream_url(attempt.url().as_str());
+        if next_is_loopback == follow_loopback_targets {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
+/// 与 reqwest 默认策略一致的单链上限。
+const MAX_REDIRECT_HOPS: usize = 10;
+
 /// 构建 HTTP 客户端（force_direct = true 时禁用一切代理）。
 ///
 /// force_direct 为 true 时客户端永不使用任何代理（包括系统代理/环境变量代理），
@@ -276,6 +358,9 @@ fn build_client_with(proxy_url: Option<&str>, force_direct: bool) -> Result<Clie
         .connect_timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
         .tcp_keepalive(Duration::from_secs(60))
+        // 跨类别 redirect hop 由 forwarder 手工重选 transport 后重发；
+        // 同类别 hop 仍由 reqwest 内部跟随（默认上限 10）。
+        .redirect(redirect_policy_for(force_direct))
         // 禁用 reqwest 自动解压：防止 reqwest 覆盖客户端原始 accept-encoding header。
         // 响应解压由 response_processor 根据 content-encoding 手动处理。
         .no_gzip()

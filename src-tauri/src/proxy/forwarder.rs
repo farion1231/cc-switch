@@ -2351,47 +2351,92 @@ impl RequestForwarder {
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
             // loopback upstream 必须直连：无显式代理时不得继承系统代理。
-            let client = if super::http_client::should_direct_connect_to(
-                &url,
-                upstream_proxy_url.as_deref(),
-            ) {
-                log::debug!(
-                    "[Forwarder] Loopback upstream detected; using direct client (inherited proxy bypassed)"
-                );
-                super::http_client::get_direct()
-            } else {
-                super::http_client::get()
-            };
-            let mut request = client.request(method.clone(), &url);
-            if request_is_streaming {
-                // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
-                // 的首包/静默期超时控制，避免长流被总时长误杀。
-                request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
-            } else if !self.non_streaming_timeout.is_zero() {
-                request = request.timeout(self.non_streaming_timeout);
-            }
-            for (key, value) in &ordered_headers {
-                request = request.header(key, value);
-            }
-            let send = request.body(body_bytes).send();
-            let send_result = if request_is_streaming {
-                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
-                    timeout
+            // 每个 redirect hop 依新目标重新选择 transport：reqwest 的 redirect
+            // policy 只在同类别 hop 内跟随，跨类别 hop（loopback <-> 外部）停止并
+            // 返回 30x，由本循环重选 transport 后重发；method/body/敏感头语义镜像
+            // reqwest/tower-http 的 redirect 处理（review finding P2-A）。
+            let mut redirect_url = url.clone();
+            let mut redirect_method = method.clone();
+            let mut redirect_headers = ordered_headers.clone();
+            let mut redirect_body: Option<Vec<u8>> = Some(body_bytes);
+            let mut manual_redirect_hops = 0usize;
+
+            let reqwest_resp = loop {
+                let client = super::http_client::select_client_for_url(redirect_url.as_str());
+                let mut request = client.request(redirect_method.clone(), &redirect_url);
+                if request_is_streaming {
+                    // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
+                    // 的首包/静默期超时控制，避免长流被总时长误杀。
+                    request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
+                } else if !self.non_streaming_timeout.is_zero() {
+                    request = request.timeout(self.non_streaming_timeout);
+                }
+                for (key, value) in &redirect_headers {
+                    request = request.header(key, value);
+                }
+                if let Some(body) = redirect_body.as_ref() {
+                    request = request.body(body.clone());
+                }
+                let send = request.send();
+                let send_result = if request_is_streaming {
+                    let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
+                        timeout
+                    } else {
+                        self.streaming_first_byte_timeout
+                    };
+                    tokio::time::timeout(header_timeout, send)
+                        .await
+                        .map_err(|_| {
+                            ProxyError::Timeout(format!(
+                                "流式响应首包超时: {}s（上游未返回响应头）",
+                                header_timeout.as_secs()
+                            ))
+                        })?
                 } else {
-                    self.streaming_first_byte_timeout
+                    send.await
                 };
-                tokio::time::timeout(header_timeout, send)
-                    .await
-                    .map_err(|_| {
-                        ProxyError::Timeout(format!(
-                            "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
-                        ))
-                    })?
-            } else {
-                send.await
+                let resp = send_result.map_err(map_reqwest_send_error)?;
+
+                // 跨类别 redirect：policy 已 stop（返回 30x），这里依新目标重选
+                // transport 重发；method/body/敏感头语义镜像 reqwest/tower-http。
+                if manual_redirect_hops < MAX_MANUAL_REDIRECT_HOPS {
+                    if let Some(next_url) =
+                        next_redirect_target(&redirect_url, resp.status(), resp.headers())
+                    {
+                        let (new_method, drop_body, drop_payload_headers) =
+                            redirect_method_transform(&redirect_method, resp.status());
+                        if drop_body {
+                            redirect_body = None;
+                        }
+                        if drop_payload_headers {
+                            for header in [
+                                http::header::CONTENT_TYPE,
+                                http::header::CONTENT_LENGTH,
+                                http::header::CONTENT_ENCODING,
+                                http::header::TRANSFER_ENCODING,
+                            ] {
+                                redirect_headers.remove(header);
+                            }
+                        }
+                        if redirect_cross_host(&redirect_url, &next_url) {
+                            for header in [
+                                http::header::AUTHORIZATION,
+                                http::header::COOKIE,
+                                http::header::PROXY_AUTHORIZATION,
+                                http::header::WWW_AUTHENTICATE,
+                            ] {
+                                redirect_headers.remove(header);
+                            }
+                            redirect_headers.remove("cookie2");
+                        }
+                        redirect_url = next_url.to_string();
+                        redirect_method = new_method;
+                        manual_redirect_hops += 1;
+                        continue;
+                    }
+                }
+                break resp;
             };
-            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
             ProxyResponse::Reqwest(reqwest_resp)
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
@@ -3572,6 +3617,63 @@ fn should_force_identity_encoding(
     headers: &axum::http::HeaderMap,
 ) -> bool {
     is_streaming_request(endpoint, body, headers)
+}
+
+/// 手工跨类别 redirect 的单链预算（与 reqwest 默认单链上限一致）。
+const MAX_MANUAL_REDIRECT_HOPS: usize = 10;
+
+/// 解析 30x 响应的下一跳目标（仅在跨类别 hop 需要重选 transport 时调用）。
+fn next_redirect_target(
+    current: &str,
+    status: reqwest::StatusCode,
+    headers: &http::HeaderMap,
+) -> Option<reqwest::Url> {
+    if !matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let location = headers.get(http::header::LOCATION)?.to_str().ok()?;
+    let base = reqwest::Url::parse(current).ok()?;
+    base.join(location).ok()
+}
+
+/// 镜像 reqwest/tower-http 的 redirect method/body 变换。
+///
+/// 返回 (新 method, 是否丢弃 body, 是否移除 payload headers)：
+/// - 301/302：POST -> GET（丢 body 与 payload headers），其余方法保持不变；
+/// - 303：非 HEAD -> GET，恒丢 body 与 payload headers；
+/// - 307/308：method/body 不变。
+fn redirect_method_transform(
+    method: &http::Method,
+    status: reqwest::StatusCode,
+) -> (http::Method, bool, bool) {
+    match status.as_u16() {
+        301 | 302 => {
+            if *method == http::Method::POST {
+                (http::Method::GET, true, true)
+            } else {
+                (method.clone(), false, false)
+            }
+        }
+        303 => {
+            let new_method = if *method == http::Method::HEAD {
+                method.clone()
+            } else {
+                http::Method::GET
+            };
+            (new_method, true, true)
+        }
+        307 | 308 => (method.clone(), false, false),
+        _ => (method.clone(), false, false),
+    }
+}
+
+/// 跨 host/port 判断（镜像 reqwest 的 remove_sensitive_headers 条件）。
+fn redirect_cross_host(previous: &str, next: &reqwest::Url) -> bool {
+    let Ok(previous) = reqwest::Url::parse(previous) else {
+        return true;
+    };
+    next.host_str() != previous.host_str()
+        || next.port_or_known_default() != previous.port_or_known_default()
 }
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
