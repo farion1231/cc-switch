@@ -146,13 +146,13 @@ describe("DeepSeekHarnessFormFields", () => {
     expect(onDefaultModelChange).toHaveBeenCalledWith("glm-5");
   });
 
-  it("fetches models and appends a selected model", async () => {
+  it("fetches models and fills the row from the inline dropdown", async () => {
     Element.prototype.scrollIntoView = vi.fn();
     vi.mocked(fetchModelsForConfig).mockResolvedValue([
       { id: "gpt-4o", ownedBy: "openai" },
     ]);
     const onModelsChange = vi.fn();
-    renderFields({ models: [], onModelsChange });
+    renderFields({ onModelsChange });
 
     fireEvent.click(screen.getByRole("button", { name: "Fetch Models" }));
 
@@ -169,7 +169,23 @@ describe("DeepSeekHarnessFormFields", () => {
     fireEvent.click(await screen.findByRole("option", { name: "gpt-4o" }));
 
     expect(onModelsChange).toHaveBeenCalledWith([
-      { id: "gpt-4o", name: "gpt-4o" },
+      { id: "gpt-4o", name: "DeepSeek V4 Pro" },
     ]);
+  });
+
+  it("does not show the fetched-model dropdown until a row exists", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "gpt-4o", ownedBy: "openai" },
+    ]);
+    renderFields({ models: [] });
+
+    fireEvent.click(screen.getByRole("button", { name: "Fetch Models" }));
+
+    await waitFor(() =>
+      expect(fetchModelsForConfig).toHaveBeenCalledTimes(1),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Select model" }),
+    ).not.toBeInTheDocument();
   });
 });

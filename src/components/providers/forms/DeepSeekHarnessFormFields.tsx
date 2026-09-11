@@ -247,10 +247,6 @@ export function DeepSeekHarnessFormFields({
           </div>
         </div>
 
-        {fetchedModels.length > 0 && (
-          <ModelDropdown models={fetchedModels} onSelect={addModel} />
-        )}
-
         {models.length === 0 ? (
           <p className="text-sm text-muted-foreground py-2">
             {t("deepseekHarness.noModels", {
@@ -277,14 +273,22 @@ export function DeepSeekHarnessFormFields({
             </div>
             {models.map((model, index) => (
               <div key={index} className="flex items-center gap-2">
-                <ImeSafeInput
-                  value={model.id}
-                  onValueChange={(value) => updateModel(index, { id: value })}
-                  placeholder={t("deepseekHarness.modelId", {
-                    defaultValue: "Model ID",
-                  })}
-                  className="flex-1"
-                />
+                <div className="flex min-w-0 flex-1 gap-1">
+                  <ImeSafeInput
+                    value={model.id}
+                    onValueChange={(value) => updateModel(index, { id: value })}
+                    placeholder={t("deepseekHarness.modelId", {
+                      defaultValue: "Model ID",
+                    })}
+                    className="flex-1"
+                  />
+                  {fetchedModels.length > 0 && (
+                    <ModelDropdown
+                      models={fetchedModels}
+                      onSelect={(id) => updateModel(index, { id })}
+                    />
+                  )}
+                </div>
                 <ImeSafeInput
                   value={model.name ?? ""}
                   onValueChange={(value) => updateModel(index, { name: value })}
