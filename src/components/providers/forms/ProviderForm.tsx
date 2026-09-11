@@ -56,13 +56,13 @@ import {
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
 import {
-  DEEPSEEK_HARNESS_DEFAULT_CONFIG,
   getDeepSeekHarnessPresetEntries,
   type DeepSeekHarnessProviderPreset,
 } from "@/config/deepseekHarnessProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { DeepSeekHarnessFormFields } from "./DeepSeekHarnessFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -91,7 +91,6 @@ import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { PiProviderForm } from "./PiProviderForm";
-import { DeepSeekHarnessProviderForm } from "./DeepSeekHarnessProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
@@ -117,6 +116,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useHermesFormState,
+  useDeepSeekHarnessFormState,
   useCopilotAuth,
   useCodexOauth,
   useXaiOauth,
@@ -132,9 +132,11 @@ import {
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
+import { DSH_CUSTOM_DEFAULT_CONFIG } from "./helpers/deepseekHarnessFormUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
+import { useDshCurrentState } from "@/lib/query/dsh";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 
 type PresetEntry = {
@@ -280,9 +282,6 @@ export interface ProviderFormProps {
 }
 
 export function ProviderForm(props: ProviderFormProps) {
-  if (props.appId === "deepseek-harness") {
-    return <DeepSeekHarnessProviderForm {...props} />;
-  }
   if (props.appId === "pi") {
     return <PiProviderForm {...props} />;
   }
@@ -404,14 +403,14 @@ function ProviderFormFull({
   useEffect(() => {
     const initialPresetId =
       !initialData && appId === "deepseek-harness"
-        ? "deepseek-harness-0"
+        ? "deepseek-harness-1"
         : "custom";
     setSelectedPresetId(initialData ? null : initialPresetId);
     setActivePreset(
       !initialData && appId === "deepseek-harness"
         ? {
             id: initialPresetId,
-            category: "official",
+            category: "custom",
           }
         : null,
     );
@@ -473,7 +472,7 @@ function ProviderFormFull({
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
                   : appId === "deepseek-harness"
-                    ? JSON.stringify(DEEPSEEK_HARNESS_DEFAULT_CONFIG, null, 2)
+                    ? JSON.stringify(DSH_CUSTOM_DEFAULT_CONFIG, null, 2)
                     : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
@@ -1043,6 +1042,18 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const dshForm = useDeepSeekHarnessFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+  const {
+    data: dshCurrentState,
+    isLoading: isDshCurrentStateLoading,
+  } = useDshCurrentState(appId === "deepseek-harness");
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -1075,9 +1086,20 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "deepseek-harness") {
+      return Array.from(
+        new Set(
+          (dshCurrentState?.providerIds ?? []).filter(
+            (key) => key !== providerId,
+          ),
+        ),
+      );
+    }
+
     return [];
   }, [
     appId,
+    dshCurrentState,
     existingOpencodeKeys,
     hermesForm.existingHermesKeys,
     hermesLiveProviderIds,
@@ -1089,6 +1111,9 @@ function ProviderFormFull({
   ]);
 
   const isProviderKeyLockStateLoading = useMemo(() => {
+    if (appId === "deepseek-harness") {
+      return isDshCurrentStateLoading;
+    }
     if (!isEditMode) return false;
     if (appId === "opencode" && !isAnyOmoCategory) {
       return isOpencodeLiveProviderIdsLoading;
@@ -1103,6 +1128,7 @@ function ProviderFormFull({
   }, [
     appId,
     isAnyOmoCategory,
+    isDshCurrentStateLoading,
     isEditMode,
     isHermesLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
@@ -1110,6 +1136,11 @@ function ProviderFormFull({
   ]);
 
   const isProviderKeyLocked = useMemo(() => {
+    if (appId === "deepseek-harness") {
+      if (dshForm.dshIsOfficial) return true;
+      if (!isEditMode || !providerId) return false;
+      return (dshCurrentState?.providerIds ?? []).includes(providerId);
+    }
     if (!isEditMode || !providerId) return false;
     if (appId === "opencode" && !isAnyOmoCategory) {
       return opencodeLiveProviderIds.includes(providerId);
@@ -1123,6 +1154,8 @@ function ProviderFormFull({
     return false;
   }, [
     appId,
+    dshCurrentState,
+    dshForm.dshIsOfficial,
     hermesLiveProviderIds,
     isAnyOmoCategory,
     isEditMode,
@@ -1276,6 +1309,45 @@ function ProviderFormFull({
       ) {
         toast.error(t("hermes.form.providerKeyDuplicate"));
         return;
+      }
+    }
+
+    // deepseek-harness: official routes use the reserved key and skip provider
+    // key validation; custom routes need a unique key and at least one model.
+    if (appId === "deepseek-harness" && !dshForm.dshIsOfficial) {
+      if (!dshForm.dshProviderKey.trim()) {
+        toast.error(
+          t("deepseekHarness.providerKeyRequired", {
+            defaultValue: "请填写 Provider Key",
+          }),
+        );
+        return;
+      }
+      if (isProviderKeyLockStateLoading) {
+        toast.error(
+          t("providerForm.providerKeyStatusLoading", {
+            defaultValue: "正在加载供应商标识状态，请稍后再试",
+          }),
+        );
+        return;
+      }
+      if (
+        !isProviderKeyLocked &&
+        additiveExistingProviderKeys.includes(dshForm.dshProviderKey)
+      ) {
+        toast.error(
+          t("deepseekHarness.providerKeyDuplicate", {
+            defaultValue: "该 Provider Key 已存在",
+          }),
+        );
+        return;
+      }
+      if (!dshForm.dshModels.some((model) => model.id.trim())) {
+        issues.push(
+          t("deepseekHarness.modelsRequired", {
+            defaultValue: "请至少填写一个模型 ID",
+          }),
+        );
       }
     }
 
@@ -1634,6 +1706,10 @@ function ProviderFormFull({
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
+    } else if (appId === "deepseek-harness") {
+      payload.providerKey = dshForm.dshIsOfficial
+        ? "deepseek-official"
+        : dshForm.dshProviderKey.trim();
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -1728,13 +1804,18 @@ function ProviderFormFull({
       delete baseMeta.custom_endpoints;
     }
 
-    const providerType = isCopilotProvider
-      ? "github_copilot"
-      : isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound
-        ? "codex_oauth"
-        : isXaiOauthProvider
-          ? "xai_oauth"
-          : undefined;
+    const providerType =
+      appId === "deepseek-harness"
+        ? dshForm.dshIsOfficial
+          ? "dsh_deepseek"
+          : "dsh_pi_ai"
+        : isCopilotProvider
+          ? "github_copilot"
+          : isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound
+            ? "codex_oauth"
+            : isXaiOauthProvider
+              ? "xai_oauth"
+              : undefined;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1750,6 +1831,13 @@ function ProviderFormFull({
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
+      // DeepSeek Harness: the currently selected model for this provider.
+      dshCurrentModel:
+        appId === "deepseek-harness"
+          ? dshForm.dshDefaultModel.trim() ||
+            dshForm.dshModels[0]?.id ||
+            undefined
+          : undefined,
       authBinding: isCopilotProvider
         ? {
             source: "managed_account",
@@ -1866,6 +1954,9 @@ function ProviderFormFull({
     }
     if (!nextMeta.githubAccountId && "githubAccountId" in nextMeta) {
       delete nextMeta.githubAccountId;
+    }
+    if (appId !== "deepseek-harness" && "dshCurrentModel" in nextMeta) {
+      delete nextMeta.dshCurrentModel;
     }
 
     payload.meta = nextMeta;
@@ -1995,6 +2086,9 @@ function ProviderFormFull({
       }
       if (appId === "hermes") {
         hermesForm.resetHermesState();
+      }
+      if (appId === "deepseek-harness") {
+        dshForm.resetDshState(undefined, false);
       }
       return;
     }
@@ -2126,6 +2220,10 @@ function ProviderFormFull({
 
     if (appId === "deepseek-harness") {
       const preset = entry.preset as DeepSeekHarnessProviderPreset;
+      dshForm.resetDshState(
+        preset.settingsConfig as Record<string, unknown>,
+        preset.category === "official",
+      );
       form.reset({
         name: preset.name,
         websiteUrl: preset.websiteUrl,
@@ -2388,6 +2486,87 @@ function ProviderFormFull({
                               defaultValue:
                                 "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.yaml.",
                             })}
+                      </p>
+                    )}
+                </div>
+              ) : appId === "deepseek-harness" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="dsh-provider-key">
+                    {t("deepseekHarness.providerKey", {
+                      defaultValue: "Provider Key",
+                    })}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <ImeSafeInput
+                    id="dsh-provider-key"
+                    value={dshForm.dshProviderKey}
+                    onValueChange={dshForm.setDshProviderKey}
+                    normalize={normalizeProviderKey}
+                    placeholder={t("deepseekHarness.providerKeyPlaceholder", {
+                      defaultValue: "my-provider",
+                    })}
+                    disabled={
+                      isProviderKeyLocked || isProviderKeyLockStateLoading
+                    }
+                    className={
+                      (additiveExistingProviderKeys.includes(
+                        dshForm.dshProviderKey,
+                      ) &&
+                        !isProviderKeyLocked) ||
+                      (!dshForm.dshIsOfficial &&
+                        dshForm.dshProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          dshForm.dshProviderKey,
+                        ))
+                        ? "border-destructive"
+                        : ""
+                    }
+                  />
+                  {additiveExistingProviderKeys.includes(
+                    dshForm.dshProviderKey,
+                  ) &&
+                    !isProviderKeyLocked && (
+                      <p className="text-xs text-destructive">
+                        {t("deepseekHarness.providerKeyDuplicate", {
+                          defaultValue: "该 Provider Key 已存在",
+                        })}
+                      </p>
+                    )}
+                  {!dshForm.dshIsOfficial &&
+                    dshForm.dshProviderKey.trim() !== "" &&
+                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                      dshForm.dshProviderKey,
+                    ) && (
+                      <p className="text-xs text-destructive">
+                        {t("deepseekHarness.providerKeyInvalid", {
+                          defaultValue: "仅支持小写字母、数字和连字符",
+                        })}
+                      </p>
+                    )}
+                  {!(
+                    additiveExistingProviderKeys.includes(
+                      dshForm.dshProviderKey,
+                    ) && !isProviderKeyLocked
+                  ) &&
+                    (dshForm.dshProviderKey.trim() === "" ||
+                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        dshForm.dshProviderKey,
+                      )) && (
+                      <p className="text-xs text-muted-foreground">
+                        {dshForm.dshIsOfficial
+                          ? t("deepseekHarness.providerKeyOfficialHint", {
+                              defaultValue:
+                                "Official DeepSeek route uses the fixed deepseek-official key.",
+                            })
+                          : isProviderKeyLocked
+                            ? t("deepseekHarness.providerKeyLockedHint", {
+                                defaultValue:
+                                  "This provider is in the DSH config; the key is locked.",
+                              })
+                            : t("deepseekHarness.providerKeyHint", {
+                                defaultValue:
+                                  "Lowercase letters, numbers, and hyphens only.",
+                              })}
                       </p>
                     )}
                 </div>
@@ -2666,6 +2845,28 @@ function ProviderFormFull({
             />
           )}
 
+          {/* DeepSeek Harness 专属字段 */}
+          {appId === "deepseek-harness" && (
+            <DeepSeekHarnessFormFields
+              isOfficial={dshForm.dshIsOfficial}
+              apiKey={dshForm.dshApiKey}
+              onApiKeyChange={dshForm.handleDshApiKeyChange}
+              apiKeyEnv={dshForm.dshApiKeyEnv}
+              onApiKeyEnvChange={dshForm.handleDshApiKeyEnvChange}
+              baseUrl={dshForm.dshBaseUrl}
+              onBaseUrlChange={dshForm.handleDshBaseUrlChange}
+              api={dshForm.dshApi}
+              onApiChange={dshForm.handleDshApiChange}
+              models={dshForm.dshModels}
+              onModelsChange={dshForm.handleDshModelsChange}
+              defaultModel={dshForm.dshDefaultModel}
+              onDefaultModelChange={dshForm.handleDshDefaultModelChange}
+              category={category}
+              shouldShowApiKeyLink={false}
+              websiteUrl={form.watch("websiteUrl") || ""}
+            />
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {appId === "codex" ? (
             <>
@@ -2754,6 +2955,31 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
+          ) : appId === "deepseek-harness" ? (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="settingsConfig">
+                  {t("provider.configJson")}
+                </Label>
+                <JsonEditor
+                  value={form.getValues("settingsConfig")}
+                  onChange={(config) => form.setValue("settingsConfig", config)}
+                  placeholder={`{
+  "displayName": "Custom DSH",
+  "api": "openai-completions",
+  "baseURL": "https://api.example.com/v1",
+  "apiKeyEnv": "CUSTOM_DSH_API_KEY",
+  "apiKey": "your-api-key-here",
+  "models": []
+}`}
+                  rows={3}
+                  showValidation={true}
+                  language="json"
+                  darkMode={isDarkMode}
+                />
+              </div>
+              {settingsConfigErrorField}
+            </>
           ) : appId === "openclaw" || appId === "hermes" ? (
             <>
               <div className="space-y-2">
@@ -2816,7 +3042,8 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" && (
+            appId !== "hermes" &&
+            appId !== "deepseek-harness" && (
               <ProviderAdvancedConfig
                 pricingConfig={pricingConfig}
                 onPricingConfigChange={setPricingConfig}

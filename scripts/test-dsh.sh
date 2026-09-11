@@ -17,6 +17,8 @@ cargo test --manifest-path src-tauri/Cargo.toml dsh_is_part_of_environment_check
 ./node_modules/.bin/vitest run \
   tests/components/DshSurface.test.ts \
   tests/components/DeepSeekHarnessProviderForm.test.tsx \
+  tests/components/DeepSeekHarnessFormFields.test.tsx \
+  tests/hooks/useDeepSeekHarnessFormState.test.tsx \
   tests/components/ProviderList.test.tsx \
   tests/components/ProviderCardLayout.test.ts \
   tests/config/appConfig.test.tsx \
