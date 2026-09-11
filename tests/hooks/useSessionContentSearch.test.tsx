@@ -27,9 +27,10 @@ function deferred<T>() {
 }
 
 const render = (query: string, providerFilter = "all") =>
-  renderHook(({ q, filter }) => useSessionContentSearch(q, filter), {
-    initialProps: { q: query, filter: providerFilter },
-  });
+  renderHook(
+    ({ q, filter, updatedAt }) => useSessionContentSearch(q, filter, updatedAt),
+    { initialProps: { q: query, filter: providerFilter, updatedAt: 1 } },
+  );
 
 describe("useSessionContentSearch", () => {
   beforeEach(() => {
@@ -55,7 +56,7 @@ describe("useSessionContentSearch", () => {
 
     const pending = deferred<SessionSearchHit[]>();
     searchMock.mockImplementationOnce(() => pending.promise);
-    rerender({ q: "beta", filter: "all" });
+    rerender({ q: "beta", filter: "all", updatedAt: 1 });
 
     // "alpha" 的命中必须立刻消失，否则新关键词下会显示上一次的片段
     expect(result.current.snippetsBySource.size).toBe(0);
@@ -79,7 +80,7 @@ describe("useSessionContentSearch", () => {
     searchMock.mockImplementationOnce(
       () => deferred<SessionSearchHit[]>().promise,
     );
-    rerender({ q: "alpha", filter: "codex" });
+    rerender({ q: "alpha", filter: "codex", updatedAt: 1 });
 
     expect(result.current.snippetsBySource.size).toBe(0);
   });
@@ -92,7 +93,7 @@ describe("useSessionContentSearch", () => {
     await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(1));
 
     searchMock.mockResolvedValueOnce([hit("/b.jsonl")]);
-    rerender({ q: "beta", filter: "all" });
+    rerender({ q: "beta", filter: "all", updatedAt: 1 });
     await waitFor(() =>
       expect([...result.current.snippetsBySource.keys()]).toEqual(["/b.jsonl"]),
     );
@@ -110,35 +111,74 @@ describe("useSessionContentSearch", () => {
 
     render("alpha");
     await waitFor(() =>
-      expect(searchMock).toHaveBeenCalledWith(
-        "alpha",
-        undefined,
-        expect.any(Number),
-      ),
+      expect(searchMock).toHaveBeenCalledWith("alpha", undefined),
     );
 
     searchMock.mockClear();
     render("alpha", "codex");
     await waitFor(() =>
-      expect(searchMock).toHaveBeenCalledWith(
-        "alpha",
-        "codex",
-        expect.any(Number),
-      ),
+      expect(searchMock).toHaveBeenCalledWith("alpha", "codex"),
     );
   });
 
-  // 后端靠这个递增号丢弃已被新关键词取代的扫描；号不递增就等于没有取消机制
-  it("tags each scan with an increasing request id", async () => {
-    searchMock.mockResolvedValue([]);
-    const { rerender } = render("alpha");
+  it("searches again after remount without a renderer request id", async () => {
+    searchMock.mockResolvedValue([hit("/a.jsonl")]);
+    const first = render("alpha");
 
     await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(1));
-    rerender({ q: "beta", filter: "all" });
-    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(2));
+    first.unmount();
+    const { result } = render("alpha");
 
-    const [first, second] = searchMock.mock.calls;
-    expect(second[2]).toBeGreaterThan(first[2]);
+    await waitFor(() => expect(result.current.snippetsBySource.size).toBe(1));
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(2));
+    expect(searchMock.mock.calls).toEqual([
+      ["alpha", undefined],
+      ["alpha", undefined],
+    ]);
+  });
+
+  it("refreshes an unchanged query when the session list refreshes", async () => {
+    searchMock.mockResolvedValueOnce([hit("/a.jsonl")]);
+    const { result, rerender } = render("alpha");
+    await waitFor(() => expect(result.current.snippetsBySource.size).toBe(1));
+
+    searchMock.mockResolvedValueOnce([hit("/b.jsonl")]);
+    rerender({ q: "alpha", filter: "all", updatedAt: 2 });
+    await waitFor(() =>
+      expect([...result.current.snippetsBySource.keys()]).toEqual(["/b.jsonl"]),
+    );
+    expect(searchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a response from before the session list refreshed", async () => {
+    const stale = deferred<SessionSearchHit[]>();
+    searchMock.mockReturnValueOnce(stale.promise);
+    const { result, rerender } = render("alpha");
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(1));
+
+    searchMock.mockResolvedValueOnce([hit("/b.jsonl")]);
+    rerender({ q: "alpha", filter: "all", updatedAt: 2 });
+    await waitFor(() =>
+      expect([...result.current.snippetsBySource.keys()]).toEqual(["/b.jsonl"]),
+    );
+
+    await act(async () => {
+      stale.resolve([hit("/a.jsonl")]);
+      await stale.promise;
+    });
+    expect([...result.current.snippetsBySource.keys()]).toEqual(["/b.jsonl"]);
+  });
+
+  it("does not rescan on an ordinary rerender", async () => {
+    searchMock.mockResolvedValue([]);
+    const { rerender } = render("alpha");
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(1));
+
+    rerender({ q: "alpha", filter: "all", updatedAt: 1 });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(searchMock).toHaveBeenCalledTimes(1);
   });
 
   it("skips the backend for a blank query", async () => {

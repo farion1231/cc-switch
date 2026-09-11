@@ -195,7 +195,7 @@ const filterSetToAllowedValues = (
 export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, isLoading, refetch } = useSessionsQuery();
+  const { data, dataUpdatedAt, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
   const piSessionDiscovery = useQuery({
     queryKey: piKeys.sessionDiscovery,
@@ -255,6 +255,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const { snippetsBySource, isSearching } = useSessionContentSearch(
     search,
     providerFilter,
+    dataUpdatedAt,
   );
 
   const filteredSessions = useMemo(() => {
@@ -737,7 +738,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         session={session}
         isSelected={isSelected}
         selectionMode={selectionMode}
-        searchQuery={search}
+        searchQuery={search.trim()}
         snippets={
           session.sourcePath
             ? snippetsBySource.get(session.sourcePath)
@@ -1775,7 +1776,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                       isActive={
                                         activeMessageIndex === virtualRow.index
                                       }
-                                      searchQuery={search}
+                                      searchQuery={search.trim()}
                                       onCopy={handleMessageCopy}
                                     />
                                   </div>

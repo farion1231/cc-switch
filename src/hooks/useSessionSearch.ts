@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import FlexSearch from "flexsearch";
 import { sessionsApi } from "@/lib/api";
 import type { SessionMeta, SessionSearchSnippet } from "@/types";
@@ -87,11 +87,13 @@ interface ContentSearchState {
  * 结果携带产生它的 query 与 providerFilter，只有两者都与当前值相符时才对外暴露；
  * 因此一次慢的后台扫描返回时，不会把上一个关键词的命中泄漏到新的搜索结果里。
  */
-export function useSessionContentSearch(query: string, providerFilter: string) {
+export function useSessionContentSearch(
+  query: string,
+  providerFilter: string,
+  dataUpdatedAt: number,
+) {
   const [state, setState] = useState<ContentSearchState | null>(null);
   const [isSearching, setIsSearching] = useState(false);
-  // 递增的请求号：后端据此丢弃已被新关键词取代的扫描
-  const requestId = useRef(0);
   const needle = query.trim();
 
   useEffect(() => {
@@ -106,11 +108,7 @@ export function useSessionContentSearch(query: string, providerFilter: string) {
 
     const timer = setTimeout(() => {
       sessionsApi
-        .search(
-          needle,
-          providerFilter === "all" ? undefined : providerFilter,
-          ++requestId.current,
-        )
+        .search(needle, providerFilter === "all" ? undefined : providerFilter)
         .then((hits) => {
           if (!active) return;
           setState({
@@ -135,7 +133,7 @@ export function useSessionContentSearch(query: string, providerFilter: string) {
       active = false;
       clearTimeout(timer);
     };
-  }, [needle, providerFilter]);
+  }, [needle, providerFilter, dataUpdatedAt]);
 
   const snippetsBySource =
     state !== null &&

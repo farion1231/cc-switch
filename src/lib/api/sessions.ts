@@ -26,18 +26,14 @@ export const sessionsApi = {
 
   /**
    * Full-content search; omit providerId to search every provider.
-   * `requestId` must increase per query so the backend can abandon a scan the
-   * user has already typed past.
    */
   async search(
     query: string,
     providerId: string | undefined,
-    requestId: number,
   ): Promise<SessionSearchHit[]> {
     return await invoke("search_sessions", {
       query,
       providerId: providerId ?? null,
-      requestId,
     });
   },
 

@@ -4,15 +4,12 @@ use std::thread;
 
 use super::{load_messages, scan_sessions, SessionMeta};
 
-/// Highest request id seen so far.
-///
-/// A scan is cancellable but not interruptible from the outside: the UI can stop
-/// waiting for a reply, but `clearTimeout` cannot recall an `invoke` that already
-/// started, so without this a few query edits would leave several full scans
-/// running at once, each with one worker per CPU. Ids come from the renderer so
-/// "newer" reflects the order the user typed, not the order the blocking pool
-/// happened to schedule.
-static LATEST_REQUEST: AtomicU64 = AtomicU64::new(0);
+static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
+
+/// Allocate at the command boundary, before blocking-pool scheduling.
+pub fn next_request_id() -> u64 {
+    NEXT_REQUEST.fetch_add(1, Ordering::SeqCst) + 1
+}
 
 /// Characters of surrounding context kept on each side of a match.
 const SNIPPET_CONTEXT_CHARS: usize = 60;
@@ -56,8 +53,6 @@ pub fn search_sessions(
     provider_id: Option<&str>,
     request_id: u64,
 ) -> Vec<SessionSearchHit> {
-    LATEST_REQUEST.fetch_max(request_id, Ordering::SeqCst);
-
     let needle = lower_chars(query.trim());
     if needle.is_empty() || is_superseded(request_id) {
         return Vec::new();
@@ -89,7 +84,7 @@ pub fn search_sessions(
 
         handles
             .into_iter()
-            .flat_map(|handle| handle.join().unwrap_or_default())
+            .flat_map(|handle| handle.join().expect("session search worker panicked"))
             .collect()
     });
 
@@ -102,7 +97,7 @@ pub fn search_sessions(
 }
 
 fn is_superseded(request_id: u64) -> bool {
-    LATEST_REQUEST.load(Ordering::Relaxed) > request_id
+    NEXT_REQUEST.load(Ordering::Relaxed) > request_id
 }
 
 fn search_session(meta: &SessionMeta, needle: &[char]) -> Option<SessionSearchHit> {
@@ -294,8 +289,7 @@ mod tests {
     #[test]
     #[serial]
     fn empty_query_matches_nothing() {
-        LATEST_REQUEST.store(0, Ordering::SeqCst);
-        assert!(search_sessions("   ", None, 1).is_empty());
+        assert!(search_sessions("   ", None, next_request_id()).is_empty());
     }
 
     /// A superseded scan must bail before touching the disk, otherwise every query
@@ -303,12 +297,23 @@ mod tests {
     #[test]
     #[serial]
     fn a_newer_request_cancels_an_older_scan() {
-        LATEST_REQUEST.store(0, Ordering::SeqCst);
-        LATEST_REQUEST.fetch_max(9, Ordering::SeqCst);
+        let older = next_request_id();
+        let newer = next_request_id();
 
-        assert!(search_sessions("anything", None, 4).is_empty());
-        assert!(is_superseded(4));
-        assert!(!is_superseded(9));
+        // The newer command cancels old work even before its scan starts.
+        assert!(search_sessions("anything", None, older).is_empty());
+        assert!(is_superseded(older));
+        assert!(!is_superseded(newer));
+    }
+
+    #[test]
+    #[serial]
+    fn requests_after_reopening_the_page_remain_current() {
+        let previous: Vec<_> = (0..5).map(|_| next_request_id()).collect();
+        let reopened = next_request_id();
+
+        assert!(previous.into_iter().all(is_superseded));
+        assert!(!is_superseded(reopened));
     }
 
     #[test]

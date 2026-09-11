@@ -11,16 +11,15 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
 }
 
 /// Full-content search across session transcripts. `providerId` is `None` when
-/// the list is showing every provider. `requestId` increases per query so a scan
-/// the user has already typed past can stop early.
+/// the list is showing every provider.
 #[tauri::command]
 pub async fn search_sessions(
     query: String,
     providerId: Option<String>,
-    requestId: u64,
 ) -> Result<Vec<session_manager::SessionSearchHit>, String> {
+    let request_id = session_manager::search::next_request_id();
     tauri::async_runtime::spawn_blocking(move || {
-        session_manager::search_sessions(&query, providerId.as_deref(), requestId)
+        session_manager::search_sessions(&query, providerId.as_deref(), request_id)
     })
     .await
     .map_err(|e| format!("Failed to search sessions: {e}"))
