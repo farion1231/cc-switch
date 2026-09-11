@@ -79,6 +79,21 @@ fn test_parse_valid_claude_deeplink() {
 }
 
 #[test]
+fn test_parse_valid_claude_desktop_deeplink() {
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Claude%20Desktop&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fapi.example.com&apiKey=test-api-key&model=claude-fable-5&haikuModel=claude-haiku-4&sonnetModel=claude-sonnet-5&opusModel=claude-opus-4-8&enabled=true";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.app.as_deref(), Some("claude-desktop"));
+    assert_eq!(request.name.as_deref(), Some("Claude Desktop"));
+    assert_eq!(request.model.as_deref(), Some("claude-fable-5"));
+    assert_eq!(request.haiku_model.as_deref(), Some("claude-haiku-4"));
+    assert_eq!(request.sonnet_model.as_deref(), Some("claude-sonnet-5"));
+    assert_eq!(request.opus_model.as_deref(), Some("claude-opus-4-8"));
+    assert_eq!(request.enabled, Some(true));
+}
+
+#[test]
 fn test_parse_deeplink_with_notes() {
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
 
@@ -577,6 +592,30 @@ fn test_parse_and_merge_config_claude() {
     );
     assert_eq!(merged.homepage, Some("https://anthropic.com".to_string()));
     assert_eq!(merged.model, Some("claude-sonnet-4.5".to_string()));
+}
+
+#[test]
+fn test_parse_and_merge_config_claude_desktop() {
+    let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude-desktop".to_string()),
+        name: Some("Claude Desktop".to_string()),
+        config: Some(BASE64_STANDARD.encode(config_json.as_bytes())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).unwrap();
+
+    assert_eq!(merged.app.as_deref(), Some("claude-desktop"));
+    assert_eq!(merged.api_key.as_deref(), Some("sk-ant-xxx"));
+    assert_eq!(
+        merged.endpoint.as_deref(),
+        Some("https://api.anthropic.com/v1")
+    );
+    assert_eq!(merged.model.as_deref(), Some("claude-sonnet-4.5"));
 }
 
 #[test]
