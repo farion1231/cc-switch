@@ -3373,7 +3373,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    icon: "tokensmarket",
+    icon: "tokenmarket",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -3383,16 +3383,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "tokensmarket/claude-sonnet-5",
-        fallbacks: [
-          "tokensmarket/gpt-5.6-luna",
-          "tokensmarket/gemini-3.5-flash",
-        ],
+        primary: "tokenmarket/claude-sonnet-5",
+        fallbacks: ["tokenmarket/gpt-5.6-luna", "tokenmarket/gemini-3.5-flash"],
       },
       modelCatalog: {
-        "tokensmarket/claude-sonnet-5": { alias: "Sonnet" },
-        "tokensmarket/gpt-5.6-luna": { alias: "Luna" },
-        "tokensmarket/gemini-3.5-flash": { alias: "Gemini Flash" },
+        "tokenmarket/claude-sonnet-5": { alias: "Sonnet" },
+        "tokenmarket/gpt-5.6-luna": { alias: "Luna" },
+        "tokenmarket/gemini-3.5-flash": { alias: "Gemini Flash" },
       },
     },
   },

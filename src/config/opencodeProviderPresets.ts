@@ -2426,7 +2426,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "aggregator",
-    icon: "tokensmarket",
+    icon: "tokenmarket",
     templateValues: {
       apiKey: {
         label: "API Key",

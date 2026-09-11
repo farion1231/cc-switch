@@ -1171,7 +1171,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     websiteUrl: "https://www.tokensmarket.ai",
     apiKeyUrl: "https://www.tokensmarket.ai/console",
     settingsConfig: {
-      name: "tokensmarket",
+      name: "tokenmarket",
       base_url: "https://api.tokensmarket.ai/v1",
       api_key: "",
       api_mode: "chat_completions",
@@ -1194,7 +1194,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    icon: "tokensmarket",
+    icon: "tokenmarket",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1203,7 +1203,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { default: "claude-sonnet-5", provider: "tokensmarket" },
+      model: { default: "claude-sonnet-5", provider: "tokenmarket" },
     },
   },
   {

@@ -23,7 +23,7 @@ const brandFields = {
   websiteUrl: "https://www.tokensmarket.ai",
   apiKeyUrl: "https://www.tokensmarket.ai/console",
   category: "aggregator",
-  icon: "tokensmarket",
+  icon: "tokenmarket",
 };
 
 function getTokenMarketPreset<T extends { name: string }>(
@@ -163,10 +163,10 @@ describe("Token Market provider presets", () => {
       },
       suggestedDefaults: {
         model: {
-          primary: "tokensmarket/claude-sonnet-5",
+          primary: "tokenmarket/claude-sonnet-5",
           fallbacks: [
-            "tokensmarket/gpt-5.6-luna",
-            "tokensmarket/gemini-3.5-flash",
+            "tokenmarket/gpt-5.6-luna",
+            "tokenmarket/gemini-3.5-flash",
           ],
         },
       },
@@ -177,7 +177,7 @@ describe("Token Market provider presets", () => {
     expect(getTokenMarketPreset(hermesProviderPresets)).toMatchObject({
       ...brandFields,
       settingsConfig: {
-        name: "tokensmarket",
+        name: "tokenmarket",
         base_url: openAiBaseUrl,
         api_key: "",
         api_mode: "chat_completions",
@@ -191,14 +191,14 @@ describe("Token Market provider presets", () => {
         ],
       },
       suggestedDefaults: {
-        model: { default: "claude-sonnet-5", provider: "tokensmarket" },
+        model: { default: "claude-sonnet-5", provider: "tokenmarket" },
       },
     });
   });
 
   it("registers the Token Market brand icon", () => {
-    expect(getIconUrl("tokensmarket")).toBeTruthy();
-    expect(getIconMetadata("tokensmarket")).toMatchObject({
+    expect(getIconUrl("tokenmarket")).toBeTruthy();
+    expect(getIconMetadata("tokenmarket")).toMatchObject({
       displayName: "Token Market",
       defaultColor: "currentColor",
     });

@@ -1549,7 +1549,7 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     endpointCandidates: ["https://api.tokensmarket.ai"],
     modelsUrl: "https://api.tokensmarket.ai/v1/models",
-    icon: "tokensmarket",
+    icon: "tokenmarket",
   },
   {
     name: "TheRouter",

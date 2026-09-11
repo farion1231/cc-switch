@@ -1363,7 +1363,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       true,
     ),
     endpointCandidates: ["https://api.tokensmarket.ai"],
-    icon: "tokensmarket",
+    icon: "tokenmarket",
   },
   {
     name: "TheRouter",

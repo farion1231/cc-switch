@@ -733,12 +733,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ppio", "派欧云"],
     defaultColor: "#2874FF",
   },
-  tokensmarket: {
-    name: "tokensmarket",
+  tokenmarket: {
+    name: "tokenmarket",
     displayName: "Token Market",
     category: "ai-provider",
     keywords: [
-      "tokensmarket",
+      "tokenmarket",
       "token market",
       "aggregator",
       "gateway",
