@@ -256,6 +256,19 @@ export function ProviderCard({
       .map((model) => ({ id: model.id, name: model.name }));
   }, [appId, provider.settingsConfig]);
 
+  const dshModels = useMemo(() => {
+    if (appId !== "deepseek-harness") return [];
+    const models = (provider.settingsConfig as Record<string, unknown>)?.models;
+    if (!Array.isArray(models)) return [];
+    return models
+      .map((model) =>
+        model && typeof model === "object"
+          ? String((model as Record<string, unknown>).id ?? "").trim()
+          : "",
+      )
+      .filter(Boolean);
+  }, [appId, provider.settingsConfig]);
+
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
       return false;
@@ -512,6 +525,22 @@ export function ProviderCard({
                   })}
                 </span>
               )}
+
+              {appId === "deepseek-harness" && dshModels.length > 0 && (
+                <ProviderStatusBadge
+                  tone="info"
+                  label={`${dshModels.length} ${t("provider.models", { defaultValue: "models" })}`}
+                />
+              )}
+
+              {appId === "deepseek-harness" &&
+                isCurrent &&
+                provider.meta?.dshCurrentModel && (
+                  <ProviderStatusBadge
+                    tone="success"
+                    label={provider.meta.dshCurrentModel}
+                  />
+                )}
             </div>
 
             {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (

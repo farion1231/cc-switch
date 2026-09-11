@@ -234,6 +234,8 @@ export interface ProviderMeta {
   liveConfigManaged?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
+  // DeepSeek Harness 原生配置中的当前模型（仅当前 provider 有值）
+  dshCurrentModel?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
 }

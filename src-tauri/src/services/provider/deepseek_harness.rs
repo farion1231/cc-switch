@@ -106,8 +106,8 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         first_model_id(&provider.settings_config)?
     };
     crate::deepseek_harness_config::set_current_model(id, &model)?;
-    state.db.set_current_provider(APP, id)?;
-    crate::settings::set_current_provider(&crate::app_config::AppType::DeepSeekHarness, Some(id))?;
+    let native = crate::deepseek_harness_config::read_native_state()?;
+    sync_native_locked(state, &native)?;
     Ok(SwitchResult::default())
 }
 
@@ -134,21 +134,34 @@ fn sync_native_locked(
         });
         let previous_name = provider.name.clone();
         let previous_config = provider.settings_config.clone();
+        let previous_source = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.clone());
+        let previous_current_model = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.dsh_current_model.clone());
         provider.name = route.name.clone();
         provider.settings_config = route.config.clone();
-        provider
-            .meta
-            .get_or_insert_with(ProviderMeta::default)
-            .provider_type = Some(
+        let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+        meta.provider_type = Some(
             match route.source {
                 crate::deepseek_harness_config::NativeProviderSource::DeepSeek => "dsh_deepseek",
                 crate::deepseek_harness_config::NativeProviderSource::PiAi => "dsh_pi_ai",
             }
             .to_string(),
         );
+        meta.dsh_current_model = if native.current_provider.as_deref() == Some(id) {
+            native.current_model.clone()
+        } else {
+            None
+        };
         if !saved.contains_key(id)
             || previous_name != provider.name
             || previous_config != provider.settings_config
+            || previous_source != meta.provider_type
+            || previous_current_model != meta.dsh_current_model
         {
             state.db.save_provider(APP, &provider)?;
             changed += 1;
@@ -290,6 +303,13 @@ mod tests {
         assert_eq!(
             state.db.get_current_provider(APP).unwrap().as_deref(),
             Some("company")
+        );
+        assert_eq!(
+            providers["company"]
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.dsh_current_model.as_deref()),
+            Some("glm-5.3")
         );
     }
 
