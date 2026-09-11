@@ -559,4 +559,64 @@ describe("EditProviderDialog", () => {
     act(() => staleCallback?.(true));
     expect(reopenedButton).toBeDisabled();
   });
+
+  // #6445: App.tsx derives `open` from Boolean(editingProvider), so picking a
+  // different provider swaps `provider` while `open` stays true. The live-config
+  // load must re-run for the new provider instead of reusing the previous one's.
+  it("does not show the previous provider's live settings after switching providers while open", async () => {
+    const active: Provider = {
+      id: "relay",
+      name: "Relay",
+      category: "aggregator",
+      settingsConfig: { auth: { OPENAI_API_KEY: "relay-db-key" } },
+    };
+    const other: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "custom",
+      settingsConfig: { auth: { OPENAI_API_KEY: "deepseek-db-key" } },
+    };
+
+    // "relay" is the provider currently written to the live config.
+    apiMocks.getCurrent.mockResolvedValue("relay");
+    apiMocks.getLiveProviderSettings.mockResolvedValue({
+      auth: { OPENAI_API_KEY: "relay-live-key" },
+    });
+
+    const { rerender } = render(
+      <EditProviderDialog
+        open
+        provider={active}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("settings-config").textContent).toContain(
+        "relay-live-key",
+      );
+    });
+
+    // Switch to a provider that is not the active one, without closing first.
+    rerender(
+      <EditProviderDialog
+        open
+        provider={other}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("settings-config").textContent).toContain(
+        "deepseek-db-key",
+      );
+    });
+    expect(screen.getByTestId("settings-config").textContent).not.toContain(
+      "relay-live-key",
+    );
+  });
 });

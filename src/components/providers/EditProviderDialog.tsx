@@ -129,13 +129,21 @@ export function EditProviderDialog({
   );
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
-  const [liveSettings, setLiveSettings] = useState<Record<
-    string,
-    unknown
-  > | null>(null);
+  //
+  // #6445: App.tsx derives `open` from Boolean(editingProvider), so choosing a
+  // different provider swaps `provider` while the panel stays open. Keying the
+  // snapshot by (appId, provider.id) — the same shape as formReadyToken above —
+  // means a stale snapshot can never be shown for another provider: the derived
+  // `liveSettings` falls back to the SSOT config until the new load settles.
+  const liveLoadKey = open && provider ? `${appId}::${provider.id}` : null;
 
-  // 使用 ref 标记是否已经加载过，防止重复读取覆盖用户编辑
-  const [hasLoadedLive, setHasLoadedLive] = useState(false);
+  const [loadedLive, setLoadedLive] = useState<{
+    key: string | null;
+    settings: Record<string, unknown> | null;
+  }>({ key: null, settings: null });
+
+  const liveSettings =
+    loadedLive.key === liveLoadKey ? loadedLive.settings : null;
 
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
@@ -152,25 +160,27 @@ export function EditProviderDialog({
 
   useEffect(() => {
     let cancelled = false;
+    // 记录该 (app, provider) 的加载结果，防止重复读取覆盖用户编辑
+    const settle = (settings: Record<string, unknown> | null) => {
+      if (!cancelled) {
+        setLoadedLive({ key: liveLoadKey, settings });
+      }
+    };
     const load = async () => {
       if (!open || !provider) {
-        setLiveSettings(null);
-        setHasLoadedLive(false);
+        settle(null);
         return;
       }
 
-      // 关键修复：只在首次打开时加载一次
-      if (hasLoadedLive) {
+      // 关键修复：每个 (app, provider) 只加载一次
+      if (loadedLive.key === liveLoadKey) {
         return;
       }
 
       // 代理接管模式：Live 配置已被代理改写，读取 live 会导致编辑界面展示代理地址/占位符等内容
       // 因此直接回退到 SSOT（数据库）配置，避免用户困惑与误保存
       if (isProxyTakeover) {
-        if (!cancelled) {
-          setLiveSettings(null);
-          setHasLoadedLive(true);
-        }
+        settle(null);
         return;
       }
 
@@ -178,29 +188,16 @@ export function EditProviderDialog({
       // the catalog coordinator. Neither has a per-provider generic live
       // snapshot that may replace the DB aggregate in this form.
       if (appId === "opencode" || appId === "pi") {
-        if (!cancelled) {
-          setLiveSettings(null);
-          setHasLoadedLive(true);
-        }
+        settle(null);
         return;
       }
 
       if (appId === "openclaw") {
         try {
           const live = await openclawApi.getLiveProvider(provider.id);
-          if (!cancelled && live && typeof live === "object") {
-            setLiveSettings(live);
-          } else if (!cancelled) {
-            setLiveSettings(null);
-          }
+          settle(live && typeof live === "object" ? live : null);
         } catch {
-          if (!cancelled) {
-            setLiveSettings(null);
-          }
-        } finally {
-          if (!cancelled) {
-            setHasLoadedLive(true);
-          }
+          settle(null);
         }
         return;
       }
@@ -212,32 +209,24 @@ export function EditProviderDialog({
             const live = (await vscodeApi.getLiveProviderSettings(
               appId,
             )) as Record<string, unknown>;
-            if (!cancelled && live && typeof live === "object") {
-              setLiveSettings(live);
-              setHasLoadedLive(true);
-            }
+            settle(live && typeof live === "object" ? live : null);
           } catch {
             // 读取实时配置失败则回退到 SSOT（不打断编辑流程）
-            if (!cancelled) {
-              setLiveSettings(null);
-              setHasLoadedLive(true);
-            }
+            settle(null);
           }
         } else {
-          if (!cancelled) {
-            setLiveSettings(null);
-            setHasLoadedLive(true);
-          }
+          settle(null);
         }
-      } finally {
-        // no-op
+      } catch {
+        // 查询当前供应商失败同样回退到 SSOT
+        settle(null);
       }
     };
     void load();
     return () => {
       cancelled = true;
     };
-  }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
+  }, [open, provider, liveLoadKey, loadedLive.key, appId, isProxyTakeover]);
 
   const initialSettingsConfig = useMemo(() => {
     const storedSettings = asRecord(provider?.settingsConfig);
