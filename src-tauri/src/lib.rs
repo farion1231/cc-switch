@@ -1644,6 +1644,7 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::import_deepseek_harness_providers_from_live,
+            commands::get_dsh_current_state,
             commands::get_opencode_live_provider_ids,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
