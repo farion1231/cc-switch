@@ -1270,7 +1270,15 @@ async fn query_volcengine(
     };
 
     // 1) Agent Plan：GetAFPUsage
-    match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage", proxy_url).await {
+    match volcengine_openapi_call(
+        &region,
+        access_key_id,
+        secret_access_key,
+        "GetAFPUsage",
+        proxy_url,
+    )
+    .await
+    {
         VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
         VolcCall::Transient(detail) => return Err(format!("GetAFPUsage: {detail}")),
         VolcCall::Soft(detail) => soft_errors.push(format!("GetAFPUsage: {detail}")),
@@ -1362,7 +1370,14 @@ async fn query_zhipu_team(
     // 供应商级外部 API 代理（outboundProxyUrl）；None/空回退全局代理。
     proxy_url: Option<&str>,
 ) -> Result<SubscriptionQuota, String> {
-    query_zhipu_team_at(ZHIPU_TEAM_QUOTA_URL, api_key, organization_id, project_id, proxy_url).await
+    query_zhipu_team_at(
+        ZHIPU_TEAM_QUOTA_URL,
+        api_key,
+        organization_id,
+        project_id,
+        proxy_url,
+    )
+    .await
 }
 
 /// 团队版额度查询。`quota_url_base` 为不含 query 的 quota 端点；团队版与个人版同路径，

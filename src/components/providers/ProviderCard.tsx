@@ -277,9 +277,9 @@ export function ProviderCard({
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
     managedCodexAccount?.login &&
-      (provider.name.trim() === managedCodexAccount.login ||
-        provider.name.trim() ===
-          `OpenAI Official (${managedCodexAccount.login})`),
+    (provider.name.trim() === managedCodexAccount.login ||
+      provider.name.trim() ===
+        `OpenAI Official (${managedCodexAccount.login})`),
   );
 
   // OMO and OMO Slim share the same card behavior
@@ -656,7 +656,6 @@ export function ProviderCard({
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
             ) : null}
-
           </div>
         </div>
 

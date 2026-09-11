@@ -569,7 +569,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const apiKey = providerCredentials.apiKey ?? "";
         const { subscriptionApi } = await import("@/lib/api/subscription");
         // 官方余额查询遵循供应商级外部 API 代理（outboundProxyUrl）
-        const result = await subscriptionApi.getBalance(baseUrl, apiKey, provider?.meta?.outboundProxyUrl);
+        const result = await subscriptionApi.getBalance(
+          baseUrl,
+          apiKey,
+          provider?.meta?.outboundProxyUrl,
+        );
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
             .map((d) =>

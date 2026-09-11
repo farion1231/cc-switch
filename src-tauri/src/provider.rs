@@ -546,10 +546,7 @@ pub struct ProviderMeta {
     pub custom_user_agent: Option<String>,
     /// 供应商级外部 API 代理 URL（http/https/socks5/socks5h）。设置后该供应商的
     /// 余额查询与本地代理转发均使用此代理，覆盖全局外部代理；为空时回退全局代理。
-    #[serde(
-        rename = "outboundProxyUrl",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "outboundProxyUrl", skip_serializing_if = "Option::is_none")]
     pub outbound_proxy_url: Option<String>,
     /// Local proxy request overrides applied to the transformed upstream request.
     #[serde(
