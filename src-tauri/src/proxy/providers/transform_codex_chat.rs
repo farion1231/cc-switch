@@ -1189,11 +1189,20 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
             }
             "input_image" => {
                 if let Some(image_url) = part.get("image_url") {
-                    let image_url = if image_url.is_object() {
+                    let mut image_url = if image_url.is_object() {
                         image_url.clone()
                     } else {
                         json!({ "url": image_url.as_str().unwrap_or_default() })
                     };
+                    // Responses 的 detail 在 part 顶层，Chat Completions 在
+                    // image_url 内；仅当 image_url 未带 detail 时补入，显式值优先。
+                    if let Some(image_url_object) = image_url.as_object_mut() {
+                        if !image_url_object.contains_key("detail") {
+                            if let Some(detail) = part.get("detail") {
+                                image_url_object.insert("detail".to_string(), detail.clone());
+                            }
+                        }
+                    }
                     chat_parts.push(json!({
                         "type": "image_url",
                         "image_url": image_url
@@ -3766,7 +3775,8 @@ mod tests {
     #[test]
     fn responses_request_to_chat_normalizes_original_image_detail_to_high() {
         // original -> high；auto/low/high 原样保留。同时覆盖 user 直传
-        // 与 tool/history 迁移的图片。
+        // （标准 Responses 结构：detail 位于 part 顶层）与 tool/history
+        // 迁移的图片。
         let input = json!({
             "model": "gpt-5.4",
             "input": [
@@ -3775,31 +3785,23 @@ mod tests {
                     "content": [
                         {
                             "type": "input_image",
-                            "image_url": {
-                                "url": "https://example.com/original.png",
-                                "detail": "original"
-                            }
+                            "image_url": "https://example.com/original.png",
+                            "detail": "original"
                         },
                         {
                             "type": "input_image",
-                            "image_url": {
-                                "url": "https://example.com/auto.png",
-                                "detail": "auto"
-                            }
+                            "image_url": "https://example.com/auto.png",
+                            "detail": "auto"
                         },
                         {
                             "type": "input_image",
-                            "image_url": {
-                                "url": "https://example.com/low.png",
-                                "detail": "low"
-                            }
+                            "image_url": "https://example.com/low.png",
+                            "detail": "low"
                         },
                         {
                             "type": "input_image",
-                            "image_url": {
-                                "url": "https://example.com/high.png",
-                                "detail": "high"
-                            }
+                            "image_url": "https://example.com/high.png",
+                            "detail": "high"
                         }
                     ]
                 },
@@ -3837,6 +3839,52 @@ mod tests {
         let media_content = messages[3]["content"].as_array().unwrap();
         assert_eq!(media_content[1]["type"], "image_url");
         assert_eq!(media_content[1]["image_url"]["detail"], "high");
+    }
+
+    #[test]
+    fn responses_request_to_chat_prefers_image_url_detail_over_top_level() {
+        // 顶层 part.detail 在 image_url 缺失 detail 时才复制进去；
+        // image_url.detail 已存在时不被顶层值覆盖。
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": {
+                                "url": "https://example.com/kept.png",
+                                "detail": "low"
+                            },
+                            "detail": "original"
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.com/copied.png",
+                            "detail": "original"
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.com/no-detail.png"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let user_content = result["messages"][0]["content"].as_array().unwrap();
+
+        // image_url.detail 优先：明确的 low 不被顶层 original 覆盖。
+        assert_eq!(user_content[0]["type"], "image_url");
+        assert_eq!(user_content[0]["image_url"]["detail"], "low");
+
+        // 顶层 detail 复制进字符串 image_url 包装出的对象，original 归一为 high。
+        assert_eq!(user_content[1]["image_url"]["detail"], "high");
+
+        // 两处都没有 detail 时不引入该字段。
+        assert!(user_content[2]["image_url"].get("detail").is_none());
     }
 
     #[test]
