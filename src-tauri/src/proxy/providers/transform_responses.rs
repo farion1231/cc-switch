@@ -24,6 +24,11 @@ use super::reasoning_bridge::{
 
 pub(crate) const TOOL_RESULT_ERROR_MARKER: &str = "[cc-switch:tool-result-error]";
 
+/// OpenAI Responses API 拒绝 `max_output_tokens` 小于 16。Anthropic 侧的合法
+/// 小预算探测请求（如 Claude Desktop 的模型可用性探测发 `max_tokens=1`）
+/// 会被严格网关整体拒绝，转换时把低于下限的预算抬到最小值而不是让请求失败。
+pub(crate) const RESPONSES_MIN_MAX_OUTPUT_TOKENS: u64 = 16;
+
 fn has_http_url_scheme(value: &str) -> bool {
     value
         .get(.."http://".len())
@@ -1805,9 +1810,20 @@ pub fn anthropic_to_responses(
         result["input"] = json!(input);
     }
 
-    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
+    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for
+    // all models). The Responses API rejects values below 16 ("The number must
+    // be `>= 16`"), while Anthropic clients legitimately send tiny probe
+    // budgets (Claude Desktop's model-availability probe uses max_tokens=1),
+    // so sub-floor budgets are clamped up to the minimum instead of failing
+    // the whole request. 0 and non-integer values keep their existing
+    // pass-through semantics.
     if let Some(v) = body.get("max_tokens") {
-        result["max_output_tokens"] = v.clone();
+        result["max_output_tokens"] = match v.as_u64() {
+            Some(n) if (1..RESPONSES_MIN_MAX_OUTPUT_TOKENS).contains(&n) => {
+                json!(RESPONSES_MIN_MAX_OUTPUT_TOKENS)
+            }
+            _ => v.clone(),
+        };
     }
 
     // 直接透传的参数
@@ -1937,6 +1953,13 @@ pub fn anthropic_to_responses(
     if let Some(v) = body.get("tool_choice") {
         result["tool_choice"] =
             map_tool_choice_to_responses(v, &hosted_web_search_names, is_codex_oauth);
+        if is_codex_oauth {
+            if let Some(disable_parallel) =
+                v.get("disable_parallel_tool_use").and_then(Value::as_bool)
+            {
+                result["parallel_tool_calls"] = json!(!disable_parallel);
+            }
+        }
     }
 
     const WEB_SEARCH_SOURCES_MARKER: &str = "web_search_call.action.sources";
@@ -2007,8 +2030,10 @@ pub fn anthropic_to_responses(
             // —— 兜底必填字段（or_insert：客户端送了什么就保留，否则注入默认值）——
             obj.entry("instructions".to_string()).or_insert(json!(""));
             obj.entry("tools".to_string()).or_insert(json!([]));
+            // Anthropic 默认允许并行工具调用。优先保留上方已转换的显式设置，
+            // 否则允许支持该能力的 Codex 模型在同一响应中批量调用独立工具。
             obj.entry("parallel_tool_calls".to_string())
-                .or_insert(json!(false));
+                .or_insert(json!(true));
 
             // —— 强制覆盖 stream = true ——
             // 即便客户端误传 stream:false 也要覆盖，因为 codex-rs 永远 true，
@@ -5007,6 +5032,44 @@ mod tests {
         assert_eq!(result["max_output_tokens"], json!(1024));
     }
 
+    #[test]
+    fn test_anthropic_to_responses_clamps_sub_floor_max_tokens() {
+        // Responses API 拒绝 max_output_tokens < 16（"The number must be >= 16"）。
+        // Claude Desktop 的模型可用性探测发 max_tokens=1，原样转发会让整个
+        // 探测请求 400，客户端因此判定"配置的模型不可用"（#7103）。
+        for budget in [1u64, 8, 15] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": budget,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], json!(16));
+        }
+
+        // 下限本身与正常预算保持原样
+        for budget in [16u64, 1024] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": budget,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], json!(budget));
+        }
+
+        // 0 与非整数不抬升：保持既有透传语义，把非法值留给上游裁决
+        for raw in [json!(0), json!("16"), json!(12.5)] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": raw,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], raw);
+        }
+    }
+
     // ==================== 第二轮：P0 + P1 字段对齐 ====================
 
     #[test]
@@ -5065,10 +5128,53 @@ mod tests {
         assert_eq!(result["tools"], json!([]), "tools 缺失时应兜底为空数组");
         assert_eq!(
             result["parallel_tool_calls"],
-            json!(false),
-            "parallel_tool_calls 应兜底为 false"
+            json!(true),
+            "parallel_tool_calls 应默认允许并行工具调用"
         );
         assert_eq!(result["stream"], json!(true), "stream 应被强制设为 true");
+    }
+
+    #[test]
+    fn test_codex_oauth_maps_anthropic_parallel_tool_choice() {
+        let enabled = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6-sol",
+                "tools": [{
+                    "name": "read_file",
+                    "input_schema": {"type": "object"}
+                }],
+                "tool_choice": {
+                    "type": "auto",
+                    "disable_parallel_tool_use": false
+                },
+                "messages": [{"role": "user", "content": "Read both files"}]
+            }),
+            None,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(enabled["parallel_tool_calls"], json!(true));
+
+        let disabled = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6-sol",
+                "tools": [{
+                    "name": "read_file",
+                    "input_schema": {"type": "object"}
+                }],
+                "tool_choice": {
+                    "type": "auto",
+                    "disable_parallel_tool_use": true
+                },
+                "messages": [{"role": "user", "content": "Read one file"}]
+            }),
+            None,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(disabled["parallel_tool_calls"], json!(false));
     }
 
     #[test]
@@ -5147,6 +5253,10 @@ mod tests {
         let input = json!({
             "model": "gpt-5-codex",
             "max_tokens": 1024,
+            "tool_choice": {
+                "type": "auto",
+                "disable_parallel_tool_use": false
+            },
             "messages": [{"role": "user", "content": "Hello"}]
         });
 

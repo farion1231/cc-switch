@@ -816,34 +816,6 @@ requires_openai_auth = true`,
     icon: "a6api",
   },
   {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: `model_provider = "custom"
-model = "zai-org/glm-5.1"
-disable_response_storage = true
-
-[model_providers.custom]
-name = "AtlasCloud"
-base_url = "https://api.atlascloud.ai/v1"
-wire_api = "responses"
-requires_openai_auth = true`,
-    endpointCandidates: ["https://api.atlascloud.ai/v1"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "zai-org/glm-5.1",
-        displayName: "GLM 5.1",
-        contextWindow: 200000,
-      },
-    ]),
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
-  },
-  {
     name: "Compshare",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
@@ -917,6 +889,22 @@ requires_openai_auth = true`,
     partnerPromotionKey: "sssaicode", // 促销信息 i18n key
     icon: "sssaicode",
     iconColor: "#000000",
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "soleapi",
+      "https://soleapi.com/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: ["https://soleapi.com/v1"],
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
   },
   {
     name: "Micu",
@@ -1102,6 +1090,32 @@ requires_openai_auth = true`,
     icon: "amux",
   },
   {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "zai-org/glm-5.1"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "AtlasCloud"
+base_url = "https://api.atlascloud.ai/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://api.atlascloud.ai/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "zai-org/glm-5.1",
+        displayName: "GLM 5.1",
+        contextWindow: 200000,
+      },
+    ]),
+    icon: "atlascloud",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
@@ -1172,32 +1186,45 @@ requires_openai_auth = true`,
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     auth: generateThirdPartyAuth(""),
+    // 智谱三端点分立（docs.bigmodel.cn/cn/coding-plan/tool/others）：Anthropic
+    // /api/anthropic、OpenAI Chat /api/coding/paas/v4、OpenAI Responses /api/v1，
+    // 并明示「错误配置端点将导致无法使用 GLM Coding Plan 套餐额度」。Codex 直连
+    // 发的是 Responses wire，base_url 必须是 /api/v1；Chat 端点上的 /responses
+    // 是严格旧网关（拒 type=custom 工具 → #6944 的 400）
     config: generateThirdPartyConfig(
       "zhipu_glm",
-      "https://open.bigmodel.cn/api/coding/paas/v4",
-      "glm-5.2",
+      "https://open.bigmodel.cn/api/v1",
+      "glm-5.3",
     ),
-    endpointCandidates: ["https://open.bigmodel.cn/api/coding/paas/v4"],
-    apiFormat: "openai_chat",
+    endpointCandidates: ["https://open.bigmodel.cn/api/v1"],
+    // 官方 Codex 接入页（docs.bigmodel.cn/cn/coding-plan/tool/codex，2026-09-04
+    // 核对）：wire_api=responses 对自家 /api/v1，与 MiMo/MiniMax 同为原生直连
+    // → NativeResponses profile（shell_command 编辑、不发 freeform apply_patch；
+    // 官方目录虽声明 freeform，无真机验证前按保守口径，不引入 400 风险）
+    apiFormat: "openai_responses",
+    // 档位/上下文/模态照抄官方 models.json：glm-5.3 low/high/max 默认 max；
+    // glm-5-turbo 官方档位为空、默认 max——cc-switch 表达不了空档位（回落会得到
+    // 模板 none/high，none 在原生直连下没有转换层兜底、会原样发给严格网关），
+    // 按官方默认收成单档 max。两模型 input_modalities=["text"]、并行工具调用 true
     modelCatalog: modelCatalog([
-      // Chat 路由 supportsEffort:false：档位值不进 wire，none=注入
-      // thinking:{type:"disabled"} 关思考，其余档一律等价于开思考。只暴露真实
-      // 两态；不填的话 gpt5_5 模板默认 low/medium/high/xhigh 全是假差异档，
-      // 且没有 none，用户在 Codex 里反而关不掉思考
       {
-        model: "glm-5.2",
-        displayName: "GLM-5.2",
-        contextWindow: 200000,
-        reasoningLevels: ["none", "high"],
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
+      },
+      {
+        model: "glm-5-turbo",
+        displayName: "GLM-5-Turbo",
+        contextWindow: 204800,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["max"],
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "zhipu",
     iconColor: "#0F62FE",
@@ -1207,32 +1234,26 @@ requires_openai_auth = true`,
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     auth: generateThirdPartyAuth(""),
+    // 国际站同上（docs.z.ai/devpack/tool/others + devpack/tool/codex，2026-09-04
+    // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3
     config: generateThirdPartyConfig(
       "zhipu_glm_en",
-      "https://api.z.ai/api/coding/paas/v4",
-      "glm-5.2",
+      "https://api.z.ai/api/v1",
+      "glm-5.3",
     ),
-    endpointCandidates: ["https://api.z.ai/api/coding/paas/v4"],
-    apiFormat: "openai_chat",
+    endpointCandidates: ["https://api.z.ai/api/v1"],
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      // Chat 路由 supportsEffort:false：档位值不进 wire，none=注入
-      // thinking:{type:"disabled"} 关思考，其余档一律等价于开思考。只暴露真实
-      // 两态；不填的话 gpt5_5 模板默认 low/medium/high/xhigh 全是假差异档，
-      // 且没有 none，用户在 Codex 里反而关不掉思考
       {
-        model: "glm-5.2",
-        displayName: "GLM-5.2",
-        contextWindow: 200000,
-        reasoningLevels: ["none", "high"],
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "zhipu",
     iconColor: "#0F62FE",
@@ -1358,69 +1379,121 @@ requires_openai_auth = true`,
     iconColor: "#2932E1",
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
-    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "bailian",
+      "qianwenai",
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "qwen3-coder-plus",
+      "qwen3.8-max",
     ),
     endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
-    // 阿里百炼 DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
+    // DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
     apiFormat: "openai_responses",
-    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）
+    // 档位与窗口照抄官方 Codex model-catalog.local.json——该元数据段落不分
+    // 套餐，按量付费与 Token Plan 用同一份（qwen3.8 系只收 low/medium/xhigh，
+    // 默认 xhigh；无 high 档，勿按常规四档补齐）
     modelCatalog: modelCatalog([
       {
-        model: "qwen3-coder-plus",
-        displayName: "Qwen3 Coder Plus",
-        contextWindow: 1048576,
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
       },
     ]),
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qianwenai_token_plan",
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "qwen3.8-max",
+    ),
+    endpointCandidates: [
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    ],
+    apiFormat: "openai_responses",
+    // 档位与窗口照抄官方 Codex model-catalogs.json（qwen3.8 系只收
+    // low/medium/xhigh，默认 xhigh；无 high 档，勿按常规四档补齐）
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.8-flash",
+        displayName: "Qwen3.8 Flash",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+    ]),
+    category: "cn_official",
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   // ===== QwenCloud（DashScope 国际站）=====
-  // 三条线的 base_url 与密钥互不通用，且协议档位不同：
-  // 按量付费与 Token Plan 走 /compatible-mode/v1 原生 Responses；
-  // Coding Plan 的地址是 /v1（没有 compatible-mode 段），官方明示只支持
-  // Chat Completions，故单独标 openai_chat 让后端改写 wire_api。
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // 按量付费与 Token Plan 走 /compatible-mode/v1 原生 Responses。
   {
     name: "QwenCloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qwencloud",
       "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-      "qwen3.7-max",
+      "qwen3.8-max",
     ),
     endpointCandidates: [
       "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     ],
     apiFormat: "openai_responses",
+    // 档位与窗口照抄官方 Codex model-catalogs.json（qwen3.8 系只收
+    // low/medium/xhigh，默认 xhigh；无 high 档，勿按常规四档补齐）
     modelCatalog: modelCatalog([
+      {
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.8-flash",
+        displayName: "Qwen3.8 Flash",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
       {
         model: "qwen3.7-max",
         displayName: "Qwen3.7 Max",
         contextWindow: 1000000,
         inputModalities: ["text"],
       },
-      {
-        model: "qwen3.7-plus",
-        displayName: "Qwen3.7 Plus",
-        contextWindow: 1000000,
-      },
-      {
-        model: "qwen3.6-plus",
-        displayName: "Qwen3.6 Plus",
-        contextWindow: 1000000,
-      },
     ]),
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
@@ -1454,13 +1527,14 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
     name: "QwenCloud Token Plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qwencloud_token_plan",
@@ -1498,7 +1572,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
@@ -1599,13 +1673,6 @@ requires_openai_auth = true`,
       {
         model: "minimax-m2.7",
         displayName: "MiniMax M2.7",
-        contextWindow: 200000,
-        reasoningLevels: ["high"],
-      },
-      {
-        // 不在套餐文档表，/models 收录 + 真 Key 实测可用（2026-08-31）
-        model: "minimax-m2.5",
-        displayName: "MiniMax M2.5",
         contextWindow: 200000,
         reasoningLevels: ["high"],
       },
@@ -1831,13 +1898,6 @@ requires_openai_auth = true`,
         displayName: "MiniMax M3",
         contextWindow: 1048576,
         reasoningLevels: ["none", "high"],
-      },
-      {
-        // 型号列表已除名，真 Key 实测仍可用（2026-08-31）
-        model: "minimax-m2.5",
-        displayName: "MiniMax M2.5",
-        contextWindow: 200000,
-        reasoningLevels: ["high"],
       },
       {
         model: "deepseek-v4-flash",
@@ -2266,7 +2326,6 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
-    partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -2305,7 +2364,6 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
-    partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
