@@ -383,7 +383,11 @@
       },
       "globalProxy": {
         "title": "全域出站代理伺服器",
-        "description": "設定 CC Switch 存取外部 API 時使用的代理伺服器"
+        "description": "設定 CC Switch 存取外部 API 時使用的代理伺服器",
+        "badgeExplicit": "自訂代理伺服器",
+        "badgeSystem": "系統代理伺服器",
+        "badgeDirect": "直接連線",
+        "badgeUnreachable": "代理伺服器不可達"
       },
       "data": {
         "title": "資料管理",
@@ -875,7 +879,7 @@
     "saving": "正在儲存...",
     "globalProxy": {
       "label": "全域代理伺服器",
-      "hint": "代理所有請求（API、Skills 下載等）。開啟本地路由時，應用程式的請求也會經過此代理伺服器。留空表示直連。",
+      "hint": "填寫後所有請求（API、用量查詢、Skills 下載等）以及本機路由的轉發都會經過此代理伺服器。留空時由「跟隨系統代理伺服器」開關決定：跟隨系統代理伺服器或直接連線；本機路由對 Claude（Anthropic 格式）供應商的轉發不讀取系統代理伺服器，留空即直接連線。",
       "username": "使用者名稱（選填）",
       "password": "密碼（選填）",
       "test": "測試連線",
@@ -899,7 +903,26 @@
       "pricingSaveFailed": "儲存計費設定失敗：{{error}}",
       "pricingLoadFailed": "載入計費設定失敗：{{error}}",
       "defaultCostMultiplierRequired": "預設倍率不能為空",
-      "defaultCostMultiplierInvalid": "預設倍率格式不正確"
+      "defaultCostMultiplierInvalid": "預設倍率格式不正確",
+      "followSystemProxy": "跟隨系統代理伺服器",
+      "followSystemProxyDescription": "未填寫代理伺服器位址時，使用 HTTP_PROXY / HTTPS_PROXY 環境變數與系統代理伺服器設定。代理軟體已結束或更換連接埠後仍提示連線失敗時，可關閉此項改為直接連線。",
+      "followSystemProxyExplicitHint": "已填寫代理伺服器位址，系統代理伺服器與環境變數不再參與。",
+      "status": {
+        "label": "目前生效：",
+        "explicit": "自訂代理伺服器 {{url}}",
+        "system": "跟隨系統代理伺服器 · {{url}}",
+        "systemNone": "跟隨系統代理伺服器 · 系統未設定代理伺服器，直接連線",
+        "systemScope": "依對 Anthropic API 主機的解析結果顯示；略過規則（NO_PROXY 等）依目標主機生效，其他供應商可能不同。本機路由對 Claude（Anthropic 格式）供應商的轉發不讀取系統代理伺服器，留空即直接連線。",
+        "direct": "直接連線（已關閉跟隨系統代理伺服器）",
+        "sourceEnv": "來源：環境變數，啟動時讀取",
+        "sourceSystem": "來源：系統代理伺服器設定",
+        "reachable": "連接埠可達",
+        "unreachable": "連接埠不可達",
+        "changed": "系統代理伺服器設定已變更，目前為 {{url}}",
+        "changedToNone": "系統代理伺服器設定已變更，目前系統未設定代理伺服器",
+        "changedSameUrl": "系統代理伺服器設定已變更（位址未變，憑證或 HTTP 代理伺服器已更新）",
+        "reapply": "重新套用"
+      }
     },
     "saveFailedGeneric": "儲存失敗，請重試"
   },

@@ -383,7 +383,11 @@
       },
       "globalProxy": {
         "title": "Global Outbound Proxy",
-        "description": "Configure proxy for CC Switch to access external APIs"
+        "description": "Configure proxy for CC Switch to access external APIs",
+        "badgeExplicit": "Custom proxy",
+        "badgeSystem": "System proxy",
+        "badgeDirect": "Direct",
+        "badgeUnreachable": "Proxy unreachable"
       },
       "data": {
         "title": "Data Management",
@@ -874,7 +878,7 @@
     "saving": "Saving...",
     "globalProxy": {
       "label": "Global Proxy",
-      "hint": "Proxy all requests (API, Skills download, etc.). When local routing is enabled, app traffic is also routed through this proxy. Leave empty for direct connection.",
+      "hint": "Proxy all requests (API, usage queries, Skills download, etc.). When local routing is enabled, forwarded app traffic also goes through it. Leave empty and the \"Follow system proxy\" switch decides: follow the system proxy or connect directly. Local-routing forwarding to Claude (Anthropic-format) providers ignores the system proxy and connects directly when this is empty.",
       "username": "Username (optional)",
       "password": "Password (optional)",
       "test": "Test Connection",
@@ -898,7 +902,26 @@
       "pricingSaveFailed": "Failed to save pricing defaults: {{error}}",
       "pricingLoadFailed": "Failed to load pricing defaults: {{error}}",
       "defaultCostMultiplierRequired": "Default multiplier is required",
-      "defaultCostMultiplierInvalid": "Invalid multiplier format"
+      "defaultCostMultiplierInvalid": "Invalid multiplier format",
+      "followSystemProxy": "Follow system proxy",
+      "followSystemProxyDescription": "When no proxy URL is set, use the HTTP_PROXY / HTTPS_PROXY environment variables and the OS proxy settings. If requests keep failing after your proxy app quit or changed port, turn this off to connect directly.",
+      "followSystemProxyExplicitHint": "A proxy URL is set; system proxy and environment variables are ignored.",
+      "status": {
+        "label": "In effect:",
+        "explicit": "custom proxy {{url}}",
+        "system": "following system proxy · {{url}}",
+        "systemNone": "following system proxy · none configured, connecting directly",
+        "systemScope": "Resolved for the Anthropic API host; bypass rules (NO_PROXY etc.) apply per destination, so other providers may differ. Local-routing forwarding to Claude (Anthropic-format) providers ignores the system proxy and connects directly unless a proxy URL is set.",
+        "direct": "direct connection (system proxy following is off)",
+        "sourceEnv": "Source: environment variables, read at startup",
+        "sourceSystem": "Source: OS proxy settings",
+        "reachable": "port reachable",
+        "unreachable": "port unreachable",
+        "changed": "System proxy settings changed, now {{url}}",
+        "changedToNone": "System proxy settings changed, none configured now",
+        "changedSameUrl": "System proxy settings changed (same address; credentials or the HTTP proxy differ)",
+        "reapply": "Re-apply"
+      }
     },
     "saveFailedGeneric": "Save failed, please try again"
   },

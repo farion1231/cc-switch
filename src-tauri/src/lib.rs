@@ -1175,6 +1175,13 @@ pub fn run() {
                 let db = &app.state::<AppState>().db;
                 let proxy_url = db.get_global_proxy_url().ok().flatten();
 
+                // 客户端构建时读取该开关，必须先于 init 设置
+                let follow_system_proxy = db.get_follow_system_proxy().unwrap_or(true);
+                if let Err(e) = crate::proxy::http_client::set_follow_system_proxy(follow_system_proxy)
+                {
+                    log::error!("[GlobalProxy] Failed to apply follow-system-proxy setting: {e}");
+                }
+
                 if let Err(e) = crate::proxy::http_client::init(proxy_url.as_deref()) {
                     log::error!(
                         "[GlobalProxy] [GP-005] Failed to initialize with saved config: {e}"
@@ -1417,6 +1424,7 @@ pub fn run() {
             commands::restart_app,
             commands::install_update_and_restart,
             commands::check_app_update_available,
+            commands::check_app_update,
             commands::check_for_updates,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
@@ -1661,6 +1669,8 @@ pub fn run() {
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
+            commands::get_follow_system_proxy,
+            commands::set_follow_system_proxy,
             commands::test_proxy_url,
             commands::get_upstream_proxy_status,
             commands::scan_local_proxies,
