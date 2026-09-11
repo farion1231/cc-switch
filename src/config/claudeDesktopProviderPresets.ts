@@ -1498,4 +1498,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "LaonongAPI",
+    websiteUrl: "https://www.laonongapi.com",
+    apiKeyUrl: "https://www.laonongapi.com/#/workspace/keys",
+    category: "aggregator",
+    baseUrl: "https://api.laonongapi.com",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-opus-5",
+      "anthropic/claude-haiku-4.5",
+    ),
+    endpointCandidates: ["https://api.laonongapi.com"],
+    icon: "laonongapi",
+    iconColor: "#7B61FF",
+  },
 ];
