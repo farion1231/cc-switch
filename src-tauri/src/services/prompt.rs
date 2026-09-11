@@ -279,6 +279,21 @@ impl PromptService {
         }
     }
 
+    /// 首启时尝试从 live 提示词文件导入到 prompts 表的应用列表。
+    pub fn first_launch_import_apps() -> [AppType; 9] {
+        [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::GrokBuild,
+            AppType::OpenCode,
+            AppType::OpenClaw,
+            AppType::Hermes,
+            AppType::Pi,
+            AppType::DeepSeekHarness,
+        ]
+    }
+
     /// 首次启动时从现有提示词文件自动导入（如果存在）
     /// 返回导入的数量
     pub fn import_from_file_on_first_launch(
@@ -723,5 +738,50 @@ mod pi_prompt_tests {
         prompts.insert(second.id.clone(), second);
 
         assert_eq!(unique_pi_backup_id(&prompts, 42), "backup-42-3");
+    }
+}
+
+#[cfg(test)]
+mod dsh_prompt_tests {
+    use super::*;
+    use crate::database::Database;
+    use serial_test::serial;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    #[test]
+    fn first_launch_import_apps_includes_deepseek_harness() {
+        assert!(PromptService::first_launch_import_apps().contains(&AppType::DeepSeekHarness));
+    }
+
+    #[test]
+    #[serial]
+    fn dsh_first_launch_imports_agents_md_into_database() {
+        let directory = tempdir().expect("tempdir");
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", directory.path());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            std::fs::write(directory.path().join("AGENTS.md"), "dsh rules")
+                .expect("write AGENTS.md");
+            let state = AppState::new(Arc::new(
+                Database::memory().expect("create in-memory database"),
+            ));
+            let count =
+                PromptService::import_from_file_on_first_launch(&state, AppType::DeepSeekHarness)
+                    .expect("import prompt");
+            assert_eq!(count, 1);
+            let prompts = state
+                .db
+                .get_prompts(AppType::DeepSeekHarness.as_str())
+                .expect("load prompts");
+            assert!(prompts
+                .values()
+                .any(|prompt| prompt.content.contains("dsh rules")));
+        }));
+        match previous {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
+        }
+        result.unwrap();
     }
 }
