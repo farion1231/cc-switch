@@ -1,6 +1,7 @@
 use crate::services::subscription::SubscriptionQuota;
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_coding_plan_quota(
     base_url: String,
     api_key: String,

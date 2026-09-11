@@ -215,7 +215,7 @@ static OVERRIDE_CLIENTS: once_cell::sync::Lazy<
 ///
 /// - `None` / 空 / `"none"`：回退全局客户端（`"none"` 表示显式直连覆盖）。
 /// - 其余：按 URL 构建并缓存；构建失败时回退全局客户端，保证请求不被中断。
-/// 该路径供"供应商级外部 API 代理"使用，优先级高于全局代理。
+///   该路径供"供应商级外部 API 代理"使用，优先级高于全局代理。
 pub fn client_for(proxy_url: Option<&str>) -> Client {
     let trimmed = proxy_url.map(str::trim).filter(|value| !value.is_empty());
     match trimmed {

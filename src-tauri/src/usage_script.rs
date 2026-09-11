@@ -6,6 +6,7 @@ use url::{Host, Url};
 use crate::error::AppError;
 
 /// 执行用量查询脚本
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_usage_script(
     script_code: &str,
     api_key: &str,

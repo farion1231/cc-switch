@@ -1433,6 +1433,7 @@ async fn query_zhipu_team_at(
 ///
 /// `coding_plan_provider` 显式标识用于无法靠 base_url 区分的供应商（当前为智谱团队版
 /// `zhipu_team`——其 base_url 与个人版智谱相同）；其余情况走 `detect_provider`。
+#[allow(clippy::too_many_arguments)]
 pub async fn get_coding_plan_quota(
     base_url: &str,
     api_key: &str,

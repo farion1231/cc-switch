@@ -10,6 +10,7 @@ use crate::store::AppState;
 use crate::usage_script;
 
 /// Execute usage script and format result (private helper method)
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_and_format_usage_result(
     script_code: &str,
     api_key: &str,
@@ -216,8 +217,9 @@ pub async fn test_usage_script(
     access_token: Option<&str>,
     user_id: Option<&str>,
     template_type: Option<&str>,
-    // 供应商级外部 API 代理（outboundProxyUrl），用于测试路径覆盖全局代理
-    proxy_url: Option<&str>,
+    // 供应商级外部 API 代理（outboundProxyUrl）；本函数内会依据 provider.meta
+    // 重新解析，故该参数本身不使用，保留以维持调用方签名一致。
+    _proxy_url: Option<&str>,
 ) -> Result<UsageResult, AppError> {
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let provider = providers.get(provider_id).ok_or_else(|| {
