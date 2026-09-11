@@ -1,5 +1,5 @@
 import path from "node:path";
-import { defineConfig } from "vitest/config";
+import { defineConfig, configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
@@ -14,8 +14,7 @@ export default defineConfig({
     setupFiles: ["./tests/setupGlobals.ts", "./tests/setupTests.ts"],
     globals: true,
     exclude: [
-      "**/node_modules/**",
-      "**/dist/**",
+      ...configDefaults.exclude,
       "**/work/**",
       "**/release/**",
       "**/.worktrees/**",

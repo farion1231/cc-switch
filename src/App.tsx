@@ -462,6 +462,9 @@ function App() {
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
             }
+            if (event.appType === "deepseek-harness") {
+              await invalidateDshProviderCaches(queryClient);
+            }
           },
         );
         if (!active) {
