@@ -41,12 +41,11 @@
 
 ## Latest Artifact
 
-- Version: `3.20.2-dsh.3` (version bumped for the parity iteration).
-- Path: `release/CC-Switch-3.20.2-dsh.3-DSH-Codex-arm64.dmg`
-- SHA-256: `3dc7b54d47383216515b83bb0856f294d17dfec349bd1e2c14152cd5f3ff8775`
-- Build: `pnpm build:dsh:macos` requires a stale-path clean (`cargo clean --release -p tauri -p tauri-build`) because cached build scripts referenced the repository's previous location. Build then completed sign/DMG/mount/arm64 verification.
-- Installed and launched locally as 3.20.2-dsh.3; native sync mirrored 4 DSH providers (yuzuvalley current, `deepseek-v4-pro`); `~/.dsh/settings.yaml` md5 unchanged from the pre-run backup.
+- Version: `3.20.2-dsh.4` (dsh.3 plus the app-visibility fix).
+- Path: `release/CC-Switch-3.20.2-dsh.4-DSH-Codex-arm64.dmg`
+- SHA-256: `ab2ddc8f28d20ebf09fa6df602c64c90ce8ea0974875e35478dc509093f3346c`
+- Installed and launched locally as 3.20.2-dsh.4; OCR-verified that Settings > Main Page Display now includes the DeepSeek Harness toggle. Native `settings.yaml` untouched; session manager lists 19 real DSH sessions.
 
 ## Next Step
 
-Visual acceptance in the running app (screen-recording permission blocked automated screenshots): DSH provider page shows no MCP/Skills buttons; speed test on `k3`; set-as-default model dropdown and remove-from-config on cards; DSH sessions in the session manager; DSH row in Settings > directory overrides.
+Continue visual acceptance: provider-card hover actions (set-as-default dropdown, remove-from-config) and the DSH entry in Settings > directory overrides. Report any further incompleteness with the specific screen.
