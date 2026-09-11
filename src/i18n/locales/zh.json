@@ -4,6 +4,7 @@
     "description": "Claude Code / Codex / Gemini CLI 全方位辅助工具"
   },
   "common": {
+    "retry": "重试",
     "add": "添加",
     "edit": "编辑",
     "delete": "删除",
@@ -1353,6 +1354,7 @@
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
     "fetchModelsTimeout": "请求超时，请检查网络连接",
+    "liveLoadFailed": "读取实时配置失败，为避免覆盖实时配置已禁用保存",
     "requiredFields": "请填写供应商名称、API 地址、API Key 和模型"
   },
   "copilot": {

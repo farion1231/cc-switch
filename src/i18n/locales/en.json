@@ -4,6 +4,7 @@
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
   },
   "common": {
+    "retry": "Retry",
     "add": "Add",
     "edit": "Edit",
     "delete": "Delete",
@@ -1353,6 +1354,7 @@
     "fetchModelsNotSupported": "This provider does not support fetching model list",
     "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
     "fetchModelsTimeout": "Request timed out, please check network connection",
+    "liveLoadFailed": "Failed to read live config; saving is disabled to avoid overwriting it",
     "requiredFields": "Please fill in provider name, API endpoint, API Key and model"
   },
   "copilot": {

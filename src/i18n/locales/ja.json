@@ -4,6 +4,7 @@
     "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"
   },
   "common": {
+    "retry": "再試行",
     "add": "追加",
     "edit": "編集",
     "delete": "削除",
@@ -1353,6 +1354,7 @@
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
     "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
     "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
+    "liveLoadFailed": "リアルタイム設定の読み込みに失敗しました。上書きを避けるため保存は無効です",
     "requiredFields": "プロバイダー名、API エンドポイント、API Key、モデルを入力してください"
   },
   "copilot": {

@@ -795,10 +795,62 @@ pub async fn testUsageScript(
     .map_err(|e| e.to_string())
 }
 
+/// True for the per-app "live file missing" errors (`*.missing` localized
+/// keys such as `claude.live.missing` / `gemini.env.missing`). Only this
+/// command exempts them: the edit form treats null as "no live config yet"
+/// (fall back to the DB snapshot, keep saving allowed) instead of tripping
+/// the retryable failure gate, which could never succeed while the file is
+/// absent — e.g. a DB synced to a new machine before live was written.
+/// Generic `read_live_settings` keeps its Err contract for its other callers
+/// (startup snippet extraction, switch-away backfill).
+fn is_live_settings_missing(err: &AppError) -> bool {
+    matches!(err, AppError::Localized { key, .. } if key.ends_with(".missing"))
+}
+
 #[tauri::command]
 pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::read_live_settings(app_type).map_err(|e| e.to_string())
+    match ProviderService::read_live_settings(app_type) {
+        Err(err) if is_live_settings_missing(&err) => Ok(serde_json::Value::Null),
+        result => result.map_err(|e| e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod read_live_provider_settings_tests {
+    use super::is_live_settings_missing;
+    use crate::error::AppError;
+
+    #[test]
+    fn missing_localized_keys_are_recognized() {
+        for key in [
+            "claude.live.missing",
+            "gemini.env.missing",
+            "hermes.config.missing",
+            "grokbuild.config.missing",
+            "codex.live.missing",
+        ] {
+            let err = AppError::localized(key, "配置文件不存在", "config file is missing");
+            assert!(is_live_settings_missing(&err), "{key} should match");
+        }
+    }
+
+    #[test]
+    fn other_errors_keep_the_failure_contract() {
+        let cases = [
+            AppError::localized(
+                "claude_desktop.live.read_unsupported",
+                "不支持",
+                "unsupported",
+            ),
+            AppError::localized("claude.live.missing_backup", "x", "x"), // suffix must be exact
+            AppError::InvalidInput("bad".to_string()),
+            AppError::Message("read failed".to_string()),
+        ];
+        for err in &cases {
+            assert!(!is_live_settings_missing(err));
+        }
+    }
 }
 
 #[tauri::command]

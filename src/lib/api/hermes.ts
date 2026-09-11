@@ -64,4 +64,17 @@ export const hermesApi = {
   ): Promise<void> {
     await invoke("set_hermes_memory_enabled", { kind, enabled });
   },
+
+  /**
+   * Read one provider fragment from Hermes' live config.yaml
+   * (`custom_providers` entry, sanitized to the same UI shape the DB stores:
+   * snake_case keys, models as an ordered array, `_cc_source` marker).
+   * Returns null when no live node exists for the provider id — the edit
+   * form then falls back to the DB snapshot.
+   */
+  async getLiveProvider(
+    providerId: string,
+  ): Promise<Record<string, unknown> | null> {
+    return await invoke("get_hermes_live_provider", { providerId });
+  },
 };
