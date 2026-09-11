@@ -2037,4 +2037,22 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "gpt-5.6-sol", provider: "aicodewith" },
     },
   },
+  {
+    name: "LaonongAPI",
+    websiteUrl: "https://www.laonongapi.com",
+    apiKeyUrl: "https://www.laonongapi.com/#/workspace/keys",
+    settingsConfig: {
+      name: "laonongapi",
+      base_url: "https://api.laonongapi.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "openai/gpt-5.6-luna", name: "openai/gpt-5.6-luna" }],
+    },
+    category: "aggregator",
+    icon: "laonongapi",
+    iconColor: "#7B61FF",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-5.6-luna", provider: "laonongapi" },
+    },
+  },
 ];
