@@ -10,10 +10,13 @@ use crate::services::model_fetch::FetchedModel;
 use crate::services::subscription::{query_codex_quota, CredentialStatus, SubscriptionQuota};
 use std::sync::Arc;
 use tauri::State;
-use tokio::sync::RwLock;
 
 /// Codex OAuth 认证状态
-pub struct CodexOAuthState(pub Arc<RwLock<CodexOAuthManager>>);
+///
+/// `CodexOAuthManager` 内部已使用细粒度锁且所有方法均为 `&self`，因此这里
+/// 直接持有 `Arc`，不再包一层 `RwLock`——避免任一命令持有粗粒度锁跨网络刷新
+/// 时阻塞其他命令（切换 / 认证中心操作 / token 读取）。
+pub struct CodexOAuthState(pub Arc<CodexOAuthManager>);
 
 /// 查询 Codex OAuth (ChatGPT Plus/Pro) 订阅额度
 ///
@@ -26,7 +29,7 @@ pub async fn get_codex_oauth_quota(
     account_id: Option<String>,
     state: State<'_, CodexOAuthState>,
 ) -> Result<SubscriptionQuota, String> {
-    let manager = state.0.read().await;
+    let manager = &state.0;
 
     // 解析最终使用的账号 ID：显式 > 默认账号 > 无账号 (not_found)
     let resolved = match account_id {
@@ -48,11 +51,15 @@ pub async fn get_codex_oauth_quota(
             ));
         }
     };
+    let chatgpt_account_id = manager
+        .chatgpt_account_id_for_account(&id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // 瞬时传输失败以 Err 传播（前端 reject → retry + 保留上次成功值）。
     query_codex_quota(
         &token,
-        Some(&id),
+        Some(&chatgpt_account_id),
         "codex_oauth",
         "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",
     )
@@ -69,7 +76,7 @@ pub async fn get_codex_oauth_models(
     account_id: Option<String>,
     state: State<'_, CodexOAuthState>,
 ) -> Result<Vec<FetchedModel>, String> {
-    let manager = state.0.read().await;
+    let manager = &state.0;
     let resolved = match account_id
         .as_deref()
         .map(str::trim)
@@ -86,6 +93,10 @@ pub async fn get_codex_oauth_models(
         .get_valid_token_for_account(&id)
         .await
         .map_err(|e| format!("Codex OAuth token unavailable: {e}"))?;
+    let chatgpt_account_id = manager
+        .chatgpt_account_id_for_account(&id)
+        .await
+        .map_err(|e| e.to_string())?;
 
-    crate::services::codex_oauth_models::fetch_models_with_token(&token, &id).await
+    crate::services::codex_oauth_models::fetch_models_with_token(&token, &chatgpt_account_id).await
 }

@@ -82,6 +82,16 @@ impl UsageCache {
             w.remove(app_type);
         }
     }
+
+    /// Drop all process-local usage snapshots after a database/provider restore.
+    pub fn invalidate_all(&self) {
+        if let Ok(mut subscriptions) = self.subscription.write() {
+            subscriptions.clear();
+        }
+        if let Ok(mut scripts) = self.script.write() {
+            scripts.clear();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -151,6 +161,22 @@ mod tests {
             .is_some());
         assert!(cache
             .with_script(&AppType::Codex, "same", |r| r.success)
+            .is_none());
+    }
+
+    #[test]
+    fn invalidate_all_clears_subscription_and_script_snapshots() {
+        let cache = UsageCache::new();
+        cache.put_subscription(AppType::Claude, fake_quota());
+        cache.put_script(AppType::Codex, "provider".to_string(), fake_result());
+
+        cache.invalidate_all();
+
+        assert!(cache
+            .with_subscription(&AppType::Claude, |quota| quota.success)
+            .is_none());
+        assert!(cache
+            .with_script(&AppType::Codex, "provider", |usage| usage.success)
             .is_none());
     }
 }

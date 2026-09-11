@@ -11,6 +11,15 @@ const PROVIDER_CARD_TSX = path.resolve(
   "providers",
   "ProviderCard.tsx",
 );
+const PROVIDER_LIST_TSX = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "src",
+  "components",
+  "providers",
+  "ProviderList.tsx",
+);
 
 describe("ProviderCard layout", () => {
   const source = fs.readFileSync(PROVIDER_CARD_TSX, "utf8");
@@ -22,5 +31,21 @@ describe("ProviderCard layout", () => {
     expect(source).toContain(
       "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
     );
+  });
+
+  it("does not add a Pi-only model list to provider cards", () => {
+    expect(source).not.toContain("ProviderModelSummary");
+    expect(source).not.toContain("extractPiModelSummaryItems");
+  });
+
+  it("keeps Pi provider cards independent from routing capability state", () => {
+    const listSource = fs.readFileSync(PROVIDER_LIST_TSX, "utf8");
+
+    expect(source).not.toContain("piCurrentRoute");
+    expect(source).not.toContain("isFailoverEligible");
+    expect(listSource).not.toContain("gatewayStatus");
+    expect(listSource).not.toContain("activeRoute");
+    expect(listSource).not.toContain("pi.gatewayReason");
+    expect(listSource).not.toContain("pi.route");
   });
 });
