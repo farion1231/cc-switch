@@ -32,6 +32,12 @@
 - DSH form tests emit pre-existing React `act(...)` warnings but pass.
 - Full upstream frontend/Rust suites are not part of the default focused script; set `DSH_FULL_TESTS=1` when preparing a merge candidate.
 
+## Latest Artifact
+
+- Path: `release/CC-Switch-3.20.2-dsh.2-DSH-Codex-arm64.dmg`
+- SHA-256: `1bf1304ec0bff257881e10836d0535ae5e16f304bdeafeffcd4a44f4be8db406`
+- Verification: project-owned build script completed release build, ad-hoc signing, DMG creation, mount, version check, arm64 check, and code-sign verification.
+
 ## Next Step
 
-Run `pnpm build:dsh:macos`, verify the generated file under `release/`, and install it for visual acceptance of the provider page and Local Environment Check.
+Install the latest artifact and perform visual acceptance of the explicit `DeepSeek Harness` provider-page title, four native provider cards, Codex-style form, and DSH Desktop 2.0.5 environment card.
