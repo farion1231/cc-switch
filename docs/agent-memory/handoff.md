@@ -42,11 +42,12 @@
 
 ## Latest Artifact
 
-- Version: `3.20.2-dsh.5` (dsh.4 plus the OpenCode-style form refactor).
-- Path: `release/CC-Switch-3.20.2-dsh.5-DSH-Codex-arm64.dmg`
-- SHA-256: `1d9a3b65517e01a74d573f18caba09cca03a22a89d5383b586814653de392d0a`
-- Installed and launched locally as 3.20.2-dsh.5; OCR-confirmed the DSH add panel renders the shared shell plus structured fields and config JSON.
+- Version: `3.20.2-dsh.6` (dsh.5 plus the full OpenCode preset catalog and inline model-catalog parity).
+- Path: `release/CC-Switch-3.20.2-dsh.6-DSH-Codex-arm64.dmg`
+- SHA-256: `d9364f3b397eaacc9e5e47e1ea73a00e5af89fe8b5ea6e9146a347eac9041239`
+- Installed and launched locally as 3.20.2-dsh.6; OCR-verified the DSH add dialog lists the full derived OpenCode preset set.
+- Local data note: `~/.dsh/settings.yaml` drifted during testing (yuzuvalley gained `MiniMax-M2.7-highspeed` and the default model changed); credential values are unchanged. Backup: `backups/settings.yaml.backup-20260911-162828`.
 
 ## Next Step
 
-Visual acceptance of the DSH add/edit form (official preset locks Provider Key to `deepseek-official` and hides credential ref/API format; custom preset edits displayName/api/baseURL/apiKeyEnv/models) and retest the earlier parity items.
+Confirm with the user whether to keep the drifted `~/.dsh/settings.yaml` or restore the backup. Then continue visual acceptance of the DSH add/edit model catalog (inline fetched-model dropdown, Add appends a row) and report any remaining OpenCode/Pi parity gaps.
