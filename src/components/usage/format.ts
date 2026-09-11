@@ -53,6 +53,7 @@ export function getLocaleFromLanguage(language: string): string {
   }
   if (normalized.startsWith("zh")) return "zh-CN";
   if (normalized.startsWith("ja")) return "ja-JP";
+  if (normalized.startsWith("ko")) return "ko-KR";
   return "en-US";
 }
 
@@ -89,6 +90,11 @@ export function formatTokensShort(
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 亿`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 万`;
     return value.toLocaleString();
+  }
+  if (normalizedLang.startsWith("ko")) {
+    if (value >= 1e8) return `${(value / 1e8).toFixed(2)}억`;
+    if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)}만`;
+    return value.toLocaleString("ko-KR");
   }
   if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
   if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
