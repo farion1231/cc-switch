@@ -5080,7 +5080,7 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::DeepSeekHarness => {
-                crate::deepseek_harness_config::remove_provider()?;
+                deepseek_harness::remove_from_live(state, id)?;
             }
             _ => {
                 return Err(AppError::Message(format!(

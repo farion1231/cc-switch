@@ -181,6 +181,15 @@ fn sync_native_locked(
     Ok(changed)
 }
 
+pub(super) fn remove_from_live(state: &AppState, id: &str) -> Result<(), AppError> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(APP));
+    let provider = state
+        .db
+        .get_provider_by_id(id, APP)?
+        .ok_or_else(|| AppError::InvalidInput(format!("Provider '{id}' not found")))?;
+    remove_native_provider(&provider)
+}
+
 fn write_native_provider(provider: &Provider) -> Result<(), AppError> {
     if provider.id == crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID
         || provider
@@ -199,7 +208,7 @@ fn write_native_provider(provider: &Provider) -> Result<(), AppError> {
     }
 }
 
-fn remove_native_provider(provider: &Provider) -> Result<(), AppError> {
+pub(super) fn remove_native_provider(provider: &Provider) -> Result<(), AppError> {
     if provider.id == crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID
         || provider
             .meta
@@ -363,5 +372,53 @@ mod tests {
             .unwrap()
             .providers
             .contains_key("new-route"));
+    }
+
+    #[test]
+    #[serial]
+    fn remove_from_live_only_clears_the_targeted_route() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        let mut provider = Provider::with_id(
+            "k3".to_string(),
+            "K3".to_string(),
+            json!({
+                "displayName": "K3",
+                "api": "openai-completions",
+                "baseURL": "https://k3.example.com",
+                "apiKeyEnv": "K3_API_KEY",
+                "apiKey": "k3-secret",
+                "models": [{"id": "k3-model"}]
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("dsh_pi_ai".to_string()),
+            ..Default::default()
+        });
+        add(&state, provider, true).unwrap();
+
+        remove_from_live(&state, "k3").unwrap();
+
+        let settings = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        assert!(settings.contains("llm-deepseek"));
+        assert!(settings.contains("company"));
+        assert!(!settings.contains("k3"));
+    }
+
+    #[test]
+    #[serial]
+    fn remove_from_live_official_route_keeps_pi_ai_providers() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+
+        remove_from_live(&state, crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID).unwrap();
+
+        let settings = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        assert!(!settings.contains("llm-deepseek"));
+        assert!(settings.contains("llm-pi-ai"));
+        assert!(settings.contains("company"));
     }
 }
