@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+/work/
+/backups/
 .DS_Store
 *.log
 .env

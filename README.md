@@ -1,5 +1,25 @@
 <div align="center">
 
+# CC Switch DSH Native
+
+This is a standalone CC Switch development project for first-class DeepSeek Harness integration. It tracks upstream CC Switch while adding native DSH provider synchronization and a Codex-style provider experience.
+
+See [DSH Native Architecture](docs/architecture/dsh-native.md) for ownership boundaries and data flow.
+
+Focused verification:
+
+```bash
+pnpm test:dsh
+```
+
+macOS Apple Silicon release package:
+
+```bash
+pnpm build:dsh:macos
+```
+
+The remainder of this README is inherited from upstream CC Switch.
+
 # CC Switch
 
 ### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw & Hermes Agent

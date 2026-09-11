@@ -13,7 +13,9 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest watch"
+    "test:unit:watch": "vitest watch",
+    "test:dsh": "bash scripts/test-dsh.sh",
+    "build:dsh:macos": "bash scripts/build-dsh-macos.sh"
   },
   "keywords": [],
   "author": "Jason Young",
