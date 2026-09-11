@@ -9,6 +9,7 @@ use super::codex_chat_common::{
     response_function_call_item, response_function_call_item_with_namespace,
     split_leading_think_block,
 };
+use super::gemini_shadow::{GeminiShadowSessionSnapshot, GeminiShadowStore, GeminiToolCallMeta};
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -256,7 +257,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
-    responses_to_chat_completions_with_reasoning(body, None)
+    responses_to_chat_completions_with_reasoning(body, None, None)
 }
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
@@ -264,6 +265,7 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
 pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
@@ -284,7 +286,7 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
 
     if let Some(input) = body.get("input") {
-        append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
+        append_responses_input_as_chat_messages(input, &mut messages, &tool_context, shadow_ctx)?;
     }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
@@ -346,6 +348,10 @@ pub fn responses_to_chat_completions_with_reasoning(
     // token/成本/缓存命中率全部漏记（input/output/cache 全为 0）。
     // 与 Claude→openai_chat 路径共用同一 helper，保证两个客户端方向一致。
     super::transform::inject_openai_stream_include_usage(&mut result);
+
+    if let Some(shadow_ctx) = shadow_ctx {
+        inject_gemini_thought_signatures_for_openai_format(&mut result, Some(shadow_ctx));
+    }
 
     Ok(result)
 }
@@ -600,6 +606,7 @@ fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
     tool_context: &CodexToolContext,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
     let mut pending_media = Vec::new();
@@ -623,6 +630,7 @@ fn append_responses_input_as_chat_messages(
                     &mut pending_reasoning,
                     &mut last_assistant_index,
                     tool_context,
+                    shadow_ctx,
                 )?;
             }
         }
@@ -635,6 +643,7 @@ fn append_responses_input_as_chat_messages(
                 &mut pending_reasoning,
                 &mut last_assistant_index,
                 tool_context,
+                shadow_ctx,
             )?;
         }
         _ => {}
@@ -664,6 +673,7 @@ fn append_responses_input_as_chat_messages(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
@@ -672,6 +682,7 @@ fn append_responses_item_as_chat_message(
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
     tool_context: &CodexToolContext,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
@@ -680,6 +691,7 @@ fn append_responses_item_as_chat_message(
             pending_tool_calls.push(responses_function_call_to_chat_tool_call(
                 item,
                 tool_context,
+                shadow_ctx,
             ));
         }
         Some("custom_tool_call") => {
@@ -1420,6 +1432,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
 fn responses_function_call_to_chat_tool_call(
     item: &Value,
     tool_context: &CodexToolContext,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Value {
     let call_id = item
         .get("call_id")
@@ -1431,14 +1444,25 @@ fn responses_function_call_to_chat_tool_call(
     let chat_name = tool_context.chat_name_for_response_function(name, namespace);
     let arguments = canonicalize_tool_arguments(item.get("arguments"));
 
-    json!({
+    let mut chat_call = json!({
         "id": call_id,
         "type": "function",
         "function": {
             "name": chat_name,
             "arguments": arguments
         }
-    })
+    });
+
+    if let Some((store, provider_id, session_id)) = shadow_ctx {
+        let sig = store
+            .get_session(provider_id, session_id)
+            .as_ref()
+            .and_then(|snapshot| lookup_thought_signature(snapshot, call_id, &chat_name))
+            .unwrap_or_else(|| GEMINI_SENTINEL_SIGNATURE.to_string());
+        inject_thought_signature_into_tool_call(&mut chat_call, &sig);
+    }
+
+    chat_call
 }
 
 fn responses_custom_tool_call_to_chat_tool_call(item: &Value) -> Value {
@@ -1518,7 +1542,7 @@ fn responses_tool_choice_to_chat(tool_choice: &Value, tool_context: &CodexToolCo
 /// Convert a non-streaming Chat Completions response into a Responses response.
 #[allow(dead_code)]
 pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
-    chat_completion_to_response_with_context(body, &CodexToolContext::default())
+    chat_completion_to_response_with_context(body, &CodexToolContext::default(), None)
 }
 
 /// Convert a non-streaming Chat Completions response into a Responses response,
@@ -1526,6 +1550,7 @@ pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
 pub(crate) fn chat_completion_to_response_with_context(
     body: Value,
     tool_context: &CodexToolContext,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Result<Value, ProxyError> {
     let choices = body
         .get("choices")
@@ -1537,6 +1562,31 @@ pub(crate) fn chat_completion_to_response_with_context(
     let message = choice
         .get("message")
         .ok_or_else(|| ProxyError::TransformError("No message in chat choice".to_string()))?;
+
+    if let Some((store, provider_id, session_id)) = shadow_ctx {
+        if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
+            let mut metas = Vec::new();
+            for call in tool_calls {
+                if let Some(sig) = call
+                    .get("extra_content")
+                    .and_then(|v| v.get("google"))
+                    .and_then(|v| v.get("thought_signature"))
+                    .and_then(|v| v.as_str())
+                {
+                    let id = call.get("id").and_then(|v| v.as_str());
+                    let name = call
+                        .get("function")
+                        .and_then(|v| v.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    metas.push(GeminiToolCallMeta::new(id, name, json!({}), Some(sig)));
+                }
+            }
+            if !metas.is_empty() {
+                store.record_assistant_turn(provider_id, session_id, Value::Null, metas);
+            }
+        }
+    }
 
     let response_id = response_id_from_chat_id(body.get("id").and_then(|v| v.as_str()));
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -2116,6 +2166,108 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
     })
 }
 
+pub fn inject_gemini_thought_signatures_for_openai_format(
+    body: &mut Value,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
+) {
+    // 无 shadow 上下文：完全不注入。调用方只在确认上游是 Gemini 时才传
+    // shadow_ctx；若误注入 `extra_content.google.*` 到严格 OpenAI 网关会 400。
+    let Some((store, provider_id, session_id)) = shadow_ctx else {
+        return;
+    };
+    let store_snapshot = store.get_session(provider_id, session_id);
+
+    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages {
+            // Fix tool_calls
+            if let Some(tool_calls) = msg.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
+                for tool_call in tool_calls {
+                    let call_id = tool_call.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = tool_call
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    let sig = store_snapshot
+                        .as_ref()
+                        .and_then(|snapshot| lookup_thought_signature(snapshot, call_id, name))
+                        .unwrap_or_else(|| GEMINI_SENTINEL_SIGNATURE.to_string());
+                    inject_thought_signature_into_tool_call(tool_call, &sig);
+                }
+            }
+
+            // Fix function_call
+            if let Some(function_call) =
+                msg.get_mut("function_call").and_then(|f| f.as_object_mut())
+            {
+                let name = function_call
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let sig = store_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| lookup_thought_signature(snapshot, "", name))
+                    .unwrap_or_else(|| GEMINI_SENTINEL_SIGNATURE.to_string());
+                inject_thought_signature_into_tool_call(msg, &sig);
+            }
+        }
+    }
+}
+
+/// Gemini OpenAI 兼容层官方兜底签名（Google 文档：跳过签名校验的哨兵值）。
+pub const GEMINI_SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
+
+/// 从影子存储中查找与 `(call_id, name)` 匹配的 thought signature。
+///
+/// 优先按 tool_call id 精确匹配（维护者要求“按 id 回填真签名”）；仅当 id 缺失
+/// （旧式 `function_call` 消息没有 id）时才退化为按名称匹配。从最近的 turn 反向
+/// 查找并命中即返回，避免同名工具多次调用时回填到历史签名。
+fn lookup_thought_signature(
+    snapshot: &GeminiShadowSessionSnapshot,
+    call_id: &str,
+    name: &str,
+) -> Option<String> {
+    for turn in snapshot.turns.iter().rev() {
+        for meta in turn.tool_calls.iter().rev() {
+            let id_matches = !call_id.is_empty() && meta.id.as_deref() == Some(call_id);
+            let name_matches = call_id.is_empty() && !name.is_empty() && meta.name == name;
+            if id_matches || name_matches {
+                return meta.thought_signature.clone();
+            }
+        }
+    }
+    None
+}
+
+/// 在 OpenAI Chat 格式的 tool_call / function_call 对象中写入
+/// `extra_content.google.thought_signature`（Gemini OpenAI 兼容层的官方位置）。
+///
+/// 只写官方位置：顶层 / `function` 内的冗余 `thought_signature` 字段会被严格
+/// 的 OpenAI 网关拒绝（400），且 Gemini 官方端点不读取它们。
+fn inject_thought_signature_into_tool_call(tool_call: &mut Value, sig: &str) {
+    let Some(obj) = tool_call.as_object_mut() else {
+        return;
+    };
+    let Some(google) = obj
+        .entry("extra_content")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+    else {
+        return;
+    };
+    let Some(google) = google
+        .entry("google")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+    else {
+        return;
+    };
+    if !google.contains_key("thought_signature") {
+        google.insert("thought_signature".to_string(), json!(sig));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2680,7 +2832,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["reasoning_effort"], "max");
@@ -2729,7 +2882,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "max"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "xhigh");
         assert!(result.get("reasoning_effort").is_none());
@@ -2744,7 +2898,7 @@ mod tests {
             "reasoning": {"effort": "high"}
         });
         let result_high =
-            responses_to_chat_completions_with_reasoning(input_high, Some(&config)).unwrap();
+            responses_to_chat_completions_with_reasoning(input_high, Some(&config), None).unwrap();
         assert_eq!(result_high["reasoning"]["effort"], "high");
         assert!(result_high.get("reasoning_effort").is_none());
     }
@@ -2769,7 +2923,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "none");
         // none 不是 OpenAI 顶层 reasoning_effort 的合法枚举，不写顶层别名；也不写 thinking。
@@ -2797,7 +2952,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         // thinking 关闭信号照发；但不写 reasoning_effort，也不写原生 reasoning 对象。
         assert_eq!(result["thinking"]["type"], "disabled");
@@ -2836,7 +2992,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -2878,7 +3034,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -2907,7 +3063,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
         }
     }
@@ -2931,7 +3087,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "medium"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert!(result.get("reasoning_effort").is_none());
         assert!(result.get("thinking").is_none());
@@ -2954,7 +3111,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert!(result.get("reasoning_effort").is_none());
@@ -2977,7 +3135,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());
@@ -4620,7 +4779,7 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+        let result = chat_completion_to_response_with_context(chat, &context, None).unwrap();
 
         assert_eq!(result["output"][0]["type"], "function_call");
         assert_eq!(result["output"][0]["call_id"], "call_gmail");
@@ -4661,7 +4820,7 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+        let result = chat_completion_to_response_with_context(chat, &context, None).unwrap();
 
         assert_eq!(result["output"][0]["type"], "tool_search_call");
         assert_eq!(result["output"][0]["call_id"], "call_tool_search_1");
@@ -4702,7 +4861,7 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+        let result = chat_completion_to_response_with_context(chat, &context, None).unwrap();
 
         assert_eq!(result["output"][0]["type"], "custom_tool_call");
         assert_eq!(result["output"][0]["id"], "ctc_call_patch");
@@ -4737,8 +4896,9 @@ mod tests {
             }]
         });
 
-        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
-            .unwrap_err();
+        let err =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap_err();
         assert!(matches!(err, ProxyError::TransformError(_)));
         assert!(err.to_string().contains("without a function name"));
     }
@@ -4768,7 +4928,8 @@ mod tests {
         });
 
         let result =
-            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap();
         let output = result["output"].as_array().unwrap();
 
         assert_eq!(output.len(), 1);
@@ -4794,8 +4955,9 @@ mod tests {
             }]
         });
 
-        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
-            .unwrap_err();
+        let err =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap_err();
         assert!(matches!(err, ProxyError::TransformError(_)));
     }
 
@@ -4823,7 +4985,8 @@ mod tests {
         });
 
         let result =
-            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap();
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
     }
@@ -4849,8 +5012,9 @@ mod tests {
             }]
         });
 
-        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
-            .unwrap_err();
+        let err =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap_err();
         assert!(matches!(err, ProxyError::TransformError(_)));
     }
 
@@ -4869,7 +5033,8 @@ mod tests {
         });
 
         let result =
-            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap();
         assert_eq!(result["status"], "completed");
     }
 
@@ -5264,5 +5429,311 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    // ===== Gemini thought_signature 注入 / 回填 / 兜底 =====
+
+    fn gemini_store_with_turns() -> (GeminiShadowStore, String, String) {
+        let store = GeminiShadowStore::with_limits(8, 8);
+        let provider_id = "provider-gemini".to_string();
+        let session_id = "session-1".to_string();
+        // 第一轮：read_file 调用（旧签名）
+        store.record_assistant_turn(
+            &provider_id,
+            &session_id,
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_old"),
+                "read_file",
+                json!({}),
+                Some("sig-old"),
+            )],
+        );
+        // 第二轮：read_file 再次调用（新签名）→ 按 id 匹配必须取 sig-new
+        store.record_assistant_turn(
+            &provider_id,
+            &session_id,
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call_new"),
+                "read_file",
+                json!({}),
+                Some("sig-new"),
+            )],
+        );
+        (store, provider_id, session_id)
+    }
+
+    #[test]
+    fn lookup_thought_signature_matches_by_call_id_not_name() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let snapshot = store.get_session(&provider_id, &session_id).unwrap();
+
+        // 同名工具多次调用：按 call_id 精确匹配到各自签名
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "call_new", "read_file"),
+            Some("sig-new".to_string())
+        );
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "call_old", "read_file"),
+            Some("sig-old".to_string())
+        );
+        // 不存在的 call_id：不能因为 name 相同就回填错误签名
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "call_ghost", "read_file"),
+            None
+        );
+    }
+
+    #[test]
+    fn lookup_thought_signature_falls_back_to_name_only_when_id_missing() {
+        let store = GeminiShadowStore::with_limits(8, 8);
+        store.record_assistant_turn(
+            "p",
+            "s",
+            json!({}),
+            vec![GeminiToolCallMeta::new(
+                Some("call-1"),
+                "get_weather",
+                json!({}),
+                Some("sig-weather"),
+            )],
+        );
+        let snapshot = store.get_session("p", "s").unwrap();
+        // call_id 为空（旧式 function_call 消息）：按 name 兜底
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "", "get_weather"),
+            Some("sig-weather".to_string())
+        );
+        assert_eq!(
+            lookup_thought_signature(&snapshot, "", "unknown_tool"),
+            None
+        );
+    }
+
+    #[test]
+    fn inject_uses_real_signature_when_available() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_new",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"}
+                }]
+            }]
+        });
+        inject_gemini_thought_signatures_for_openai_format(
+            &mut body,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        );
+        let call = &body["messages"][0]["tool_calls"][0];
+        assert_eq!(
+            call["extra_content"]["google"]["thought_signature"],
+            "sig-new"
+        );
+        // 只写官方位置：不写顶层 / function 冗余字段
+        assert!(call.get("thought_signature").is_none());
+        assert!(call["function"].get("thought_signature").is_none());
+    }
+
+    #[test]
+    fn inject_falls_back_to_sentinel_without_store_match() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_unknown",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"}
+                }]
+            }]
+        });
+        inject_gemini_thought_signatures_for_openai_format(
+            &mut body,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        );
+        assert_eq!(
+            body["messages"][0]["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+            GEMINI_SENTINEL_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn inject_noop_without_shadow_ctx() {
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_x",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"}
+                }]
+            }]
+        });
+        inject_gemini_thought_signatures_for_openai_format(&mut body, None);
+        // 无 shadow 上下文：不注入任何内容（保持原样）
+        assert!(body["messages"][0]["tool_calls"][0]
+            .get("extra_content")
+            .is_none());
+    }
+
+    #[test]
+    fn inject_does_not_overwrite_existing_signature() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_new",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                    "extra_content": {"google": {"thought_signature": "sig-exists"}}
+                }]
+            }]
+        });
+        inject_gemini_thought_signatures_for_openai_format(
+            &mut body,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        );
+        assert_eq!(
+            body["messages"][0]["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+            "sig-exists"
+        );
+    }
+
+    #[test]
+    fn inject_handles_function_call_message_and_malformed_tool_calls() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    // 旧式 function_call：无 id，按 name 兜底
+                    "function_call": {"name": "read_file", "arguments": "{}"}
+                },
+                {
+                    "role": "assistant",
+                    // 畸形 tool_calls：数组元素不是对象，不得 panic
+                    "tool_calls": ["not-an-object", 42]
+                }
+            ]
+        });
+        inject_gemini_thought_signatures_for_openai_format(
+            &mut body,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        );
+        // function_call 消息：extra_content 挂在消息对象上（官方位置）
+        assert_eq!(
+            body["messages"][0]["extra_content"]["google"]["thought_signature"],
+            "sig-new"
+        );
+        // 畸形 tool_calls：保持原样、不 panic
+        assert_eq!(body["messages"][1]["tool_calls"][0], "not-an-object");
+    }
+
+    #[test]
+    fn responses_to_chat_injects_signature_from_shadow() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        // Codex Responses 请求：assistant function_call 回放（call_new 已存真签名）
+        let body = json!({
+            "model": "gemini-3.6-flash",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call_new",
+                "name": "read_file",
+                "arguments": "{}"
+            }]
+        });
+        let result = responses_to_chat_completions_with_reasoning(
+            body,
+            None,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        )
+        .unwrap();
+        let tool_call = &result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m.get("tool_calls").is_some())
+            .unwrap()["tool_calls"][0];
+        assert_eq!(
+            tool_call["extra_content"]["google"]["thought_signature"],
+            "sig-new"
+        );
+    }
+
+    #[test]
+    fn responses_to_chat_injects_sentinel_when_no_signature() {
+        let (store, provider_id, session_id) = gemini_store_with_turns();
+        let body = json!({
+            "model": "gemini-3.6-flash",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call_ghost",
+                "name": "read_file",
+                "arguments": "{}"
+            }]
+        });
+        let result = responses_to_chat_completions_with_reasoning(
+            body,
+            None,
+            Some((&store, provider_id.as_str(), session_id.as_str())),
+        )
+        .unwrap();
+        let tool_call = &result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m.get("tool_calls").is_some())
+            .unwrap()["tool_calls"][0];
+        assert_eq!(
+            tool_call["extra_content"]["google"]["thought_signature"],
+            GEMINI_SENTINEL_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn chat_to_response_captures_signature_into_shadow() {
+        let store = GeminiShadowStore::with_limits(8, 8);
+        let provider_id = "provider-gemini";
+        let session_id = "session-1";
+        // 上游 Chat 响应：assistant tool_calls 带真签名
+        let chat = json!({
+            "id": "chatcmpl-1",
+            "model": "gemini-3.6-flash",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_upstream",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                        "extra_content": {"google": {"thought_signature": "sig-upstream"}}
+                    }]
+                }
+            }]
+        });
+        let result = chat_completion_to_response_with_context(
+            chat,
+            &CodexToolContext::default(),
+            Some((&store, provider_id, session_id)),
+        )
+        .unwrap();
+        assert_eq!(result["output"][0]["type"], "function_call");
+
+        // 签名已存入影子存储 → 后续请求可按 call_upstream 回填
+        let snapshot = store.get_session(provider_id, session_id).unwrap();
+        assert_eq!(
+            snapshot.turns[0].tool_calls[0].id.as_deref(),
+            Some("call_upstream")
+        );
+        assert_eq!(
+            snapshot.turns[0].tool_calls[0].thought_signature.as_deref(),
+            Some("sig-upstream")
+        );
     }
 }

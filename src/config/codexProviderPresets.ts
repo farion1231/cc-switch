@@ -1183,6 +1183,38 @@ requires_openai_auth = true`,
     iconColor: "#0078D4",
   },
   {
+    name: "Gemini",
+    websiteUrl: "https://ai.google.dev/gemini-api",
+    apiKeyUrl: "https://aistudio.google.com/app/apikey",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "gemini",
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+      "gemini-3.7-flash",
+    ),
+    endpointCandidates: [
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "gemini-3.7-flash",
+        displayName: "Gemini 3.7 Flash",
+        contextWindow: 1048576,
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "gemini-3.1-pro",
+        displayName: "Gemini 3.1 Pro",
+        contextWindow: 1048576,
+        reasoningLevels: ["low", "medium", "high"],
+      },
+    ]),
+    category: "third_party",
+    icon: "gemini",
+    iconColor: "#4285F4",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",

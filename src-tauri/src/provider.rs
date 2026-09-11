@@ -108,8 +108,34 @@ impl Provider {
             .unwrap_or(false)
     }
 
-    fn provider_type(&self) -> Option<&str> {
+    pub fn provider_type(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
+    }
+
+    /// Whether the provider's API format is Gemini Native (generateContent).
+    ///
+    /// Checks `meta.api_format` first (SSOT), then legacy `settings_config.api_format`,
+    /// mirroring `get_claude_api_format`'s precedence.
+    pub fn is_gemini_native(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.api_format.as_deref())
+            .or_else(|| {
+                self.settings_config
+                    .get("api_format")
+                    .and_then(|v| v.as_str())
+            })
+            == Some("gemini_native")
+    }
+
+    /// Whether this provider routes to a Gemini upstream, for the OpenAI-compat
+    /// thought_signature fix. True when the provider type is Gemini/Gemini CLI,
+    /// the endpoint is Google's official one, or the request model name contains
+    /// "gemini" (covers local reverse proxies with custom domains).
+    pub fn is_gemini_upstream(&self, endpoint: &str, model: &str) -> bool {
+        matches!(self.provider_type(), Some("gemini") | Some("gemini_cli"))
+            || endpoint.contains("generativelanguage.googleapis.com")
+            || model.to_lowercase().contains("gemini")
     }
 
     fn claude_base_url_contains(&self, needle: &str) -> bool {

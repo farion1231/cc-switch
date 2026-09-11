@@ -1546,9 +1546,24 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+            let gemini_model = mapped_body
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let is_gemini_upstream = provider.is_gemini_upstream(&effective_endpoint, gemini_model);
+            let shadow_ctx = if is_gemini_upstream {
+                Some((
+                    self.gemini_shadow.as_ref(),
+                    provider.id.as_str(),
+                    self.session_id.as_str(),
+                ))
+            } else {
+                None
+            };
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
+                shadow_ctx,
             )?;
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
@@ -1557,6 +1572,7 @@ impl RequestForwarder {
                 self.session_client_provided
                     .then_some(self.session_id.as_str()),
             );
+
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
@@ -1589,6 +1605,7 @@ impl RequestForwarder {
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
                 )?;
+
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
             // added. apply_codex_upstream_model may have just written back a model
@@ -1631,6 +1648,18 @@ impl RequestForwarder {
                 adapter.transform_request(mapped_body, provider)?
             }
         } else {
+            let gemini_model = mapped_body
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let is_gemini_chat = provider.is_gemini_upstream(&effective_endpoint, gemini_model);
+
+            if is_gemini_chat {
+                super::providers::transform_codex_chat::inject_gemini_thought_signatures_for_openai_format(
+                    &mut mapped_body,
+                    Some((&self.gemini_shadow, provider.id.as_str(), self.session_id.as_str()))
+                );
+            }
             mapped_body
         };
 
