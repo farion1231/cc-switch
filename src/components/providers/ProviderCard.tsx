@@ -760,7 +760,11 @@ export function ProviderCard({
               isDefaultModel={isDefaultModel}
               isRemovalProtected={isRemovalProtected}
               isStateChangeProtected={isStateChangeProtected}
-              defaultModelOptions={openclawDefaultModelOptions}
+              defaultModelOptions={
+                appId === "deepseek-harness"
+                  ? dshModels.map((id) => ({ id, name: id }))
+                  : openclawDefaultModelOptions
+              }
               onSetAsDefault={onSetAsDefault}
             />
           </div>

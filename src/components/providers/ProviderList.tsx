@@ -124,7 +124,7 @@ export function ProviderList({
     appId === "deepseek-harness",
   );
 
-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
+  // 判断供应商是否已添加到配置（原生成员状态应用：OpenCode/OpenClaw/Hermes/DeepSeek Harness）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId === "opencode") {
@@ -507,7 +507,9 @@ export function ProviderList({
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
+                    : appId === "deepseek-harness"
+                      ? dshCurrentState?.currentProviderId === provider.id
+                      : isProviderDefaultModel(provider.id)
                 }
                 isRemovalProtected={
                   appId === "pi"

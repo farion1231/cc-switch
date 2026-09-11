@@ -783,6 +783,9 @@ function App() {
         if (activeApp === "pi") {
           void invalidatePiProviderCaches(queryClient).catch(() => undefined);
         }
+        if (activeApp === "deepseek-harness") {
+          void invalidateDshProviderCaches(queryClient).catch(() => undefined);
+        }
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
           closeButton: true,
@@ -1189,7 +1192,8 @@ function App() {
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
-                        activeApp === "pi"
+                        activeApp === "pi" ||
+                        activeApp === "deepseek-harness"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
