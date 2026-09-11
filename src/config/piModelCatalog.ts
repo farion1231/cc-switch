@@ -532,15 +532,6 @@ export const piModelCatalog = {
       maxTokens: 16_384,
     },
   },
-  "volcengine/doubao-seedance-2-5-v2": {
-    capabilities: {
-      name: "doubao-seedance-2-5-v2",
-      reasoning: true,
-      input: ["text", "image"],
-      contextWindow: 128_000,
-      maxTokens: 16_384,
-    },
-  },
   "xai/grok-4.3": {
     capabilities: {
       name: "Grok 4.3",
