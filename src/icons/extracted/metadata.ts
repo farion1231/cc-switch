@@ -754,6 +754,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["xycai", "xyc", "aggregator", "relay", "gateway", "token"],
     defaultColor: "#1E88E5",
   },
+  laonongapi: {
+    name: "laonongapi",
+    displayName: "Laonong API",
+    category: "ai-provider",
+    keywords: ["laonong", "laonongapi", "aggregator", "relay", "gateway"],
+    defaultColor: "#7B61FF", 
+  }, 
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {
