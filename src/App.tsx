@@ -101,6 +101,8 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import { dshApi } from "@/lib/api/dsh";
+import { invalidateDshProviderCaches } from "@/lib/query/dsh";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -371,6 +373,41 @@ function App() {
             translatePiProviderMutationError(detail, t) || detail || undefined,
           closeButton: true,
         },
+      );
+    }
+  };
+
+  const handleSetDshDefaultModel = async (
+    provider: Provider,
+    modelId?: string,
+  ) => {
+    const config = provider.settingsConfig as {
+      models?: Array<{ id?: string } | string>;
+    };
+    const firstModel = config.models?.[0];
+    const resolved =
+      modelId ?? (typeof firstModel === "string" ? firstModel : firstModel?.id);
+    if (!resolved) {
+      toast.error(
+        t("dsh.provider.noModels", {
+          defaultValue: "该供应商没有配置模型",
+        }),
+      );
+      return;
+    }
+    try {
+      await dshApi.setCurrentModel(provider.id, resolved);
+      await invalidateDshProviderCaches(queryClient);
+      toast.success(
+        t("dsh.provider.defaultSet", { defaultValue: "已设为 DSH 默认模型" }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(
+        t("dsh.provider.defaultFailed", {
+          defaultValue: "设置 DSH 默认模型失败",
+        }),
+        { description: extractErrorMessage(error), closeButton: true },
       );
     }
   };
@@ -754,6 +791,9 @@ function App() {
       }
       if (activeApp === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (activeApp === "deepseek-harness") {
+        await invalidateDshProviderCaches(queryClient);
       }
       // Invalidate queries to refresh the isInConfig state
       if (activeApp === "opencode") {
@@ -1174,7 +1214,9 @@ function App() {
                           ? setAsDefaultModel
                           : activeApp === "hermes"
                             ? switchProvider
-                            : undefined
+                            : activeApp === "deepseek-harness"
+                              ? handleSetDshDefaultModel
+                              : undefined
                       }
                     />
                   </motion.div>
