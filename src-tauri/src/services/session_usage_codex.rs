@@ -217,6 +217,7 @@ struct ParsedCodexFile {
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
     line_offset: i64,
+    byte_offset: i64,
     has_billable_tokens: bool,
 }
 
@@ -493,6 +494,7 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 ///   仍用旧价，下一个同步 pass 生效。
 struct CodexSyncPass {
     cursors: HashMap<String, (i64, i64)>,
+    byte_offsets: HashMap<String, Option<i64>>,
     pricing: HashMap<String, Option<ModelPricing>>,
 }
 
@@ -511,8 +513,15 @@ impl CodexSyncPass {
             })
             .and_then(|rows| rows.collect::<Result<HashMap<_, _>, _>>())
             .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
+        let mut stmt = conn.prepare("SELECT file_path, last_byte_offset FROM session_log_sync")?;
+        let byte_offsets = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
+            })?
+            .collect::<Result<HashMap<_, _>, _>>()?;
         Ok(Self {
             cursors,
+            byte_offsets,
             pricing: HashMap::new(),
         })
     }
@@ -783,7 +792,7 @@ fn parse_codex_file(
 ) -> Result<ParsedCodexFile, AppError> {
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
     let mut root_meta_seen = false;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
@@ -803,11 +812,26 @@ fn parse_codex_file(
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
     let mut line_offset = 0i64;
+    let mut byte_offset = 0i64;
     let mut has_billable_tokens = false;
 
-    for line_result in reader.lines() {
+    loop {
+        let mut bytes = Vec::new();
+        let read = reader
+            .read_until(b'\n', &mut bytes)
+            .map_err(|e| AppError::Config(format!("无法读取 Codex 日志: {e}")))?;
+        // A live writer may have only written part of the final JSON record.
+        // Retry incomplete records, but retain support for a complete final JSON
+        // record without a newline (including already closed historical files).
+        if read == 0
+            || (bytes.last() != Some(&b'\n')
+                && serde_json::from_slice::<serde_json::Value>(&bytes).is_err())
+        {
+            break;
+        }
+        byte_offset += read as i64;
         line_offset += 1;
-        let line = match line_result {
+        let line = match String::from_utf8(bytes) {
             Ok(line) => line,
             Err(_) => continue,
         };
@@ -997,6 +1021,7 @@ fn parse_codex_file(
         parent,
         token_events,
         line_offset,
+        byte_offset,
         has_billable_tokens,
     })
 }
@@ -1164,6 +1189,33 @@ fn mark_deferred(
 /// 与大文件重导期间面板的响应性。
 const CODEX_INSERT_BATCH_SIZE: usize = 1000;
 
+fn update_codex_sync_state_on_conn(
+    conn: &rusqlite::Connection,
+    file_path: &str,
+    modified: i64,
+    parsed: &ParsedCodexFile,
+) -> Result<(), AppError> {
+    update_sync_state_on_conn(conn, file_path, modified, parsed.line_offset)?;
+    conn.execute(
+        "UPDATE session_log_sync SET last_byte_offset = ?1 WHERE file_path = ?2",
+        rusqlite::params![parsed.byte_offset, file_path],
+    )?;
+    Ok(())
+}
+
+fn update_codex_sync_state(
+    db: &Database,
+    file_path: &str,
+    modified: i64,
+    parsed: &ParsedCodexFile,
+) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    let tx = conn.unchecked_transaction()?;
+    update_codex_sync_state_on_conn(&tx, file_path, modified, parsed)?;
+    tx.commit()?;
+    Ok(())
+}
+
 /// 同步单个 Codex JSONL 文件。
 fn sync_single_codex_file(
     db: &Database,
@@ -1182,8 +1234,10 @@ fn sync_single_codex_file(
     // 检查同步状态
     let (last_modified, last_offset) = get_codex_sync_state(db, file_path, &pass.cursors)?;
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // Windows may keep mtime unchanged while Codex holds its write handle open.
+    // Legacy cursors have no byte offset: rescan once to catch up and persist it.
+    let last_byte_offset = pass.byte_offsets.get(&file_path_str).copied().flatten();
+    if file_modified == last_modified && last_byte_offset == i64::try_from(file_size).ok() {
         return Ok(CodexFileSyncResult::default());
     }
 
@@ -1216,7 +1270,7 @@ fn sync_single_codex_file(
 
     let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
     if !parsed.has_billable_tokens {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_codex_sync_state(db, &file_path_str, file_modified, &parsed)?;
         return Ok(CodexFileSyncResult::default());
     }
     let Some(root_thread_id) = parsed.root_thread_id.as_deref() else {
@@ -1372,7 +1426,7 @@ fn sync_single_codex_file(
         if is_last_batch {
             // 游标推进与最后一批数据同事务提交：中途崩溃时两者一起回滚，
             // 不会出现"游标已推进但数据缺失"的丢数据窗口。
-            update_sync_state_on_conn(&tx, &file_path_str, file_modified, parsed.line_offset)?;
+            update_codex_sync_state_on_conn(&tx, &file_path_str, file_modified, &parsed)?;
         }
         tx.commit()
             .map_err(|e| AppError::Database(format!("提交 Codex 会话写入事务失败: {e}")))?;
@@ -1383,7 +1437,7 @@ fn sync_single_codex_file(
     }
 
     if to_insert.is_empty() {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_codex_sync_state(db, &file_path_str, file_modified, &parsed)?;
     }
     Ok(result)
 }
@@ -1694,6 +1748,128 @@ mod tests {
             .collect::<Vec<_>>();
         let mut pass = CodexSyncPass::load(db)?;
         sync_single_codex_file(db, file, &build_rollout_index(&files), &mut pass)
+    }
+
+    #[test]
+    fn test_append_with_unchanged_mtime_survives_reload_without_duplicates() -> Result<(), AppError>
+    {
+        use std::io::Write;
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count(100, 50, 10),
+            ],
+        );
+        let modified = fs::metadata(&file).unwrap().modified().unwrap();
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        let mut writer = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writeln!(writer, "{}", token_count(250, 100, 30)).unwrap();
+        writer
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        // Each call reloads its cursor from the DB, as after an application restart.
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 0);
+        let conn = lock_conn!(db.conn);
+        let totals: (i64, i64, i64) = conn.query_row(
+            "SELECT count(*), sum(input_tokens), sum(output_tokens) FROM proxy_request_logs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(totals, (2, 250, 30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_legacy_cursor_catches_up_with_unchanged_mtime() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count(100, 50, 10),
+                token_count(250, 100, 30),
+            ],
+        );
+        let modified = metadata_modified_nanos(&fs::metadata(&file).unwrap());
+        update_sync_state(&db, &file.to_string_lossy(), modified, 3)?;
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 0);
+        let conn = lock_conn!(db.conn);
+        let bytes: i64 =
+            conn.query_row("SELECT last_byte_offset FROM session_log_sync", [], |r| {
+                r.get(0)
+            })?;
+        assert_eq!(bytes as u64, fs::metadata(&file).unwrap().len());
+        Ok(())
+    }
+
+    #[test]
+    fn test_complete_final_record_without_newline_is_imported_once() -> Result<(), AppError> {
+        use std::io::Write;
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(&file, &[session_meta(PARENT_ID), turn_context()]);
+        let mut writer = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        write!(writer, "{}", token_count(100, 50, 10)).unwrap();
+        let modified = fs::metadata(&file).unwrap().modified().unwrap();
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 0);
+        writeln!(writer).unwrap();
+        writeln!(writer, "{}", token_count(250, 100, 30)).unwrap();
+        writer
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 0);
+        let conn = lock_conn!(db.conn);
+        let totals: (i64, i64, i64) = conn.query_row(
+            "SELECT count(*), sum(input_tokens), sum(output_tokens) FROM proxy_request_logs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(totals, (2, 250, 30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_partial_live_record_is_retried_after_append() -> Result<(), AppError> {
+        use std::io::Write;
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count(100, 50, 10),
+            ],
+        );
+        let modified = fs::metadata(&file).unwrap().modified().unwrap();
+        let next = format!("{}\n", token_count(250, 100, 30));
+        let split = next.len() / 2;
+        let mut writer = fs::OpenOptions::new().append(true).open(&file).unwrap();
+        writer.write_all(&next.as_bytes()[..split]).unwrap();
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        assert_eq!(get_sync_state(&db, &file.to_string_lossy())?.1, 3);
+        writer.write_all(&next.as_bytes()[split..]).unwrap();
+        writer
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 0);
+        assert_eq!(get_sync_state(&db, &file.to_string_lossy())?.1, 4);
+        Ok(())
     }
 
     /// revert 产生的替换 rollout 是 `<threadId>_<rolloutId>` 双段文件名，
