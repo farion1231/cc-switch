@@ -373,6 +373,22 @@ impl AnthropicToResponsesState {
                 } else {
                     canonicalize_tool_arguments_str(&raw_input)
                 };
+                // Anthropic tool_use.input is always a JSON object. A non-JSON
+                // string here means the upstream stream was truncated or garbled;
+                // emit a safe empty object instead of propagating garbage into
+                // the Responses history where the next request would fail on
+                // re-parse. Keep this scoped to the Anthropic path because the
+                // Chat path legitimately preserves plain-text custom/tool-search
+                // arguments via canonicalize_tool_arguments_str.
+                let arguments = if serde_json::from_str::<Value>(&arguments).is_err() {
+                    log::warn!(
+                        "Anthropic upstream sent unparseable tool arguments ({} bytes) for '{}'; falling back to '{{}}'.",
+                        raw_input.len(), name
+                    );
+                    "{}".to_string()
+                } else {
+                    arguments
+                };
                 let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&name);
                 let item = response_tool_call_item_from_chat_name(
                     &item_id,
@@ -1038,6 +1054,33 @@ mod tests {
         // The tool arguments came from the start event, not from any delta.
         assert!(merged.contains("Tokyo"));
         assert!(merged.contains("\"status\":\"completed\""));
+    }
+
+    #[tokio::test]
+    async fn test_tool_use_with_unparseable_arguments_falls_back_to_empty_object() {
+        // A truncated input_json_delta leaves non-JSON text in the accumulator.
+        // The Anthropic tool_use.input contract is JSON, so the emitter must not
+        // propagate the garbage into the Responses function_call arguments.
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_malformed\",\"model\":\"claude\",\"usage\":{\"input_tokens\":5}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_m\",\"name\":\"exec_command\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\":\\\"\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":3}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let merged = run(input).await;
+        assert!(merged.contains("\"name\":\"exec_command\""));
+        assert!(merged.contains("event: response.function_call_arguments.done"));
+        assert!(merged.contains("\"arguments\":\"{}\""));
+        // The raw partial_json still appears in the incremental argument delta;
+        // only the authoritative done event and stored output item must be safe.
     }
 
     #[tokio::test]
