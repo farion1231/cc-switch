@@ -24,6 +24,11 @@ use super::reasoning_bridge::{
 
 pub(crate) const TOOL_RESULT_ERROR_MARKER: &str = "[cc-switch:tool-result-error]";
 
+/// OpenAI Responses API 拒绝 `max_output_tokens` 小于 16。Anthropic 侧的合法
+/// 小预算探测请求（如 Claude Desktop 的模型可用性探测发 `max_tokens=1`）
+/// 会被严格网关整体拒绝，转换时把低于下限的预算抬到最小值而不是让请求失败。
+pub(crate) const RESPONSES_MIN_MAX_OUTPUT_TOKENS: u64 = 16;
+
 fn has_http_url_scheme(value: &str) -> bool {
     value
         .get(.."http://".len())
@@ -1805,9 +1810,20 @@ pub fn anthropic_to_responses(
         result["input"] = json!(input);
     }
 
-    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
+    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for
+    // all models). The Responses API rejects values below 16 ("The number must
+    // be `>= 16`"), while Anthropic clients legitimately send tiny probe
+    // budgets (Claude Desktop's model-availability probe uses max_tokens=1),
+    // so sub-floor budgets are clamped up to the minimum instead of failing
+    // the whole request. 0 and non-integer values keep their existing
+    // pass-through semantics.
     if let Some(v) = body.get("max_tokens") {
-        result["max_output_tokens"] = v.clone();
+        result["max_output_tokens"] = match v.as_u64() {
+            Some(n) if (1..RESPONSES_MIN_MAX_OUTPUT_TOKENS).contains(&n) => {
+                json!(RESPONSES_MIN_MAX_OUTPUT_TOKENS)
+            }
+            _ => v.clone(),
+        };
     }
 
     // 直接透传的参数
@@ -5014,6 +5030,44 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert_eq!(result["max_output_tokens"], json!(1024));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_clamps_sub_floor_max_tokens() {
+        // Responses API 拒绝 max_output_tokens < 16（"The number must be >= 16"）。
+        // Claude Desktop 的模型可用性探测发 max_tokens=1，原样转发会让整个
+        // 探测请求 400，客户端因此判定"配置的模型不可用"（#7103）。
+        for budget in [1u64, 8, 15] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": budget,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], json!(16));
+        }
+
+        // 下限本身与正常预算保持原样
+        for budget in [16u64, 1024] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": budget,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], json!(budget));
+        }
+
+        // 0 与非整数不抬升：保持既有透传语义，把非法值留给上游裁决
+        for raw in [json!(0), json!("16"), json!(12.5)] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": raw,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], raw);
+        }
     }
 
     // ==================== 第二轮：P0 + P1 字段对齐 ====================
