@@ -2346,7 +2346,8 @@ impl ProxyService {
         }
 
         // 2.2) 最后兜底：尽力清理占位符与本地代理地址，避免长期卡在代理占位符状态
-        self.cleanup_takeover_placeholders_in_live_for_app(app_type)?;
+        self.cleanup_takeover_placeholders_in_live_for_app(app_type)
+            .await?;
         log::info!("{app_type_str} Live 接管占位符已清理（无备份兜底）");
         Ok(())
     }
@@ -2426,13 +2427,13 @@ impl ProxyService {
         Ok(true)
     }
 
-    fn cleanup_takeover_placeholders_in_live_for_app(
+    async fn cleanup_takeover_placeholders_in_live_for_app(
         &self,
         app_type: &AppType,
     ) -> Result<(), String> {
         match app_type {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
-            AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
+            AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live().await,
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
             AppType::GrokBuild => self.cleanup_grok_takeover_placeholders_in_live(),
             _ => Ok(()),
@@ -2575,18 +2576,39 @@ impl ProxyService {
         Ok(())
     }
 
-    fn cleanup_codex_takeover_placeholders_in_live(&self) -> Result<(), String> {
+    async fn cleanup_codex_takeover_placeholders_in_live(&self) -> Result<(), String> {
+        // Resolve the endpoint before reading live files: do not introduce an
+        // await between reading the user's current credentials and writing them.
+        // A localhost-looking URL alone does not prove takeover ownership.
+        let proxy_base_url = match self.build_proxy_urls().await {
+            Ok((_, codex_url)) => Some(codex_url),
+            Err(error) => {
+                log::warn!("无法确认 Codex 代理地址，仅清理可验证的接管字段: {error}");
+                None
+            }
+        };
         let mut config = self.read_codex_live()?;
+        let mut removed_auth_placeholder = false;
 
         if let Some(auth) = config.get_mut("auth").and_then(|v| v.as_object_mut()) {
             if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
             {
                 auth.remove("OPENAI_API_KEY");
+                removed_auth_placeholder = true;
             }
         }
 
         if let Some(cfg_str) = config.get("config").and_then(|v| v.as_str()) {
-            let updated = Self::remove_local_toml_base_url(cfg_str);
+            let updated = crate::codex_config::remove_codex_temporary_takeover_route(
+                cfg_str,
+                &crate::codex_config::get_codex_config_dir(),
+            )
+            .map_err(|e| format!("清理 Codex 临时接管路由失败: {e}"))?;
+            let updated = crate::codex_config::remove_codex_toml_base_url_if(&updated, |url| {
+                proxy_base_url
+                    .as_deref()
+                    .is_some_and(|expected| Self::proxy_urls_match(url, expected))
+            });
             let updated =
                 crate::codex_config::remove_codex_experimental_bearer_token_if(&updated, |token| {
                     token == PROXY_TOKEN_PLACEHOLDER
@@ -2594,16 +2616,18 @@ impl ProxyService {
                 .map_err(|e| format!("清理 Codex 接管占位符失败: {e}"))?;
             let updated = crate::codex_config::remove_codex_official_proxy_route(&updated)
                 .map_err(|e| format!("清理 Codex 官方接管路由失败: {e}"))?;
+            crate::codex_config::validate_codex_takeover_cleanup(
+                cfg_str,
+                &updated,
+                removed_auth_placeholder,
+                &crate::codex_config::get_codex_config_dir(),
+            )
+            .map_err(|e| e.to_string())?;
             config["config"] = json!(updated);
         }
 
         self.write_codex_live(&config)?;
         Ok(())
-    }
-
-    /// Remove local proxy base_url from TOML（委托给 codex_config 共享实现）
-    fn remove_local_toml_base_url(toml_str: &str) -> String {
-        crate::codex_config::remove_codex_toml_base_url_if(toml_str, Self::is_local_proxy_url)
     }
 
     fn cleanup_gemini_takeover_placeholders_in_live(&self) -> Result<(), String> {
@@ -3434,7 +3458,7 @@ impl ProxyService {
                 .map_err(|e| format!("生成 Codex 官方接管配置失败: {e}"));
         }
 
-        let updated = crate::codex_config::update_codex_toml_field(toml_str, "base_url", proxy_url)
+        let updated = crate::codex_config::update_codex_takeover_base_url(toml_str, proxy_url)
             .map_err(|e| format!("更新 Codex 代理地址失败: {e}"))?;
         let mut updated =
             crate::codex_config::update_codex_toml_field(&updated, "wire_api", "responses")
@@ -3708,7 +3732,7 @@ impl ProxyService {
             let live_config = if official_passthrough {
                 prepared_config
             } else {
-                let injected = crate::codex_config::prepare_codex_provider_live_config(
+                let injected = crate::codex_config::prepare_codex_takeover_live_config(
                     config.get("auth").unwrap_or(&Value::Null),
                     &prepared_config,
                 )
@@ -3738,7 +3762,7 @@ impl ProxyService {
                 };
                 match live_login_state {
                     Some(live_has_login) => {
-                        crate::codex_config::align_codex_requires_openai_auth_with_login_preservation(
+                        crate::codex_config::align_codex_takeover_requires_openai_auth(
                             &injected,
                             live_has_login,
                         )
@@ -4747,6 +4771,80 @@ mod tests {
                 .is_none(),
             "non-managed providers should retain the legacy fallback behavior"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_tracks_ephemeral_endpoint_after_stop() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().unwrap();
+        let db = Arc::new(Database::memory().unwrap());
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+        let info = service.start().await.expect("start local proxy fixture");
+        assert_ne!(info.port, 0);
+        assert_eq!(db.get_proxy_config().await.unwrap().listen_port, info.port);
+        let auth = json!({ "tokens": { "access_token": "fixture-oauth-access" } });
+        let config = format!(
+            "model_provider = 'mine'\nmodel = 'fixture-model'\n\
+             model_providers = {{ mine = {{ name = 'Mine', wire_api = 'responses', \
+             base_url = 'http://127.0.0.1:{}/v1', experimental_bearer_token = 'PROXY_MANAGED' }} }}\n",
+            info.port
+        );
+        let mut expected: toml::Value = toml::from_str(&config).unwrap();
+        let table = expected["model_providers"]["mine"].as_table_mut().unwrap();
+        table.remove("base_url");
+        table.remove("experimental_bearer_token");
+        for stopped in [false, true] {
+            if stopped {
+                service.stop().await.expect("stop fixture before fallback");
+            }
+            crate::codex_config::write_codex_live_atomic(&auth, Some(&config)).unwrap();
+            service
+                .restore_live_config_for_app_with_fallback(&AppType::Codex)
+                .await
+                .unwrap();
+            let restored = service.read_codex_live().unwrap();
+            assert_eq!(restored["auth"], auth);
+            assert_eq!(
+                toml::from_str::<toml::Value>(restored["config"].as_str().unwrap()).unwrap(),
+                expected,
+                "the actual endpoint must be cleaned with stopped={stopped}"
+            );
+        }
+        crate::settings::update_settings(crate::settings::AppSettings::default()).unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_cleanup_works_from_sync_disable_without_tokio_runtime() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().unwrap();
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        let db = Arc::new(Database::memory().unwrap());
+        let service = ProxyService::new(db);
+        let (_, proxy_url) = futures::executor::block_on(service.build_proxy_urls()).unwrap();
+        let auth = json!({ "tokens": { "access_token": "fixture-oauth-access" } });
+        let config = format!(
+            "model_provider = 'mine'\n\
+             model_providers = {{ mine = {{ name = 'Mine', wire_api = 'responses', \
+             base_url = '{proxy_url}', experimental_bearer_token = 'PROXY_MANAGED' }} }}\n"
+        );
+        crate::codex_config::write_codex_live_atomic(&auth, Some(&config)).unwrap();
+        service
+            .disable_takeover_for_app_sync(&AppType::Codex)
+            .unwrap();
+        let restored = service.read_codex_live().unwrap();
+        let mut expected: toml::Value = toml::from_str(&config).unwrap();
+        let table = expected["model_providers"]["mine"].as_table_mut().unwrap();
+        table.remove("base_url");
+        table.remove("experimental_bearer_token");
+        assert_eq!(restored["auth"], auth);
+        assert_eq!(
+            toml::from_str::<toml::Value>(restored["config"].as_str().unwrap()).unwrap(),
+            expected
+        );
+        crate::settings::update_settings(crate::settings::AppSettings::default()).unwrap();
     }
 
     #[tokio::test]
@@ -6395,9 +6493,9 @@ wire_api = "responses"
             .expect("reset settings");
     }
 
-    #[test]
+    #[tokio::test]
     #[serial]
-    fn codex_takeover_cleanup_removes_config_placeholder_without_touching_oauth_auth() {
+    async fn codex_takeover_cleanup_removes_config_placeholder_without_touching_oauth_auth() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -6433,6 +6531,7 @@ experimental_bearer_token = "PROXY_MANAGED"
 
         service
             .cleanup_codex_takeover_placeholders_in_live()
+            .await
             .expect("cleanup Codex takeover placeholders");
 
         let live_auth: Value =
@@ -6453,6 +6552,861 @@ experimental_bearer_token = "PROXY_MANAGED"
             !live_config.contains("http://127.0.0.1:15721"),
             "cleanup should remove local proxy base_url"
         );
+    }
+
+    async fn codex_takeover_then_cleanup_without_restore_sources(
+        route_config: &str,
+    ) -> (toml::Value, toml::Value) {
+        codex_takeover_then_cleanup_with_context(route_config, None, None, None, None, None, false)
+            .await
+    }
+
+    async fn codex_takeover_then_cleanup_with_context(
+        route_config: &str,
+        root_override: Option<&str>,
+        profile_config: Option<&str>,
+        auth_flag_edit: Option<Option<bool>>,
+        provider_url_edit: Option<&str>,
+        reject_auth_fallback: Option<bool>,
+        official_provider: bool,
+    ) -> (toml::Value, toml::Value) {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload isolated settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "id_token": "test-oauth-id",
+                "access_token": "test-oauth-access",
+                "refresh_token": "test-oauth-refresh",
+                "account_id": "test-account"
+            },
+            "last_refresh": "2026-09-01T00:00:00Z"
+        });
+        let config = format!(
+            "model = \"gpt-5.4\"\nmodel_reasoning_effort = \"high\"\n{route_config}\n\
+             [mcp_servers.cleanup_fixture]\ncommand = \"test-mcp-command\"\nargs = [\"--test\"]\n"
+        );
+        let original: toml::Value = toml::from_str(&config).expect("parse original config");
+        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some(&config))
+            .expect("seed isolated Codex live files");
+        let mut provider = Provider::with_id(
+            "cleanup-provider".to_string(),
+            "Cleanup fixture".to_string(),
+            json!({
+                "auth": if official_provider { json!({}) } else { json!({ "OPENAI_API_KEY": "test-key" }) },
+                "config": config
+            }),
+            None,
+        );
+        provider.category = Some(
+            if official_provider {
+                "official"
+            } else {
+                "custom"
+            }
+            .to_string(),
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("set DB current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id))
+            .expect("set local current provider");
+
+        // Generate the takeover configuration through the production path;
+        // in particular, do not hand-author the generated cc-switch table.
+        service
+            .takeover_live_config_strict(&AppType::Codex)
+            .await
+            .expect("take over Codex");
+        let taken_over = service.read_codex_live().expect("read takeover config");
+        assert_eq!(taken_over.get("auth"), Some(&oauth_auth));
+        assert!(service.detect_takeover_in_live_config_for_app(&AppType::Codex));
+        let mut takeover_text = taken_over["config"]
+            .as_str()
+            .expect("takeover TOML")
+            .to_string();
+        if let Some(url) = root_override {
+            // The user adds an override while the temporary custom route is
+            // active. It must not suddenly become active during cleanup.
+            let mut doc: toml_edit::DocumentMut =
+                takeover_text.parse().expect("parse takeover TOML");
+            doc["openai_base_url"] = toml_edit::value(url);
+            takeover_text = doc.to_string();
+            crate::codex_config::write_codex_live_config_atomic(Some(&takeover_text))
+                .expect("write user root override");
+        }
+        if let Some(auth_flag_edit) = auth_flag_edit {
+            let mut doc: toml_edit::DocumentMut =
+                takeover_text.parse().expect("parse takeover TOML");
+            let provider_id = doc["model_provider"]
+                .as_str()
+                .expect("generated provider id")
+                .to_string();
+            let table = doc["model_providers"][&provider_id]
+                .as_table_like_mut()
+                .expect("generated provider table");
+            assert_eq!(
+                table
+                    .get("requires_openai_auth")
+                    .and_then(toml_edit::Item::as_bool),
+                Some(true),
+                "the production writer must stamp the existing OAuth login before the user edit"
+            );
+            match auth_flag_edit {
+                Some(value) => {
+                    table.insert("requires_openai_auth", toml_edit::value(value));
+                }
+                None => {
+                    table.remove("requires_openai_auth");
+                }
+            }
+            takeover_text = doc.to_string();
+            crate::codex_config::write_codex_live_config_atomic(Some(&takeover_text))
+                .expect("write user auth flag edit");
+        }
+        if let Some(url) = provider_url_edit {
+            let mut doc: toml_edit::DocumentMut =
+                takeover_text.parse().expect("parse takeover TOML");
+            let provider_id = doc["model_provider"]
+                .as_str()
+                .expect("takeover provider id")
+                .to_string();
+            let table = doc["model_providers"][&provider_id]
+                .as_table_like_mut()
+                .expect("takeover provider table");
+            assert_eq!(
+                table
+                    .get("experimental_bearer_token")
+                    .and_then(toml_edit::Item::as_str),
+                Some(PROXY_TOKEN_PLACEHOLDER),
+                "the user's URL edit leaves the takeover placeholder in place"
+            );
+            table.insert("base_url", toml_edit::value(url));
+            takeover_text = doc.to_string();
+            crate::codex_config::write_codex_live_config_atomic(Some(&takeover_text))
+                .expect("write user provider URL edit");
+        }
+        let profile_path = crate::codex_config::get_codex_config_dir().join("work.config.toml");
+        if let Some(profile_config) = profile_config {
+            std::fs::write(&profile_path, profile_config).expect("write independent profile");
+        }
+        let taken_over: toml::Value = toml::from_str(&takeover_text).expect("parse takeover TOML");
+
+        db.delete_live_backup("codex").await.expect("remove backup");
+        db.delete_provider("codex", &provider.id)
+            .expect("remove SSOT provider");
+        crate::settings::set_current_provider(&AppType::Codex, None)
+            .expect("clear local current provider");
+        assert!(db
+            .get_live_backup("codex")
+            .await
+            .expect("read backup")
+            .is_none());
+        assert!(db
+            .get_all_providers("codex")
+            .expect("read providers")
+            .is_empty());
+        assert!(
+            crate::settings::get_effective_current_provider(&db, &AppType::Codex)
+                .expect("read current provider")
+                .is_none()
+        );
+        if reject_auth_fallback == Some(true) {
+            // Logging out does not make the configuration safe: a later login
+            // would enable the same official-auth fallback to the retained URL.
+            std::fs::remove_file(crate::codex_config::get_codex_auth_path())
+                .expect("remove this isolated fixture's current OAuth login");
+        }
+        let config_path = crate::codex_config::get_codex_config_path();
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        let before_config = std::fs::read(&config_path).expect("snapshot config bytes");
+        let before_auth = auth_path
+            .exists()
+            .then(|| std::fs::read(&auth_path).expect("snapshot auth bytes"));
+        let restore_result = service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await;
+        if reject_auth_fallback.is_some() {
+            let provider_id = taken_over["model_provider"].as_str().expect("provider id");
+            if provider_url_edit.is_some() {
+                assert_eq!(
+                    taken_over["model_providers"][provider_id]["requires_openai_auth"].as_bool(),
+                    Some(true),
+                    "the unsafe edited URL must retain the production writer's official-auth flag"
+                );
+            }
+            let error = restore_result.expect_err("cleanup must reject official-auth fallback");
+            assert!(
+                error.contains("官方认证"),
+                "explain why the user's configuration cannot safely be cleaned: {error}"
+            );
+            assert_eq!(
+                std::fs::read(&config_path).expect("read rejected config"),
+                before_config,
+                "rejection must happen before any config.toml write"
+            );
+            assert_eq!(auth_path.exists(), before_auth.is_some());
+            if let Some(before_auth) = before_auth {
+                assert_eq!(
+                    std::fs::read(&auth_path).expect("read rejected auth"),
+                    before_auth,
+                    "rejection must preserve auth.json byte for byte"
+                );
+            }
+            if let Some(profile_config) = profile_config {
+                assert_eq!(
+                    std::fs::read(&profile_path).expect("read rejected profile"),
+                    profile_config.as_bytes(),
+                    "rejection must preserve the independent profile byte for byte"
+                );
+            }
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset isolated settings");
+            return (taken_over.clone(), taken_over);
+        }
+        restore_result.expect("restore through last-resort cleanup");
+
+        let restored = service.read_codex_live().expect("read cleaned live config");
+        assert_eq!(
+            restored.get("auth"),
+            Some(&oauth_auth),
+            "preserve the complete OAuth login"
+        );
+        let restored_text = restored["config"].as_str().expect("cleaned TOML");
+        assert!(!restored_text.contains(PROXY_TOKEN_PLACEHOLDER));
+        let restored: toml::Value = toml::from_str(restored_text).expect("parse cleaned TOML");
+        for field in ["model", "model_reasoning_effort", "mcp_servers"] {
+            assert_eq!(restored.get(field), original.get(field), "preserve {field}");
+        }
+        if let Some(url) = root_override {
+            assert_eq!(
+                restored
+                    .get("openai_base_url")
+                    .and_then(toml::Value::as_str),
+                Some(url)
+            );
+        }
+        if let Some(profile_config) = profile_config {
+            assert_eq!(
+                std::fs::read(&profile_path).expect("read independent profile after cleanup"),
+                profile_config.as_bytes(),
+                "cleanup must not rewrite independent profile content"
+            );
+        }
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset isolated settings");
+        (taken_over, restored)
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_removes_generated_legacy_route_without_restore_sources() {
+        for (route_config, generated_id) in [
+            ("", "cc-switch"),
+            ("model_provider = \"openai\"\n", "cc-switch"),
+            (
+                "[model_providers.cc-switch]\nname = \"User gateway\"\n\
+                 base_url = \"https://user.example/v1\"\nwire_api = \"responses\"\n",
+                "cc-switch-2",
+            ),
+            (
+                "model_provider = \"openai\"\n\
+                 model_providers = { cc-switch = { name = \"User gateway\", \
+                 base_url = \"https://user.example/v1\", wire_api = \"responses\" } }\n",
+                "cc-switch-2",
+            ),
+        ] {
+            let original: toml::Value = toml::from_str(route_config).expect("parse route fixture");
+            let (taken_over, restored) =
+                codex_takeover_then_cleanup_without_restore_sources(route_config).await;
+            assert_eq!(taken_over["model_provider"].as_str(), Some(generated_id));
+            assert!(taken_over["model_providers"].get(generated_id).is_some());
+            assert_eq!(
+                restored.get("model_provider").and_then(toml::Value::as_str).unwrap_or("openai"),
+                "openai",
+                "cleanup must return a generated legacy route to the built-in provider: {route_config}"
+            );
+            assert!(
+                restored
+                    .get("model_providers")
+                    .and_then(|tables| tables.get(generated_id))
+                    .is_none(),
+                "the temporary provider table must not survive cleanup"
+            );
+            let expected_tables = original
+                .get("model_providers")
+                .and_then(toml::Value::as_table);
+            let restored_tables = restored
+                .get("model_providers")
+                .and_then(toml::Value::as_table);
+            assert_eq!(
+                restored_tables.map_or(0, |tables| tables.len()),
+                expected_tables.map_or(0, |tables| tables.len())
+            );
+            if let Some(expected_tables) = expected_tables {
+                for (id, table) in expected_tables {
+                    assert_eq!(
+                        restored_tables.and_then(|tables| tables.get(id)),
+                        Some(table)
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_preserves_user_authored_legacy_route_names() {
+        // A user can create exactly the same TOML values as an automatically
+        // projected route. Neither its id nor its field values prove ownership.
+        let (generated, _) = codex_takeover_then_cleanup_without_restore_sources("").await;
+        for provider_id in ["cc-switch", "cc-switch-2"] {
+            for inline in [false, true] {
+                let route_config = if inline {
+                    format!(
+                        "model_provider = \"{provider_id}\"\nmodel_providers = {{ \
+                         {provider_id} = {{ name = \"Custom\", wire_api = \"responses\" }} }}\n"
+                    )
+                } else {
+                    format!(
+                        "model_provider = \"{provider_id}\"\n\n\
+                         [model_providers.{provider_id}]\nname = \"Custom\"\nwire_api = \"responses\"\n"
+                    )
+                };
+                let (taken_over, restored) =
+                    codex_takeover_then_cleanup_without_restore_sources(&route_config).await;
+                assert_eq!(
+                    taken_over["model_providers"][provider_id],
+                    generated["model_providers"]["cc-switch"],
+                    "user and generated tables must be semantically indistinguishable during takeover"
+                );
+                assert_eq!(restored["model_provider"].as_str(), Some(provider_id));
+                let mut expected = taken_over["model_providers"][provider_id].clone();
+                let expected_table = expected.as_table_mut().expect("provider table");
+                expected_table.remove("base_url");
+                expected_table.remove("experimental_bearer_token");
+                assert_eq!(
+                    restored["model_providers"][provider_id], expected,
+                    "cleanup must preserve the user-authored table: {route_config}"
+                );
+            }
+        }
+    }
+
+    fn assert_codex_cleanup_preserves_route_identity(
+        taken_over: &toml::Value,
+        restored: &toml::Value,
+    ) {
+        let provider_id = taken_over["model_provider"]
+            .as_str()
+            .expect("takeover provider id");
+        assert_eq!(
+            restored.get("model_provider"),
+            taken_over.get("model_provider"),
+            "cleanup must keep the selector when removing it changes another routing context"
+        );
+        let mut expected_table = taken_over["model_providers"][provider_id].clone();
+        let table = expected_table
+            .as_table_mut()
+            .expect("takeover provider table");
+        table.remove("base_url");
+        table.remove("experimental_bearer_token");
+        assert_eq!(
+            restored
+                .get("model_providers")
+                .and_then(|tables| tables.get(provider_id)),
+            Some(&expected_table),
+            "keep the referenced provider table while removing its temporary URL and token"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_preserves_route_identity_with_root_override() {
+        for route_config in ["", "model_providers = {}\n"] {
+            for url in ["https://user-root.example/v1", "http://localhost:28764/v1"] {
+                let (taken_over, restored) = codex_takeover_then_cleanup_with_context(
+                    route_config,
+                    Some(url),
+                    None,
+                    None,
+                    None,
+                    None,
+                    false,
+                )
+                .await;
+                assert_codex_cleanup_preserves_route_identity(&taken_over, &restored);
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_rejects_unverified_independent_profile() {
+        for route_config in ["", "model_providers = {}\n"] {
+            for profile_config in [
+                "# User profile references the main config's generated table.\n\
+                 model_provider = \"cc-switch\"\nmodel = \"profile-model\"\n",
+                "# The selector is inherited; dropping it activates this URL.\n\
+                 openai_base_url = \"https://profile.example/v1\"\nmodel = \"profile-model\"\n",
+                "# An unfinished edit is not evidence that the profile is independent.\n\
+                 model_provider =\n",
+                "# This route inherits requires_openai_auth from the main config.\n\
+                 [model_providers.cc-switch]\nbase_url = \"https://profile.example/v1\"\n",
+            ] {
+                codex_takeover_then_cleanup_with_context(
+                    route_config,
+                    None,
+                    Some(profile_config),
+                    None,
+                    None,
+                    Some(false),
+                    false,
+                )
+                .await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_rejects_profile_enabling_official_auth() {
+        for route_config in ["", "model_providers = {}\n"] {
+            codex_takeover_then_cleanup_with_context(
+                route_config,
+                None,
+                Some(
+                    "[model_providers.cc-switch]\nrequires_openai_auth = true\n\
+                     base_url = \"https://profile.example/v1\"\n",
+                ),
+                Some(Some(false)),
+                None,
+                Some(false),
+                false,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_preserves_user_edited_auth_flag() {
+        for route_config in ["", "model_providers = {}\n"] {
+            for auth_flag_edit in [Some(false), None] {
+                let (taken_over, restored) = codex_takeover_then_cleanup_with_context(
+                    route_config,
+                    None,
+                    None,
+                    Some(auth_flag_edit),
+                    None,
+                    None,
+                    false,
+                )
+                .await;
+                assert_codex_cleanup_preserves_route_identity(&taken_over, &restored);
+                let provider_id = taken_over["model_provider"].as_str().expect("provider id");
+                assert_eq!(
+                    restored["model_providers"][provider_id]
+                        .get("requires_openai_auth")
+                        .and_then(toml::Value::as_bool),
+                    auth_flag_edit,
+                    "cleanup must retain the user's auth mode edit, including field removal"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_preserves_user_edited_provider_url_without_official_auth() {
+        for route_config in [
+            "",
+            "model_providers = {}\n",
+            "model_provider = \"cc-switch\"\n[model_providers]\n\
+             cc-switch = { name = \"Custom\", wire_api = \"responses\" }\n",
+        ] {
+            for url in [
+                "http://localhost.example.test/v1",
+                "http://localhost:11434/v1",
+                "http://127.0.0.1.example.test/v1",
+                "http://127.0.0.1:15721/other/v1",
+                "http://127.0.0.1:15721@user-gateway.example/v1",
+                "http://[::1]:11434/v1",
+                "http://127.0.0.1:15721/v1?target=user-gateway",
+            ] {
+                let (taken_over, restored) = codex_takeover_then_cleanup_with_context(
+                    route_config,
+                    None,
+                    None,
+                    Some(Some(false)),
+                    Some(url),
+                    None,
+                    false,
+                )
+                .await;
+                assert_eq!(
+                    restored.get("model_provider"),
+                    taken_over.get("model_provider"),
+                    "cleanup must preserve the selector for the user-edited route"
+                );
+                let provider_id = taken_over["model_provider"].as_str().expect("provider id");
+                let mut expected_table = taken_over["model_providers"][provider_id].clone();
+                expected_table
+                    .as_table_mut()
+                    .expect("takeover provider table")
+                    .remove("experimental_bearer_token");
+                assert_eq!(
+                    restored
+                        .get("model_providers")
+                        .and_then(|tables| tables.get(provider_id)),
+                    Some(&expected_table),
+                    "cleanup must remove only the placeholder, not the user's URL: {url}; {route_config}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_rejects_user_url_with_official_auth() {
+        for route_config in [
+            "",
+            "model_providers = {}\n",
+            "model_provider = \"cc-switch\"\n[model_providers]\n\
+             cc-switch = { name = \"Custom\", wire_api = \"responses\" }\n",
+        ] {
+            for url in [
+                "https://user-gateway.example/v1",
+                "http://localhost:11434/v1",
+            ] {
+                codex_takeover_then_cleanup_with_context(
+                    route_config,
+                    None,
+                    None,
+                    None,
+                    Some(url),
+                    Some(false),
+                    false,
+                )
+                .await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_rejects_user_url_without_current_oauth() {
+        for route_config in ["", "model_providers = {}\n"] {
+            codex_takeover_then_cleanup_with_context(
+                route_config,
+                None,
+                None,
+                None,
+                Some("https://user-gateway.example/v1"),
+                Some(true),
+                false,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_checks_official_route_overrides_before_removal() {
+        for (root_override, profile_config) in [
+            (None, None),
+            (Some("https://user-root.example/v1"), None),
+            (
+                None,
+                Some("openai_base_url = \"https://profile.example/v1\"\n"),
+            ),
+        ] {
+            let reject = root_override.is_some() || profile_config.is_some();
+            let (taken_over, restored) = codex_takeover_then_cleanup_with_context(
+                "",
+                root_override,
+                profile_config,
+                None,
+                None,
+                reject.then_some(false),
+                true,
+            )
+            .await;
+            assert_eq!(
+                taken_over["model_provider"].as_str(),
+                Some("cc-switch-official"),
+                "the fixture must exercise the production official takeover route"
+            );
+            if !reject {
+                assert!(restored.get("model_provider").is_none());
+                assert!(restored
+                    .get("model_providers")
+                    .and_then(|tables| tables.get("cc-switch-official"))
+                    .is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_preserves_independent_provider_credentials() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload isolated settings");
+        let service = ProxyService::new(Arc::new(Database::memory().expect("init db")));
+        for provider_auth in [
+            "env_key = \"CC_SWITCH_TEST_USER_GATEWAY_KEY\"\n\
+             experimental_bearer_token = \"PROXY_MANAGED\"\n",
+            "experimental_bearer_token = \"test-user-gateway-key\"\n",
+        ] {
+            let auth = json!({
+                "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "id_token": "test-oauth-id",
+                    "access_token": "test-oauth-access",
+                    "refresh_token": "test-oauth-refresh"
+                }
+            });
+            let config = format!(
+                "model_provider = \"user-route\"\nmodel = \"gpt-5.4\"\n\
+                 [model_providers.user-route]\nname = \"User gateway\"\n\
+                 base_url = \"https://user-gateway.example/v1\"\nwire_api = \"responses\"\n\
+                 requires_openai_auth = true\n{provider_auth}\n\
+                 [mcp_servers.cleanup_fixture]\ncommand = \"test-mcp-command\"\n"
+            );
+            service
+                .write_codex_live(&json!({ "auth": auth, "config": config }))
+                .expect("seed independently authenticated gateway");
+            let mut expected: toml::Value = toml::from_str(&config).expect("parse gateway fixture");
+            let expected_provider = expected["model_providers"]["user-route"]
+                .as_table_mut()
+                .expect("provider table");
+            if expected_provider["experimental_bearer_token"].as_str()
+                == Some(PROXY_TOKEN_PLACEHOLDER)
+            {
+                expected_provider.remove("experimental_bearer_token");
+            }
+            let mut expected_auth = auth;
+            expected_auth
+                .as_object_mut()
+                .unwrap()
+                .remove("OPENAI_API_KEY");
+
+            service
+                .cleanup_codex_takeover_placeholders_in_live()
+                .await
+                .expect("independent provider auth must not activate official-auth fallback");
+            let restored = service.read_codex_live().expect("read cleaned gateway");
+            assert_eq!(restored.get("auth"), Some(&expected_auth));
+            let restored: toml::Value = toml::from_str(restored["config"].as_str().unwrap())
+                .expect("parse cleaned gateway");
+            assert_eq!(
+                restored, expected,
+                "preserve user credentials, URL and auth mode while removing only placeholders"
+            );
+        }
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset isolated settings");
+    }
+
+    async fn assert_codex_cleanup_only_removes_expected_endpoint(
+        service: &ProxyService,
+        url: &str,
+        remove_url: bool,
+    ) {
+        let auth = json!({
+            "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "test-oauth-id",
+                "access_token": "test-oauth-access",
+                "refresh_token": "test-oauth-refresh",
+                "account_id": "test-account"
+            }
+        });
+        // Include both the old root URL location and an active inline provider.
+        // An inactive provider with the same URL must remain entirely untouched.
+        let config = format!(
+            "model_provider = \"user-route\"\nmodel = \"gpt-5.4\"\n\
+             model_reasoning_effort = \"high\"\nbase_url = \"{url}\"\n\
+             [model_providers]\n\
+             user-route = {{ name = \"User route\", base_url = \"{url}\", \
+             wire_api = \"responses\", experimental_bearer_token = \"PROXY_MANAGED\", \
+             requires_openai_auth = false }}\n\
+             inactive = {{ name = \"Other route\", base_url = \"{url}\", \
+             wire_api = \"responses\", experimental_bearer_token = \"test-user-key\" }}\n\
+             [mcp_servers.cleanup_fixture]\ncommand = \"test-mcp-command\"\nargs = [\"--test\"]\n"
+        );
+        service
+            .write_codex_live(&json!({ "auth": auth, "config": config }))
+            .expect("seed endpoint cleanup fixture");
+        let mut expected: toml::Value = toml::from_str(&config).expect("parse cleanup fixture");
+        if remove_url {
+            expected.as_table_mut().unwrap().remove("base_url");
+            expected["model_providers"]["user-route"]
+                .as_table_mut()
+                .unwrap()
+                .remove("base_url");
+        }
+        expected["model_providers"]["user-route"]
+            .as_table_mut()
+            .unwrap()
+            .remove("experimental_bearer_token");
+        let mut expected_auth = auth;
+        expected_auth
+            .as_object_mut()
+            .unwrap()
+            .remove("OPENAI_API_KEY");
+
+        service
+            .cleanup_codex_takeover_placeholders_in_live()
+            .await
+            .expect("clean up through the production endpoint predicate");
+        let restored = service
+            .read_codex_live()
+            .expect("read cleaned endpoint fixture");
+        assert_eq!(restored.get("auth"), Some(&expected_auth));
+        let restored: toml::Value =
+            toml::from_str(restored["config"].as_str().unwrap()).expect("parse cleaned fixture");
+        assert_eq!(
+            restored, expected,
+            "cleanup must change only the proven proxy URL and placeholders: {url}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_matches_current_nondefault_endpoint() {
+        for (listen_address, connect_host) in [("0.0.0.0", "127.0.0.1"), ("::", "[::1]")] {
+            let _home = TempHome::new();
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let db = Arc::new(Database::memory().expect("init db"));
+            db.update_proxy_config(ProxyConfig {
+                listen_address: listen_address.to_string(),
+                listen_port: 28764,
+                ..Default::default()
+            })
+            .await
+            .expect("set nondefault proxy endpoint");
+            let service = ProxyService::new(db);
+            let expected_endpoint = format!("http://{connect_host}:28764/v1");
+            assert_eq!(
+                service
+                    .build_proxy_urls()
+                    .await
+                    .expect("resolve endpoint")
+                    .1,
+                expected_endpoint
+            );
+            for (url, remove_url) in [
+                (expected_endpoint.clone(), true),
+                (format!("{expected_endpoint}/"), true),
+                (format!("http://{connect_host}:28765/v1"), false),
+                (format!("http://{connect_host}:28764/other/v1"), false),
+            ] {
+                assert_codex_cleanup_only_removes_expected_endpoint(&service, &url, remove_url)
+                    .await;
+            }
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset isolated settings");
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_preserves_urls_when_endpoint_cannot_be_resolved() {
+        for missing_proxy_config in [false, true] {
+            let _home = TempHome::new();
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let db = Arc::new(Database::memory().expect("init db"));
+            let service = ProxyService::new(db.clone());
+            if missing_proxy_config {
+                db.conn
+                    .lock()
+                    .expect("lock isolated database")
+                    .execute_batch("DROP TABLE proxy_config")
+                    .expect("simulate proxy configuration read failure");
+            } else {
+                use_ephemeral_proxy_port(&db).await;
+            }
+            assert!(
+                service.build_proxy_urls().await.is_err(),
+                "the fixture must make the endpoint unavailable"
+            );
+            assert_codex_cleanup_only_removes_expected_endpoint(
+                &service,
+                "http://127.0.0.1:15721/v1",
+                false,
+            )
+            .await;
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset isolated settings");
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_removes_generated_route_after_writer_stamps_auth_false() {
+        for route_config in ["", "model_providers = {}\n"] {
+            let _home = TempHome::new();
+            crate::settings::reload_settings().expect("reload isolated settings");
+            let db = Arc::new(Database::memory().expect("init db"));
+            let service = ProxyService::new(db);
+            assert!(!crate::codex_config::get_codex_auth_path().exists());
+
+            let mut provider = Provider::with_id(
+                "cleanup-provider".to_string(),
+                "Cleanup fixture".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "test-key" },
+                    "config": format!("model = \"gpt-5.4\"\n{route_config}")
+                }),
+                None,
+            );
+            provider.category = Some("custom".to_string());
+            let mut takeover_settings = provider.settings_config.clone();
+            ProxyService::apply_codex_takeover_fields_for_provider(
+                &mut takeover_settings,
+                "http://127.0.0.1:15721/v1",
+                &provider,
+            )
+            .expect("apply takeover fields");
+            service
+                .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+                .expect("write generated takeover route");
+            let takeover_text =
+                std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                    .expect("read takeover config");
+            let taken_over: toml::Value = toml::from_str(&takeover_text).expect("parse takeover");
+            assert_eq!(taken_over["model_provider"].as_str(), Some("cc-switch"));
+            assert_eq!(
+                taken_over["model_providers"]["cc-switch"]["requires_openai_auth"].as_bool(),
+                Some(false),
+                "the production writer stamps false when no login exists"
+            );
+
+            service
+                .cleanup_codex_takeover_placeholders_in_live()
+                .await
+                .expect("clean up generated takeover route");
+            let cleaned_text =
+                std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                    .expect("read cleaned config");
+            let cleaned: toml::Value = toml::from_str(&cleaned_text).expect("parse cleaned config");
+            assert!(cleaned.get("model_provider").is_none());
+            assert!(cleaned
+                .get("model_providers")
+                .and_then(|tables| tables.get("cc-switch"))
+                .is_none());
+            assert_eq!(cleaned["model"].as_str(), Some("gpt-5.4"));
+            assert!(!cleaned_text.contains(PROXY_TOKEN_PLACEHOLDER));
+            assert!(!crate::codex_config::get_codex_auth_path().exists());
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset isolated settings");
+        }
     }
 
     #[test]
