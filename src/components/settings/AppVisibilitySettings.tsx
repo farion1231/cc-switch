@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type { VisibleApps } from "@/types";
-import type { AppId } from "@/lib/api";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import copilotByokIcon from "@/assets/icons/vscode-copilot-byok.png";
 
 interface AppVisibilitySettingsProps {
   settings: SettingsFormState;
@@ -15,8 +15,9 @@ interface AppVisibilitySettingsProps {
 }
 
 const APP_CONFIG: Array<{
-  id: AppId;
-  icon: string;
+  id: keyof VisibleApps;
+  icon?: string;
+  imageSrc?: string;
   nameKey: string;
 }> = [
   { id: "claude", icon: "claude", nameKey: "apps.claudeCode" },
@@ -29,6 +30,16 @@ const APP_CONFIG: Array<{
   { id: "gemini", icon: "gemini", nameKey: "apps.gemini" },
   { id: "grokbuild", icon: "grok", nameKey: "apps.grokbuild" },
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
+  {
+    id: "copilotByok",
+    imageSrc: copilotByokIcon,
+    nameKey: "apps.copilotByok",
+  },
+  {
+    id: "copilotCli",
+    icon: "githubcopilot",
+    nameKey: "apps.copilotCli",
+  },
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
   { id: "pi", icon: "pi", nameKey: "apps.pi" },
@@ -45,7 +56,7 @@ export function AppVisibilitySettings({
   // Count how many apps are currently visible
   const visibleCount = Object.values(visibleApps).filter(Boolean).length;
 
-  const handleToggle = (appId: AppId) => {
+  const handleToggle = (appId: keyof VisibleApps) => {
     const isCurrentlyVisible = visibleApps[appId];
     // Prevent disabling the last visible app
     if (isCurrentlyVisible && visibleCount <= 1) return;
@@ -81,6 +92,7 @@ export function AppVisibilitySettings({
               disabled={isDisabled}
               onClick={() => handleToggle(app.id)}
               icon={app.icon}
+              imageSrc={app.imageSrc}
               name={t(app.nameKey)}
             >
               {t(app.nameKey)}
@@ -103,7 +115,8 @@ interface AppButtonProps {
   active: boolean;
   disabled?: boolean;
   onClick: () => void;
-  icon: string;
+  icon?: string;
+  imageSrc?: string;
   name: string;
   children: React.ReactNode;
 }
@@ -113,12 +126,14 @@ function AppButton({
   disabled,
   onClick,
   icon,
+  imageSrc,
   name,
   children,
 }: AppButtonProps) {
   return (
     <Button
       type="button"
+      aria-label={name}
       onClick={onClick}
       disabled={disabled}
       size="sm"
@@ -130,7 +145,16 @@ function AppButton({
           : "text-muted-foreground hover:text-foreground hover:bg-muted",
       )}
     >
-      <ProviderIcon icon={icon} name={name} size={14} />
+      {imageSrc ? (
+        <img
+          src={imageSrc}
+          alt=""
+          aria-hidden="true"
+          className="h-3.5 w-3.5 rounded object-cover"
+        />
+      ) : (
+        <ProviderIcon icon={icon} name={name} size={14} />
+      )}
       {children}
     </Button>
   );

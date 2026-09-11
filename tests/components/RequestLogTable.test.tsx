@@ -158,4 +158,130 @@ describe("RequestLogTable", () => {
       );
     });
   });
+
+  it("shows only readable resolved model names", () => {
+    useRequestLogsMock.mockReturnValue({
+      data: {
+        data: [
+          {
+            requestId: "vscode-session-1",
+            providerId: "vscode-copilot",
+            providerName: "VS Code Copilot (Session)",
+            appType: "copilot-byok",
+            model: "oswe-vscode-prime",
+            modelDisplayName: "Raptor mini",
+            requestModel: "copilot/auto",
+            costMultiplier: "0",
+            inputTokens: 100,
+            outputTokens: 10,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            inputCostUsd: "0",
+            outputCostUsd: "0",
+            cacheReadCostUsd: "0",
+            cacheCreationCostUsd: "0",
+            totalCostUsd: "0",
+            isStreaming: true,
+            latencyMs: 1000,
+            statusCode: 200,
+            createdAt: 1_700_000_000,
+            dataSource: "vscode_session",
+          },
+          {
+            requestId: "vscode-session-2",
+            providerId: "vscode-copilot",
+            providerName: "VS Code Copilot (Session)",
+            appType: "copilot-byok",
+            model: "MiniMax-M3",
+            modelDisplayName: "MiniMax-M3",
+            requestModel: "customendpoint/Minimax/MiniMax-M3",
+            costMultiplier: "1.0",
+            inputTokens: 200,
+            outputTokens: 20,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            inputCostUsd: "0",
+            outputCostUsd: "0",
+            cacheReadCostUsd: "0",
+            cacheCreationCostUsd: "0",
+            totalCostUsd: "0",
+            isStreaming: true,
+            latencyMs: 1000,
+            statusCode: 200,
+            createdAt: 1_700_000_001,
+            dataSource: "vscode_session",
+          },
+        ],
+        total: 2,
+        page: 0,
+        pageSize: 20,
+      },
+      isLoading: false,
+    });
+
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        rangeLabel="Today"
+        appType="copilot-byok"
+        refreshIntervalMs={0}
+      />,
+    );
+
+    expect(screen.getByText("Raptor mini")).toBeInTheDocument();
+    expect(screen.getByText("MiniMax-M3")).toBeInTheDocument();
+    expect(screen.queryByText("copilot/auto")).not.toBeInTheDocument();
+    expect(screen.queryByText("oswe-vscode-prime")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("customendpoint/Minimax/MiniMax-M3"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps request-to-resolved routing visible for non-VS Code logs", () => {
+    useRequestLogsMock.mockReturnValue({
+      data: {
+        data: [
+          {
+            requestId: "claude-route-1",
+            providerId: "provider-1",
+            providerName: "Provider",
+            appType: "claude",
+            model: "resolved-model",
+            requestModel: "requested-model",
+            costMultiplier: "1",
+            inputTokens: 100,
+            outputTokens: 10,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            inputCostUsd: "0",
+            outputCostUsd: "0",
+            cacheReadCostUsd: "0",
+            cacheCreationCostUsd: "0",
+            totalCostUsd: "0",
+            isStreaming: true,
+            latencyMs: 1000,
+            statusCode: 200,
+            createdAt: 1_700_000_000,
+          },
+        ],
+        total: 1,
+        page: 0,
+        pageSize: 20,
+      },
+      isLoading: false,
+    });
+
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        rangeLabel="Today"
+        appType="all"
+        refreshIntervalMs={0}
+      />,
+    );
+
+    expect(
+      screen.getByTitle("requested-model → resolved-model"),
+    ).toHaveTextContent("requested-model → resolved-model");
+  });
 });

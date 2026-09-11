@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import copilotByokIcon from "@/assets/icons/vscode-copilot-byok.png";
 import {
   Popover,
   PopoverContent,
@@ -34,6 +35,8 @@ const APP_ICON_NAME: Record<AppId, string> = {
   gemini: "gemini",
   grokbuild: "grok",
   opencode: "opencode",
+  "copilot-byok": "vscode-copilot-byok",
+  "copilot-cli": "githubcopilot",
   openclaw: "openclaw",
   hermes: "hermes",
   pi: "pi",
@@ -46,13 +49,26 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   gemini: "Gemini",
   grokbuild: "Grok Build",
   opencode: "OpenCode",
+  "copilot-byok": "VS Code Copilot",
+  "copilot-cli": "Copilot CLI",
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
 };
 
-/** 应用图标 + 角标（Claude Code / Desktop 用角标区分终端与桌面） */
 function AppGlyph({ app, isActive }: { app: AppId; isActive: boolean }) {
+  if (app === "copilot-byok") {
+    return (
+      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+        <img
+          src={copilotByokIcon}
+          alt=""
+          aria-hidden="true"
+          className="h-6 w-6 max-w-none shrink-0 rounded object-cover"
+        />
+      </span>
+    );
+  }
   const badgeConfig = APP_BADGE_ICON[app];
   const BadgeIcon = badgeConfig?.icon;
   return (
@@ -65,7 +81,7 @@ function AppGlyph({ app, isActive }: { app: AppId; isActive: boolean }) {
       {BadgeIcon && (
         <span
           className={cn(
-            "absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-[3px] border h-[11px] w-[11px]",
+            "absolute -bottom-0.5 -right-0.5 flex h-[11px] w-[11px] items-center justify-center rounded-[3px] border",
             isActive
               ? "bg-background border-border text-foreground"
               : "bg-muted border-background text-muted-foreground group-hover:bg-background group-hover:text-foreground",
@@ -103,26 +119,26 @@ export function AppSwitcher({
   };
 
   // Filter apps based on visibility settings (default all visible)
-  const appsToShow = APP_IDS.filter((app) => {
+  const itemsToShow = APP_IDS.filter((item) => {
     if (!visibleApps) return true;
-    return visibleApps[app];
+    if (item === "copilot-byok") return visibleApps.copilotByok;
+    if (item === "copilot-cli") return visibleApps.copilotCli;
+    return visibleApps[item];
   });
-  const appCount = appsToShow.length;
+  const itemCount = itemsToShow.length;
+  const [visibleCount, setVisibleCount] = useState(itemCount);
 
-  const [visibleCount, setVisibleCount] = useState(appCount);
-
-  // 宽度必须取父弹性槽而非自身：自身宽度随可见数量变化，
-  // 用它做输入会形成收起→变窄→再收起的反馈循环
   useLayoutEffect(() => {
     const root = rootRef.current;
     const slot = root?.parentElement;
     if (!root || !slot) return;
 
     const compute = () => {
-      const sample = root.querySelector("button");
+      const sample = root.querySelector<HTMLButtonElement>(
+        "button[data-app-item]",
+      );
       if (!sample) return;
       const itemWidth = sample.offsetWidth;
-      // jsdom 或未完成布局时 offsetWidth 为 0，保持全部可见
       if (itemWidth <= 0) return;
       const rootStyle = window.getComputedStyle(root);
       const gap = parseFloat(rootStyle.columnGap) || 0;
@@ -130,35 +146,39 @@ export function AppSwitcher({
         (parseFloat(rootStyle.paddingLeft) || 0) +
         (parseFloat(rootStyle.paddingRight) || 0);
       const available = slot.clientWidth;
-      const widthAll = padding + appCount * itemWidth + (appCount - 1) * gap;
+      const widthAll =
+        padding + itemCount * itemWidth + Math.max(0, itemCount - 1) * gap;
       if (widthAll <= available) {
-        setVisibleCount(appCount);
+        setVisibleCount(itemCount);
         return;
       }
-      // 「更多」按钮与应用按钮同宽（同 padding + 同尺寸图标）
+
+      const reservedForMore = itemWidth + gap;
       const fit = Math.floor(
-        (available - padding - itemWidth) / (itemWidth + gap),
+        (available - padding - reservedForMore) / (itemWidth + gap),
       );
-      setVisibleCount(Math.max(1, Math.min(appCount - 1, fit)));
+      setVisibleCount(Math.max(1, Math.min(itemCount - 1, fit)));
     };
 
     compute();
     const observer = new ResizeObserver(compute);
     observer.observe(slot);
     return () => observer.disconnect();
-  }, [appCount]);
+  }, [itemCount]);
 
-  const visibleList = appsToShow.slice(0, Math.max(1, visibleCount));
-  // 激活应用被收进溢出区时，顶替最后一个可见位，保证始终可点亮
-  if (appsToShow.includes(activeApp) && !visibleList.includes(activeApp)) {
-    visibleList[visibleList.length - 1] = activeApp;
+  const activeItem = activeApp;
+  const visibleList = itemsToShow.slice(0, Math.max(1, visibleCount));
+  if (itemsToShow.includes(activeItem) && !visibleList.includes(activeItem)) {
+    visibleList[visibleList.length - 1] = activeItem;
   }
-  const overflowList = appsToShow.filter((app) => !visibleList.includes(app));
+  const overflowList = itemsToShow.filter(
+    (item) => !visibleList.includes(item),
+  );
 
   return (
     <div
       ref={rootRef}
-      className="inline-flex bg-muted rounded-xl p-1 gap-1"
+      className="inline-flex gap-1 rounded-xl bg-muted p-1"
       style={{ WebkitAppRegion: "no-drag" } as any}
     >
       {visibleList.map((app) => {
@@ -167,20 +187,22 @@ export function AppSwitcher({
           <button
             key={app}
             type="button"
+            data-app-item
             onClick={() => handleSwitch(app)}
             title={APP_DISPLAY_NAME[app]}
             aria-label={APP_DISPLAY_NAME[app]}
             className={cn(
-              "group inline-flex items-center px-3 h-8 rounded-md text-sm font-medium transition-all duration-200",
+              "group inline-flex h-8 items-center rounded-md px-3 text-sm font-medium transition-all duration-200",
               isActive
                 ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-background/50",
+                : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
             )}
           >
             <AppGlyph app={app} isActive={isActive} />
           </button>
         );
       })}
+
       {overflowList.length > 0 && (
         <Popover open={moreOpen} onOpenChange={setMoreOpen}>
           <PopoverTrigger asChild>
@@ -189,10 +211,10 @@ export function AppSwitcher({
               title={t("appSwitcher.more")}
               aria-label={t("appSwitcher.more")}
               className={cn(
-                "inline-flex items-center px-3 h-8 rounded-md transition-all duration-200",
+                "inline-flex h-8 items-center rounded-md px-3 transition-all duration-200",
                 moreOpen
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-background/50",
+                  : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
               )}
             >
               <MoreHorizontal size={20} className="shrink-0" />
@@ -204,20 +226,22 @@ export function AppSwitcher({
             sideOffset={6}
             className="z-[100] w-56 p-1"
           >
-            {overflowList.map((app) => (
-              <button
-                key={app}
-                type="button"
-                onClick={() => {
-                  setMoreOpen(false);
-                  handleSwitch(app);
-                }}
-                className="group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <AppGlyph app={app} isActive={false} />
-                <span className="truncate">{APP_DISPLAY_NAME[app]}</span>
-              </button>
-            ))}
+            {overflowList.map((app) => {
+              return (
+                <button
+                  key={app}
+                  type="button"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    handleSwitch(app);
+                  }}
+                  className="group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <AppGlyph app={app} isActive={false} />
+                  <span className="truncate">{APP_DISPLAY_NAME[app]}</span>
+                </button>
+              );
+            })}
           </PopoverContent>
         </Popover>
       )}

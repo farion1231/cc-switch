@@ -127,6 +127,74 @@ fn test_parse_grokbuild_provider() {
 }
 
 #[test]
+fn test_parse_vscode_copilot_provider() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=copilot-byok&name=MiniMax&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=secret&model=MiniMax-M3";
+    let request = parse_deeplink_url(url).expect("parse Copilot provider link");
+
+    assert_eq!(request.app.as_deref(), Some("copilot-byok"));
+    let provider = build_provider_from_request(&AppType::CopilotByok, &request)
+        .expect("build Copilot provider");
+    assert_eq!(provider.settings_config["name"], "MiniMax");
+    assert_eq!(
+        provider.settings_config["url"],
+        "https://api.example.com/v1"
+    );
+    assert_eq!(
+        provider.settings_config["models"][0]["modelId"],
+        "MiniMax-M3"
+    );
+}
+
+#[test]
+fn vscode_copilot_inline_config_preserves_multi_model_catalog() {
+    use super::provider::build_provider_from_request;
+
+    let config = serde_json::json!({
+        "provider": {
+            "name": "Config Name",
+            "url": "https://api.example.com/v1",
+            "apiKey": "secret",
+            "apiType": "responses",
+            "requestHeaders": {"X-Tenant": "example"},
+            "models": [
+                {"modelId": "model-a", "name": "Model A", "toolCalling": true},
+                {"modelId": "model-b", "name": "Model B", "maxOutputTokens": 4096}
+            ]
+        }
+    });
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("copilot-byok".to_string()),
+        name: Some("URL Name".to_string()),
+        config: Some(BASE64_STANDARD.encode(config.to_string())),
+        config_format: Some("json".to_string()),
+        ..DeepLinkImportRequest::default()
+    };
+
+    let merged = parse_and_merge_config(&request).expect("merge Copilot config");
+    let provider = build_provider_from_request(&AppType::CopilotByok, &merged)
+        .expect("build Copilot provider");
+
+    assert_eq!(provider.settings_config["name"], "URL Name");
+    assert_eq!(provider.settings_config["apiType"], "responses");
+    assert_eq!(
+        provider.settings_config["requestHeaders"]["X-Tenant"],
+        "example"
+    );
+    assert_eq!(
+        provider.settings_config["models"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        provider.settings_config["models"][1]["maxOutputTokens"],
+        4096
+    );
+}
+
+#[test]
 fn test_parse_invalid_scheme() {
     let url = "https://v1/import?resource=provider&app=claude&name=Test";
 

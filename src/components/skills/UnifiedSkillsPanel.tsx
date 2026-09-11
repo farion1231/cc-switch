@@ -219,6 +219,8 @@ const UnifiedSkillsPanel = React.forwardRef<
       gemini: 0,
       grokbuild: 0,
       opencode: 0,
+      "copilot-byok": 0,
+      "copilot-cli": 0,
       openclaw: 0,
       hermes: 0,
       pi: 0,

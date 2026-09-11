@@ -131,6 +131,10 @@ pub struct RequestLogDetail {
     pub provider_name: Option<String>,
     pub app_type: String,
     pub model: String,
+    /// Optional human-readable name for the resolved model. The raw model id
+    /// remains in `model` for filtering, pricing, and diagnostics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_model: Option<String>,
     pub cost_multiplier: String,
@@ -178,6 +182,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         provider_name: row.get(2)?,
         app_type: row.get(3)?,
         model: row.get(4)?,
+        model_display_name: None,
         request_model: row.get(5)?,
         cost_multiplier: row
             .get::<_, Option<String>>(6)?
@@ -217,8 +222,62 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_pi_session' THEN 'Pi (Session)' \
+         WHEN '_copilot_cli_session' THEN 'Copilot CLI (Session)' \
+         WHEN 'vscode-copilot' THEN 'VS Code Copilot (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
+}
+
+fn vscode_copilot_model_display_names(
+    conn: &Connection,
+) -> Result<HashMap<String, String>, AppError> {
+    let settings_config = conn
+        .query_row(
+            "SELECT settings_config FROM providers
+             WHERE id = 'vscode-copilot' AND app_type = 'copilot-byok'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::Database(format!("查询 VS Code Copilot 模型显示名称失败: {error}"))
+        })?;
+    let Some(settings_config) = settings_config else {
+        return Ok(HashMap::new());
+    };
+    // Display names are optional enrichment. A malformed legacy provider row
+    // must not make the entire request-log page unavailable.
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&settings_config) else {
+        return Ok(HashMap::new());
+    };
+    let Some(model_names) = settings
+        .get("modelNames")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Ok(HashMap::new());
+    };
+
+    Ok(model_names
+        .iter()
+        .filter_map(|(model_id, value)| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(|name| (model_id.to_ascii_lowercase(), name.to_string()))
+        })
+        .collect())
+}
+
+fn apply_vscode_copilot_model_display_name(
+    log: &mut RequestLogDetail,
+    model_names: &HashMap<String, String>,
+) {
+    if log.app_type != "copilot-byok" || log.data_source.as_deref() != Some("vscode_session") {
+        return;
+    }
+
+    log.model_display_name = model_names.get(&log.model.to_ascii_lowercase()).cloned();
 }
 
 pub(crate) const SESSION_PROXY_DEDUP_WINDOW_SECONDS: i64 = 10 * 60;
@@ -310,32 +369,38 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
-            AND EXISTS (
-                SELECT 1
-                FROM proxy_request_logs proxy_dedup
-                WHERE {proxy_data_source} = 'proxy'
-                  AND {app_type_match}
-                  AND proxy_dedup.status_code >= 200
-                  AND proxy_dedup.status_code < 300
-                  AND proxy_dedup.input_tokens = {log_alias}.input_tokens
-                  AND proxy_dedup.output_tokens = {log_alias}.output_tokens
-                  AND proxy_dedup.cache_read_tokens = {log_alias}.cache_read_tokens
-                  AND (
-                      proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
-                      OR (
-                          {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+            (
+                {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+                AND EXISTS (
+                    SELECT 1
+                    FROM proxy_request_logs proxy_dedup
+                    WHERE {proxy_data_source} = 'proxy'
+                      AND {app_type_match}
+                      AND proxy_dedup.status_code >= 200
+                      AND proxy_dedup.status_code < 300
+                      AND proxy_dedup.input_tokens = {log_alias}.input_tokens
+                      AND proxy_dedup.output_tokens = {log_alias}.output_tokens
+                      AND proxy_dedup.cache_read_tokens = {log_alias}.cache_read_tokens
+                      AND (
+                          proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
+                          OR (
+                              {log_alias}.cache_creation_tokens = 0
+                              AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          )
                       )
-                  )
-                  AND proxy_dedup.created_at BETWEEN
-                      {log_alias}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
-                      AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
-                  AND (
-                      LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
-                      OR LOWER(proxy_dedup.model) = 'unknown'
-                      OR LOWER({log_alias}.model) = 'unknown'
-                  )
+                      AND proxy_dedup.created_at BETWEEN
+                          {log_alias}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+                          AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+                      AND (
+                          LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
+                          OR LOWER(proxy_dedup.model) = 'unknown'
+                          OR LOWER({log_alias}.model) = 'unknown'
+                      )
+                )
+            )
+            OR (
+                {log_alias}.app_type = 'copilot-byok'
+                AND {data_source} != 'vscode_session'
             )
         )"
     )
@@ -1635,12 +1700,14 @@ impl Database {
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_refs.as_slice(), row_to_request_log_detail)?;
 
+        let vscode_model_names = vscode_copilot_model_display_names(&conn)?;
         let mut logs = Vec::new();
         let mut pricing_cache = HashMap::new();
 
         for row in rows {
             let mut log = row?;
             Self::maybe_backfill_log_costs(&conn, &mut log, &mut pricing_cache)?;
+            apply_vscode_copilot_model_display_name(&mut log, &vscode_model_names);
             logs.push(log);
         }
 
@@ -1678,6 +1745,8 @@ impl Database {
             Ok(mut detail) => {
                 let mut pricing_cache = HashMap::new();
                 Self::maybe_backfill_log_costs(&conn, &mut detail, &mut pricing_cache)?;
+                let vscode_model_names = vscode_copilot_model_display_names(&conn)?;
+                apply_vscode_copilot_model_display_name(&mut detail, &vscode_model_names);
                 Ok(Some(detail))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -1887,10 +1956,6 @@ impl Database {
             return Ok(false);
         }
 
-        let pricing = match Self::get_log_model_pricing_cached(conn, pricing_cache, log)? {
-            Some(info) => info,
-            None => return Ok(false),
-        };
         let multiplier =
             rust_decimal::Decimal::from_str(&log.cost_multiplier).unwrap_or_else(|e| {
                 log::warn!(
@@ -1900,6 +1965,18 @@ impl Database {
                 );
                 rust_decimal::Decimal::ONE
             });
+        // A zero multiplier is an explicit free/subscription row, not a
+        // missing-cost row. VS Code Copilot session history uses this marker
+        // so retail API pricing is never presented as an account charge for
+        // official Copilot traffic.
+        if multiplier <= rust_decimal::Decimal::ZERO {
+            return Ok(false);
+        }
+
+        let pricing = match Self::get_log_model_pricing_cached(conn, pricing_cache, log)? {
+            Some(info) => info,
+            None => return Ok(false),
+        };
 
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
@@ -2367,6 +2444,23 @@ fn should_try_pricing_prefix_match(model_id: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn malformed_vscode_model_display_names_do_not_break_usage_logs() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE providers (
+                id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                settings_config TEXT NOT NULL
+            );
+            INSERT INTO providers (id, app_type, settings_config)
+            VALUES ('vscode-copilot', 'copilot-byok', 'not valid json');",
+        )?;
+
+        assert!(vscode_copilot_model_display_names(&conn)?.is_empty());
+        Ok(())
+    }
+
     fn local_ts(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> i64 {
         match Local.with_ymd_and_hms(year, month, day, hour, minute, second) {
             chrono::LocalResult::Single(dt) => dt.timestamp(),
@@ -2662,6 +2756,49 @@ mod tests {
         assert_eq!(input_cost, "5.000000");
         assert_eq!(output_cost, "30.000000");
         assert_eq!(total_cost, "35.000000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_skips_explicit_zero_multiplier_subscription_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "vscode-copilot-subscription",
+                "copilot-byok",
+                "vscode-copilot",
+                "gpt-5.5",
+                "vscode_session",
+                1000,
+                1_000_000,
+                1_000_000,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET request_model = 'copilot/auto', cost_multiplier = '0'
+                 WHERE request_id = 'vscode-copilot-subscription'",
+                [],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        let conn = lock_conn!(db.conn);
+        let total_cost: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs
+             WHERE request_id = 'vscode-copilot-subscription'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total_cost, "0");
 
         Ok(())
     }
@@ -3611,6 +3748,87 @@ mod tests {
         assert_eq!(codex_session_count, Some(1));
         assert_eq!(gemini_session_count, None);
         assert_eq!(session_log_count, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_copilot_byok_usage_always_comes_from_vscode_session_history() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "copilot-byok-proxy-match",
+                "copilot-byok",
+                "vscode-copilot",
+                "gpt-test",
+                "proxy",
+                10_000,
+                111,
+                22,
+                0,
+                0,
+                200,
+                "0.10",
+            )?;
+            insert_usage_log(
+                &conn,
+                "copilot-byok-proxy-only",
+                "copilot-byok",
+                "acme",
+                "other-model",
+                "proxy",
+                20_000,
+                999,
+                99,
+                0,
+                0,
+                200,
+                "0.90",
+            )?;
+            insert_usage_log(
+                &conn,
+                "copilot-byok-session",
+                "copilot-byok",
+                "vscode-copilot",
+                "gpt-test",
+                "vscode_session",
+                10_060,
+                111,
+                22,
+                0,
+                0,
+                200,
+                "0.10",
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None, Some("copilot-byok"), None, None)?;
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_input_tokens, 111);
+        assert_eq!(summary.total_output_tokens, 22);
+
+        let provider_stats = db.get_provider_stats(None, None, Some("copilot-byok"), None, None)?;
+        assert_eq!(provider_stats.len(), 1);
+        assert_eq!(provider_stats[0].provider_name, "VS Code Copilot (Session)");
+
+        let breakdown = crate::services::session_usage::get_data_source_breakdown(&db)?;
+        assert_eq!(
+            breakdown
+                .iter()
+                .find(|item| item.data_source == "vscode_session")
+                .map(|item| item.request_count),
+            Some(1)
+        );
+        assert_eq!(
+            breakdown
+                .iter()
+                .find(|item| item.data_source == "proxy")
+                .map(|item| item.request_count),
+            None
+        );
 
         Ok(())
     }
