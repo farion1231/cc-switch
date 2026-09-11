@@ -396,6 +396,12 @@ pub enum AppType {
     OpenClaw,
     Hermes,
     Pi,
+    #[serde(
+        rename = "deepseek-harness",
+        alias = "deepseekharness",
+        alias = "deepseek_harness",
+        alias = "dsh"
+    )]
     DeepSeekHarness,
 }
 
@@ -1016,6 +1022,22 @@ mod tests {
     use std::env;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn app_type_deserializes_deepseek_harness_with_hyphen() {
+        assert_eq!(
+            serde_json::from_str::<AppType>("\"deepseek-harness\"").unwrap(),
+            AppType::DeepSeekHarness
+        );
+        assert_eq!(
+            serde_json::to_string(&AppType::DeepSeekHarness).unwrap(),
+            "\"deepseek-harness\""
+        );
+        assert_eq!(
+            "deepseekharness".parse::<AppType>().unwrap(),
+            AppType::DeepSeekHarness
+        );
+    }
 
     #[test]
     fn app_type_parses_claude_desktop_aliases() {
