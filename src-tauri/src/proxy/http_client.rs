@@ -19,6 +19,10 @@ static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
 
+/// 全局直连 HTTP 客户端（永不使用任何代理，包括系统代理）。
+/// 用于 loopback upstream 目标：本地目标必须直连，否则会被系统代理截获。
+static DIRECT_CLIENT: OnceCell<Client> = OnceCell::new();
+
 /// 设置 CC Switch 代理服务器的监听端口
 ///
 /// 应在代理服务器启动时调用，以便系统代理检测能正确识别自己的端口
@@ -196,6 +200,51 @@ pub fn get() -> Client {
         })
 }
 
+/// 获取全局直连 HTTP 客户端（永不使用任何代理，包括系统代理/环境变量代理）。
+///
+/// 用于 loopback upstream 目标：本地环回地址必须直连，
+/// 避免被系统代理（如 ClashX / v2rayN）截获导致请求无法到达本地服务。
+pub fn get_direct() -> Client {
+    DIRECT_CLIENT
+        .get_or_init(|| {
+            build_client_with(None, true).unwrap_or_else(|e| {
+                log::warn!(
+                    "[GlobalProxy] [GP-009] Direct client build failed, using fallback: {e}"
+                );
+                Client::builder().no_proxy().build().unwrap_or_default()
+            })
+        })
+        .clone()
+}
+
+/// 判断最终 upstream URL 的 host 是否为 loopback 目标。
+///
+/// 使用标准 URL/IP 解析（url crate + IpAddr::is_loopback），不做字符串前缀粗判：
+/// - localhost（大小写不敏感）
+/// - IPv4 loopback（127.0.0.0/8，例如 127.0.0.1）
+/// - IPv6 loopback（::1）
+pub fn is_loopback_upstream_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url.trim()) else {
+        return false;
+    };
+    match parsed.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+/// 判断给定 upstream 目标是否必须使用「直连客户端」。
+///
+/// 仅当未配置用户显式 upstream 代理（explicit_proxy_url == None）且目标为 loopback
+/// 时返回 true：
+/// - loopback 目标不得继承系统代理（系统代理会截获回环请求）；
+/// - 用户显式配置的代理语义保持不变（存在显式代理时始终返回 false）。
+pub fn should_direct_connect_to(url: &str, explicit_proxy_url: Option<&str>) -> bool {
+    explicit_proxy_url.is_none() && is_loopback_upstream_url(url)
+}
+
 /// 获取当前代理 URL
 ///
 /// 返回当前配置的代理 URL，None 表示直连。
@@ -214,6 +263,14 @@ pub fn is_proxy_enabled() -> bool {
 
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
+    build_client_with(proxy_url, false)
+}
+
+/// 构建 HTTP 客户端（force_direct = true 时禁用一切代理）。
+///
+/// force_direct 为 true 时客户端永不使用任何代理（包括系统代理/环境变量代理），
+/// 用于 loopback upstream：本地目标必须直连，避免被系统代理截获。
+fn build_client_with(proxy_url: Option<&str>, force_direct: bool) -> Result<Client, String> {
     let mut builder = Client::builder()
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
@@ -225,6 +282,15 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         .no_brotli()
         .no_deflate()
         .no_zstd();
+
+    if force_direct {
+        // 直连语义：显式禁用一切代理，不进入下方的代理选择逻辑。
+        builder = builder.no_proxy();
+        log::debug!("[GlobalProxy] Direct client built (all proxies disabled)");
+        return builder
+            .build()
+            .map_err(|e| format!("Failed to build direct HTTP client: {e}"));
+    }
 
     // 有代理地址则使用代理，否则跟随系统代理
     if let Some(url) = proxy_url {
@@ -342,7 +408,7 @@ pub fn mask_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -461,5 +527,219 @@ mod tests {
         for key in &keys {
             std::env::remove_var(key);
         }
+    }
+
+    const OPENAI_CHAT_BODY: &str = r#"{"id":"chatcmpl-test","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+
+    /// 启动一个记录请求的 mock 服务器（可充当 mock 上游或 mock 代理），固定返回 200 + OPENAI_CHAT_BODY。
+    async fn spawn_recording_server(
+        record: Arc<Mutex<Vec<String>>>,
+        body: &'static str,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let app = axum::Router::new().fallback(move |req: axum::extract::Request| {
+            let record = record.clone();
+            async move {
+                record
+                    .lock()
+                    .unwrap()
+                    .push(format!("{} {}", req.method(), req.uri()));
+                (
+                    axum::http::StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    body,
+                )
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock server");
+        let addr = listener.local_addr().expect("mock server addr");
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (addr, handle)
+    }
+
+    #[test]
+    fn test_is_loopback_upstream_url_classification() {
+        // 1) localhost（大小写不敏感）
+        assert!(is_loopback_upstream_url(
+            "http://localhost:8080/v1/chat/completions"
+        ));
+        assert!(is_loopback_upstream_url("http://LOCALHOST/v1"));
+        assert!(is_loopback_upstream_url("http://LocalHost/v1"));
+        // 2) 127.0.0.1
+        assert!(is_loopback_upstream_url("http://127.0.0.1:8080/v1"));
+        // 3) 任意 127/8 地址
+        assert!(is_loopback_upstream_url("http://127.8.8.8:9/v1"));
+        assert!(is_loopback_upstream_url("http://127.255.255.254/v1"));
+        // 4) IPv6 ::1
+        assert!(is_loopback_upstream_url("http://[::1]:8080/v1"));
+        // 5) 公网/私网 IPv4 不是 loopback
+        assert!(!is_loopback_upstream_url("https://8.8.8.8/v1"));
+        assert!(!is_loopback_upstream_url("https://192.168.1.10:7890/v1"));
+        assert!(!is_loopback_upstream_url("https://10.0.0.2/v1"));
+        // 6) 普通主机名不是 loopback
+        assert!(!is_loopback_upstream_url("https://api.openai.com/v1"));
+        assert!(!is_loopback_upstream_url("https://localhost.evil.com/v1"));
+        // 非法输入保守返回 false
+        assert!(!is_loopback_upstream_url("not a url"));
+    }
+
+    #[test]
+    fn test_should_direct_connect_to_policy() {
+        // 8) loopback + 无显式代理 → 直连（不继承系统代理）
+        assert!(should_direct_connect_to("http://127.0.0.1:8080/v1", None));
+        assert!(should_direct_connect_to("http://localhost:8080/v1", None));
+        assert!(should_direct_connect_to("http://[::1]:8080/v1", None));
+        // 9) 外部目标 + 无显式代理 → 保持既有语义（跟随系统/继承代理）
+        assert!(!should_direct_connect_to("https://api.openai.com/v1", None));
+        assert!(!should_direct_connect_to("http://192.0.2.1/v1", None));
+        // 10) loopback + 显式代理 → 保持显式代理语义
+        assert!(!should_direct_connect_to(
+            "http://127.0.0.1:8080/v1",
+            Some("http://127.0.0.1:7890")
+        ));
+        // 11) 外部 + 显式代理 → 保持显式代理语义
+        assert!(!should_direct_connect_to(
+            "https://api.openai.com/v1",
+            Some("socks5://127.0.0.1:1080")
+        ));
+    }
+
+    /// 12) loopback 目标不得被「继承代理」（环境变量/系统代理）截获：
+    /// 直连客户端在继承代理存在时仍必须直连到本地服务器。
+    #[tokio::test]
+    async fn test_direct_client_ignores_inherited_env_proxy_for_loopback_target() {
+        let _guard = env_lock().lock().unwrap();
+        let prev_http = env::var("HTTP_PROXY").ok();
+        let prev_http_lower = env::var("http_proxy").ok();
+
+        let upstream_rec: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (upstream_addr, upstream_handle) =
+            spawn_recording_server(upstream_rec.clone(), OPENAI_CHAT_BODY).await;
+        let proxy_rec: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (proxy_addr, proxy_handle) =
+            spawn_recording_server(proxy_rec.clone(), OPENAI_CHAT_BODY).await;
+
+        env::set_var(
+            "HTTP_PROXY",
+            format!("http://127.0.0.1:{}", proxy_addr.port()),
+        );
+        env::set_var(
+            "http_proxy",
+            format!("http://127.0.0.1:{}", proxy_addr.port()),
+        );
+
+        let direct = get_direct();
+        let result = direct
+            .get(format!("http://127.0.0.1:{}/", upstream_addr.port()))
+            .send()
+            .await;
+
+        match prev_http {
+            Some(v) => env::set_var("HTTP_PROXY", v),
+            None => env::remove_var("HTTP_PROXY"),
+        }
+        match prev_http_lower {
+            Some(v) => env::set_var("http_proxy", v),
+            None => env::remove_var("http_proxy"),
+        }
+
+        let resp = result.expect("direct client must bypass inherited proxy");
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            upstream_rec.lock().unwrap().len(),
+            1,
+            "loopback target must be reached directly"
+        );
+        assert_eq!(
+            proxy_rec.lock().unwrap().len(),
+            0,
+            "inherited proxy must not be used for a loopback target"
+        );
+        upstream_handle.abort();
+        proxy_handle.abort();
+    }
+
+    /// 13) 未配置显式代理时，外部目标仍遵循继承代理（既有语义不变）。
+    #[tokio::test]
+    async fn test_following_client_still_uses_inherited_env_proxy_for_external_target() {
+        let _guard = env_lock().lock().unwrap();
+        let prev_http = env::var("HTTP_PROXY").ok();
+        let prev_http_lower = env::var("http_proxy").ok();
+
+        let proxy_rec: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (proxy_addr, proxy_handle) =
+            spawn_recording_server(proxy_rec.clone(), OPENAI_CHAT_BODY).await;
+
+        env::set_var(
+            "HTTP_PROXY",
+            format!("http://127.0.0.1:{}", proxy_addr.port()),
+        );
+        env::set_var(
+            "http_proxy",
+            format!("http://127.0.0.1:{}", proxy_addr.port()),
+        );
+
+        let following = build_client(None).expect("build following client");
+        // 非 loopback 目标（TEST-NET-1 不可路由；由 mock 代理直接应答，无需真实网络）
+        let result = following.get("http://192.0.2.1/v1").send().await;
+
+        match prev_http {
+            Some(v) => env::set_var("HTTP_PROXY", v),
+            None => env::remove_var("HTTP_PROXY"),
+        }
+        match prev_http_lower {
+            Some(v) => env::set_var("http_proxy", v),
+            None => env::remove_var("http_proxy"),
+        }
+
+        let resp = result.expect("external request should go through the inherited proxy");
+        assert_eq!(resp.status(), 200);
+        let rec = proxy_rec.lock().unwrap().clone();
+        assert_eq!(
+            rec.len(),
+            1,
+            "external target must keep following the inherited proxy"
+        );
+        assert!(rec[0].contains("192.0.2.1"), "{}", rec[0]);
+        proxy_handle.abort();
+    }
+
+    /// 10/11) 显式代理语义保持：loopback 与外部目标都经显式代理，不被本 patch 静默覆盖。
+    #[tokio::test]
+    async fn test_explicit_proxy_is_used_for_loopback_and_external_targets() {
+        let proxy_rec: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (proxy_addr, proxy_handle) =
+            spawn_recording_server(proxy_rec.clone(), OPENAI_CHAT_BODY).await;
+
+        let proxy_url = format!("http://127.0.0.1:{}", proxy_addr.port());
+        let client = build_client(Some(proxy_url.as_str())).expect("build explicit-proxy client");
+
+        // loopback 目标：不得被静默改为直连（目标端口无需真实监听——由显式代理应答）
+        let resp = client
+            .get("http://127.0.0.1:9/loopback/check")
+            .send()
+            .await
+            .expect("request via explicit proxy");
+        assert_eq!(resp.status(), 200);
+        // 外部目标：同样遵循显式代理
+        let resp2 = client
+            .get("http://192.0.2.1/external/check")
+            .send()
+            .await
+            .expect("external request via explicit proxy");
+        assert_eq!(resp2.status(), 200);
+
+        let rec = proxy_rec.lock().unwrap().clone();
+        assert_eq!(
+            rec.len(),
+            2,
+            "both requests must go through the explicit proxy"
+        );
+        assert!(rec[0].contains("127.0.0.1:9/loopback/check"), "{}", rec[0]);
+        assert!(rec[1].contains("192.0.2.1/external/check"), "{}", rec[1]);
+        proxy_handle.abort();
     }
 }

@@ -19,6 +19,8 @@ pub mod http_client;
 pub mod hyper_client;
 pub(crate) mod json_canonical;
 pub mod log_codes;
+#[cfg(all(test, feature = "test-hooks"))]
+mod loopback_upstream_tests;
 pub mod media_sanitizer;
 pub mod model_mapper;
 pub mod provider_router;

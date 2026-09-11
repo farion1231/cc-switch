@@ -2350,7 +2350,18 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = super::http_client::get();
+            // loopback upstream 必须直连：无显式代理时不得继承系统代理。
+            let client = if super::http_client::should_direct_connect_to(
+                &url,
+                upstream_proxy_url.as_deref(),
+            ) {
+                log::debug!(
+                    "[Forwarder] Loopback upstream detected; using direct client (inherited proxy bypassed)"
+                );
+                super::http_client::get_direct()
+            } else {
+                super::http_client::get()
+            };
             let mut request = client.request(method.clone(), &url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
