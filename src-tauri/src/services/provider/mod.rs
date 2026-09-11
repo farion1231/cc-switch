@@ -38,6 +38,14 @@ pub fn import_deepseek_harness_providers_from_live(state: &AppState) -> Result<u
     deepseek_harness::import_from_live(state)
 }
 
+pub fn set_dsh_current_model(
+    state: &AppState,
+    provider_id: &str,
+    model_id: &str,
+) -> Result<(), AppError> {
+    deepseek_harness::set_current_model(state, provider_id, model_id)
+}
+
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{

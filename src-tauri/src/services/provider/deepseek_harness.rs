@@ -111,6 +111,34 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
     Ok(SwitchResult::default())
 }
 
+pub(super) fn set_current_model(
+    state: &AppState,
+    provider_id: &str,
+    model_id: &str,
+) -> Result<(), AppError> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(APP));
+    let native = crate::deepseek_harness_config::read_native_state()?;
+    let provider = native
+        .providers
+        .get(provider_id)
+        .ok_or_else(|| AppError::InvalidInput(format!("Provider '{provider_id}' not found")))?;
+    if let Some(models) = provider.config.get("models").and_then(Value::as_array) {
+        let known = models.iter().any(|model| {
+            model.get("id").and_then(Value::as_str) == Some(model_id)
+                || model.as_str() == Some(model_id)
+        });
+        if !known {
+            return Err(AppError::InvalidInput(format!(
+                "Model '{model_id}' is not configured for DSH provider '{provider_id}'"
+            )));
+        }
+    }
+    crate::deepseek_harness_config::set_current_model(provider_id, model_id)?;
+    let native = crate::deepseek_harness_config::read_native_state()?;
+    sync_native_locked(state, &native)?;
+    Ok(())
+}
+
 fn sync_native_locked(
     state: &AppState,
     native: &crate::deepseek_harness_config::NativeState,
@@ -372,6 +400,30 @@ mod tests {
             .unwrap()
             .providers
             .contains_key("new-route"));
+    }
+
+    #[test]
+    #[serial]
+    fn set_current_model_validates_membership_and_updates_state() {
+        let home = DshHome::new();
+        std::fs::write(
+            home._dir.path().join("settings.yaml"),
+            "llm-pi-ai:\n  providers:\n    k3:\n      baseURL: https://k3.example.com\n      models:\n        - id: k3\n        - id: k3-turbo\n",
+        )
+        .unwrap();
+        let state = state();
+
+        set_current_model(&state, "k3", "k3-turbo").unwrap();
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert_eq!(native.current_provider.as_deref(), Some("k3"));
+        assert_eq!(native.current_model.as_deref(), Some("k3-turbo"));
+        assert_eq!(
+            state.db.get_current_provider(APP).unwrap().as_deref(),
+            Some("k3")
+        );
+
+        assert!(set_current_model(&state, "k3", "no-such-model").is_err());
+        assert!(set_current_model(&state, "ghost", "k3").is_err());
     }
 
     #[test]
