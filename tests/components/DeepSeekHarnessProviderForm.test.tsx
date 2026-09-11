@@ -1,103 +1,87 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
-import { DEEPSEEK_HARNESS_DEFAULT_CONFIG } from "@/config/deepseekHarnessProviderPresets";
-import {
-  ProviderForm,
-  type ProviderFormValues,
-} from "@/components/providers/forms/ProviderForm";
+import { ProviderForm, type ProviderFormValues } from "@/components/providers/forms/ProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
-vi.mock("sonner", () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-    warning: vi.fn(),
-  },
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
+vi.mock("@/lib/api/model-fetch", () => ({
+  fetchModelsForConfig: vi.fn().mockResolvedValue([]),
+  showFetchModelsError: vi.fn(),
 }));
 
-vi.mock("@/lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api")>();
-  return {
-    ...actual,
-    providersApi: {
-      ...actual.providersApi,
-      getAll: vi.fn().mockResolvedValue({}),
-    },
-  };
-});
-
-vi.mock("@/lib/query", () => ({
-  useSettingsQuery: () => ({
-    data: { commonConfigConfirmed: true },
-  }),
-}));
-
-vi.mock("@/components/JsonEditor", () => ({
-  default: ({
-    value,
-    onChange,
-  }: {
-    value: string;
-    onChange: (value: string) => void;
-  }) => (
-    <textarea
-      aria-label="Config JSON"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
-  ),
-}));
-
-function renderForm(onSubmit: (values: ProviderFormValues) => void) {
+function renderForm(
+  onSubmit: (values: ProviderFormValues) => void,
+  initialData?: Parameters<typeof ProviderForm>[0]["initialData"],
+) {
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderForm
         appId="deepseek-harness"
-        submitLabel="save-provider"
+        submitLabel="Save"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
+        initialData={initialData}
       />
     </QueryClientProvider>,
   );
 }
 
 describe("DeepSeek Harness provider form", () => {
-  it("starts with the official preset and valid default config", async () => {
+  it("creates a custom native provider with Codex-style structured fields", async () => {
     const onSubmit = vi.fn();
     renderForm(onSubmit);
 
-    expect(screen.getByTitle("官方")).toBeInTheDocument();
+    expect(screen.getByLabelText("Provider ID")).toHaveValue("custom-dsh");
+    expect(screen.getByLabelText("API Key")).toBeInTheDocument();
+    expect(screen.getByLabelText("Base URL")).toBeInTheDocument();
+    expect(screen.getByText("API Format")).toBeInTheDocument();
+    expect(screen.getByText("Model Catalog")).toBeInTheDocument();
 
-    expect(screen.getByLabelText("Config JSON")).toHaveValue(
-      JSON.stringify(DEEPSEEK_HARNESS_DEFAULT_CONFIG, null, 2),
-    );
+    fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "secret" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), {
+      target: { value: "https://gateway.example/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+    fireEvent.change(screen.getAllByPlaceholderText("model-id")[0], {
+      target: { value: "glm-5.3" },
+    });
+    fireEvent.change(screen.getByLabelText("Default Model"), {
+      target: { value: "glm-5.3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    const nameInput = screen.getAllByRole("textbox")[0];
-    fireEvent.change(nameInput, { target: { value: "DeepSeek" } });
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const values = onSubmit.mock.calls[0][0] as ProviderFormValues;
+    expect(values.providerKey).toBe("custom-dsh");
+    expect(values.meta?.providerType).toBe("dsh_pi_ai");
+    expect(values.meta?.dshCurrentModel).toBe("glm-5.3");
+    expect(JSON.parse(values.settingsConfig)).toMatchObject({
+      baseURL: "https://gateway.example/v1",
+      apiKeyEnv: "CUSTOM_DSH_API_KEY",
+      models: [{ id: "glm-5.3" }],
+    });
+  });
 
-    fireEvent.change(screen.getByLabelText("Config JSON"), {
-      target: {
-        value: JSON.stringify({
-          apiKey: "sk-test",
-          baseURL: "https://api.deepseek.com",
-          profile: "desktop",
-          models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
-        }),
+  it("loads an imported native provider for editing", () => {
+    renderForm(vi.fn(), {
+      name: "Company Gateway",
+      category: "custom",
+      settingsConfig: {
+        displayName: "Company Gateway",
+        api: "openai-completions",
+        baseURL: "https://company.example/v1",
+        apiKeyEnv: "COMPANY_API_KEY",
+        apiKey: "secret",
+        models: [{ id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" }],
       },
+      meta: { providerType: "dsh_pi_ai", dshCurrentModel: "deepseek-v4-pro" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /save-provider/u }));
-    const submitted = await vi.waitFor(() => {
-      const value = onSubmit.mock.calls[0]?.[0];
-      expect(value).toBeDefined();
-      return value;
-    });
-    expect(JSON.parse(submitted.settingsConfig)).toEqual({
-      apiKey: "sk-test",
-      baseURL: "https://api.deepseek.com",
-      profile: "desktop",
-      models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
-    });
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://company.example/v1");
+    expect(screen.getByLabelText("Default Model")).toHaveValue("deepseek-v4-pro");
+    expect(screen.getByPlaceholderText("model-id")).toHaveValue(
+      "deepseek-v4-pro",
+    );
   });
 });

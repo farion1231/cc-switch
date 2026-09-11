@@ -110,6 +110,7 @@ import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
+  getAppLabel,
   isProxyAppId,
 } from "@/config/appConfig";
 
@@ -1100,6 +1101,17 @@ function App() {
                     transition={{ duration: 0.15 }}
                     className="space-y-4"
                   >
+                    <div
+                      data-testid="active-provider-app-title"
+                      className="flex items-center gap-2 border-b border-border px-1 pb-3 pt-4"
+                    >
+                      <h2 className="text-base font-semibold">
+                        {getAppLabel(activeApp)}
+                      </h2>
+                      <span className="text-sm text-muted-foreground">
+                        {t("provider.title", { defaultValue: "供应商" })}
+                      </span>
+                    </div>
                     <ProviderList
                       providers={providers}
                       currentProviderId={currentProviderId}
