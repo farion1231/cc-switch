@@ -14,3 +14,8 @@
 - `settings.rs` SETTINGS_STORE reads the real user settings file even in tests. Any per-app directory override consulted by path resolution must be bypassed under `cfg(test)` (pi's TEST_AGENT_DIR / dsh's `settings_override()` shim), or every env-isolated test breaks once the developer sets the override.
 - `agent-default-model.provider/model` is coupled in DSH: setting a default model on a non-current provider switches the current provider. UI copy and reviewers should treat them as one action.
 - Removing the currently selected DSH provider leaves a dangling `agent-default-model` pointer (pre-existing in both delete and remove-from-live paths).
+
+## DSH interaction parity (2026-09-11 correction)
+
+- User correction: all DSH interaction logic must mirror OpenCode or Pi; do not invent custom UX (e.g., auto scroll/focus on model add). Pi/OpenCode both render the fetched-model dropdown inline in each model row and append an empty row on Add; match them exactly.
+- DSH preset catalog is derived from `opencodeProviderPresets` at load time (75 entries incl. the official preset), so parity is automatic; skip OMO and entries without a base URL.
