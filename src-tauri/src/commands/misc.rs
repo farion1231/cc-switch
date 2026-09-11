@@ -951,7 +951,7 @@ async fn fetch_npm_dist_tags(
     package: &str,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     let url = format!("https://registry.npmjs.org/{package}");
-    let resp = client.get(&url).send().await.ok()?;
+    let resp = client.get(&url).timeout(LATEST_PROBE_TIMEOUT).send().await.ok()?;
     let json = resp.json::<serde_json::Value>().await.ok()?;
     json.get("dist-tags")?.as_object().cloned()
 }
