@@ -166,6 +166,9 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut has_sent_message_stop = false;
         let mut stream_ended_with_error = false;
         let mut latest_usage: Option<Value> = None;
+        // Anthropic content blocks are sequential. Once visible text starts, later
+        // upstream reasoning cannot be represented without splitting that text.
+        let mut has_started_text = false;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
@@ -268,51 +271,58 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                         // 处理 reasoning（thinking）
                                         if let Some(reasoning) = &choice.delta.reasoning {
-                                            if current_non_tool_block_type != Some("thinking") {
-                                                if let Some(index) = current_non_tool_block_index.take() {
+                                            if has_started_text {
+                                                log::debug!(
+                                                    "[Claude/OpenRouter] ignoring reasoning delta after text started"
+                                                );
+                                            } else {
+                                                if current_non_tool_block_type != Some("thinking") {
+                                                    if let Some(index) = current_non_tool_block_index.take() {
+                                                        let event = json!({
+                                                            "type": "content_block_stop",
+                                                            "index": index
+                                                        });
+                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+                                                    let index = next_content_index;
+                                                    next_content_index += 1;
                                                     let event = json!({
-                                                        "type": "content_block_stop",
-                                                        "index": index
+                                                        "type": "content_block_start",
+                                                        "index": index,
+                                                        "content_block": {
+                                                            "type": "thinking",
+                                                            "thinking": ""
+                                                        }
                                                     });
-                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    current_non_tool_block_type = Some("thinking");
+                                                    current_non_tool_block_index = Some(index);
+                                                }
+
+                                                if let Some(index) = current_non_tool_block_index {
+                                                    let event = json!({
+                                                        "type": "content_block_delta",
+                                                        "index": index,
+                                                        "delta": {
+                                                            "type": "thinking_delta",
+                                                            "thinking": reasoning
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
                                                         serde_json::to_string(&event).unwrap_or_default());
                                                     yield Ok(Bytes::from(sse_data));
                                                 }
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                let event = json!({
-                                                    "type": "content_block_start",
-                                                    "index": index,
-                                                    "content_block": {
-                                                        "type": "thinking",
-                                                        "thinking": ""
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
-                                                current_non_tool_block_type = Some("thinking");
-                                                current_non_tool_block_index = Some(index);
-                                            }
-
-                                            if let Some(index) = current_non_tool_block_index {
-                                                let event = json!({
-                                                    "type": "content_block_delta",
-                                                    "index": index,
-                                                    "delta": {
-                                                        "type": "thinking_delta",
-                                                        "thinking": reasoning
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
                                             }
                                         }
 
                                         // 处理文本内容
                                         if let Some(content) = &choice.delta.content {
                                             if !content.is_empty() {
+                                                has_started_text = true;
                                                 if current_non_tool_block_type != Some("text") {
                                                     if let Some(index) = current_non_tool_block_index.take() {
                                                         let event = json!({
@@ -758,6 +768,62 @@ mod tests {
             map_stop_reason(Some("content_filter")),
             Some("end_turn".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_interleaved_reasoning_after_text_does_not_split_text_block() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_interleaved\",\"model\":\"reasoning-model\",\"choices\":[{\"delta\":{\"reasoning_content\":\"plan \"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_interleaved\",\"model\":\"reasoning-model\",\"choices\":[{\"delta\":{\"content\":\"first \"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_interleaved\",\"model\":\"reasoning-model\",\"choices\":[{\"delta\":{\"reasoning_content\":\"late reasoning\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_interleaved\",\"model\":\"reasoning-model\",\"choices\":[{\"delta\":{\"content\":\"second\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_interleaved\",\"model\":\"reasoning-model\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let thinking_starts: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("thinking")
+            })
+            .collect();
+        let text_starts: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("text")
+            })
+            .collect();
+        let text_deltas: Vec<&str> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(|v| v.as_str()) == Some("text_delta")
+            })
+            .filter_map(|event| event.pointer("/delta/text").and_then(|v| v.as_str()))
+            .collect();
+        let thinking_deltas: Vec<&str> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(|v| v.as_str())
+                        == Some("thinking_delta")
+            })
+            .filter_map(|event| event.pointer("/delta/thinking").and_then(|v| v.as_str()))
+            .collect();
+
+        assert_eq!(thinking_starts.len(), 1);
+        assert_eq!(text_starts.len(), 1);
+        assert_eq!(text_deltas.concat(), "first second");
+        assert_eq!(thinking_deltas, vec!["plan "]);
     }
 
     #[tokio::test]
