@@ -1643,6 +1643,8 @@
     "customUserAgent": "Custom User-Agent",
     "customUserAgentInvalid": "User-Agent must not contain control characters (e.g. line breaks); otherwise it will be ignored.",
     "customUserAgentPresets": "Presets",
+    "stripClaudeCodeFingerprint": "Strip Claude Code fingerprint headers",
+    "stripClaudeCodeFingerprintHint": "Disabled by default. When enabled, applies only on format-transform paths (OpenAI Chat / Responses / Gemini): removes client fingerprint headers (x-app, x-stainless-*, x-claude-code-*) before forwarding. Native Anthropic passthrough is unaffected.",
     "localProxyRequestOverrides": "Local proxy request overrides",
     "localProxyRequestOverridesInvalid": "Local proxy request overrides format error: {{error}}",
     "localProxyHeaderOverrides": "Header overrides",

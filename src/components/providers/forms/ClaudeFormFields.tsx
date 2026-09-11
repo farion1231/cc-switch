@@ -10,6 +10,7 @@ import {
 import { toast } from "@/lib/toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -164,6 +165,9 @@ interface ClaudeFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
+  // Strip Claude Code fingerprint headers on transform paths (default false)
+  stripClaudeCodeFingerprint: boolean;
+  onStripClaudeCodeFingerprintChange: (value: boolean) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -241,6 +245,8 @@ export function ClaudeFormFields({
   onFullUrlChange,
   customUserAgent,
   onCustomUserAgentChange,
+  stripClaudeCodeFingerprint,
+  onStripClaudeCodeFingerprintChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -265,6 +271,7 @@ export function ClaudeFormFields({
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     isFullUrl ||
     customUserAgent ||
+    stripClaudeCodeFingerprint ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
@@ -1334,6 +1341,29 @@ export function ClaudeFormFields({
                       })}
                 </p>
               )}
+            </div>
+
+            <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+              <div className="space-y-1">
+                <FormLabel>
+                  {t("providerForm.stripClaudeCodeFingerprint", {
+                    defaultValue: "剥离 Claude Code 指纹头",
+                  })}
+                </FormLabel>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t("providerForm.stripClaudeCodeFingerprintHint", {
+                    defaultValue:
+                      "默认关闭。开启后仅在 API 格式转换路径（OpenAI Chat / Responses / Gemini）生效：转发前移除 x-app、x-stainless-*、x-claude-code-* 等客户端指纹头。原生 Anthropic 透传不受影响。",
+                  })}
+                </p>
+              </div>
+              <Switch
+                checked={stripClaudeCodeFingerprint}
+                onCheckedChange={onStripClaudeCodeFingerprintChange}
+                aria-label={t("providerForm.stripClaudeCodeFingerprint", {
+                  defaultValue: "剥离 Claude Code 指纹头",
+                })}
+              />
             </div>
 
             {/* Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过 */}
