@@ -132,7 +132,10 @@ import {
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
-import { DSH_CUSTOM_DEFAULT_CONFIG } from "./helpers/deepseekHarnessFormUtils";
+import {
+  DSH_CUSTOM_DEFAULT_CONFIG,
+  isValidCredentialRef,
+} from "./helpers/deepseekHarnessFormUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -401,19 +404,8 @@ function ProviderFormFull({
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
-    const initialPresetId =
-      !initialData && appId === "deepseek-harness"
-        ? "deepseek-harness-1"
-        : "custom";
-    setSelectedPresetId(initialData ? null : initialPresetId);
-    setActivePreset(
-      !initialData && appId === "deepseek-harness"
-        ? {
-            id: initialPresetId,
-            category: "custom",
-          }
-        : null,
-    );
+    setSelectedPresetId(initialData ? null : "custom");
+    setActivePreset(null);
 
     if (!initialData) {
       setDraftCustomEndpoints([]);
@@ -1137,9 +1129,14 @@ function ProviderFormFull({
 
   const isProviderKeyLocked = useMemo(() => {
     if (appId === "deepseek-harness") {
-      if (dshForm.dshIsOfficial) return true;
-      if (!isEditMode || !providerId) return false;
-      return (dshCurrentState?.providerIds ?? []).includes(providerId);
+      // Any provider that already exists (edit mode) keeps its native
+      // providerKey: EditProviderDialog does not rewrite the id, so an
+      // editable-looking field would silently discard the change.
+      return (
+        Boolean(providerId) ||
+        dshForm.dshIsOfficial ||
+        (dshCurrentState?.providerIds.includes(providerId ?? "") ?? false)
+      );
     }
     if (!isEditMode || !providerId) return false;
     if (appId === "opencode" && !isAnyOmoCategory) {
@@ -1346,6 +1343,14 @@ function ProviderFormFull({
         issues.push(
           t("deepseekHarness.modelsRequired", {
             defaultValue: "请至少填写一个模型 ID",
+          }),
+        );
+      }
+      if (!isValidCredentialRef(dshForm.dshApiKeyEnv)) {
+        issues.push(
+          t("deepseekHarness.credentialRefInvalid", {
+            defaultValue:
+              "Credential Ref must be an uppercase identifier using letters, digits, and underscores.",
           }),
         );
       }
@@ -2538,9 +2543,7 @@ function ProviderFormFull({
                       dshForm.dshProviderKey,
                     ) && (
                       <p className="text-xs text-destructive">
-                        {t("deepseekHarness.providerKeyInvalid", {
-                          defaultValue: "仅支持小写字母、数字和连字符",
-                        })}
+                        {t("deepseekHarness.providerKeyInvalid")}
                       </p>
                     )}
                   {!(

@@ -11,7 +11,7 @@ interface UseDeepSeekHarnessFormStateParams {
   initialData?: {
     settingsConfig?: Record<string, unknown>;
     category?: string;
-    meta?: { dshCurrentModel?: string };
+    meta?: { dshCurrentModel?: string; providerType?: string };
   };
   appId: string;
   providerId?: string;
@@ -57,7 +57,12 @@ export function useDeepSeekHarnessFormState({
     if (appId !== "deepseek-harness") return "";
     return (
       providerId ??
-      (isDshOfficial(providerId, initialData?.category, initial)
+      (isDshOfficial(
+        providerId,
+        initialData?.category,
+        initial,
+        initialData?.meta?.providerType,
+      )
         ? "deepseek-official"
         : "")
     );
@@ -65,7 +70,12 @@ export function useDeepSeekHarnessFormState({
 
   const [dshIsOfficial, setDshIsOfficial] = useState<boolean>(() => {
     if (appId !== "deepseek-harness") return false;
-    return isDshOfficial(providerId, initialData?.category, initial);
+    return isDshOfficial(
+      providerId,
+      initialData?.category,
+      initial,
+      initialData?.meta?.providerType,
+    );
   });
 
   const [dshApiKey, setDshApiKey] = useState<string>(() => {
@@ -75,7 +85,12 @@ export function useDeepSeekHarnessFormState({
 
   const [dshApiKeyEnv, setDshApiKeyEnv] = useState<string>(() => {
     if (appId !== "deepseek-harness") return "";
-    const official = isDshOfficial(providerId, initialData?.category, initial);
+    const official = isDshOfficial(
+      providerId,
+      initialData?.category,
+      initial,
+      initialData?.meta?.providerType,
+    );
     if (typeof initial.apiKeyEnv === "string" && initial.apiKeyEnv) {
       return initial.apiKeyEnv;
     }

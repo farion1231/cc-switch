@@ -11,7 +11,7 @@ import {
 interface RenderOptions {
   providerId?: string;
   category?: string;
-  meta?: { dshCurrentModel?: string };
+  meta?: { dshCurrentModel?: string; providerType?: string };
 }
 
 const renderDshFormState = (
@@ -89,6 +89,25 @@ describe("useDeepSeekHarnessFormState", () => {
     expect(result.current.dshApiKeyEnv).toBe("COMPANY_API_KEY");
     expect(result.current.dshApi).toBe("openai-completions");
     expect(result.current.dshDefaultModel).toBe("deepseek-v4-pro");
+  });
+
+  it("honors meta.providerType over category and credential ref", () => {
+    const officialByType = renderDshFormState(
+      { ...CUSTOM_CONFIG, apiKeyEnv: "DEEPSEEK_API_KEY" },
+      {
+        providerId: "company-gateway",
+        category: "custom",
+        meta: { providerType: "dsh_deepseek" },
+      },
+    );
+    expect(officialByType.result.current.dshIsOfficial).toBe(true);
+
+    const customByType = renderDshFormState(OFFICIAL_CONFIG, {
+      providerId: "deepseek-official",
+      category: "official",
+      meta: { providerType: "dsh_pi_ai" },
+    });
+    expect(customByType.result.current.dshIsOfficial).toBe(false);
   });
 
   it("defaults the credential ref for a custom provider", () => {
@@ -210,14 +229,23 @@ describe("useDeepSeekHarnessFormState", () => {
 });
 
 describe("deepseekHarnessFormUtils", () => {
-  it("detects official providers by id, category or credential ref", () => {
-    expect(isDshOfficial("deepseek-official")).toBe(true);
-    expect(isDshOfficial(undefined, "official")).toBe(true);
+  it("detects official providers by the authoritative providerType", () => {
+    // providerType wins over every other signal, in both directions.
     expect(
-      isDshOfficial(undefined, undefined, { apiKeyEnv: "DEEPSEEK_API_KEY" }),
+      isDshOfficial("custom", "custom", undefined, "dsh_deepseek"),
     ).toBe(true);
     expect(
-      isDshOfficial("custom", "custom", { apiKeyEnv: "CUSTOM_DSH_API_KEY" }),
+      isDshOfficial("deepseek-official", "official", undefined, "dsh_pi_ai"),
+    ).toBe(false);
+    // Falls back to the fixed id and official category.
+    expect(isDshOfficial("deepseek-official", undefined, undefined)).toBe(true);
+    expect(isDshOfficial(undefined, "official", undefined)).toBe(true);
+    // The reserved credential ref is not an official signal.
+    expect(
+      isDshOfficial("custom", "custom", { apiKeyEnv: "DEEPSEEK_API_KEY" }),
+    ).toBe(false);
+    expect(
+      isDshOfficial("custom", "custom", { apiKeyEnv: "DEEPSEEK_API_KEY" }, "dsh_pi_ai"),
     ).toBe(false);
   });
 

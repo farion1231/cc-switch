@@ -142,6 +142,20 @@ describe("DeepSeek Harness provider form (shared shell)", () => {
     });
   });
 
+  it("defaults to the custom preset without highlighting a preset in add mode", () => {
+    renderForm(vi.fn());
+
+    const customButton = screen.getByRole("button", {
+      name: "providerPreset.custom",
+    });
+    expect(customButton.className).toContain("bg-blue-500");
+
+    const openAiButton = screen.getByRole("button", {
+      name: /OpenAI Compatible/,
+    });
+    expect(openAiButton.className).not.toContain("bg-blue-500");
+  });
+
   it("locks the official route key and submits the dsh_deepseek shape", async () => {
     const onSubmit = vi.fn();
     renderForm(onSubmit);
@@ -197,5 +211,29 @@ describe("DeepSeek Harness provider form (shared shell)", () => {
     expect(screen.getAllByPlaceholderText("Model ID")[0]).toHaveValue(
       "deepseek-v4-pro",
     );
+  });
+
+  it("locks the key for an existing DSH provider not yet in the live config", () => {
+    dshState.providerIds = [];
+    renderForm(
+      vi.fn(),
+      {
+        name: "Legacy Route",
+        category: "custom",
+        settingsConfig: {
+          displayName: "Legacy Route",
+          api: "openai-completions",
+          baseURL: "https://legacy.example/v1",
+          apiKeyEnv: "LEGACY_API_KEY",
+          apiKey: "secret",
+          models: [{ id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" }],
+        },
+        meta: { providerType: "dsh_pi_ai" },
+      },
+      "legacy-route",
+    );
+
+    expect(screen.getByLabelText(/Provider Key/)).toHaveValue("legacy-route");
+    expect(screen.getByLabelText(/Provider Key/)).toBeDisabled();
   });
 });

@@ -39,17 +39,21 @@ export interface DshSettingsConfigInput {
 // ── Pure functions ───────────────────────────────────────────────────
 
 /**
- * Official DSH routes are identified by the fixed provider id, the official
- * category, or (as a last resort) the reserved credential reference.
+ * Official DSH routes are identified authoritatively by the persisted provider
+ * meta `providerType` (`dsh_deepseek` vs `dsh_pi_ai`), with the fixed provider
+ * id and official category as fallbacks. A reserved credential reference is NOT
+ * a signal: custom routes may legitimately use `DEEPSEEK_API_KEY`.
  */
 export function isDshOfficial(
-  id?: string,
-  category?: string,
-  config?: Record<string, unknown> | null,
+  id: string | undefined,
+  category: string | undefined,
+  _config: Record<string, unknown> | undefined,
+  providerType?: string | null,
 ): boolean {
+  if (providerType === "dsh_deepseek") return true;
+  if (providerType === "dsh_pi_ai") return false;
   if (id === "deepseek-official") return true;
   if (category === "official") return true;
-  if (config && config.apiKeyEnv === "DEEPSEEK_API_KEY") return true;
   return false;
 }
 
