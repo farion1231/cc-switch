@@ -13,6 +13,7 @@ use crate::services::subscription::SubscriptionQuota;
 #[derive(Default)]
 pub struct UsageCache {
     subscription: RwLock<HashMap<AppType, SubscriptionQuota>>,
+    codex_oauth: RwLock<HashMap<String, SubscriptionQuota>>,
     script: RwLock<HashMap<(AppType, String), UsageResult>>,
 }
 
@@ -25,6 +26,24 @@ impl UsageCache {
         if let Ok(mut w) = self.subscription.write() {
             w.insert(app_type, quota);
         }
+    }
+
+    pub fn put_codex_oauth(&self, account_id: String, quota: SubscriptionQuota) {
+        if let Ok(mut w) = self.codex_oauth.write() {
+            w.insert(account_id, quota);
+        }
+    }
+
+    /// Managed accounts must never share the CLI's app-wide subscription snapshot.
+    pub fn with_codex_oauth<R>(
+        &self,
+        account_id: &str,
+        f: impl FnOnce(&SubscriptionQuota) -> R,
+    ) -> Option<R> {
+        self.codex_oauth
+            .read()
+            .ok()
+            .and_then(|r| r.get(account_id).map(f))
     }
 
     pub fn put_script(&self, app_type: AppType, provider_id: String, result: UsageResult) {
@@ -90,6 +109,9 @@ impl UsageCache {
         }
         if let Ok(mut scripts) = self.script.write() {
             scripts.clear();
+        }
+        if let Ok(mut accounts) = self.codex_oauth.write() {
+            accounts.clear();
         }
     }
 }
@@ -165,9 +187,10 @@ mod tests {
     }
 
     #[test]
-    fn invalidate_all_clears_subscription_and_script_snapshots() {
+    fn invalidate_all_clears_all_usage_snapshots() {
         let cache = UsageCache::new();
         cache.put_subscription(AppType::Claude, fake_quota());
+        cache.put_codex_oauth("account-1".to_string(), fake_quota());
         cache.put_script(AppType::Codex, "provider".to_string(), fake_result());
 
         cache.invalidate_all();
@@ -177,6 +200,9 @@ mod tests {
             .is_none());
         assert!(cache
             .with_script(&AppType::Codex, "provider", |usage| usage.success)
+            .is_none());
+        assert!(cache
+            .with_codex_oauth("account-1", |quota| quota.success)
             .is_none());
     }
 }

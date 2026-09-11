@@ -445,6 +445,7 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "ppio",
     endpointCandidates: ["https://api.ppio.com/anthropic"],
+    modelsUrl: "https://api.ppio.com/openai/v1/models",
     icon: "ppio",
     iconColor: "#2874FF",
   },
@@ -531,7 +532,8 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#3370FF",
   },
   {
-    name: "DouBaoSeed",
+    name: "Volcengine Doubao",
+    nameKey: "providerForm.presets.doubaoseed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -609,27 +611,6 @@ export const providerPresets: ProviderPreset[] = [
     icon: "a6api",
   },
   {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.atlascloud.ai",
-        ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "zai-org/glm-5.1",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/glm-5.1",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/glm-5.1",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/glm-5.1",
-        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
-      },
-    },
-    endpointCandidates: ["https://api.atlascloud.ai"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
-  },
-  {
     name: "Compshare",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
@@ -702,6 +683,22 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "sssaicode", // 促销信息 i18n key
     icon: "sssaicode",
     iconColor: "#000000",
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://soleapi.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://soleapi.com"],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
   },
   {
     name: "Micu",
@@ -872,6 +869,25 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     icon: "amux",
+  },
+  {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.atlascloud.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "zai-org/glm-5.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/glm-5.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/glm-5.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/glm-5.1",
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
+      },
+    },
+    endpointCandidates: ["https://api.atlascloud.ai"],
+    category: "aggregator",
+    icon: "atlascloud",
   },
   {
     name: "Gemini Native",
@@ -1186,20 +1202,29 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#2932E1",
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://dashscope.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
+        // 模型 id 非 claude-* 时 Claude Code 按 200K 默认窗口处理，必须显式
+        // 钉住官方值：qwen3.8 系 context_window = 983616
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
       },
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   {
-    name: "Bailian For Coding",
+    name: "千问AI平台 Coding Plan",
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
       env: {
@@ -1209,7 +1234,30 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
+        // 官方 Token Plan 配置同样钉窗口：qwen3.8 系 context_window = 983616
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
+      },
+    },
+    category: "cn_official",
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   // ===== QwenCloud（DashScope 国际站）=====
@@ -1218,21 +1266,21 @@ export const providerPresets: ProviderPreset[] = [
   // base_url 不匹配会 401，因此拆成三个预设而非共用一条加候选地址。
   {
     name: "QwenCloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
           "https://dashscope-intl.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "qwen3.7-max",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.6-flash",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-max",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.7-max",
+        ANTHROPIC_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
@@ -1251,28 +1299,29 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
     name: "QwenCloud Token Plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
           "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "qwen3.8-max",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.6-flash",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.8-max",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max",
         // 官方 Claude Code 配置钉的窗口：qwen3.8 系 context_window = 983616
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
       },
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
@@ -1387,14 +1436,14 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
-        ANTHROPIC_MODEL: "MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2.7",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
+        ANTHROPIC_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3[1M]",
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1412,14 +1461,14 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
-        ANTHROPIC_MODEL: "MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2.7",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2.7",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
+        ANTHROPIC_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3[1M]",
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1565,6 +1614,9 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     endpointCandidates: ["https://api.novita.ai/anthropic"],
+    // Anthropic 兼容层在 /anthropic 子路径，OpenAI 侧却在 /openai/v1；剥后缀
+    // 后的根路径没有 /models（实测 404），通用候选够不到，故覆写
+    modelsUrl: "https://api.novita.ai/openai/v1/models",
     icon: "novita",
     iconColor: "#000000",
   },
@@ -1793,6 +1845,9 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     endpointCandidates: ["https://api.jiekou.ai/anthropic"],
+    // 同 Novita：Anthropic 在 /anthropic、OpenAI 在 /openai/v1，根路径无
+    // /models（实测 404），通用候选够不到，故覆写
+    modelsUrl: "https://api.jiekou.ai/openai/v1/models",
     icon: "jiekou",
     iconColor: "#000000",
   },

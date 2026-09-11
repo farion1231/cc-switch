@@ -682,7 +682,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "DouBaoSeed",
+    name: "Volcengine Doubao",
+    nameKey: "providerForm.presets.doubaoseed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -782,30 +783,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    settingsConfig: {
-      name: "atlascloud",
-      base_url: "https://api.atlascloud.ai/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [
-        {
-          id: "zai-org/glm-5.1",
-          name: "GLM 5.1",
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
-    suggestedDefaults: {
-      model: { default: "zai-org/glm-5.1", provider: "atlascloud" },
-    },
-  },
-  {
     name: "Compshare",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
@@ -896,6 +873,41 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "claude-opus-5", provider: "sssaicode" },
+    },
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      name: "soleapi",
+      base_url: "https://soleapi.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5", provider: "soleapi" },
     },
   },
   {
@@ -1122,6 +1134,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    settingsConfig: {
+      name: "atlascloud",
+      base_url: "https://api.atlascloud.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "zai-org/glm-5.1",
+          name: "GLM 5.1",
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "atlascloud",
+    suggestedDefaults: {
+      model: { default: "zai-org/glm-5.1", provider: "atlascloud" },
+    },
+  },
+  {
     name: "OpenRouter",
     nameKey: "providerForm.presets.openrouter",
     websiteUrl: "https://openrouter.ai",
@@ -1325,7 +1359,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         { id: "deepseek-v4-flash-202605", name: "DeepSeek V4 Flash" },
         { id: "deepseek-v4-pro-202606", name: "DeepSeek V4 Pro" },
         { id: "minimax-m2.7", name: "MiniMax M2.7" },
-        { id: "minimax-m2.5", name: "MiniMax M2.5" },
         { id: "glm-5", name: "GLM-5" },
         { id: "glm-5.1", name: "GLM-5.1" },
         { id: "glm-5.2", name: "GLM-5.2" },
@@ -1392,7 +1425,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         { id: "kimi-k2.6", name: "Kimi K2.6" },
         { id: "minimax-m2.7", name: "MiniMax M2.7" },
         { id: "minimax-m3", name: "MiniMax M3" },
-        { id: "minimax-m2.5", name: "MiniMax M2.5" },
         { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
         { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
         { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731 GA" },
@@ -1522,30 +1554,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
-      name: "bailian",
+      name: "qianwenai",
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
-        { id: "qwen3-max", name: "Qwen3 Max" },
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },
       ],
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
     suggestedDefaults: {
-      model: { default: "qwen3-coder-plus", provider: "bailian" },
+      model: { default: "qwen3.8-max", provider: "qianwenai" },
     },
   },
   {
-    name: "Bailian For Coding",
+    name: "千问AI平台 Coding Plan",
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
-      name: "bailian_coding",
+      name: "qianwenai_coding_plan",
       base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
@@ -1555,35 +1589,63 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
     suggestedDefaults: {
-      model: { default: "qwen3-coder-plus", provider: "bailian_coding" },
+      model: {
+        default: "qwen3-coder-plus",
+        provider: "qianwenai_coding_plan",
+      },
+    },
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    settingsConfig: {
+      name: "qianwenai_token_plan",
+      base_url:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },
+      ],
+    },
+    category: "cn_official",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+    suggestedDefaults: {
+      model: { default: "qwen3.8-max", provider: "qianwenai_token_plan" },
     },
   },
   // ===== QwenCloud（DashScope 国际站）=====
-  // 三条线都用 anthropic_messages；地址不带 /v1（与官方 hermes 文档一致，
-  // 这点和 OpenCode / OpenClaw 的 /apps/anthropic/v1 不同，勿互相照搬）。
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // QwenCloud 与 Token Plan 都用 anthropic_messages，地址不带 /v1（与官方
+  // hermes 文档一致，这点和 OpenCode / OpenClaw 不同，勿互相照搬）。
   {
     name: "QwenCloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       name: "qwencloud",
       base_url: "https://dashscope-intl.aliyuncs.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
+        { id: "qwen3.8-max", name: "Qwen3.8 Max", context_length: 983616 },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 983616 },
         { id: "qwen3.7-max", name: "Qwen3.7 Max", context_length: 1000000 },
-        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
-        { id: "qwen3.6-plus", name: "Qwen3.6 Plus", context_length: 1000000 },
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     suggestedDefaults: {
-      model: { default: "qwen3.7-max", provider: "qwencloud" },
+      model: { default: "qwen3.8-max", provider: "qwencloud" },
     },
   },
   {
@@ -1606,7 +1668,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     suggestedDefaults: {
       model: { default: "qwen3.7-plus", provider: "qwencloud_coding" },
@@ -1614,8 +1676,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "QwenCloud Token Plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       name: "qwencloud_token_plan",
       base_url:
@@ -1632,7 +1695,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
     suggestedDefaults: {
       model: { default: "qwen3.8-max", provider: "qwencloud_token_plan" },
@@ -1729,15 +1792,14 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.minimaxi.com/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
+      models: [{ id: "MiniMax-M3", name: "MiniMax M3" }],
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_cn",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M2.7", provider: "minimax" },
+      model: { default: "MiniMax-M3", provider: "minimax" },
     },
   },
   {
@@ -1749,15 +1811,14 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.minimax.io/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
+      models: [{ id: "MiniMax-M3", name: "MiniMax M3" }],
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_en",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M2.7", provider: "minimax_en" },
+      model: { default: "MiniMax-M3", provider: "minimax_en" },
     },
   },
   {

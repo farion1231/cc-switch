@@ -7,6 +7,7 @@ import { codexProviderPresets } from "@/config/codexProviderPresets";
 //   表单显示"未设置"的误导比快照过时/冗余声明的代价更大）；
 // - Chat 路由预设（supportsEffort:false）：档位值不进 wire，仅当预设声明了
 //   真实思考开关（supportsThinking + thinkingParam）时填两态 none/high；
+//   未确认开关且模型会思考时，仅列 high 表示单一思考模式；
 // - 后端对两条路径的 catalog 都应用 per-row 覆盖（apply_codex_reasoning_
 //   level_override "Applies to every profile"）。
 // 后端 codex_canonical_efforts 对未知值静默丢弃——预设里的拼写错误不会报错，
@@ -34,15 +35,15 @@ function catalogModel(presetName: string, modelId: string) {
 
 describe("Codex preset pre-filled reasoning levels", () => {
   // 每条期望值都对应官方文档证据（见预设文件内注释）；改动任一侧前先核对来源。
-  // 第四位=期望的显式 defaultReasoningLevel：仅在官方默认 ≠ 后端回落结果时
-  // 声明（后端回落=模板默认 ∈ 子集则保留、否则取子集最高档），其余一律留空
+  // 第四位=期望的显式 defaultReasoningLevel：用于官方 catalog 的默认值，
+  // 或让 Chat catalog 与预设 config.toml 的显式 high 一致（否则可能回落 max）。
   const EXPECTED: Array<[string, string, string[], string?]> = [
     // 火山官方 Codex 接入文档四份一致：low/medium/high
     ["火山 Agent Plan", "ark-code-latest", ["low", "medium", "high"]],
     ["火山 Coding Plan", "ark-code-latest", ["low", "medium", "high"]],
     // 方舟深度思考文档：本模型无限制的通用四档（minimal=关思考直接回答）
     [
-      "DouBaoSeed",
+      "Volcengine Doubao",
       "doubao-seed-2-1-pro-260628",
       ["minimal", "low", "medium", "high"],
     ],
@@ -52,7 +53,7 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 腾讯 Token Plan（订阅线 /plan 端点）档位全部真 Key 实测（2026-08-31）：
     // glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 直接 400，
     // 错误信息即枚举来源）；kimi-k2.7-code(-highspeed) 仅接受
-    // thinking:enabled；minimax-m2.5/m2.7 与国内 auto 关思考被静默忽略
+    // thinking:enabled；minimax-m2.7 与国内 auto 关思考被静默忽略
     //（选 none 是假关）→ 只列 high；其余模型 thinking 开关真实生效 → 两态
     ["Tencent Token Plan", "tc-code-latest", ["none", "high"]],
     ["Tencent Token Plan", "hy3", ["none", "high"]],
@@ -105,8 +106,13 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // SiliconFlow .com 的 M3：平台级 enable_thinking 布尔开关（后端按平台
     // 推断兜底），M3 官方可关思考 → 两态
     ["SiliconFlow en", "MiniMaxAI/MiniMax-M3", ["none", "high"]],
-    // Novita：平台真开关 enable_thinking（声明已修正方言）→ 两态
-    ["Novita AI", "zai-org/glm-5.1", ["none", "high"]],
+    // SiliconFlow .cn：平台仅 high/max，显式 high 与预设配置一致。
+    ["SiliconFlow", "deepseek-ai/DeepSeek-V4-Flash", ["high", "max"], "high"],
+    // 聚合平台尚未确认新 GLM 的开关/effort；单档不下发推理控制参数。
+    ["AtlasCloud", "zai-org/glm-5.2", ["high"]],
+    ["Novita AI", "zai-org/glm-5.3", ["high"]],
+    // NIM K3 的官方枚举；显式 high 与预设配置一致。
+    ["Nvidia", "moonshotai/kimi-k3", ["low", "high", "max"], "high"],
     // 千帆 v2 官方 thinking:{type}（声明已补）→ 两态
     ["Baidu Qianfan Coding Plan", "qianfan-code-latest", ["none", "high"]],
     // 千帆 Token Plan：deepseek-v4-pro/v4-flash 在 thinking+reasoning_effort
@@ -126,25 +132,35 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["StepFun", "step-3.5-flash-2603", ["low", "high"]],
     ["StepFun en", "step-3.7-flash", ["low", "medium", "high"]],
     ["StepFun en", "step-3.5-flash-2603", ["low", "high"]],
-    // Kimi 开放平台：k2.7-code 始终思考且官方标注不支持 effort → 单档；k3
-    // 三档（官方默认 max=后端回落结果，无需显式 default）。均关不掉思考无 none
-    ["Kimi", "kimi-k2.7-code", ["high"]],
+    // Kimi 开放平台（原生 Responses 直连，默认模型 kimi-k3）：k3 三档不声明
+    // default——native 模板默认 high ∈ 子集故后端保留 high（= 预设
+    // config.toml 的 model_reasoning_effort），官方默认 max 只是 API 侧未显式
+    // 传 effort 时的行为；k2.7-code 始终思考且官方标注不支持 effort → 单档。
+    // 均关不掉思考无 none
     ["Kimi", "kimi-k3", ["low", "high", "max"]],
-    // Kimi Code 端点：k3/k3-256k 官方默认 high ≠ 回落值 max → 显式 default
-    // 首两例；kimi-for-coding(-highspeed) Thinking 恒 ON 单档
+    ["Kimi", "kimi-k2.7-code", ["high"]],
+    // Kimi Code 端点（原生 Responses 直连）：k3/k3-256k 官方 models.json 明写
+    // default_reasoning_level "high"，与 native 模板回落值相同——照抄官方目录
+    // 的显式声明（表单可见性优先，MiniMax/MiMo 先例）故仍有第四位期望；
+    // kimi-for-coding(-highspeed) Thinking 恒 ON 单档
     ["Kimi For Coding", "kimi-for-coding", ["high"]],
     ["Kimi For Coding", "kimi-for-coding-highspeed", ["high"]],
     ["Kimi For Coding", "k3", ["low", "high", "max"], "high"],
     ["Kimi For Coding", "k3-256k", ["low", "high", "max"], "high"],
     // OpenCode Go（Zen 网关）：opencode 客户端 variants() 严格按各模型在
     // models.dev 的 reasoning_options 声明发 reasoning_effort（provider/
-    // transform.ts）——glm-5.2 / deepseek-v4-pro 仅 high|max、v4-flash 另
-    // 声明 low（均无 none：effort 档位非思考开关，none 会是假开关）。本 PR
-    // 已为该预设补上 codexChatReasoning（effortValueMode:"zen"），代理转换
-    // 层按同一张表逐模型钳制，表即下发生效的依据
-    ["OpenCode Go", "glm-5.2", ["high", "max"]],
+    // transform.ts）——GLM5.3 两款有 low/high/max，Kimi K3 仅 max。
+    // 代理转换层按同一张表逐模型钳制；GLM 默认 high 与预设配置一致。
+    ["OpenCode Go", "glm-5.3", ["low", "high", "max"], "high"],
+    ["OpenCode Go", "glm-5.3-flash", ["low", "high", "max"], "high"],
+    ["OpenCode Go", "kimi-k3", ["max"]],
     ["OpenCode Go", "deepseek-v4-pro", ["high", "max"]],
     ["OpenCode Go", "deepseek-v4-flash", ["low", "high", "max"]],
+    // 千问官方 Codex 页只发布一份 model-catalog.local.json，且该元数据段落
+    // 位于套餐分页之前（help.aliyun.com/zh/model-studio/codex，2026-09-08
+    // 核对）：qwen3.8-max 档位 low/medium/xhigh、默认 xhigh（≠ 模板回落的
+    // none/high，故显式声明）；按量付费与 Token Plan 同源同一份
+    ["千问AI平台", "qwen3.8-max", ["low", "medium", "xhigh"], "xhigh"],
   ];
 
   it.each(EXPECTED)(
@@ -152,32 +168,21 @@ describe("Codex preset pre-filled reasoning levels", () => {
     (presetName, modelId, levels, expectedDefault) => {
       const model = catalogModel(presetName, modelId);
       expect(model.reasoningLevels).toEqual(levels);
-      // 默认档通常不显式声明（后端 fallback 已落到正确档位）；仅当官方默认
-      // 与回落结果不一致时才有第四位期望值（Kimi Code k3 系先例）
+      // 显式默认来源见各预设注释；未声明时仍保留后端的 fallback 行为。
       expect(model.defaultReasoningLevel).toBe(expectedDefault);
     },
   );
 
   it("keeps deliberately-unfilled presets unfilled", () => {
-    // Bailian qwen3-coder-plus 无 per-model 档位证据。OpenCode Go 的
-    // toggle/未收录模型保持不填：glm-5.1 是 toggle 型（models.dev 无 effort
-    // 声明）、kimi-k2.7-code 官方标注不支持 effort、mimo-v2.5-pro 未收录
-    // models.dev——与 opencode 客户端一致（代理侧无表不发 reasoning_effort
-    // 字段）。SiliconFlow .cn 的 M2.5 能否真正关思考无官方明文、ModelScope
-    // 是否透传思考字段未证实——真机验证前不造两态假开关（2026-08-15 盘点结论）
+    // OpenCode Go 的 MiMo 无 effort 声明，与 opencode 客户端一致（代理侧
+    // 无表不发 reasoning_effort）。ModelScope 是否透传思考字段未证实，不造
+    // 两态假开关。
     const UNFILLED: Array<[string, string]> = [
-      ["Bailian", "qwen3-coder-plus"],
-      ["OpenCode Go", "glm-5.1"],
-      ["OpenCode Go", "kimi-k2.7-code"],
       ["OpenCode Go", "mimo-v2.5-pro"],
-      ["SiliconFlow", "Pro/MiniMaxAI/MiniMax-M2.5"],
       ["ModelScope", "ZhipuAI/GLM-5.2"],
       // StepFun 无后缀 3.5-flash：官方未暴露 effort，单一常开思考态
       ["StepFun", "step-3.5-flash"],
       ["StepFun en", "step-3.5-flash"],
-      // Nvidia NIM：无思考开关（真参数 chat_template_kwargs 不在值域），
-      // 声明已改 thinkingParam:none 撤销假开关
-      ["Nvidia", "moonshotai/kimi-k2.5"],
       // 千帆 Token Plan：三模型均不在 thinking 官方清单（2026-05-27 版）且
       // 无任何官方接入示例下发思考字段——无证据不造档位
       ["Baidu Qianfan Token Plan", "deepseek-v4-flash-0731"],

@@ -999,10 +999,15 @@ impl ProxyService {
             return Ok(());
         }
 
-        let mut resolved_config = config.clone();
+        // 端口是全局字段，不能通过旧接口回写各应用独立的重试和超时配置。
+        let mut resolved_config = self
+            .db
+            .get_global_proxy_config()
+            .await
+            .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
         resolved_config.listen_port = actual_port;
         self.db
-            .update_proxy_config(resolved_config)
+            .update_global_proxy_config(resolved_config)
             .await
             .map_err(|e| format!("保存动态代理端口失败: {e}"))
     }
@@ -1803,20 +1808,16 @@ impl ProxyService {
         // 2. 恢复原始 Live 配置
         self.restore_live_configs().await?;
 
-        // 3. 更新 proxy_config 表中的 live_takeover_active 标志（兼容旧版）
-        //    注意：保留 proxy_config.enabled 状态，下次启动时自动恢复
-        if let Ok(mut config) = self.db.get_proxy_config().await {
-            config.live_takeover_active = false;
-            let _ = self.db.update_proxy_config(config).await;
-        }
+        // 保留各应用的 enabled 和故障转移配置，下次启动时自动恢复。
+        // live_takeover_active 已废弃，无需通过旧接口回写配置。
 
-        // 4. 删除备份（Live 配置已恢复，备份不再需要）
+        // 3. 删除备份（Live 配置已恢复，备份不再需要）
         self.db
             .delete_all_live_backups()
             .await
             .map_err(|e| format!("删除备份失败: {e}"))?;
 
-        // 5. 重置健康状态
+        // 4. 重置健康状态
         self.db
             .clear_all_provider_health()
             .await
@@ -3605,6 +3606,53 @@ impl ProxyService {
         auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
     }
 
+    /// The login state Codex will observe for `config_text`, as far as
+    /// cc-switch can tell without touching the keyring: `Some(true)` signed
+    /// in, `Some(false)` signed out, `None` undecidable. Which store Codex
+    /// reads is decided first (`cli_auth_credentials_store`), and
+    /// `auth.json` is only opened for the one mode that reads it:
+    /// - `file` (the default): the file decides — see
+    ///   `codex_auth_file_has_login`;
+    /// - `ephemeral`: every process starts signed out, whatever is on disk;
+    /// - `keyring`: Codex never opens the file (and deletes it after saving
+    ///   to the keyring), so the file says nothing — undecidable;
+    /// - `auto` (`AutoAuthStorage::load`): the keyring wins whenever it holds
+    ///   anything and the file is only a fallback, so even a login in the
+    ///   file cannot be ranked without reading the keyring — undecidable;
+    /// - anything Codex would reject: undecidable.
+    fn codex_live_login_state(config_text: &str) -> Option<bool> {
+        use crate::codex_config::CodexAuthStoreMode;
+
+        match crate::codex_config::codex_config_auth_store_mode(config_text) {
+            CodexAuthStoreMode::File => Some(Self::codex_auth_file_has_login()),
+            CodexAuthStoreMode::Ephemeral => Some(false),
+            CodexAuthStoreMode::Keyring
+            | CodexAuthStoreMode::Auto
+            | CodexAuthStoreMode::Unknown => None,
+        }
+    }
+
+    /// Whether the live `auth.json` holds a login Codex's file store would
+    /// load. The takeover placeholder is not a login, and neither are
+    /// Bedrock credentials or leftover metadata
+    /// (`codex_auth_has_openai_account_material`). A file that is missing,
+    /// unreadable or unparsable is "no stored auth" to Codex as well
+    /// (`FileAuthStorage::load` fails and `AuthManager::load_auth` swallows
+    /// it with `.ok()`), so it means signed out here and must never fail the
+    /// takeover write.
+    fn codex_auth_file_has_login() -> bool {
+        let auth = match CodexAuthFileSnapshot::capture().and_then(|snapshot| snapshot.value()) {
+            Ok(Some(auth)) => auth,
+            Ok(None) => return false,
+            Err(error) => {
+                log::warn!("Codex auth.json 不可读，按未登录处理: {error}");
+                return false;
+            }
+        };
+        !Self::codex_auth_has_proxy_placeholder(&auth)
+            && crate::codex_config::codex_auth_has_openai_account_material(&auth)
+    }
+
     fn write_codex_takeover_live_for_provider(
         &self,
         config: &Value,
@@ -3660,11 +3708,44 @@ impl ProxyService {
             let live_config = if official_passthrough {
                 prepared_config
             } else {
-                crate::codex_config::prepare_codex_provider_live_config(
+                let injected = crate::codex_config::prepare_codex_provider_live_config(
                     config.get("auth").unwrap_or(&Value::Null),
                     &prepared_config,
                 )
-                .map_err(|e| format!("写入 Codex 配置失败: {e}"))?
+                .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                // Takeover never touches auth.json, but it no longer owns the
+                // file's presence: a preservation-off direct switch deletes
+                // the login before takeover is enabled, and `codex logout`
+                // can remove it mid-takeover. The stored card's
+                // `requires_openai_auth` (presets carried `true` from the
+                // pre-0.149 era) would then trap the TUI in the login screen
+                // — Codex decides that screen from the flag and its account
+                // probe alone, never from the bearer token — so stamp the
+                // flag to the observed login state, exactly as the direct
+                // switch does. When the state is undecidable from disk
+                // (keyring-backed or auto stores) the card's flag is left
+                // alone. Proxy-injected OAuth cards (xai_oauth, copilot) are
+                // excluded outright: the effective snapshot already carries
+                // the neutralized `false` (`neutralize_codex_proxy_oauth_fallback`)
+                // because the official login is never their credential, and
+                // a login on disk must not raise it back to `true`.
+                let proxy_injected_oauth =
+                    provider.is_some_and(Provider::uses_proxy_injected_oauth);
+                let live_login_state = if proxy_injected_oauth {
+                    None
+                } else {
+                    Self::codex_live_login_state(&injected)
+                };
+                match live_login_state {
+                    Some(live_has_login) => {
+                        crate::codex_config::align_codex_requires_openai_auth_with_login_preservation(
+                            &injected,
+                            live_has_login,
+                        )
+                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?
+                    }
+                    None => injected,
+                }
             };
             crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
@@ -4071,6 +4152,88 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    async fn seed_distinct_app_proxy_configs(db: &Database) -> Vec<Value> {
+        let mut configs = Vec::new();
+        for (app, retries) in [("claude", 6), ("codex", 0), ("gemini", 2), ("grokbuild", 3)] {
+            let mut config = db.get_proxy_config_for_app(app).await.unwrap();
+            config.enabled = retries % 2 == 0;
+            config.auto_failover_enabled = retries % 2 != 0;
+            config.max_retries = retries;
+            config.streaming_first_byte_timeout = 30 + retries;
+            config.streaming_idle_timeout = 90 + retries;
+            config.non_streaming_timeout = 300 + retries;
+            config.circuit_failure_threshold = 5 + retries;
+            configs.push(serde_json::to_value(&config).unwrap());
+            db.update_proxy_config_for_app(config).await.unwrap();
+        }
+        configs
+    }
+
+    async fn assert_app_proxy_configs_unchanged(db: &Database, configs: &[Value]) {
+        for expected in configs {
+            let app = expected["appType"].as_str().unwrap();
+            let actual = db.get_proxy_config_for_app(app).await.unwrap();
+            assert_eq!(serde_json::to_value(actual).unwrap(), *expected, "{app}");
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn shutdown_preserves_app_proxy_configs() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().unwrap();
+        let db = Arc::new(Database::memory().unwrap());
+        let configs = seed_distinct_app_proxy_configs(&db).await;
+        let service = ProxyService::new(db.clone());
+
+        let backup = json!({"env": {"ANTHROPIC_BASE_URL": "https://example.com"}});
+        db.save_live_backup("claude", &backup.to_string())
+            .await
+            .unwrap();
+
+        service.stop_with_restore_keep_state().await.unwrap();
+
+        assert_app_proxy_configs_unchanged(&db, &configs).await;
+        assert_eq!(
+            read_json_file::<Value>(&get_claude_settings_path()).unwrap(),
+            backup
+        );
+        assert!(db.get_live_backup("claude").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn ephemeral_port_preserves_app_proxy_configs() {
+        let db = Arc::new(Database::memory().unwrap());
+        let configs = seed_distinct_app_proxy_configs(&db).await;
+        let service = ProxyService::new(db.clone());
+        let mut config = db.get_proxy_config().await.unwrap();
+        config.listen_port = 0;
+        let mut expected_global = db.get_global_proxy_config().await.unwrap();
+        expected_global.listen_port = 23456;
+
+        service
+            .persist_ephemeral_listen_port_if_needed(&config, 23456)
+            .await
+            .unwrap();
+
+        assert_app_proxy_configs_unchanged(&db, &configs).await;
+        assert_eq!(
+            serde_json::to_value(db.get_global_proxy_config().await.unwrap()).unwrap(),
+            serde_json::to_value(expected_global).unwrap()
+        );
+
+        config.listen_port = 23456;
+        service
+            .persist_ephemeral_listen_port_if_needed(&config, 34567)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_global_proxy_config().await.unwrap().listen_port,
+            23456
+        );
+        assert_app_proxy_configs_unchanged(&db, &configs).await;
     }
 
     #[tokio::test]
@@ -6294,6 +6457,599 @@ experimental_bearer_token = "PROXY_MANAGED"
 
     #[test]
     #[serial]
+    fn codex_takeover_stamps_requires_openai_auth_false_when_auth_json_absent() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        // Preservation off: the direct switch that preceded takeover already
+        // deleted auth.json (see plan_codex_live_write).
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: false,
+            ..Default::default()
+        })
+        .expect("disable Codex official auth preservation");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        assert!(!crate::codex_config::get_codex_auth_path().exists());
+
+        // Stored cards carry `requires_openai_auth = true` from the pre-0.149
+        // presets; the takeover projection must not replay it onto a login-less
+        // auth.json or Codex traps the TUI in the login screen.
+        let mut provider = Provider::with_id(
+            "kimi".to_string(),
+            "Kimi".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "kimi-key" },
+                "config": r#"model_provider = "kimi"
+model = "kimi-k2"
+
+[model_providers.kimi]
+name = "Kimi"
+base_url = "https://api.moonshot.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut takeover_settings = provider.settings_config.clone();
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut takeover_settings,
+            "http://127.0.0.1:15721/v1",
+            &provider,
+        )
+        .expect("apply takeover fields");
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("write takeover live config");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(
+            live_config.contains("requires_openai_auth = false"),
+            "no login on disk: the stored `true` must be stamped false; got:\n{live_config}"
+        );
+        assert!(
+            live_config.contains(&format!(
+                "experimental_bearer_token = \"{PROXY_TOKEN_PLACEHOLDER}\""
+            )),
+            "placeholder must still ride as the provider token; got:\n{live_config}"
+        );
+        assert!(live_config.contains("base_url = \"http://127.0.0.1:15721/v1\""));
+        assert!(
+            !crate::codex_config::get_codex_auth_path().exists(),
+            "takeover must not create auth.json"
+        );
+
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_stamps_requires_openai_auth_true_when_login_present() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access",
+                "refresh_token": "oauth-refresh"
+            }
+        });
+        crate::codex_config::write_codex_live_atomic(
+            &oauth_auth,
+            Some(
+                r#"model_provider = "openai"
+model = "gpt-5-codex"
+"#,
+            ),
+        )
+        .expect("seed live OAuth auth");
+
+        // The card omits the flag: with a login on disk it is stamped true so
+        // Codex keeps showing the account and refreshing the preserved tokens
+        // (the placeholder bearer token still short-circuits request auth).
+        let mut provider = Provider::with_id(
+            "kimi".to_string(),
+            "Kimi".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "kimi-key" },
+                "config": r#"model_provider = "kimi"
+model = "kimi-k2"
+
+[model_providers.kimi]
+name = "Kimi"
+base_url = "https://api.moonshot.cn/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut takeover_settings = provider.settings_config.clone();
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut takeover_settings,
+            "http://127.0.0.1:15721/v1",
+            &provider,
+        )
+        .expect("apply takeover fields");
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("write takeover live config");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(
+            live_config.contains("requires_openai_auth = true"),
+            "login on disk: the flag must be stamped true; got:\n{live_config}"
+        );
+        assert!(live_config.contains(&format!(
+            "experimental_bearer_token = \"{PROXY_TOKEN_PLACEHOLDER}\""
+        )));
+
+        let auth_after: Value = serde_json::from_str(
+            &std::fs::read_to_string(crate::codex_config::get_codex_auth_path())
+                .expect("read auth.json"),
+        )
+        .expect("parse auth.json");
+        assert_eq!(
+            auth_after, oauth_auth,
+            "takeover must leave the OAuth login untouched"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_does_not_stamp_true_over_bedrock_only_auth_json() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        // Bedrock credentials are a login for the Bedrock provider only: on
+        // any requires_openai_auth provider Codex's account probe returns
+        // UnsupportedBedrockApiKeyAuth and the TUI fails to start.
+        let bedrock_auth = json!({ "bedrock_api_key": "bedrock-key" });
+        crate::codex_config::write_codex_live_atomic(
+            &bedrock_auth,
+            Some("model_provider = \"amazon-bedrock\"\nmodel = \"claude\"\n"),
+        )
+        .expect("seed bedrock auth");
+
+        let mut provider = Provider::with_id(
+            "kimi".to_string(),
+            "Kimi".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "kimi-key" },
+                "config": r#"model_provider = "kimi"
+model = "kimi-k2"
+
+[model_providers.kimi]
+name = "Kimi"
+base_url = "https://api.moonshot.cn/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut takeover_settings = provider.settings_config.clone();
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut takeover_settings,
+            "http://127.0.0.1:15721/v1",
+            &provider,
+        )
+        .expect("apply takeover fields");
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("write takeover live config");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(
+            !live_config.contains("requires_openai_auth = true"),
+            "bedrock-only auth.json must never be promoted to an OpenAI login; got:\n{live_config}"
+        );
+        assert!(live_config.contains("requires_openai_auth = false"));
+        let auth_after: Value = serde_json::from_str(
+            &std::fs::read_to_string(crate::codex_config::get_codex_auth_path())
+                .expect("read auth.json"),
+        )
+        .expect("parse auth.json");
+        assert_eq!(
+            auth_after, bedrock_auth,
+            "takeover must leave auth.json untouched"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_keeps_stored_flag_when_auth_store_is_keyring_backed() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        assert!(!crate::codex_config::get_codex_auth_path().exists());
+
+        // Codex deletes auth.json after saving to the keyring, so an absent
+        // file says nothing about login state under these store modes: the
+        // stored `true` must survive instead of being rewritten to false
+        // (which would hide a valid keyring login).
+        for mode in ["keyring", "auto"] {
+            let mut provider = Provider::with_id(
+                "kimi".to_string(),
+                "Kimi".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "kimi-key" },
+                    "config": format!(
+                        r#"model_provider = "kimi"
+model = "kimi-k2"
+cli_auth_credentials_store = "{mode}"
+
+[model_providers.kimi]
+name = "Kimi"
+base_url = "https://api.moonshot.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                    )
+                }),
+                None,
+            );
+            provider.category = Some("custom".to_string());
+
+            let mut takeover_settings = provider.settings_config.clone();
+            ProxyService::apply_codex_takeover_fields_for_provider(
+                &mut takeover_settings,
+                "http://127.0.0.1:15721/v1",
+                &provider,
+            )
+            .expect("apply takeover fields");
+            service
+                .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+                .expect("write takeover live config");
+
+            let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                .expect("read live config");
+            assert!(
+                live_config.contains("requires_openai_auth = true"),
+                "store mode {mode}: stored flag must be left alone; got:\n{live_config}"
+            );
+            assert!(
+                live_config.contains(&format!("cli_auth_credentials_store = \"{mode}\"")),
+                "store mode key must survive projection; got:\n{live_config}"
+            );
+            assert!(!crate::codex_config::get_codex_auth_path().exists());
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_stamps_false_when_bedrock_outranks_stale_openai_key() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        // AuthDotJson::resolved_mode ranks bedrock_api_key above
+        // OPENAI_API_KEY, so Codex loads this as Bedrock auth; a stamped
+        // `true` would make account_state() fail with
+        // UnsupportedBedrockApiKeyAuth.
+        let mixed_auth = json!({
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_api_key": "bedrock-key"
+        });
+        crate::codex_config::write_codex_live_atomic(
+            &mixed_auth,
+            Some("model_provider = \"amazon-bedrock\"\nmodel = \"claude\"\n"),
+        )
+        .expect("seed mixed auth");
+
+        let mut provider = Provider::with_id(
+            "kimi".to_string(),
+            "Kimi".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "kimi-key" },
+                "config": r#"model_provider = "kimi"
+model = "kimi-k2"
+
+[model_providers.kimi]
+name = "Kimi"
+base_url = "https://api.moonshot.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut takeover_settings = provider.settings_config.clone();
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut takeover_settings,
+            "http://127.0.0.1:15721/v1",
+            &provider,
+        )
+        .expect("apply takeover fields");
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("write takeover live config");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(
+            live_config.contains("requires_openai_auth = false"),
+            "bedrock outranks the stale key: the stored `true` must be stamped false; got:\n{live_config}"
+        );
+        let auth_after: Value = serde_json::from_str(
+            &std::fs::read_to_string(crate::codex_config::get_codex_auth_path())
+                .expect("read auth.json"),
+        )
+        .expect("parse auth.json");
+        assert_eq!(
+            auth_after, mixed_auth,
+            "takeover must leave auth.json untouched"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_keeps_stored_flag_under_auto_even_when_file_holds_login() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        // Under `auto` the keyring is consulted first and the file is only a
+        // fallback: a keyring entry (say Bedrock) would shadow this login, so
+        // the file alone cannot justify forcing the flag to true.
+        let file_login = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access",
+                "refresh_token": "oauth-refresh"
+            }
+        });
+        crate::codex_config::write_codex_live_atomic(
+            &file_login,
+            Some("model_provider = \"openai\"\nmodel = \"gpt-5-codex\"\n"),
+        )
+        .expect("seed file login");
+
+        let mut provider = Provider::with_id(
+            "kimi".to_string(),
+            "Kimi".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "kimi-key" },
+                "config": r#"model_provider = "kimi"
+model = "kimi-k2"
+cli_auth_credentials_store = "auto"
+
+[model_providers.kimi]
+name = "Kimi"
+base_url = "https://api.moonshot.cn/v1"
+wire_api = "responses"
+requires_openai_auth = false
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut takeover_settings = provider.settings_config.clone();
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut takeover_settings,
+            "http://127.0.0.1:15721/v1",
+            &provider,
+        )
+        .expect("apply takeover fields");
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("write takeover live config");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(
+            live_config.contains("requires_openai_auth = false"),
+            "auto store: the stored flag must be left alone, not forced true by the fallback file; got:\n{live_config}"
+        );
+        assert!(!live_config.contains("requires_openai_auth = true"));
+        let auth_after: Value = serde_json::from_str(
+            &std::fs::read_to_string(crate::codex_config::get_codex_auth_path())
+                .expect("read auth.json"),
+        )
+        .expect("parse auth.json");
+        assert_eq!(
+            auth_after, file_login,
+            "takeover must leave auth.json untouched"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_tolerates_corrupt_auth_json_for_every_store_mode() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        std::fs::create_dir_all(auth_path.parent().expect("codex dir")).expect("mkdir");
+        // A leftover file Codex itself cannot parse. Keyring/ephemeral stores
+        // never open it, and the file store treats the failed load as "no
+        // stored auth"; in no case may it fail the takeover write.
+        std::fs::write(&auth_path, "{").expect("seed corrupt auth.json");
+
+        // (store line, expected flag after projection)
+        let cases = [
+            (
+                "cli_auth_credentials_store = \"keyring\"\n",
+                "requires_openai_auth = true",
+            ),
+            (
+                "cli_auth_credentials_store = \"auto\"\n",
+                "requires_openai_auth = true",
+            ),
+            (
+                "cli_auth_credentials_store = \"ephemeral\"\n",
+                "requires_openai_auth = false",
+            ),
+            ("", "requires_openai_auth = false"),
+        ];
+        for (store_line, expected) in cases {
+            let mut provider = Provider::with_id(
+                "kimi".to_string(),
+                "Kimi".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "kimi-key" },
+                    "config": format!(
+                        r#"model_provider = "kimi"
+model = "kimi-k2"
+{store_line}
+[model_providers.kimi]
+name = "Kimi"
+base_url = "https://api.moonshot.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                    )
+                }),
+                None,
+            );
+            provider.category = Some("custom".to_string());
+
+            let mut takeover_settings = provider.settings_config.clone();
+            ProxyService::apply_codex_takeover_fields_for_provider(
+                &mut takeover_settings,
+                "http://127.0.0.1:15721/v1",
+                &provider,
+            )
+            .expect("apply takeover fields");
+            service
+                .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "store {store_line:?}: corrupt auth.json must not fail the write: {error}"
+                    )
+                });
+
+            let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                .expect("read live config");
+            assert!(
+                live_config.contains(expected),
+                "store {store_line:?}: expected `{expected}`; got:\n{live_config}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&auth_path).expect("read auth.json"),
+                "{",
+                "takeover must leave the corrupt file untouched"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_never_raises_flag_on_proxy_injected_oauth_card_with_login_on_disk() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        // A preserved ChatGPT login is on disk (file store), which would
+        // stamp an ordinary third-party card to `true`.
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access",
+                "refresh_token": "oauth-refresh"
+            }
+        });
+        crate::codex_config::write_codex_live_atomic(
+            &oauth_auth,
+            Some("model_provider = \"openai\"\nmodel = \"gpt-5-codex\"\n"),
+        )
+        .expect("seed live OAuth auth");
+
+        // Preset snapshot of a proxy-injected OAuth card still carrying the
+        // pre-0.149 `true`; the effective builder neutralizes it to `false`
+        // before the takeover writer ever sees it.
+        let stored = r#"model_provider = "xai"
+model = "grok-4"
+
+[model_providers.xai]
+name = "xAI"
+base_url = "https://api.x.ai/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let neutralized =
+            crate::codex_config::neutralize_codex_official_auth_fallback_for_proxy_oauth(stored)
+                .expect("legacy true is neutralized");
+        let mut provider = Provider::with_id(
+            "xai".to_string(),
+            "xAI".to_string(),
+            json!({ "auth": {}, "config": neutralized }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            ..Default::default()
+        });
+        assert!(provider.uses_proxy_injected_oauth());
+
+        let mut takeover_settings = provider.settings_config.clone();
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut takeover_settings,
+            "http://127.0.0.1:15721/v1",
+            &provider,
+        )
+        .expect("apply takeover fields");
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("write takeover live config");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(
+            live_config.contains("requires_openai_auth = false"),
+            "proxy-injected OAuth card must keep its neutralized flag; got:\n{live_config}"
+        );
+        assert!(
+            !live_config.contains("requires_openai_auth = true"),
+            "a login on disk must not raise the flag on a keyless OAuth card; got:\n{live_config}"
+        );
+        assert!(
+            live_config.contains(&format!(
+                "experimental_bearer_token = \"{PROXY_TOKEN_PLACEHOLDER}\""
+            )),
+            "placeholder must still ride as the provider token; got:\n{live_config}"
+        );
+        let auth_after: Value = serde_json::from_str(
+            &std::fs::read_to_string(crate::codex_config::get_codex_auth_path())
+                .expect("read auth.json"),
+        )
+        .expect("parse auth.json");
+        assert_eq!(
+            auth_after, oauth_auth,
+            "takeover must leave the login untouched"
+        );
+    }
+
+    #[test]
+    #[serial]
     fn codex_custom_provider_live_write_removes_auth_when_preserve_disabled() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -6423,6 +7179,34 @@ requires_openai_auth = true
             .and_then(|v| v.as_str())
             .expect("model_providers.any.wire_api should exist");
         assert_eq!(wire_api, "responses");
+    }
+
+    #[test]
+    fn codex_takeover_without_provider_selects_a_local_authenticated_route() {
+        for input in [
+            "",
+            "model = \"gpt-5\"\nbase_url = \"https://old.example/v1\"\n",
+            "model_providers = { cc-switch = { name = \"Existing\", base_url = \"https://keep.example/v1\" } }\n",
+        ] {
+            let url = "http://127.0.0.1:15721/v1";
+            let projected = ProxyService::apply_codex_proxy_toml_config_for_provider(input, url, None).unwrap();
+            let auth = json!({"OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER});
+            let live = crate::codex_config::prepare_codex_provider_live_config(&auth, &projected).unwrap();
+            println!("takeover_fixture={}", serde_json::to_string(&live).unwrap());
+            let doc: toml::Value = toml::from_str(&live).unwrap();
+            let id = doc["model_provider"].as_str().expect("explicit provider");
+            assert_ne!(id, "openai");
+            let table = &doc["model_providers"][id];
+            assert_eq!(table["base_url"].as_str(), Some(url));
+            assert_eq!(table["wire_api"].as_str(), Some("responses"));
+            assert_eq!(table["experimental_bearer_token"].as_str(), Some(PROXY_TOKEN_PLACEHOLDER));
+            if input.contains("Existing") {
+                assert_eq!(doc["model_providers"]["cc-switch"]["base_url"].as_str(), Some("https://keep.example/v1"));
+            }
+            let repeated = ProxyService::apply_codex_proxy_toml_config_for_provider(&live, url, None).unwrap();
+            let repeated = crate::codex_config::prepare_codex_provider_live_config(&auth, &repeated).unwrap();
+            assert_eq!(toml::from_str::<toml::Value>(&repeated).unwrap(), doc);
+        }
     }
 
     #[test]
@@ -6638,22 +7422,22 @@ wire_api = "responses"
     }
 
     #[test]
-    fn update_toml_base_url_falls_back_to_top_level_base_url() {
+    fn update_toml_base_url_uses_implicit_openai_override() {
         let input = r#"
 model = "gpt-5.1-codex"
 "#;
 
         let new_url = "http://127.0.0.1:5000/v1";
         let output = crate::codex_config::update_codex_toml_field(input, "base_url", new_url)
-            .expect("update top-level base_url");
+            .expect("update implicit openai base_url");
 
         let parsed: toml::Value =
             toml::from_str(&output).expect("updated config should be valid TOML");
 
         let base_url = parsed
-            .get("base_url")
+            .get("openai_base_url")
             .and_then(|v| v.as_str())
-            .expect("base_url should exist");
+            .expect("openai_base_url should exist");
 
         assert_eq!(base_url, new_url);
     }
