@@ -1829,6 +1829,26 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#FF9900",
   },
   {
+    name: "cocodot",
+    websiteUrl: "https://cocodot.co/ccswitch",
+    apiKeyUrl: "https://cocodot.co/dashboard/ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://cocodot.co/api/ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "mcs-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mch-1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mcs-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mco-6",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://cocodot.co/api/ai"],
+    modelsUrl: "https://cocodot.co/api/ai/v1/models",
+    icon: "cocodot",
+    iconColor: "#2F6BFF",
+  },
+  {
     name: "JieKou AI",
     websiteUrl: "https://jiekou.ai/#model-library",
     apiKeyUrl: "https://jiekou.ai/settings/key-management",
