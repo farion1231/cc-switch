@@ -1060,6 +1060,16 @@
       "deleteTemplateMessage": "prompts/{{slug}}.md を完全に削除します。"
     }
   },
+  "dsh": {
+    "provider": {
+      "enabled": "DSH で有効化しました",
+      "removed": "DSH から削除しました",
+      "noModels": "このプロバイダーには設定済みのモデルがありません",
+      "defaultSet": "DSH のデフォルトモデルに設定しました",
+      "defaultFailed": "DSH のデフォルトモデルを設定できませんでした",
+      "selectDefaultModel": "デフォルトモデルを選択"
+    }
+  },
   "appSwitcher": {
     "more": "その他のアプリ"
   },

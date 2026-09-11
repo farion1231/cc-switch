@@ -1061,6 +1061,16 @@
       "deleteTemplateMessage": "此操作會永久刪除 prompts/{{slug}}.md。"
     }
   },
+  "dsh": {
+    "provider": {
+      "enabled": "已在 DSH 中啟用",
+      "removed": "已從 DSH 移除",
+      "noModels": "該供應商沒有配置模型",
+      "defaultSet": "已設為 DSH 預設模型",
+      "defaultFailed": "設定 DSH 預設模型失敗",
+      "selectDefaultModel": "選擇預設模型"
+    }
+  },
   "appSwitcher": {
     "more": "更多應用程式"
   },

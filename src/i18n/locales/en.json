@@ -1060,6 +1060,16 @@
       "deleteTemplateMessage": "This permanently deletes prompts/{{slug}}.md."
     }
   },
+  "dsh": {
+    "provider": {
+      "enabled": "Enabled in DSH",
+      "removed": "Removed from DSH",
+      "noModels": "This provider has no configured models",
+      "defaultSet": "Set as the DSH default model",
+      "defaultFailed": "Could not set the DSH default model",
+      "selectDefaultModel": "Select default model"
+    }
+  },
   "appSwitcher": {
     "more": "More apps"
   },
