@@ -237,3 +237,52 @@ pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
 fn strip_think_answer_separator(text: &str) -> &str {
     text.trim_start_matches(['\r', '\n', '\t', ' '])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===== 输出路径测试 (output path: arguments = JSON-encoded string per Responses API spec) =====
+
+    #[test]
+    fn response_function_call_item_arguments_is_string() {
+        let item = response_function_call_item(
+            "fc_1",
+            "completed",
+            "call_1",
+            "get_weather",
+            r#"{"city":"Tokyo"}"#,
+            None,
+        );
+        assert_eq!(item["type"], "function_call");
+        assert!(
+            item["arguments"].is_string(),
+            "arguments must be a JSON-encoded string per Responses API spec, got: {:?}",
+            item["arguments"]
+        );
+        assert_eq!(item["arguments"], r#"{"city":"Tokyo"}"#);
+    }
+
+    #[test]
+    fn response_function_call_item_empty_arguments_is_empty_string() {
+        let item = response_function_call_item("fc_1", "completed", "call_1", "noop", "", None);
+        assert!(item["arguments"].is_string());
+        assert_eq!(item["arguments"], "");
+    }
+
+    #[test]
+    fn response_function_call_item_with_namespace_preserves_string_arguments() {
+        let item = response_function_call_item_with_namespace(
+            "fc_1",
+            "completed",
+            "call_1",
+            "search",
+            Some("mcp__gmail"),
+            r#"{"q":"hello"}"#,
+            None,
+        );
+        assert!(item["arguments"].is_string());
+        assert_eq!(item["arguments"], r#"{"q":"hello"}"#);
+        assert_eq!(item["namespace"], "mcp__gmail");
+    }
+}
