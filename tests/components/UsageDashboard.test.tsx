@@ -46,6 +46,10 @@ vi.mock("@/lib/query/usage", async () => {
   };
 });
 
+vi.mock("@/components/usage/CodexBackgroundUsage", () => ({
+  CodexBackgroundUsage: () => <div data-testid="codex-background-usage" />,
+}));
+
 vi.mock("@/components/usage/UsageHero", () => ({
   UsageHero: (props: unknown) => {
     usageHeroMock(props);

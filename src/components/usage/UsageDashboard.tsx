@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { CodexBackgroundUsage } from "./CodexBackgroundUsage";
 import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
@@ -412,6 +413,14 @@ export function UsageDashboard({
         model={model}
         refreshIntervalMs={refreshIntervalMs}
       />
+
+      {(appType === "all" || appType === "codex") && !providerName && (
+        <CodexBackgroundUsage
+          range={range}
+          model={model}
+          refreshIntervalMs={refreshIntervalMs}
+        />
+      )}
 
       <UsageTrendChart
         range={range}

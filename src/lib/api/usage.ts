@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CodexBackgroundUsage,
   UsageSummary,
   UsageSummaryByApp,
   DailyStats,
@@ -20,6 +21,12 @@ import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
 
 export const usageApi = {
+  getCodexBackgroundUsage: (
+    startDate: number,
+    endDate: number,
+    model?: string,
+  ): Promise<CodexBackgroundUsage[]> =>
+    invoke("get_codex_background_usage", { startDate, endDate, model }),
   // Provider usage script methods
   query: async (providerId: string, appId: AppId): Promise<UsageResult> => {
     return invoke("queryProviderUsage", { providerId, app: appId });

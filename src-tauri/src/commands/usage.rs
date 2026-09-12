@@ -328,3 +328,19 @@ mod tests {
         assert_eq!(crate::usage_events::take_test_notify_count(), 1);
     }
 }
+
+/// Background generations are independent observations, excluded from request totals.
+#[tauri::command]
+pub fn get_codex_background_usage(
+    state: State<'_, AppState>,
+    start_date: i64,
+    end_date: i64,
+    model: Option<String>,
+) -> Result<Vec<crate::services::codex_background_usage::BackgroundUsage>, AppError> {
+    crate::services::codex_background_usage::summary(
+        &state.db,
+        start_date,
+        end_date,
+        model.as_deref(),
+    )
+}

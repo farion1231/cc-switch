@@ -1876,7 +1876,21 @@
       "syncNow": "今すぐ同期"
     },
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
-    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）"
+    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）",
+    "background": {
+      "title": "Codex Desktop バックグラウンド使用量",
+      "description": "この Mac の生成イベントです。プロキシ要求との重複を判定できないため、上の合計には含みません。入力にはキャッシュが含まれます。費用は現在設定されている標準単価での概算で、サブスクリプションの請求額ではありません。ログの保存期間や別の端末の利用により、記録は不完全です。",
+      "model": "モデル",
+      "feature": "機能",
+      "status": "状態",
+      "generations": "生成回数",
+      "input": "入力",
+      "cached": "キャッシュ入力",
+      "output": "出力",
+      "cost": "概算 USD",
+      "unknown": "単価不明",
+      "error": "Codex バックグラウンド使用量を読み込めませんでした。"
+    }
   },
   "usageScript": {
     "title": "利用状況を設定",

@@ -1876,7 +1876,21 @@
       "syncNow": "Sync now"
     },
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
-    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)"
+    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)",
+    "background": {
+      "title": "Codex Desktop background usage",
+      "description": "Local macOS generation events, excluded from the totals above: overlap with proxy requests cannot be determined. Cached tokens are included in input. Costs estimate current configured standard rates, not subscription charges. Log retention and other devices limit coverage.",
+      "model": "Model",
+      "feature": "Feature",
+      "status": "Status",
+      "generations": "Generations",
+      "input": "Input",
+      "cached": "Cached input",
+      "output": "Output",
+      "cost": "Estimated USD",
+      "unknown": "Unknown price",
+      "error": "Could not load Codex background usage."
+    }
   },
   "usageScript": {
     "title": "Configure Usage Query",
