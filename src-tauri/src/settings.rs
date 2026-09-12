@@ -412,6 +412,12 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
+    // ===== OpenCode 模型能力填充 =====
+    /// OpenCode「自动填充模型能力」生成的 variants 档位键名风格：
+    /// plain（纯名称，默认）或 numbered（01-low 式数字前缀，对配置 A-Z 重排免疫）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models_dev_variants_style: Option<String>,
+
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
@@ -541,6 +547,7 @@ impl Default for AppSettings {
             first_run_notice_confirmed: None,
             common_config_confirmed: None,
             language: None,
+            models_dev_variants_style: None,
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,

@@ -1,16 +1,63 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps, PropsWithChildren } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeAll } from "vitest";
 import { OpenCodeFormFields } from "@/components/providers/forms/OpenCodeFormFields";
 import { Form } from "@/components/ui/form";
+
+// jsdom 缺少 ResizeObserver，Radix SelectContent 打开时需要
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+beforeAll(() => {
+  (globalThis as Record<string, unknown>).ResizeObserver ??=
+    ResizeObserverStub;
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {};
+  }
+});
+
+const saveSettingsMock = vi.hoisted(() => {
+  const fn = vi.fn();
+  fn.mockResolvedValue(undefined);
+  return fn;
+});
+
+vi.mock("@/lib/query", () => ({
+  useSettingsQuery: () => ({
+    data: {
+      showInTray: true,
+      minimizeToTrayOnClose: true,
+      modelsDevVariantsStyle: "plain",
+    },
+  }),
+  useSaveSettingsMutation: () => ({
+    mutateAsync: saveSettingsMock,
+    isPending: false,
+  }),
+}));
 
 type OpenCodeFormFieldsProps = ComponentProps<typeof OpenCodeFormFields>;
 
 const FormShell = ({ children }: PropsWithChildren) => {
   const form = useForm();
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      }),
+  );
 
-  return <Form {...form}>{children}</Form>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Form {...form}>{children}</Form>
+    </QueryClientProvider>
+  );
 };
 
 const renderOpenCodeForm = (
@@ -358,5 +405,155 @@ describe("OpenCodeFormFields", () => {
         name: "Kimi K2",
       },
     });
+  });
+
+  it("shows the auto-fill button with a naming-style preference once a model exists", () => {
+    renderOpenCodeForm();
+
+    expect(
+      screen.getByRole("button", { name: /Auto-fill capabilities/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Thinking level name style")).toBeEnabled();
+  });
+
+  it("hides the auto-fill row when no models are configured", () => {
+    renderOpenCodeForm({ models: {} });
+
+    expect(
+      screen.queryByRole("button", { name: /Auto-fill capabilities/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Thinking level name style"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("persists the naming-style preference without triggering a fill", async () => {
+    const onModelsChange = vi.fn();
+    const user = userEvent.setup();
+    renderOpenCodeForm({ onModelsChange });
+
+    await user.click(screen.getByLabelText("Thinking level name style"));
+    await user.click(screen.getByRole("option", { name: "Numbered prefixes" }));
+
+    expect(saveSettingsMock).toHaveBeenCalledTimes(1);
+    const payload = saveSettingsMock.mock.calls[0][0];
+    expect(payload.modelsDevVariantsStyle).toBe("numbered");
+    // 切换偏好只保存设置，不触发填充
+    expect(onModelsChange).not.toHaveBeenCalled();
+  });
+
+  it("toggles extended thinking and writes reasoning to the model", () => {
+    const onModelsChange = vi.fn();
+    renderOpenCodeForm({ onModelsChange });
+
+    expandFirstModel();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Supports extended thinking" }),
+    );
+
+    expect(onModelsChange).toHaveBeenCalledWith({
+      "kimi-k2": {
+        name: "Kimi K2",
+        limit: { context: 1048576, output: 131072 },
+        reasoning: true,
+      },
+    });
+  });
+
+  it("toggles image input and writes modalities", () => {
+    const onModelsChange = vi.fn();
+    renderOpenCodeForm({ onModelsChange });
+
+    expandFirstModel();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Supports image input" }),
+    );
+
+    expect(onModelsChange).toHaveBeenCalledWith({
+      "kimi-k2": {
+        name: "Kimi K2",
+        limit: { context: 1048576, output: 131072 },
+        modalities: { input: ["text", "image"] },
+      },
+    });
+  });
+
+  it("adds a thinking level via the dropdown using plain keys by default", async () => {
+    const onModelsChange = vi.fn();
+    const user = userEvent.setup();
+    renderOpenCodeForm({
+      onModelsChange,
+      models: { "test-model": { name: "Test", reasoning: true } },
+    });
+
+    expandFirstModel();
+    fireEvent.click(screen.getByRole("button", { name: "Thinking levels" }));
+    await user.click(screen.getByRole("button", { name: /Add level/ }));
+    await user.click(screen.getByRole("menuitem", { name: "low" }));
+
+    const nextModels = onModelsChange.mock.calls[0][0];
+    expect(nextModels["test-model"].variants).toEqual({
+      low: { reasoningEffort: "low" },
+    });
+  });
+
+  it("removes a thinking level capsule", () => {
+    const onModelsChange = vi.fn();
+    renderOpenCodeForm({
+      onModelsChange,
+      models: {
+        "test-model": {
+          name: "Test",
+          reasoning: true,
+          variants: { low: { reasoningEffort: "low" } },
+        },
+      },
+    });
+
+    expandFirstModel();
+    fireEvent.click(screen.getByRole("button", { name: "Thinking levels" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove level low" }));
+
+    const nextModels = onModelsChange.mock.calls[0][0];
+    expect(nextModels["test-model"].variants).toBeUndefined();
+  });
+
+  it("excludes structured capability keys from the extra-fields editor", () => {
+    renderOpenCodeForm({
+      models: {
+        "test-model": {
+          name: "Test",
+          reasoning: true,
+          variants: { low: { reasoningEffort: "low" } },
+          cost: { input: 1 },
+        },
+      },
+    });
+
+    expandFirstModel();
+    // 模型属性 KV 列表默认收起，先展开再断言
+    fireEvent.click(screen.getByRole("button", { name: "模型属性" }));
+    expect(screen.getByDisplayValue("cost")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("variants")).not.toBeInTheDocument();
+    expect(
+      screen.queryByDisplayValue('{"reasoningEffort":"low"}'),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the extra-fields list collapsed by default", () => {
+    renderOpenCodeForm({
+      models: {
+        "test-model": { name: "Test", cost: { input: 1 } },
+      },
+    });
+
+    expandFirstModel();
+    expect(
+      screen.getByRole("button", { name: "模型属性" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("cost")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "模型属性" }));
+    expect(screen.getByDisplayValue("cost")).toBeInTheDocument();
   });
 });
