@@ -99,8 +99,7 @@ export function UniversalProviderFormModal({
       setSelectedPreset(preset || null);
     } else {
       // 新建模式：使用传入的预设或默认选择第一个预设
-      const defaultPreset =
-        initialPreset || universalProviderPresets[0];
+      const defaultPreset = initialPreset || universalProviderPresets[0];
       setSelectedPreset(defaultPreset);
       setName(defaultPreset.name);
       setBaseUrl(
@@ -169,7 +168,7 @@ export function UniversalProviderFormModal({
         ANTHROPIC_DEFAULT_OPUS_MODEL: opus,
       },
     };
-    }, [
+  }, [
     claudeEnabled,
     effectivePreviewBaseUrl,
     effectivePreviewApiKey,
@@ -201,7 +200,7 @@ requires_openai_auth = true`;
       },
       config: configToml,
     };
-    }, [
+  }, [
     codexEnabled,
     effectivePreviewBaseUrl,
     effectivePreviewApiKey,
@@ -219,7 +218,7 @@ requires_openai_auth = true`;
         GEMINI_MODEL: model,
       },
     };
-    }, [
+  }, [
     geminiEnabled,
     effectivePreviewBaseUrl,
     effectivePreviewApiKey,
@@ -443,24 +442,24 @@ requires_openai_auth = true`;
             </Label>
             <div className="flex flex-wrap gap-2">
               {universalProviderPresets.map((preset) => (
-                  <button
-                    key={preset.providerType}
-                    type="button"
-                    onClick={() => handlePresetSelect(preset)}
-                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                      selectedPreset?.providerType === preset.providerType
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-accent text-muted-foreground hover:bg-accent/80"
-                    }`}
-                  >
-                    <ProviderIcon
-                      icon={preset.icon}
-                      name={preset.name}
-                      size={16}
-                    />
-                    {preset.name}
-                  </button>
-                ))}
+                <button
+                  key={preset.providerType}
+                  type="button"
+                  onClick={() => handlePresetSelect(preset)}
+                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                    selectedPreset?.providerType === preset.providerType
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-accent text-muted-foreground hover:bg-accent/80"
+                  }`}
+                >
+                  <ProviderIcon
+                    icon={preset.icon}
+                    name={preset.name}
+                    size={16}
+                  />
+                  {preset.name}
+                </button>
+              ))}
             </div>
             {selectedPreset?.description && (
               <p className="text-xs text-muted-foreground">

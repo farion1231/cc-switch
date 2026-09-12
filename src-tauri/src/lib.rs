@@ -63,6 +63,7 @@ pub use provider::{
     ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, Provider, ProviderMeta,
     UniversalProvider, UniversalProviderApps, UniversalProviderModels,
 };
+pub use proxy::model_router::ModelRouter;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::reapply_current_codex_official_live,
