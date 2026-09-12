@@ -1458,55 +1458,74 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
                 }
             }
             "content_block_delta" => {
-                if let Some(index) = value.get("index").and_then(|v| v.as_u64()) {
-                    let delta = value.get("delta").cloned().unwrap_or(json!({}));
-                    match delta.get("type").and_then(|t| t.as_str()).unwrap_or("") {
-                        "text_delta" => {
-                            if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-                                append_str_field(
-                                    blocks.entry(index).or_insert(json!({})),
-                                    "text",
-                                    text,
-                                );
-                            }
+                // 修复：如果 delta 事件缺少 index，尝试从其他字段推断或使用默认值 0
+                // 某些第三方网关可能在 delta 事件中省略 index 字段
+                let index = value
+                    .get("index")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| value.get("output_index").and_then(|v| v.as_u64()))
+                    .unwrap_or(0);
+
+                if index == 0 && value.get("index").is_none() && value.get("output_index").is_none()
+                {
+                    // 记录警告但继续处理，避免完全丢失内容
+                    log::debug!(
+                        "[Anthropic SSE] content_block_delta missing index, using default 0"
+                    );
+                }
+
+                let delta = value.get("delta").cloned().unwrap_or(json!({}));
+                match delta.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+                    "text_delta" => {
+                        if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
+                            append_str_field(
+                                blocks.entry(index).or_insert(json!({})),
+                                "text",
+                                text,
+                            );
                         }
-                        "thinking_delta" => {
-                            if let Some(text) = delta.get("thinking").and_then(|t| t.as_str()) {
-                                append_str_field(
-                                    blocks.entry(index).or_insert(json!({})),
-                                    "thinking",
-                                    text,
-                                );
-                            }
-                        }
-                        "signature_delta" => {
-                            if let Some(sig) = delta.get("signature").and_then(|t| t.as_str()) {
-                                blocks.entry(index).or_insert(json!({}))["signature"] = json!(sig);
-                            }
-                        }
-                        "input_json_delta" => {
-                            if let Some(partial) =
-                                delta.get("partial_json").and_then(|t| t.as_str())
-                            {
-                                json_accum.entry(index).or_default().push_str(partial);
-                            }
-                        }
-                        _ => {}
                     }
+                    "thinking_delta" => {
+                        if let Some(text) = delta.get("thinking").and_then(|t| t.as_str()) {
+                            append_str_field(
+                                blocks.entry(index).or_insert(json!({})),
+                                "thinking",
+                                text,
+                            );
+                        }
+                    }
+                    "signature_delta" => {
+                        if let Some(sig) = delta.get("signature").and_then(|t| t.as_str()) {
+                            blocks.entry(index).or_insert(json!({}))["signature"] = json!(sig);
+                        }
+                    }
+                    "input_json_delta" => {
+                        if let Some(partial) = delta.get("partial_json").and_then(|t| t.as_str()) {
+                            json_accum.entry(index).or_default().push_str(partial);
+                        }
+                    }
+                    _ => {}
                 }
             }
             "content_block_stop" => {
-                if let Some(index) = value.get("index").and_then(|v| v.as_u64()) {
-                    if let Some(accum) = json_accum.get(&index) {
-                        if !accum.trim().is_empty() {
-                            let parsed: Value =
-                                serde_json::from_str(accum).unwrap_or_else(|_| json!({}));
-                            if let Some(block) = blocks.get_mut(&index) {
-                                block["input"] = parsed;
-                            }
+                // 修复：如果 stop 事件缺少 index，尝试从其他字段推断
+                let index = value
+                    .get("index")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| value.get("output_index").and_then(|v| v.as_u64()))
+                    .unwrap_or(0);
+
+                if let Some(accum) = json_accum.get(&index) {
+                    if !accum.trim().is_empty() {
+                        let parsed: Value =
+                            serde_json::from_str(accum).unwrap_or_else(|_| json!({}));
+                        if let Some(block) = blocks.get_mut(&index) {
+                            block["input"] = parsed;
                         }
                     }
                 }
+                // 清理 accumulator
+                json_accum.remove(&index);
             }
             "message_delta" => {
                 if let Some(reason) = value.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
