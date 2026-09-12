@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Edit2, Trash2, Globe, Power, PowerOff, Save } from "lucide-react";
+import {
+  Plus,
+  Edit2,
+  Trash2,
+  Globe,
+  Power,
+  PowerOff,
+  Save,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -13,7 +21,11 @@ interface RouteTableEditorProps {
   onSaveRoutes?: () => void;
 }
 
-export function RouteTableEditor({ routes, onChange, onSaveRoutes }: RouteTableEditorProps) {
+export function RouteTableEditor({
+  routes,
+  onChange,
+  onSaveRoutes,
+}: RouteTableEditorProps) {
   const { t } = useTranslation();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<UpstreamRoute | null>(null);

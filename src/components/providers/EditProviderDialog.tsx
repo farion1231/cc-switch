@@ -96,17 +96,29 @@ function restoreProviderCredentials(
   const result = { ...liveSettings };
   if (appId === "codex") {
     const storedAuth = asRecord(storedSettings.auth);
-    if (storedAuth && Object.prototype.hasOwnProperty.call(storedAuth, "OPENAI_API_KEY")) {
-      result.auth = { ...(asRecord(result.auth) ?? {}), OPENAI_API_KEY: storedAuth.OPENAI_API_KEY };
+    if (
+      storedAuth &&
+      Object.prototype.hasOwnProperty.call(storedAuth, "OPENAI_API_KEY")
+    ) {
+      result.auth = {
+        ...(asRecord(result.auth) ?? {}),
+        OPENAI_API_KEY: storedAuth.OPENAI_API_KEY,
+      };
     }
     return result;
   }
   const storedEnv = asRecord(storedSettings.env);
   if (!storedEnv) return result;
   const liveEnv = { ...(asRecord(result.env) ?? {}) };
-  for (const key of ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+  for (const key of [
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+  ]) {
     delete liveEnv[key];
-    if (Object.prototype.hasOwnProperty.call(storedEnv, key)) liveEnv[key] = storedEnv[key];
+    if (Object.prototype.hasOwnProperty.call(storedEnv, key))
+      liveEnv[key] = storedEnv[key];
   }
   result.env = liveEnv;
   return result;
