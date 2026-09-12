@@ -247,6 +247,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     }
 
     if let Some(input) = body.get("input") {
+        collect_direct_additional_tools(input, &mut context);
         collect_tool_search_output_tools(input, &mut context);
     }
 
@@ -771,6 +772,9 @@ fn append_responses_item_as_chat_message(
             // 到达时回溯附挂，见 attach_pending_reasoning_to_previous_assistant。
             append_pending_reasoning(pending_reasoning, responses_reasoning_item_text(item));
         }
+        // Responses Lite uses this direct input item to declare tools. It is request metadata,
+        // not a developer message, and build_codex_tool_context_from_request has consumed it.
+        Some("additional_tools") => {}
         Some("input_text" | "input_image" | "input_file" | "input_audio") => {
             flush_pending_tool_calls(
                 messages,
@@ -1286,6 +1290,29 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
 
 fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
     chat_file_from_input_file(part)
+}
+
+fn collect_direct_additional_tools(input: &Value, context: &mut CodexToolContext) {
+    match input {
+        Value::Array(items) => {
+            for item in items {
+                collect_additional_tools_item(item, context);
+            }
+        }
+        Value::Object(_) => collect_additional_tools_item(input, context),
+        _ => {}
+    }
+}
+
+fn collect_additional_tools_item(item: &Value, context: &mut CodexToolContext) {
+    if item.get("type").and_then(Value::as_str) != Some("additional_tools") {
+        return;
+    }
+    if let Some(tools) = item.get("tools").and_then(Value::as_array) {
+        for tool in tools {
+            context.add_response_tool(tool);
+        }
+    }
 }
 
 fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
@@ -2600,6 +2627,74 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("mcp__codex_apps__gmail"));
+    }
+
+    #[test]
+    fn responses_lite_additional_tools_become_chat_tools_not_messages() {
+        let input = json!({
+            "model": "qwen3.6",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [{
+                        "type": "function",
+                        "name": "read_workspace_file",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"]
+                        }
+                    }]
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": "You are Codex."
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        assert_eq!(
+            result["tools"][0]["function"]["name"],
+            "read_workspace_file"
+        );
+        assert_eq!(
+            result["messages"],
+            json!([{"role": "system", "content": "You are Codex."}])
+        );
+    }
+
+    #[test]
+    fn responses_lite_additional_tools_ignore_nested_application_data() {
+        let request = json!({
+            "tools": [{
+                "type": "function",
+                "name": "declared_tool",
+                "parameters": {"type": "object", "properties": {}}
+            }],
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": {
+                    "type": "additional_tools",
+                    "tools": [{
+                        "type": "function",
+                        "name": "phantom_tool",
+                        "parameters": {"type": "object", "properties": {}}
+                    }]
+                }
+            }]
+        });
+
+        let context = build_codex_tool_context_from_request(&request);
+        let names = context
+            .chat_tools()
+            .iter()
+            .filter_map(|tool| tool.pointer("/function/name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["declared_tool"]);
     }
 
     #[test]
