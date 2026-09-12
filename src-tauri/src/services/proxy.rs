@@ -3668,6 +3668,9 @@ impl ProxyService {
         let placeholder_auth = config
             .get("auth")
             .is_some_and(Self::codex_auth_has_proxy_placeholder);
+        let provider_config_text = provider
+            .and_then(|provider| provider.settings_config.get("config"))
+            .and_then(Value::as_str);
 
         // Takeover must never overwrite Codex's long-lived ChatGPT login. For
         // third-party providers the placeholder is moved into config.toml; for
@@ -3680,7 +3683,10 @@ impl ProxyService {
                 .unwrap_or(crate::codex_config::CodexCatalogToolProfile::ProxyChat);
             let prepared_config =
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                    config, config_str, profile,
+                    config,
+                    config_str,
+                    profile,
+                    provider_config_text,
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             if managed_official {
@@ -3806,6 +3812,7 @@ impl ProxyService {
                     config,
                     cfg,
                     crate::codex_config::CodexCatalogToolProfile::ProxyChat,
+                    None,
                 )
             })
             .transpose()
