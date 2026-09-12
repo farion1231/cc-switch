@@ -26,6 +26,8 @@ pub struct CodexOAuthState(pub Arc<CodexOAuthManager>);
 ///   与 Codex CLI 路径完全一致
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_codex_oauth_quota(
+    app: tauri::AppHandle,
+    app_state: State<'_, crate::store::AppState>,
     account_id: Option<String>,
     state: State<'_, CodexOAuthState>,
 ) -> Result<SubscriptionQuota, String> {
@@ -33,15 +35,30 @@ pub async fn get_codex_oauth_quota(
 
     // 解析最终使用的账号 ID：显式 > 默认账号 > 无账号 (not_found)
     let resolved = match account_id {
-        Some(id) => Some(id),
+        Some(id) => Some(id.trim().to_string()),
         None => manager.default_account_id().await,
     };
     let Some(id) = resolved else {
         return Ok(SubscriptionQuota::not_found("codex_oauth"));
     };
 
+    let result = query_codex_oauth_quota_for(manager, &id).await;
+    // Cache by the resolved account, even if the default/binding changes while
+    // the request is in flight. Transport errors retain the last good snapshot;
+    // authentication/HTTP failures replace it so the tray hides invalid quotas.
+    if let Ok(quota) = &result {
+        app_state.usage_cache.put_codex_oauth(id, quota.clone());
+        crate::tray::schedule_tray_refresh(&app);
+    }
+    result
+}
+
+async fn query_codex_oauth_quota_for(
+    manager: &CodexOAuthManager,
+    id: &str,
+) -> Result<SubscriptionQuota, String> {
     // 获取（必要时自动刷新）access_token
-    let token = match manager.get_valid_token_for_account(&id).await {
+    let token = match manager.get_valid_token_for_account(id).await {
         Ok(t) => t,
         Err(e) => {
             return Ok(SubscriptionQuota::error(
@@ -52,7 +69,7 @@ pub async fn get_codex_oauth_quota(
         }
     };
     let chatgpt_account_id = manager
-        .chatgpt_account_id_for_account(&id)
+        .chatgpt_account_id_for_account(id)
         .await
         .map_err(|e| e.to_string())?;
 
