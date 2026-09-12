@@ -325,6 +325,81 @@ export const handlers = [
     }),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_ohmypi_current_state`, () =>
+      success({
+          enabledProviderIds: [],
+          defaultProviderId: null,
+      }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_ohmypi_agent_discovery_state`, () =>
+    success({
+      needsConfirmation: true,
+      requiredProviderIds: [
+        "claude",
+        "claude-plugins",
+        "agents",
+        "codex",
+        "gemini",
+        "opencode",
+        "cursor",
+        "vscode",
+        "cline",
+        "windsurf",
+        "github",
+        "agent-plugins",
+      ],
+      missingProviderIds: [
+        "claude",
+        "claude-plugins",
+        "agents",
+        "codex",
+        "gemini",
+        "opencode",
+        "cursor",
+        "vscode",
+        "cline",
+        "windsurf",
+        "github",
+        "agent-plugins",
+      ],
+    }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_ohmypi_agent_discovery_providers`, () =>
+    success([
+      {id: "claude", displayName: "Claude Code"},
+      {id: "claude-plugins", displayName: "Claude Code 插件市场"},
+      {id: "agents", displayName: "Agent 目录 (.agent/.agents)"},
+      {id: "codex", displayName: "OpenAI Codex"},
+      {id: "gemini", displayName: "Gemini CLI"},
+      {id: "opencode", displayName: "OpenCode"},
+      {id: "cursor", displayName: "Cursor"},
+      {id: "vscode", displayName: "VS Code"},
+      {id: "cline", displayName: "Cline"},
+      {id: "windsurf", displayName: "Windsurf"},
+      {id: "github", displayName: "GitHub Copilot"},
+      {id: "agent-plugins", displayName: "Agent Plugins"},
+    ]),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/disable_ohmypi_agent_auto_discovery`, () =>
+    success([
+      "claude",
+      "claude-plugins",
+      "agents",
+      "codex",
+      "gemini",
+      "opencode",
+      "cursor",
+      "vscode",
+      "cline",
+      "windsurf",
+      "github",
+      "agent-plugins",
+    ]),
+  ),
+
   // Proxy status (for SettingsPage / ProxyPanel hooks)
   http.post(`${TAURI_ENDPOINT}/get_proxy_status`, () =>
     success({

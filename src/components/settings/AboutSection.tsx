@@ -68,6 +68,7 @@ const TOOL_NAMES = [
   "openclaw",
   "hermes",
   "pi",
+  "ohmypi",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 type ToolLifecycleAction = "install" | "update";
@@ -141,7 +142,9 @@ npm i -g openclaw@latest
 # Hermes
 ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
 # Pi
-npm i -g @earendil-works/pi-coding-agent@latest`;
+npm i -g @earendil-works/pi-coding-agent@latest
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
@@ -158,7 +161,9 @@ npm i -g openclaw@latest
 # Hermes
 ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
-npm i -g @earendil-works/pi-coding-agent@latest`;
+npm i -g @earendil-works/pi-coding-agent@latest
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -173,6 +178,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  ohmypi: "Oh My Pi",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -190,6 +196,7 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   openclaw: "openclaw",
   hermes: "hermes",
   pi: "pi",
+  ohmypi: "ohmypi",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

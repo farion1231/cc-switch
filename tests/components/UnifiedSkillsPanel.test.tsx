@@ -128,6 +128,7 @@ const makeInstalledSkill = (
     openclaw: false,
     hermes: false,
     pi: false,
+    ohmypi: false,
   };
   const { apps, ...skillOverrides } = overrides;
 

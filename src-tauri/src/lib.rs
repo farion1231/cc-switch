@@ -22,6 +22,7 @@ mod lightweight;
 mod linux_fix;
 mod mcp;
 mod model_capabilities;
+mod ohmypi_config;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -871,6 +872,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
+            match crate::services::provider::import_ohmypi_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Oh My Pi provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -989,6 +997,7 @@ pub fn run() {
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
+                    crate::app_config::AppType::OhMyPi,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1467,10 +1476,23 @@ pub fn run() {
             commands::list_pi_prompt_templates,
             commands::upsert_pi_prompt_template,
             commands::delete_pi_prompt_template,
+            commands::get_ohmypi_prompt_file,
+            commands::replace_ohmypi_prompt_file,
+            commands::delete_ohmypi_prompt_file,
+            commands::list_ohmypi_prompt_templates,
+            commands::upsert_ohmypi_prompt_template,
+            commands::delete_ohmypi_prompt_template,
             // Pi native provider and session views
             commands::get_pi_current_state,
             commands::update_pi_provider_usage_script,
             commands::get_pi_session_discovery,
+            // Oh My Pi native provider and session views
+            commands::get_ohmypi_current_state,
+            commands::update_ohmypi_provider_usage_script,
+            // Oh My Pi agent auto-discovery guard
+            commands::get_ohmypi_agent_discovery_state,
+            commands::get_ohmypi_agent_discovery_providers,
+            commands::disable_ohmypi_agent_auto_discovery,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,

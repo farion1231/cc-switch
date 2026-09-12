@@ -21,6 +21,7 @@ import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
 import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
+import type { OhMyPiProviderPreset } from "@/config/ohmypiProviderPresets";
 import type { ProviderCategory } from "@/types";
 import {
   universalProviderPresets,
@@ -46,7 +47,8 @@ export type AnyPreset =
   | OpenCodeProviderPreset
   | OpenClawProviderPreset
   | HermesProviderPreset
-  | PiProviderPreset;
+  | PiProviderPreset
+  | OhMyPiProviderPreset;
 
 export type PresetEntry = {
   id: string;

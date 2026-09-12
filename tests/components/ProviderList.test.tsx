@@ -577,4 +577,57 @@ describe("ProviderList Component", () => {
       screen.queryByRole("button", { name: "provider.addProvider" }),
     ).not.toBeInTheDocument();
   });
+
+  it("reflects Oh My Pi live config membership in isInConfig", async () => {
+    const enabledProvider = createProvider({
+      id: "provider-a",
+      name: "A",
+    });
+    const disabledProvider = createProvider({
+      id: "provider-b",
+      name: "B",
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [enabledProvider, disabledProvider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+        http.post(`${TAURI_ENDPOINT}/get_ohmypi_current_state`, () =>
+            HttpResponse.json({
+              enabledProviderIds: ["provider-a"],
+            }),
+        ),
+    );
+
+    renderWithQueryClient(
+        <ProviderList
+            providers={{
+              "provider-a": enabledProvider,
+              "provider-b": disabledProvider,
+            }}
+            currentProviderId=""
+            appId="ohmypi"
+            onSwitch={vi.fn()}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onDuplicate={vi.fn()}
+            onOpenWebsite={vi.fn()}
+        />,
+    );
+
+    await waitFor(() => {
+      const latestEnabled = providerCardRenderSpy.mock.calls
+          .map(([props]) => props)
+          .filter((p) => p.provider.id === "provider-a")
+          .at(-1);
+      const latestDisabled = providerCardRenderSpy.mock.calls
+          .map(([props]) => props)
+          .filter((p) => p.provider.id === "provider-b")
+          .at(-1);
+      expect(latestEnabled?.isInConfig).toBe(true);
+      expect(latestDisabled?.isInConfig).toBe(false);
+    });
+  });
+
 });
