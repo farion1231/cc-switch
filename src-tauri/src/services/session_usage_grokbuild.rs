@@ -1309,7 +1309,14 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&enc, sub.join("cycle")).expect("symlink");
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")).expect("symlink");
+        if let Err(error) = std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")) {
+            // Directory symlinks require a Windows privilege that is not present
+            // in all CI/developer environments.
+            if error.raw_os_error() == Some(1314) {
+                return;
+            }
+            panic!("symlink: {error}");
+        }
 
         // 也放一个真实的目标文件，确认正常遍历仍工作
         std::fs::write(enc.join("updates.jsonl"), b"{}\n").expect("write real file");

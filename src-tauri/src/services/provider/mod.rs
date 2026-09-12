@@ -5,6 +5,7 @@
 mod endpoints;
 mod gemini_auth;
 mod live;
+mod omp;
 mod pi;
 mod usage;
 
@@ -31,6 +32,10 @@ pub use live::{
 
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
+}
+
+pub fn import_omp_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    omp::import_from_live(state)
 }
 
 // Internal re-exports (pub(crate))
@@ -4545,6 +4550,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::list(state);
         }
+        if app_type == AppType::Omp {
+            return omp::list(state);
+        }
         state.db.get_all_providers(app_type.as_str())
     }
 
@@ -4573,6 +4581,9 @@ impl ProviderService {
     ) -> Result<bool, AppError> {
         if app_type == AppType::Pi {
             return pi::add(state, provider, add_to_live);
+        }
+        if app_type == AppType::Omp {
+            return omp::add(state, provider, add_to_live);
         }
 
         let mut provider = provider;
@@ -4691,6 +4702,9 @@ impl ProviderService {
     ) -> Result<bool, AppError> {
         if app_type == AppType::Pi {
             return pi::update(state, original_id, provider);
+        }
+        if app_type == AppType::Omp {
+            return omp::update(state, original_id, provider);
         }
 
         let mut provider = provider;
@@ -5043,6 +5057,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
+        if app_type == AppType::Omp {
+            return omp::delete(state, id);
+        }
 
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
@@ -5118,6 +5135,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::remove(state, id);
         }
+        if app_type == AppType::Omp {
+            return omp::remove(state, id);
+        }
 
         match app_type {
             AppType::OpenCode => {
@@ -5185,6 +5205,9 @@ impl ProviderService {
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
         if app_type == AppType::Pi {
             return pi::enable(state, id);
+        }
+        if app_type == AppType::Omp {
+            return omp::enable(state, id);
         }
 
         // Check if provider exists
@@ -5786,7 +5809,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi => Ok(String::new()),
+            AppType::Pi | AppType::Omp => Ok(String::new()),
         }
     }
 
@@ -5804,7 +5827,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi => Ok(String::new()),
+            AppType::Pi | AppType::Omp => Ok(String::new()),
         }
     }
 
@@ -6570,7 +6593,7 @@ impl ProviderService {
                     ));
                 }
             }
-            AppType::Pi => {
+            AppType::Pi | AppType::Omp => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
         }
@@ -6777,7 +6800,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Omp => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config

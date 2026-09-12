@@ -26,6 +26,7 @@ export const APP_IDS: AppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "omp",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -38,6 +39,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   openclaw: true,
   hermes: true,
   pi: true,
+  omp: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -49,6 +51,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "opencode",
   "hermes",
   "pi",
+  "omp",
 ];
 
 export type ProxyAppId = Extract<
@@ -70,7 +73,7 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "omp"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -78,6 +81,7 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "omp",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
@@ -192,6 +196,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  omp: {
+    label: "OMP",
+    icon: <ProviderIcon icon="omp" name="OMP" size={14} showFallback={false} />,
+    activeClass:
+      "bg-purple-500/10 ring-1 ring-purple-500/20 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/20 border-0 gap-1.5",
   },
 };
 

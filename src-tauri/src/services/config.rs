@@ -138,7 +138,7 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
-            AppType::Pi => {
+            AppType::Pi | AppType::Omp => {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
             }

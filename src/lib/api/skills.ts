@@ -24,6 +24,7 @@ export interface SkillApps {
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;
+  omp?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

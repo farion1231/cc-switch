@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 8] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi",
+const VALID_TOOLS: [&str; 9] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -434,6 +434,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "omp" => "OMP",
         _ => "Unknown",
     }
 }
@@ -449,6 +450,11 @@ const OPENCODE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const GROK_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+
+// OMP 官方一键安装器优先、npm 兜底（同 claude/grok 模式）。安装脚本首行
+// `#!/bin/sh`，POSIX 侧用 sh 执行；OMP 没有 self-update 子命令，升级即重跑。
+const OMP_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://omp.sh/install -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
 
 /// Hermes 官方安装器会自带/选择合适的 Python 运行时。不要再用
 /// `python3 -m pip ... || python -m pip ...`:Hermes PyPI 包要求 Python >=3.11,
@@ -493,6 +499,16 @@ fn grok_install_windows_command() -> String {
 }
 
 #[cfg(target_os = "windows")]
+const OMP_INSTALL_WINDOWS_SCRIPT: &str = "irm https://omp.sh/install.ps1 | iex";
+#[cfg(target_os = "windows")]
+fn omp_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(OMP_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
 fn hermes_update_windows_command() -> String {
     // fallback 是 powershell.exe，不是 .cmd/.bat；这里不需要 `call`。PowerShell 的
     // `irm | iex` 已被 EncodedCommand 收进单一参数,避免 `cmd.exe` 解析管道符。
@@ -515,6 +531,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
+        "omp" => Some("npm i -g @oh-my-pi/pi-coding-agent@latest"),
         _ => None,
     }
 }
@@ -565,6 +582,23 @@ fn tool_action_shell_command_for_shell(
             npm_install_command_for(tool)?.to_string(),
             shell,
         ));
+    }
+
+    if tool == "omp" {
+        // OMP 没有 self-update 子命令：安装与升级同为「重跑官方安装器，失败回落 npm」。
+        return match shell {
+            LifecycleCommandShell::Posix => {
+                Some(installer_with_npm_fallback(OMP_INSTALL_UNIX, tool))
+            }
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch => Some(chain_update_commands(
+                omp_install_windows_command(),
+                npm_install_command_for(tool)?.to_string(),
+                shell,
+            )),
+            #[cfg(not(target_os = "windows"))]
+            LifecycleCommandShell::WindowsBatch => None,
+        };
     }
 
     if tool == "hermes" {
@@ -825,6 +859,7 @@ async fn get_single_tool_version_impl(
         "pi" => {
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
+        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
     };
 
@@ -2510,6 +2545,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
+        "omp" => Some("@oh-my-pi/pi-coding-agent"),
         _ => None,
     }
 }
@@ -3592,6 +3628,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "grok" => installer_with_npm_fallback(GROK_INSTALL_UNIX, tool),
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        "omp" => installer_with_npm_fallback(OMP_INSTALL_UNIX, tool),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }
@@ -5032,6 +5069,49 @@ mod tests {
             Some("0.19.0")
         );
         assert_eq!(drop_latest_behind_local(None, Some("0.21.0")), None);
+    }
+
+    #[test]
+    fn omp_lifecycle_metadata_matches_pinned_distribution() {
+        let requested = vec!["unsupported".to_string(), "omp".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["omp"]);
+        assert_eq!(tool_display_name("omp"), "OMP");
+        assert_eq!(npm_package_for("omp"), Some("@oh-my-pi/pi-coding-agent"));
+        assert_eq!(
+            npm_install_command_for("omp"),
+            Some("npm i -g @oh-my-pi/pi-coding-agent@latest")
+        );
+        // OMP 没有 self-update 子命令，升级靠重跑官方安装器。
+        assert_eq!(official_update_args("omp"), None);
+
+        for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
+            let cmd =
+                tool_action_shell_command_for_shell("omp", action, LifecycleCommandShell::Posix)
+                    .expect("omp posix command");
+            assert!(
+                cmd.starts_with("bash -c 'tmp=$(mktemp) && curl -fsSL https://omp.sh/install ")
+                    && cmd.ends_with("|| npm i -g @oh-my-pi/pi-coding-agent@latest"),
+                "omp 静态命令应重跑官方安装器并以 npm 兜底: {cmd}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn omp_windows_static_commands_prefer_powershell_installer_with_npm_fallback() {
+        for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
+            let cmd = tool_action_shell_command_for_shell(
+                "omp",
+                action,
+                LifecycleCommandShell::WindowsBatch,
+            )
+            .expect("omp windows command");
+            assert!(
+                cmd.starts_with("powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ")
+                    && cmd.ends_with("|| call npm i -g @oh-my-pi/pi-coding-agent@latest"),
+                "omp Windows 静态命令应先跑官方 PowerShell 安装器、npm 兜底: {cmd}"
+            );
+        }
     }
 
     #[test]
