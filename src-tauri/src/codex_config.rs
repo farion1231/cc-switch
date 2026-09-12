@@ -3807,6 +3807,52 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
 /// committing any state, then execute the same computation for the real
 /// write. Keeping validation and execution in one builder makes it
 /// impossible for the two to drift apart.
+///
+/// Preserve unmanaged `[model_providers.*]` sections from the live
+/// `config.toml` (issue #6860). The DB-stored config only contains the
+/// active CC Switch-managed provider (`custom`); live file may carry
+/// manually added aliases like `proxy` / `kimi3` that old Codex threads
+/// still reference. Without merging, a restart or failover strips those
+/// aliases and breaks the threads.
+fn merge_preserve_unmanaged_model_providers(new_config: String) -> String {
+    let live_path = get_codex_config_path();
+    if !live_path.exists() {
+        return new_config;
+    }
+    let live_text = match fs::read_to_string(&live_path) {
+        Ok(t) => t,
+        Err(_) => return new_config,
+    };
+    if live_text.trim().is_empty() {
+        return new_config;
+    }
+    let Ok(mut new_doc) = new_config.parse::<DocumentMut>() else {
+        return new_config;
+    };
+    let Ok(live_doc) = live_text.parse::<DocumentMut>() else {
+        return new_config;
+    };
+    let Some(live_providers) = live_doc
+        .get("model_providers")
+        .and_then(|item| item.as_table_like())
+    else {
+        return new_config;
+    };
+    // Ensure the target has a model_providers table to merge into.
+    let new_providers_entry = new_doc
+        .entry("model_providers")
+        .or_insert(toml_edit::table());
+    let Some(new_providers) = new_providers_entry.as_table_like_mut() else {
+        return new_config;
+    };
+    for (key, item) in live_providers.iter() {
+        if !new_providers.contains_key(key) {
+            new_providers.insert(key, item.clone());
+        }
+    }
+    new_doc.to_string()
+}
+
 struct CodexLiveWritePlan {
     write_full_auth: bool,
     config_text: Option<String>,
@@ -3858,9 +3904,12 @@ fn plan_codex_live_write(
         // Official cards own auth.json: a material-carrying login is written
         // in full, a material-less card follows the live login and only
         // writes config. Official auth never travels through config.toml.
+        // Also preserve unmanaged aliases for official writes (same #6860).
+        let config_text =
+            config_text.map(|t| merge_preserve_unmanaged_model_providers(t.to_string()));
         return Ok(CodexLiveWritePlan {
             write_full_auth: codex_auth_has_login_material(auth),
-            config_text: config_text.map(str::to_string),
+            config_text,
             remove_auth_file: false,
         });
     }
@@ -3945,6 +3994,9 @@ fn plan_codex_live_write(
         &live_config,
         preserve_official_login,
     )?;
+    // Preserve unmanaged [model_providers.*] aliases from the live file
+    // (#6860): DB-stored config only carries the active `custom` provider.
+    let live_config = merge_preserve_unmanaged_model_providers(live_config);
 
     Ok(CodexLiveWritePlan {
         write_full_auth: false,
