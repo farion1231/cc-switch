@@ -1,4 +1,7 @@
-use super::codex_chat_common::{is_empty_value, response_item_call_id};
+use super::codex_chat_common::{
+    attach_optional_google_thought_signature, google_thought_signature, is_empty_value,
+    response_item_call_id,
+};
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
@@ -475,6 +478,7 @@ fn enrich_call_item_from_cache(item: &mut Value, cached: &Value) -> bool {
         "input",
         "status",
         "execution",
+        "extra_content",
         "reasoning_content",
         "reasoning",
     ] {
@@ -487,6 +491,11 @@ fn enrich_call_item_from_cache(item: &mut Value, cached: &Value) -> bool {
         if let Some(object) = item.as_object_mut() {
             object.insert(key.to_string(), value.clone());
             changed = true;
+        }
+    }
+    if google_thought_signature(item).is_none() {
+        if let Some(signature) = google_thought_signature(cached) {
+            changed |= attach_optional_google_thought_signature(item, Some(signature));
         }
     }
     changed
