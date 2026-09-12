@@ -3612,7 +3612,7 @@ impl ProxyService {
     /// reads is decided first (`cli_auth_credentials_store`), and
     /// `auth.json` is only opened for the one mode that reads it:
     /// - `file` (the default): the file decides — see
-    ///   `codex_auth_file_has_login`;
+    ///   `codex_config::codex_live_login_state`;
     /// - `ephemeral`: every process starts signed out, whatever is on disk;
     /// - `keyring`: Codex never opens the file (and deletes it after saving
     ///   to the keyring), so the file says nothing — undecidable;
@@ -3621,36 +3621,7 @@ impl ProxyService {
     ///   file cannot be ranked without reading the keyring — undecidable;
     /// - anything Codex would reject: undecidable.
     fn codex_live_login_state(config_text: &str) -> Option<bool> {
-        use crate::codex_config::CodexAuthStoreMode;
-
-        match crate::codex_config::codex_config_auth_store_mode(config_text) {
-            CodexAuthStoreMode::File => Some(Self::codex_auth_file_has_login()),
-            CodexAuthStoreMode::Ephemeral => Some(false),
-            CodexAuthStoreMode::Keyring
-            | CodexAuthStoreMode::Auto
-            | CodexAuthStoreMode::Unknown => None,
-        }
-    }
-
-    /// Whether the live `auth.json` holds a login Codex's file store would
-    /// load. The takeover placeholder is not a login, and neither are
-    /// Bedrock credentials or leftover metadata
-    /// (`codex_auth_has_openai_account_material`). A file that is missing,
-    /// unreadable or unparsable is "no stored auth" to Codex as well
-    /// (`FileAuthStorage::load` fails and `AuthManager::load_auth` swallows
-    /// it with `.ok()`), so it means signed out here and must never fail the
-    /// takeover write.
-    fn codex_auth_file_has_login() -> bool {
-        let auth = match CodexAuthFileSnapshot::capture().and_then(|snapshot| snapshot.value()) {
-            Ok(Some(auth)) => auth,
-            Ok(None) => return false,
-            Err(error) => {
-                log::warn!("Codex auth.json 不可读，按未登录处理: {error}");
-                return false;
-            }
-        };
-        !Self::codex_auth_has_proxy_placeholder(&auth)
-            && crate::codex_config::codex_auth_has_openai_account_material(&auth)
+        crate::codex_config::codex_live_login_state(config_text)
     }
 
     fn write_codex_takeover_live_for_provider(
