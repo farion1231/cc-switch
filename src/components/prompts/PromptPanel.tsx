@@ -133,6 +133,13 @@ const StandardPromptPanel = React.forwardRef<
     }, [appId, open, runExternalReload]);
 
     useEffect(() => {
+      if (!open) return;
+      const handleFocus = () => void runExternalReload();
+      window.addEventListener("focus", handleFocus);
+      return () => window.removeEventListener("focus", handleFocus);
+    }, [open, runExternalReload]);
+
+    useEffect(() => {
       setSearchQuery("");
       overlayOpenRef.current = false;
       setIsFormOpen(false);
