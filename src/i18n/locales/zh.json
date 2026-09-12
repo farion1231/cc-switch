@@ -384,7 +384,11 @@
       },
       "globalProxy": {
         "title": "全局出站代理",
-        "description": "配置 CC Switch 访问外部 API 时使用的代理"
+        "description": "配置 CC Switch 访问外部 API 时使用的代理",
+        "badgeExplicit": "自定义代理",
+        "badgeSystem": "系统代理",
+        "badgeDirect": "直连",
+        "badgeUnreachable": "代理不可达"
       },
       "data": {
         "title": "数据管理",
@@ -875,7 +879,7 @@
     "saving": "正在保存...",
     "globalProxy": {
       "label": "全局代理",
-      "hint": "代理所有请求（API、Skills 下载等）。开启本地路由时，应用的请求也会经过此代理。留空表示直连。",
+      "hint": "填写后所有请求（API、用量查询、Skills 下载等）以及本地路由的转发都经此代理。留空时由「跟随系统代理」开关决定：跟随系统代理或直连；本地路由对 Claude（Anthropic 格式）供应商的转发不读系统代理，留空即直连。",
       "username": "用户名（可选）",
       "password": "密码（可选）",
       "test": "测试连接",
@@ -899,7 +903,26 @@
       "pricingSaveFailed": "保存计费配置失败：{{error}}",
       "pricingLoadFailed": "加载计费配置失败：{{error}}",
       "defaultCostMultiplierRequired": "默认倍率不能为空",
-      "defaultCostMultiplierInvalid": "默认倍率格式不正确"
+      "defaultCostMultiplierInvalid": "默认倍率格式不正确",
+      "followSystemProxy": "跟随系统代理",
+      "followSystemProxyDescription": "未填写代理地址时，使用 HTTP_PROXY / HTTPS_PROXY 环境变量与系统代理设置。代理软件已退出或更换端口后仍提示连接失败时，可关闭此项改为直连。",
+      "followSystemProxyExplicitHint": "已填写代理地址，系统代理与环境变量不再参与。",
+      "status": {
+        "label": "当前生效：",
+        "explicit": "自定义代理 {{url}}",
+        "system": "跟随系统代理 · {{url}}",
+        "systemNone": "跟随系统代理 · 系统未设置代理，直连",
+        "systemScope": "按对 Anthropic API 主机的解析结果显示；绕过规则（NO_PROXY 等）按目标主机生效，其他供应商可能不同。本地路由对 Claude（Anthropic 格式）供应商的转发不读系统代理，留空即直连。",
+        "direct": "直连（已关闭跟随系统代理）",
+        "sourceEnv": "来源：环境变量，启动时读取",
+        "sourceSystem": "来源：系统代理设置",
+        "reachable": "端口可达",
+        "unreachable": "端口不可达",
+        "changed": "系统代理设置已变化，当前为 {{url}}",
+        "changedToNone": "系统代理设置已变化，当前系统未设置代理",
+        "changedSameUrl": "系统代理设置已变化（地址未变，凭据或 HTTP 代理已更新）",
+        "reapply": "重新应用"
+      }
     },
     "saveFailedGeneric": "保存失败，请重试"
   },

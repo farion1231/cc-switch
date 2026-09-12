@@ -170,6 +170,30 @@ impl Database {
         }
     }
 
+    /// 「跟随系统代理」开关的存储键名
+    const FOLLOW_SYSTEM_PROXY_KEY: &'static str = "follow_system_proxy";
+
+    /// 未填写全局代理地址时是否跟随系统代理（含 HTTP_PROXY 等环境变量）
+    ///
+    /// 键不存在视为 true，与开关引入前的行为一致
+    pub fn get_follow_system_proxy(&self) -> Result<bool, AppError> {
+        Ok(self
+            .get_setting(Self::FOLLOW_SYSTEM_PROXY_KEY)?
+            .map(|value| value != "false")
+            .unwrap_or(true))
+    }
+
+    /// 设置是否跟随系统代理
+    ///
+    /// - true：未填写代理地址时使用系统代理与环境变量
+    /// - false：未填写代理地址时直连
+    pub fn set_follow_system_proxy(&self, follow: bool) -> Result<(), AppError> {
+        self.set_setting(
+            Self::FOLLOW_SYSTEM_PROXY_KEY,
+            if follow { "true" } else { "false" },
+        )
+    }
+
     // --- 代理接管状态管理（已废弃，使用 proxy_config.enabled 替代）---
 
     /// 获取指定应用的代理接管状态
@@ -323,5 +347,22 @@ impl Database {
         let json = serde_json::to_string(config)
             .map_err(|e| AppError::Database(format!("序列化日志配置失败: {e}")))?;
         self.set_setting("log_config", &json)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::database::Database;
+
+    #[test]
+    fn follow_system_proxy_defaults_to_true_and_roundtrips() {
+        let db = Database::memory().unwrap();
+        assert!(db.get_follow_system_proxy().unwrap());
+
+        db.set_follow_system_proxy(false).unwrap();
+        assert!(!db.get_follow_system_proxy().unwrap());
+
+        db.set_follow_system_proxy(true).unwrap();
+        assert!(db.get_follow_system_proxy().unwrap());
     }
 }

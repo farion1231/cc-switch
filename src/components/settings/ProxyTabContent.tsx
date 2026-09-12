@@ -15,6 +15,7 @@ import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPa
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
+import { GlobalProxyStatusBadge } from "@/components/settings/GlobalProxyStatusBadge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
@@ -261,6 +262,7 @@ export function ProxyTabContent({
                   {t("settings.advanced.globalProxy.description")}
                 </p>
               </div>
+              <GlobalProxyStatusBadge />
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
