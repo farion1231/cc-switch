@@ -151,6 +151,7 @@ fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     }
     false
 }
+
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
 
@@ -402,6 +403,10 @@ impl CodexLiveStateSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexCatalogToolProfile {
     ProxyChat,
+    /// Copilot selects Responses or Chat per model, but both paths run through
+    /// the local proxy. Keep proxy-compatible tools while disabling Codex's
+    /// hosted web-search endpoint, which Copilot does not expose.
+    Copilot,
     NativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
@@ -1595,7 +1600,10 @@ fn codex_catalog_model_entry(
         )),
     );
 
-    if profile != CodexCatalogToolProfile::ProxyChat {
+    if !matches!(
+        profile,
+        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
+    ) {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
         // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
         // emit a custom/freeform tool, and rely on shell_type="shell_command" for
@@ -1627,6 +1635,12 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
+    }
+    if profile == CodexCatalogToolProfile::Copilot {
+        entry_obj.insert(
+            "supports_parallel_tool_calls".to_string(),
+            json!(spec.supports_parallel_tool_calls.unwrap_or(false)),
+        );
     }
 
     // Per-model reasoning levels override the template's conservative
@@ -2308,7 +2322,9 @@ fn codex_model_catalog_from_settings(
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
             load_codex_native_responses_template()
         }
-        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
+        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot => {
+            load_codex_model_catalog_template()?
+        }
     };
     Ok(Some(codex_model_catalog_from_specs(
         &specs,
@@ -2417,6 +2433,7 @@ pub fn prepare_codex_config_text_with_model_catalog(
                 codex_native_gateway_rejects_web_search(&config_text)
             }
             CodexCatalogToolProfile::ProxyChat => false,
+            CodexCatalogToolProfile::Copilot => true,
         };
         let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
         write_json_file(&catalog_path, &catalog)?;
@@ -2426,7 +2443,10 @@ pub fn prepare_codex_config_text_with_model_catalog(
         // Even without a generated catalog, the Responses→Anthropic transform drops the
         // Codex web_search hosted tool, so keep the invariant that an Anthropic provider
         // never presents it as a dead tool.
-        let disable_web_search = profile == CodexCatalogToolProfile::Anthropic;
+        let disable_web_search = matches!(
+            profile,
+            CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot
+        );
         set_codex_native_web_search_field(&config_text, disable_web_search)
     }
 }
@@ -7688,6 +7708,48 @@ web_search = "disabled"
         assert!(
             parsed.get("web_search").is_none(),
             "ProxyChat profile must not disable web_search on the no-catalog path"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn copilot_proxy_chat_profile_disables_unrepresentable_hosted_search() {
+        let _home = CodexLiveTestHome::new();
+        let config = r#"
+model_provider = "custom"
+model = "claude-sonnet-5"
+[model_providers.custom]
+base_url = "https://api.githubcopilot.com"
+wire_api = "responses"
+"#;
+        let settings = serde_json::json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "claude-sonnet-5",
+                    "contextWindow": 400000,
+                    "supportsParallelToolCalls": false
+                }]
+            }
+        });
+
+        let prepared = prepare_codex_config_text_with_model_catalog(
+            &settings,
+            config,
+            CodexCatalogToolProfile::Copilot,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&prepared).unwrap();
+        assert_eq!(
+            parsed.get("web_search").and_then(|value| value.as_str()),
+            Some("disabled")
+        );
+        let catalog: Value =
+            serde_json::from_str(&fs::read_to_string(get_codex_model_catalog_path()).unwrap())
+                .unwrap();
+        assert_eq!(catalog["models"][0]["context_window"], json!(400000));
+        assert_eq!(
+            catalog["models"][0]["supports_parallel_tool_calls"],
+            json!(false)
         );
     }
 

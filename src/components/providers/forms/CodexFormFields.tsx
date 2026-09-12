@@ -42,8 +42,14 @@ import {
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { CodexOAuthSection } from "./CodexOAuthSection";
+import { CopilotAuthSection } from "./CopilotAuthSection";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+  type CopilotModel,
+} from "@/lib/api/copilot";
 import {
   fetchModelsForConfig,
   fetchXaiOauthModels,
@@ -56,6 +62,7 @@ import { cn } from "@/lib/utils";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
+  CodexCopilotApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
   PromptCacheRoutingMode,
@@ -68,9 +75,42 @@ interface EndpointCandidate {
   url: string;
 }
 
+export function isCopilotModelSupportedByCodex(
+  model: CopilotModel,
+  format: CodexCopilotApiFormat = "auto",
+): boolean {
+  const endpoints =
+    format === "openai_responses"
+      ? ["/responses", "/v1/responses"]
+      : format === "openai_chat"
+        ? ["/chat/completions", "/v1/chat/completions"]
+        : [
+            "/responses",
+            "/v1/responses",
+            "/chat/completions",
+            "/v1/chat/completions",
+          ];
+  return (model.supported_endpoints ?? []).some((endpoint) =>
+    endpoints.includes(
+      endpoint.split("?")[0].replace(/\/+$/, "").toLowerCase(),
+    ),
+  );
+}
+
+export function resolveCopilotCatalogContextWindow(
+  current: CodexCatalogModel["contextWindow"],
+  reported: number | undefined,
+): CodexCatalogModel["contextWindow"] {
+  return String(current ?? "").trim() ? current : reported;
+}
+
 interface CodexFormFieldsProps {
   appId?: AppId;
   providerId?: string;
+  isCopilotPreset?: boolean;
+  isCopilotAuthenticated?: boolean;
+  selectedGitHubAccountId?: string | null;
+  onGitHubAccountSelect?: (accountId: string | null) => void;
   // xAI OAuth 托管预设（Grok 订阅）：隐藏 API Key / 端点输入，挂账号选择区块
   isXaiOauthPreset?: boolean;
   isXaiOauthAuthenticated?: boolean;
@@ -118,6 +158,8 @@ interface CodexFormFieldsProps {
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
+  copilotApiFormat?: CodexCopilotApiFormat;
+  onCopilotApiFormatChange?: (format: CodexCopilotApiFormat) => void;
   // Auth field for the Anthropic Messages upstream (only used when apiFormat === "anthropic")
   anthropicAuthField: ClaudeApiKeyField;
   onAnthropicAuthFieldChange: (value: ClaudeApiKeyField) => void;
@@ -367,6 +409,10 @@ function ReasoningLevelsEditor({
 export function CodexFormFields({
   appId = "codex",
   providerId,
+  isCopilotPreset,
+  isCopilotAuthenticated,
+  selectedGitHubAccountId,
+  onGitHubAccountSelect,
   isXaiOauthPreset,
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
@@ -405,6 +451,8 @@ export function CodexFormFields({
   onModelChange,
   apiFormat,
   onApiFormatChange,
+  copilotApiFormat = "auto",
+  onCopilotApiFormatChange,
   anthropicAuthField,
   onAnthropicAuthFieldChange,
   impersonateClaudeCode,
@@ -442,14 +490,23 @@ export function CodexFormFields({
     isFullUrl,
     codexApiKey,
     customUserAgent,
+    isCopilotPreset,
+    copilotApiFormat,
+    isCopilotAuthenticated,
+    selectedGitHubAccountId,
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
   ]);
   // 思考能力随 Chat 格式显示（仅 Chat Completions 转换路径用得上）；模型映射常驻
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
-  const isChatFormat = apiFormat === "openai_chat";
-  const isAnthropicFormat = apiFormat === "anthropic";
+  const effectiveApiFormat = isCopilotPreset
+    ? copilotApiFormat === "auto"
+      ? "openai_chat"
+      : copilotApiFormat
+    : apiFormat;
+  const isChatFormat = effectiveApiFormat === "openai_chat";
+  const isAnthropicFormat = effectiveApiFormat === "anthropic";
   // Grok Build 复用本表单，但语义与 Codex 有差异（无模型映射、协议由 TOML 的
   // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
   // 对应词条在 grokBuild.* 下。
@@ -467,10 +524,11 @@ export function CodexFormFields({
     localProxyHeadersOverride.trim() || localProxyBodyOverride.trim(),
   );
   const hasAnyAdvancedValue =
+    isCopilotPreset ||
     !!customUserAgent ||
     hasRequestOverrides ||
     catalogModels.length > 0 ||
-    apiFormat === "openai_responses" ||
+    effectiveApiFormat === "openai_responses" ||
     isAnthropicFormat ||
     supportsThinking ||
     supportsEffort ||
@@ -549,7 +607,103 @@ export function CodexFormFields({
     [codexChatReasoning, onCodexChatReasoningChange],
   );
 
+  const receiveFetchedModels = useCallback((models: FetchedModel[]) => {
+    setFetchedModels(models);
+    return models.length;
+  }, []);
+
+  const runModelFetch = useCallback(
+    <T,>(
+      fetchModels: () => Promise<T>,
+      receiveModels: (models: T) => number,
+      errorLogMessage: string,
+    ) => {
+      const seq = ++fetchModelsSeqRef.current;
+      setIsFetchingModels(true);
+      fetchModels()
+        .then((models) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          const count = receiveModels(models);
+          if (count === 0) {
+            toast.info(t("providerForm.fetchModelsEmpty"));
+          } else {
+            toast.success(t("providerForm.fetchModelsSuccess", { count }));
+          }
+        })
+        .catch((err) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          console.warn(errorLogMessage, err);
+          showFetchModelsError(err, t);
+        })
+        .finally(() => setIsFetchingModels(false));
+    },
+    [t],
+  );
+
   const handleFetchModels = useCallback(() => {
+    if (isCopilotPreset) {
+      if (!isCopilotAuthenticated) {
+        toast.error(
+          t("copilot.loginRequired", {
+            defaultValue: "请先登录 GitHub Copilot",
+          }),
+        );
+        return;
+      }
+      runModelFetch(
+        () =>
+          selectedGitHubAccountId
+            ? copilotGetModelsForAccount(selectedGitHubAccountId)
+            : copilotGetModels(),
+        (models) => {
+          const usableModels = models.filter((model) =>
+            isCopilotModelSupportedByCodex(model, copilotApiFormat),
+          );
+          const fetched = usableModels.map((model) => ({
+            id: model.id,
+            ownedBy: model.vendor || null,
+          }));
+          setFetchedModels(fetched);
+
+          if (onCatalogModelsChange) {
+            const existing = new Map(
+              catalogModels.map((model) => [model.model, model]),
+            );
+            onCatalogModelsChange(
+              usableModels.map((model) => ({
+                ...(existing.get(model.id) ?? {}),
+                model: model.id,
+                displayName: model.name || model.id,
+                contextWindow: resolveCopilotCatalogContextWindow(
+                  existing.get(model.id)?.contextWindow,
+                  model.context_window,
+                ),
+                supportsParallelToolCalls:
+                  existing.get(model.id)?.supportsParallelToolCalls ?? false,
+                inputModalities: existing.get(model.id)?.inputModalities ?? [
+                  "text",
+                ],
+              })),
+            );
+          }
+          if (
+            usableModels.length > 0 &&
+            onModelChange &&
+            !usableModels.some((model) => model.id === codexModel)
+          ) {
+            const defaultModel =
+              usableModels.find((model) =>
+                model.id.toLowerCase().startsWith("gpt-"),
+              ) ?? usableModels[0];
+            onModelChange(defaultModel.id);
+          }
+          return usableModels.length;
+        },
+        "[Copilot] Failed to fetch models:",
+      );
+      return;
+    }
+
     // xAI OAuth 托管预设：不走 base_url + key 的 /models 探测，
     // 直接用托管账号 token 拉取（与 Claude 表单同一后端命令）
     if (isXaiOauthPreset) {
@@ -561,26 +715,11 @@ export function CodexFormFields({
         );
         return;
       }
-      const seq = ++fetchModelsSeqRef.current;
-      setIsFetchingModels(true);
-      fetchXaiOauthModels(selectedXaiAccountId ?? null)
-        .then((models) => {
-          if (seq !== fetchModelsSeqRef.current) return;
-          setFetchedModels(models);
-          if (models.length === 0) {
-            toast.info(t("providerForm.fetchModelsEmpty"));
-          } else {
-            toast.success(
-              t("providerForm.fetchModelsSuccess", { count: models.length }),
-            );
-          }
-        })
-        .catch((err) => {
-          if (seq !== fetchModelsSeqRef.current) return;
-          console.warn("[XaiOAuth] Failed to fetch models:", err);
-          showFetchModelsError(err, t);
-        })
-        .finally(() => setIsFetchingModels(false));
+      runModelFetch(
+        () => fetchXaiOauthModels(selectedXaiAccountId ?? null),
+        receiveFetchedModels,
+        "[XaiOAuth] Failed to fetch models:",
+      );
       return;
     }
 
@@ -591,37 +730,33 @@ export function CodexFormFields({
       });
       return;
     }
-    const seq = ++fetchModelsSeqRef.current;
-    setIsFetchingModels(true);
-    fetchModelsForConfig(
-      codexBaseUrl,
-      codexApiKey,
-      isFullUrl,
-      undefined,
-      customUserAgent,
-    )
-      .then((models) => {
-        if (seq !== fetchModelsSeqRef.current) return;
-        setFetchedModels(models);
-        if (models.length === 0) {
-          toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
-        }
-      })
-      .catch((err) => {
-        if (seq !== fetchModelsSeqRef.current) return;
-        console.warn("[ModelFetch] Failed:", err);
-        showFetchModelsError(err, t);
-      })
-      .finally(() => setIsFetchingModels(false));
+    runModelFetch(
+      () =>
+        fetchModelsForConfig(
+          codexBaseUrl,
+          codexApiKey,
+          isFullUrl,
+          undefined,
+          customUserAgent,
+        ),
+      receiveFetchedModels,
+      "[ModelFetch] Failed:",
+    );
   }, [
+    runModelFetch,
+    receiveFetchedModels,
     codexBaseUrl,
     codexApiKey,
+    codexModel,
+    catalogModels,
     isFullUrl,
     customUserAgent,
+    isCopilotPreset,
+    copilotApiFormat,
+    isCopilotAuthenticated,
+    selectedGitHubAccountId,
+    onCatalogModelsChange,
+    onModelChange,
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
@@ -719,6 +854,19 @@ export function CodexFormFields({
 
   return (
     <>
+      {isCopilotPreset && (
+        <CopilotAuthSection
+          mode="select"
+          selectedAccountId={selectedGitHubAccountId}
+          onAccountSelect={onGitHubAccountSelect}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("github_copilot")
+              : undefined
+          }
+        />
+      )}
+
       {/* Codex OAuth 账号选择 */}
       {isCodexOauthPreset && (
         <CodexOAuthSection
@@ -753,7 +901,7 @@ export function CodexFormFields({
       )}
 
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isCodexOauthPreset && !isXaiOauthPreset && (
+      {!isCopilotPreset && !isCodexOauthPreset && !isXaiOauthPreset && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"
@@ -776,7 +924,7 @@ export function CodexFormFields({
       )}
 
       {/* Codex Base URL 输入框（托管 OAuth 端点由 adapter 硬定向，不展示） */}
-      {shouldShowSpeedTest && !isXaiOauthPreset && (
+      {shouldShowSpeedTest && !isCopilotPreset && !isXaiOauthPreset && (
         <EndpointField
           id="codexBaseUrl"
           label={t("codexConfig.apiUrlLabel")}
@@ -907,10 +1055,9 @@ export function CodexFormFields({
             </p>
           )}
           <CollapsibleContent className="space-y-3 pt-3">
-            {/* 上游格式 —— Chat 需开启路由接管（走代理转换），Responses 原生直连。
-                沿用 shouldShowSpeedTest 门控，cloud_provider 保持不可切换；
-                xAI OAuth 托管预设格式钉死 Responses，不可切换。 */}
-            {shouldShowSpeedTest && !isXaiOauthPreset && (
+            {/* Copilot supports automatic capability routing or an explicit protocol;
+                other providers retain their existing format controls. */}
+            {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <FormLabel htmlFor="codex-upstream-format">
@@ -919,10 +1066,24 @@ export function CodexFormFields({
                     })}
                   </FormLabel>
                   <Select
-                    value={apiFormat}
-                    onValueChange={(value) =>
-                      onApiFormatChange(value as CodexApiFormat)
-                    }
+                    value={isCopilotPreset ? copilotApiFormat : apiFormat}
+                    onValueChange={(value) => {
+                      if (isCopilotPreset) {
+                        if (
+                          value === "auto" ||
+                          value === "openai_chat" ||
+                          value === "openai_responses"
+                        ) {
+                          onCopilotApiFormatChange?.(value);
+                        }
+                      } else if (
+                        value === "openai_chat" ||
+                        value === "openai_responses" ||
+                        value === "anthropic"
+                      ) {
+                        onApiFormatChange(value);
+                      }
+                    }}
                   >
                     <SelectTrigger
                       id="codex-upstream-format"
@@ -931,28 +1092,39 @@ export function CodexFormFields({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      {isCopilotPreset && (
+                        <SelectItem value="auto">
+                          {t("codexConfig.upstreamFormatAuto")}
+                        </SelectItem>
+                      )}
                       <SelectItem value="openai_chat">
                         {t("codexConfig.upstreamFormatChat", {
                           defaultValue: "Chat Completions（需开启路由）",
                         })}
                       </SelectItem>
                       <SelectItem value="openai_responses">
-                        {t("codexConfig.upstreamFormatResponses", {
-                          defaultValue: "Responses（原生）",
-                        })}
+                        {isCopilotPreset
+                          ? t("codexConfig.upstreamFormatCopilotResponses")
+                          : t("codexConfig.upstreamFormatResponses", {
+                              defaultValue: "Responses（原生）",
+                            })}
                       </SelectItem>
-                      <SelectItem value="anthropic">
-                        {t("codexConfig.upstreamFormatAnthropic", {
-                          defaultValue: "Anthropic Messages（需开启路由）",
-                        })}
-                      </SelectItem>
+                      {!isCopilotPreset && (
+                        <SelectItem value="anthropic">
+                          {t("codexConfig.upstreamFormatAnthropic", {
+                            defaultValue: "Anthropic Messages（需开启路由）",
+                          })}
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t("codexConfig.upstreamFormatHint", {
-                      defaultValue:
-                        "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
-                    })}
+                    {isCopilotPreset
+                      ? t("codexConfig.upstreamFormatCopilotHint")
+                      : t("codexConfig.upstreamFormatHint", {
+                          defaultValue:
+                            "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
+                        })}
                   </p>
                 </div>
 
