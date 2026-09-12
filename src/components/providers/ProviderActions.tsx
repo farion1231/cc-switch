@@ -34,6 +34,7 @@ interface OpenClawDefaultModelOption {
 interface ProviderActionsProps {
   appId?: AppId;
   isCurrent: boolean;
+  isManagedCodexAccountUnavailable?: boolean;
   isInConfig?: boolean;
   isTesting?: boolean;
   isProxyTakeover?: boolean;
@@ -76,6 +77,7 @@ interface MainButtonState {
 export function ProviderActions({
   appId,
   isCurrent,
+  isManagedCodexAccountUnavailable = false,
   isInConfig = false,
   isTesting,
   isProxyTakeover = false,
@@ -233,6 +235,19 @@ export function ProviderActions({
           "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
         icon: <Check className="h-4 w-4" />,
         text: t("provider.inUse"),
+      };
+    }
+
+    if (isManagedCodexAccountUnavailable) {
+      return {
+        disabled: true,
+        variant: "default" as const,
+        className: "",
+        icon: <Play className="h-4 w-4" />,
+        text: t("provider.enable"),
+        title: t("codex.boundAccountUnavailable", {
+          defaultValue: "绑定的账号不可用",
+        }),
       };
     }
 

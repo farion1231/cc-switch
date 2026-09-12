@@ -3037,6 +3037,74 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn switch_away_from_removed_managed_codex_account_succeeds() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            tauri::async_runtime::block_on(async {
+                state
+                    .codex_oauth_manager
+                    .add_test_account_with_user_identity(
+                        "acct-managed",
+                        "managed-access",
+                        "managed-user",
+                    )
+                    .await
+                    .expect("seed managed account");
+            });
+
+            let managed = managed_codex_provider("managed-auth-center", "acct-managed");
+            let mut baseline = Provider::with_id(
+                "baseline".to_string(),
+                "Baseline".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-baseline" },
+                    "config": "model_provider = \"baseline\"\n[model_providers.baseline]\nbase_url = \"https://baseline.example/v1\"\n"
+                }),
+                None,
+            );
+            baseline.category = Some("custom".to_string());
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &managed)
+                .expect("save managed provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &baseline)
+                .expect("save baseline provider");
+
+            ProviderService::switch(state, AppType::Codex, &managed.id)
+                .expect("activate managed provider");
+            tauri::async_runtime::block_on(
+                crate::commands::remove_codex_oauth_account_with_switch_lock(state, "acct-managed"),
+            )
+            .expect("remove managed account");
+
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id(&managed.id, AppType::Codex.as_str())
+                    .expect("read managed provider")
+                    .and_then(|provider| provider.meta)
+                    .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+                    .as_deref(),
+                Some("acct-managed"),
+                "the binding remains available for same-account recovery"
+            );
+
+            ProviderService::switch(state, AppType::Codex, &baseline.id)
+                .expect("switch away from removed managed account");
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+                    .expect("read current")
+                    .as_deref(),
+                Some(baseline.id.as_str())
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn codex_auth_center_removal_waits_for_provider_switch_lock() {
         with_test_home(|state, _| {
             crate::settings::reload_settings().expect("reload settings");

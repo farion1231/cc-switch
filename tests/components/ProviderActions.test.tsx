@@ -148,3 +148,33 @@ describe("ProviderActions Pi provider switching", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ProviderActions managed Codex account switching", () => {
+  it("blocks enabling a provider whose bound account is unavailable", async () => {
+    const user = userEvent.setup();
+    const onSwitch = vi.fn();
+
+    render(
+      <ProviderActions
+        appId="codex"
+        isCurrent={false}
+        isManagedCodexAccountUnavailable
+        onSwitch={onSwitch}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    const enableButton = screen.getByRole("button", {
+      name: "provider.enable",
+    });
+    expect(enableButton).toBeDisabled();
+    expect(enableButton.parentElement).toHaveAttribute(
+      "title",
+      "绑定的账号不可用",
+    );
+
+    await user.click(enableButton);
+    expect(onSwitch).not.toHaveBeenCalled();
+  });
+});
