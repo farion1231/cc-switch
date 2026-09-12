@@ -1336,6 +1336,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "step-3.5-flash-2603",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "step-3.5-flash-2603",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "step-3.5-flash-2603",
+        // StepFun Coding Plan models have a 256K context window. Compact before
+        // the hard boundary so the next generation and tool results have room.
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "220000",
       },
     },
     category: "cn_official",
@@ -1355,6 +1359,8 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "step-3.5-flash-2603",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "step-3.5-flash-2603",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "step-3.5-flash-2603",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "220000",
       },
     },
     category: "cn_official",
