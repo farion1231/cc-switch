@@ -311,6 +311,8 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     format!(
         "NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            AND {log_alias}.status_code >= 200
+            AND {log_alias}.status_code < 300
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
