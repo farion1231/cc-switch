@@ -33,6 +33,7 @@ export function useSessionSearch({
     filteredByProvider.forEach((session, idx) => {
       const metaContent = [
         session.sessionId,
+        session.parentSessionId,
         session.title,
         session.summary,
         session.projectDir,
