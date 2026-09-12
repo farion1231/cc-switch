@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { useMessageSelectionRange } from "@/hooks/useMessageSelectionRange";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
@@ -341,12 +342,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const deleteSessionMutation = useDeleteSessionMutation();
   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
 
+  const rangeExtractor = useMessageSelectionRange(
+    scrollContainerRef,
+    selectedKey,
+  );
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: () => 120,
     overscan: 5,
-    gap: 12,
+    rangeExtractor,
   });
 
   useEffect(() => {
@@ -1714,6 +1719,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                       top: 0,
                                       left: 0,
                                       width: "100%",
+                                      paddingBottom:
+                                        virtualRow.index === messages.length - 1
+                                          ? 0
+                                          : 12,
                                       transform: `translateY(${virtualRow.start}px)`,
                                     }}
                                   >
