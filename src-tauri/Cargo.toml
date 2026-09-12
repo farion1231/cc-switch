@@ -106,6 +106,8 @@ rquickjs = { version = "0.8", features = ["bindgen"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
+# 读取 macOS 系统代理（SCDynamicStore），用于全局 HTTP 客户端跟随系统代理变化
+system-configuration = "0.7"
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]
