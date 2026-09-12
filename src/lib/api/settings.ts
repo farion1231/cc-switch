@@ -49,6 +49,14 @@ export const settingsApi = {
     return await invoke("restore_codex_unified_history");
   },
 
+  async migrateCodexUnifiedHistory(): Promise<{
+    migratedJsonlFiles: number;
+    migratedStateRows: number;
+    skippedReason?: string;
+  }> {
+    return await invoke("migrate_codex_unified_history");
+  },
+
   async restart(): Promise<boolean> {
     return await invoke("restart_app");
   },
