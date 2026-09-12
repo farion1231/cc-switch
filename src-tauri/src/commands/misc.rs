@@ -378,6 +378,16 @@ impl FromStr for ToolLifecycleAction {
     }
 }
 
+/// Windows lifecycle .bat 头部。`@echo off` 之后必须先 `chcp 65001`：脚本以
+/// UTF-8 写入（`fs::write`），而 cmd.exe 默认按 OEM 代码页解析批处理内容——
+/// 锚定路径含非 ASCII 字符（如中文用户名 `C:\Users\张三\...`）时会被错解成
+/// 乱码路径，cmd 报 "The system cannot find the path specified."（#6741）。
+/// 代码页切换必须排在任何携带路径的命令行之前。
+#[cfg(target_os = "windows")]
+fn windows_lifecycle_bat_header() -> Vec<String> {
+    vec!["@echo off".to_string(), "chcp 65001 >nul".to_string()]
+}
+
 fn build_tool_lifecycle_command(
     tools: &[&str],
     action: ToolLifecycleAction,
@@ -395,7 +405,7 @@ fn build_tool_lifecycle_command(
     }
 
     #[cfg(target_os = "windows")]
-    lines.push("@echo off".to_string());
+    lines.extend(windows_lifecycle_bat_header());
 
     for tool in tools {
         let label = tool_display_name(tool);
@@ -6953,6 +6963,40 @@ mod tests {
             decode_command_output(&output.stdout).trim(),
             "codex-cli 0.144.3"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn lifecycle_bat_runs_anchored_command_with_non_ascii_path() {
+        // 非 ASCII 路径（如中文用户名）下的锚定命令：.bat 以 UTF-8 写入，cmd.exe
+        // 默认按 OEM 代码页解析会把路径错解成乱码；头部切到 UTF-8 后必须能跑通。
+        let base = tempfile::tempdir().expect("temp dir should be created");
+        let tool_dir = base.path().join("cc-switch-工具目录");
+        std::fs::create_dir_all(&tool_dir).expect("non-ascii tool dir should be created");
+        let npm = tool_dir.join("npm.cmd");
+        std::fs::write(&npm, "@echo off\r\nexit /b 0\r\n").expect("fake npm.cmd should be written");
+
+        let command_line = format!(
+            "{header}\r\ncall \"{npm}\"\r\nif errorlevel 1 exit /b %errorlevel%",
+            header = windows_lifecycle_bat_header().join("\r\n"),
+            npm = npm.display(),
+        );
+
+        let result = run_tool_lifecycle_silently(&command_line, "test_non_ascii_path");
+        assert!(
+            result.is_ok(),
+            "anchored command with non-ASCII path should run under the UTF-8 header: {result:?}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_tool_lifecycle_command_emits_utf8_header_first() {
+        let command = build_tool_lifecycle_command(&["claude"], ToolLifecycleAction::Update, None)
+            .expect("lifecycle command should build");
+        let mut lines = command.lines();
+        assert_eq!(lines.next(), Some("@echo off"));
+        assert_eq!(lines.next(), Some("chcp 65001 >nul"));
     }
 
     #[test]
