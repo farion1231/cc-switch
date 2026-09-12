@@ -260,22 +260,16 @@ impl RequestContext {
     /// 获取流式超时配置
     ///
     /// 配置生效规则：
-    /// - 故障转移开启：返回配置的值（0 表示禁用超时检查）
-    /// - 故障转移关闭：返回 0（禁用超时检查）
+    /// - 始终返回配置的值（0 表示禁用超时检查）。超时检测与"超时后是否自动
+    ///   故障转移"是两件事：即使 auto_failover_enabled=false（没有备用 provider
+    ///   可切换），静默期超时依然应该触发，让卡死的流以明确错误结束，而不是
+    ///   让客户端连接永久挂起（曾导致 deepseek-v4-flash 流无 finish_reason 时
+    ///   cc-switch 判定请求"成功"但客户端读流永久阻塞，见 L-0135/L-0136）。
     #[inline]
     pub fn streaming_timeout_config(&self) -> StreamingTimeoutConfig {
-        if self.app_config.auto_failover_enabled {
-            // 故障转移开启：使用配置的值（0 = 禁用超时）
-            StreamingTimeoutConfig {
-                first_byte_timeout: self.app_config.streaming_first_byte_timeout as u64,
-                idle_timeout: self.app_config.streaming_idle_timeout as u64,
-            }
-        } else {
-            // 故障转移关闭：禁用流式超时检查
-            StreamingTimeoutConfig {
-                first_byte_timeout: 0,
-                idle_timeout: 0,
-            }
+        StreamingTimeoutConfig {
+            first_byte_timeout: self.app_config.streaming_first_byte_timeout as u64,
+            idle_timeout: self.app_config.streaming_idle_timeout as u64,
         }
     }
 }
