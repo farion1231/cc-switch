@@ -7086,6 +7086,8 @@ impl ProviderService {
             .get_universal_provider(id)?
             .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
 
+        let mut live_failures = Vec::new();
+
         if provider.apps.claude {
             let child_id = format!("universal-claude-{id}");
             if let Some(mut child) = state.db.get_provider_by_id(&child_id, "claude")? {
@@ -7114,6 +7116,12 @@ impl ProviderService {
                     }
                 }
                 state.db.save_provider("claude", &child)?;
+                Self::project_universal_child_to_live(
+                    state,
+                    AppType::Claude,
+                    &child_id,
+                    &mut live_failures,
+                );
             }
         }
 
@@ -7173,6 +7181,12 @@ impl ProviderService {
                     root.insert("config".to_string(), Value::String(doc.to_string()));
                 }
                 state.db.save_provider("codex", &child)?;
+                Self::project_universal_child_to_live(
+                    state,
+                    AppType::Codex,
+                    &child_id,
+                    &mut live_failures,
+                );
             }
         }
 
@@ -7198,10 +7212,23 @@ impl ProviderService {
                     );
                 }
                 state.db.save_provider("gemini", &child)?;
+                Self::project_universal_child_to_live(
+                    state,
+                    AppType::Gemini,
+                    &child_id,
+                    &mut live_failures,
+                );
             }
         }
 
-        Ok(true)
+        if live_failures.is_empty() {
+            Ok(true)
+        } else {
+            Err(AppError::Message(format!(
+                "统一供应商 API 配置已保存到数据库，但以下应用的配置文件未能写入：{}",
+                live_failures.join("、")
+            )))
+        }
     }
 
     /// 递归合并 JSON：base 为底，patch 覆盖同名字段
