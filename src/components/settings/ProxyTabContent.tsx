@@ -19,18 +19,17 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { getAppLabel, PROXY_APP_IDS } from "@/config/appConfig";
 
 interface ProxyTabContentProps {
   settings: SettingsFormState;
   onAutoSave: (updates: Partial<SettingsFormState>) => Promise<boolean | void>;
 }
 
-export const FAILOVER_APPS = [
-  { id: "claude", label: "Claude" },
-  { id: "codex", label: "Codex" },
-  { id: "gemini", label: "Gemini" },
-  { id: "grokbuild", label: "Grok Build" },
-] as const;
+export const FAILOVER_APPS = PROXY_APP_IDS.map((id) => ({
+  id,
+  label: getAppLabel(id),
+}));
 
 export function ProxyTabContent({
   settings,
@@ -118,7 +117,7 @@ export function ProxyTabContent({
                 className="gap-1.5 h-6 ml-auto mr-2"
               >
                 <Activity
-                  className={`h-3 w-3 ${isRunning ? "animate-pulse" : ""}`}
+                  className={`h-3 w-3 ${isRunning ? "status-heartbeat" : ""}`}
                 />
                 {isRunning
                   ? t("settings.advanced.proxy.running")

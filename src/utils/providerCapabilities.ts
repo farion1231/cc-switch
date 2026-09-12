@@ -1,8 +1,12 @@
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
   extractCodexWireApi,
+  hasExplicitNonOpenAiCodexModelProvider,
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
@@ -10,16 +14,90 @@ import {
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 
+export type CodexOfficialIdentity =
+  | "native_login"
+  | "managed_account"
+  | "api_key";
+
+const nonEmptyString = (value: unknown): boolean =>
+  typeof value === "string" && value.trim().length > 0;
+
+function hasExplicitCodexThirdPartyUpstream(
+  settings: Record<string, unknown>,
+): boolean {
+  const config = typeof settings.config === "string" ? settings.config : "";
+
+  return (
+    nonEmptyString(settings.baseUrl) ||
+    nonEmptyString(settings.baseURL) ||
+    nonEmptyString(settings.base_url) ||
+    Boolean(extractCodexExperimentalBearerToken(config)) ||
+    Boolean(extractCodexBaseUrl(config)) ||
+    hasExplicitNonOpenAiCodexModelProvider(config)
+  );
+}
+
+function hasStoredCodexApiKey(settings: Record<string, unknown>): boolean {
+  const auth = settings.auth as Record<string, unknown> | undefined;
+  return nonEmptyString(auth?.OPENAI_API_KEY);
+}
+
+export function resolveCodexOfficialIdentity(
+  appId: AppId,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
+): CodexOfficialIdentity | null {
+  if (appId !== "codex") return null;
+
+  const managedAccountId = resolveManagedAccountId(
+    provider.meta,
+    "codex_oauth",
+  )?.trim();
+  const hasFixedOfficialId = provider.id === CODEX_OFFICIAL_PROVIDER_ID;
+  if (hasFixedOfficialId && provider.category === "official") {
+    return managedAccountId ? "managed_account" : "native_login";
+  }
+
+  const settings = provider.settingsConfig as Record<string, unknown>;
+  const auth = settings?.auth;
+  const config = settings?.config;
+  if (
+    !auth ||
+    typeof auth !== "object" ||
+    Array.isArray(auth) ||
+    (config != null && typeof config !== "string")
+  ) {
+    return null;
+  }
+
+  if (hasExplicitCodexThirdPartyUpstream(settings)) {
+    return null;
+  }
+
+  if (managedAccountId) {
+    return "managed_account";
+  }
+  if (hasStoredCodexApiKey(settings)) {
+    return provider.category === "official" ? "api_key" : null;
+  }
+  return hasFixedOfficialId || provider.category === "official"
+    ? "native_login"
+    : null;
+}
+
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
   appId: AppId,
-  provider: Pick<Provider, "id" | "category">,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
-  return (
-    appId === "codex" &&
-    provider.id === CODEX_OFFICIAL_PROVIDER_ID &&
-    provider.category === "official"
-  );
+  const identity = resolveCodexOfficialIdentity(appId, provider);
+  if (!identity || identity === "api_key") return false;
+  if (
+    provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
+    identity === "managed_account"
+  ) {
+    return true;
+  }
+  return true;
 }
 
 /**
@@ -39,9 +117,16 @@ export function providerNeedsRouting(
   appId: AppId,
   provider: Provider,
 ): boolean {
-  if (provider.category === "official") return false;
+  if (
+    provider.category === "official" ||
+    resolveCodexOfficialIdentity(appId, provider)
+  )
+    return false;
 
   const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
+
+  // CC Switch 本地代理：请求必须经过本地代理路由到上游，恒需接管
+  if (provider.meta?.providerType === "cc_switch") return true;
 
   // Desktop 普通供应商由表单模式决定；托管 OAuth 的 token 只能由代理注入。
   if (appId === "claude-desktop") {

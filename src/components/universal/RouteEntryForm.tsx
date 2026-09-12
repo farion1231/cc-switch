@@ -14,7 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ProviderIcon } from "@/components/ProviderIcon";
-import { Loader2, RefreshCw, X, Check } from "lucide-react";
+import { Loader2, RefreshCw, X, Check, Eye, EyeOff } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -135,6 +135,7 @@ export function RouteEntryForm({
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [modelNames, setModelNames] = useState<string[]>([]);
   const [fetching, setFetching] = useState(false);
@@ -405,13 +406,28 @@ export function RouteEntryForm({
         {/* API Key */}
         <div className="space-y-2">
           <Label htmlFor="route-apiKey">API Key</Label>
-          <Input
-            id="route-apiKey"
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
-          />
+          <div className="relative">
+            <Input
+              id="route-apiKey"
+              type={showApiKey ? "text" : "password"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-..."
+              className="pr-9"
+            />
+            <button
+              type="button"
+              onClick={() => setShowApiKey((v) => !v)}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+            >
+              {showApiKey ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
         </div>
 
         {/* 优先级 */}

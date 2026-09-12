@@ -156,6 +156,29 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#5B7FFF",
   },
   {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://api.qnaigc.com/bypass/vertex",
+    model: "gemini-3.6-flash",
+    description: "Qiniu",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    endpointCandidates: [
+      "https://api.qnaigc.com/bypass/vertex",
+      "https://api.modelink.ai/bypass/vertex",
+    ],
+    icon: "qiniu",
+  },
+  {
     name: "AICoding",
     websiteUrl: "https://aicoding.inc",
     apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
@@ -213,6 +236,30 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "apikeyfun",
     endpointCandidates: ["https://api.apikey.fun", "https://slb.apikey.fun"],
     icon: "apikeyfun",
+  },
+  {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://9527.codes",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://9527.codes",
+    model: "gemini-3.6-flash",
+    description: "9527CODE",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    endpointCandidates: [
+      "https://9527.codes",
+      "https://api.9527.codes",
+      "https://cdn.9527.codes",
+    ],
+    icon: "9527code",
   },
   {
     name: "Code0",
@@ -273,6 +320,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     ],
     icon: "sssaicode",
     iconColor: "#000000",
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://soleapi.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://soleapi.com",
+    model: "gemini-3.8-flash",
+    description: "SoleAPI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    endpointCandidates: ["https://soleapi.com"],
+    icon: "soleapi",
   },
   {
     name: "ETok.ai",
@@ -340,29 +407,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
-        GEMINI_MODEL: "gemini-3.6-flash",
-      },
-    },
-    baseURL: "https://api.qnaigc.com/bypass/vertex",
-    model: "gemini-3.6-flash",
-    description: "Qiniu",
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    endpointCandidates: [
-      "https://api.qnaigc.com/bypass/vertex",
-      "https://api.modelink.ai/bypass/vertex",
-    ],
-    icon: "qiniu",
-  },
-  {
     name: "SudoCode.us",
     websiteUrl: "https://sudocode.us",
     apiKeyUrl: "https://sudocode.us",
@@ -380,6 +424,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
     icon: "sudocode-us",
+  },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://apicdn.xycai.us",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://apicdn.xycai.us",
+    model: "gemini-3.6-flash",
+    description: "XycAi",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
+    icon: "xycai",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -467,6 +531,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
+  },
+  {
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.aicodewith.ai/gemini_cli",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.aicodewith.ai/gemini_cli",
+    model: "gemini-3.1-pro-preview",
+    description: "AICodeWith",
+    category: "aggregator",
+    endpointCandidates: ["https://api.aicodewith.ai/gemini_cli"],
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
   },
   {
     name: "自定义",

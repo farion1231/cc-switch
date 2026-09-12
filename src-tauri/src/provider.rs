@@ -87,6 +87,16 @@ impl Provider {
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
+    /// Third-party managed OAuth (xai_oauth, github_copilot, …): the real
+    /// credential is injected per-request by the local proxy, so the card is
+    /// keyless by design and its stored config is only an upstream snapshot.
+    /// `codex_oauth` is deliberately excluded — the official ChatGPT login
+    /// in auth.json IS its credential, so the `requires_openai_auth = true`
+    /// fallback is its correct shape, never a legacy leftover.
+    pub fn uses_proxy_injected_oauth(&self) -> bool {
+        self.is_xai_oauth() || self.is_github_copilot()
+    }
+
     /// Whether the provider form's "auth field" was explicitly set to
     /// ANTHROPIC_API_KEY. The form only persists `meta.apiKeyField` for the
     /// non-default choice, so `None` means the default ANTHROPIC_AUTH_TOKEN.
@@ -205,6 +215,11 @@ impl Provider {
             // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
             AppType::OpenClaw => (
                 str_at(settings.get("baseUrl")),
+                str_at(settings.get("apiKey")),
+            ),
+            // Pi custom providers use the native models.json field names.
+            AppType::Pi => (
+                crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 str_at(settings.get("apiKey")),
             ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
@@ -401,6 +416,12 @@ pub struct CodexChatReasoningConfig {
     /// 靠穷举字段提取、并不读取本字段；保留作文档说明与未来按格式分发（如 think_tags）的预留。
     #[serde(rename = "outputFormat", skip_serializing_if = "Option::is_none")]
     pub output_format: Option<String>,
+    /// 运行时字段（不持久化、不进 meta）：当前请求模型在平台侧声明的合法 effort
+    /// 档位，由 resolve 按请求模型从供应商 `settings_config.modelCatalog` 的
+    /// `reasoningLevels`（逐模型声明，见 #6228）查表填充。仅 "zen" 值映射消费：
+    /// Some → 钳到合法档；None → 不发 effort 字段（模型未收录或为 toggle 型）。
+    #[serde(skip)]
+    pub effort_levels: Option<Vec<String>>,
 }
 
 /// Local proxy request overrides applied after route/protocol transforms.
@@ -783,6 +804,18 @@ impl UniversalProvider {
         }
     }
 
+    /// 生成派生 provider 的 meta：cc_switch 类型强制标记 providerType，
+    /// 供前端识别"本地代理 + 路由"供应商（必须接管才能工作）。
+    fn derived_meta(&self) -> Option<ProviderMeta> {
+        if self.provider_type == "cc_switch" {
+            let mut meta = self.meta.clone().unwrap_or_default();
+            meta.provider_type = Some("cc_switch".to_string());
+            Some(meta)
+        } else {
+            self.meta.clone()
+        }
+    }
+
     /// 生成 Claude 供应商配置
     pub fn to_claude_provider(&self) -> Option<Provider> {
         if !self.apps.claude {
@@ -823,7 +856,7 @@ impl UniversalProvider {
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -888,7 +921,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -923,7 +956,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -1036,6 +1069,30 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn proxy_injected_oauth_excludes_codex_oauth() {
+        let mut provider = Provider::with_id("p".to_string(), "P".to_string(), json!({}), None);
+        assert!(!provider.uses_proxy_injected_oauth());
+
+        for (provider_type, expected) in [
+            ("xai_oauth", true),
+            ("github_copilot", true),
+            // the official ChatGPT login IS this card's credential — its
+            // auth.json fallback shape must never be neutralized
+            ("codex_oauth", false),
+        ] {
+            provider.meta = Some(ProviderMeta {
+                provider_type: Some(provider_type.to_string()),
+                ..ProviderMeta::default()
+            });
+            assert_eq!(
+                provider.uses_proxy_injected_oauth(),
+                expected,
+                "{provider_type}"
+            );
+        }
+    }
 
     #[test]
     fn provider_meta_serializes_pricing_model_source() {
@@ -1561,6 +1618,25 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-openclaw".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_pi_uses_native_model_level_base_url() {
+        let p = provider_with(json!({
+            "apiKey": "sk-pi",
+            "models": [{
+                "id": "model-a",
+                "api": "openai-completions",
+                "baseUrl": "https://api.example.com/v1/"
+            }]
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Pi),
+            (
+                "https://api.example.com/v1".to_string(),
+                "sk-pi".to_string()
             )
         );
     }

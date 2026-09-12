@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::sync::Arc;
 
 use cc_switch_lib::{
     get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
@@ -20,6 +21,103 @@ fn sanitize_provider_name(name: &str) -> String {
         })
         .collect::<String>()
         .to_lowercase()
+}
+
+#[test]
+fn universal_api_config_sync_updates_url_key_and_preserves_model_config() {
+    let _guard = test_mutex()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+    let db = Arc::clone(&state.db);
+    let universal_id = format!("shared-{}", std::process::id());
+    let mut universal = cc_switch_lib::UniversalProvider::new(
+        universal_id.clone(),
+        "Shared".into(),
+        "custom".into(),
+        "https://new.example".into(),
+        "new-key".into(),
+    );
+    universal.apps.claude = true;
+    universal.apps.codex = true;
+    universal.apps.gemini = true;
+    db.save_universal_provider(&universal).unwrap();
+    let claude_id = format!("universal-claude-{universal_id}");
+    let codex_id = format!("universal-codex-{universal_id}");
+    let gemini_id = format!("universal-gemini-{universal_id}");
+    db.save_provider("claude", &Provider::with_id(claude_id.clone(), "Claude".into(), json!({"env":{"ANTHROPIC_BASE_URL":"https://old.example","ANTHROPIC_AUTH_TOKEN":"old-key","ANTHROPIC_MODEL":"keep"},"custom":"keep"}), None)).unwrap();
+    db.save_provider("codex", &Provider::with_id(codex_id.clone(), "Codex".into(), json!({"auth":{"OPENAI_API_KEY":"old-key"},"config":"model = \"keep\"\n[model_providers.custom]\nbase_url = \"https://old.example/v1\"\nwire_api = \"responses\"\n","modelCatalog":{"keep":true}}), None)).unwrap();
+    db.save_provider("gemini", &Provider::with_id(gemini_id.clone(), "Gemini".into(), json!({"env":{"GOOGLE_GEMINI_BASE_URL":"https://old.example","GEMINI_API_KEY":"old-key","GEMINI_MODEL":"keep"},"custom":"keep"}), None)).unwrap();
+    ProviderService::sync_universal_api_config_to_apps(&state, &universal_id).unwrap();
+    let claude = db
+        .get_provider_by_id(&claude_id, "claude")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        claude.settings_config["env"]["ANTHROPIC_BASE_URL"],
+        "https://new.example"
+    );
+    assert_eq!(
+        claude.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+        "new-key"
+    );
+    assert_eq!(claude.settings_config["env"]["ANTHROPIC_MODEL"], "keep");
+    let codex = db.get_provider_by_id(&codex_id, "codex").unwrap().unwrap();
+    assert_eq!(codex.settings_config["auth"]["OPENAI_API_KEY"], "new-key");
+    assert!(codex.settings_config["config"]
+        .as_str()
+        .unwrap()
+        .contains("base_url = \"https://new.example/v1\""));
+    assert!(codex.settings_config["config"]
+        .as_str()
+        .unwrap()
+        .contains("model = \"keep\""));
+    assert_eq!(codex.settings_config["modelCatalog"]["keep"], true);
+    let gemini = db
+        .get_provider_by_id(&gemini_id, "gemini")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        gemini.settings_config["env"]["GOOGLE_GEMINI_BASE_URL"],
+        "https://new.example"
+    );
+    assert_eq!(gemini.settings_config["env"]["GEMINI_API_KEY"], "new-key");
+    assert_eq!(gemini.settings_config["env"]["GEMINI_MODEL"], "keep");
+}
+
+#[test]
+fn universal_api_config_sync_skips_missing_and_disabled_children() {
+    let _guard = test_mutex()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+    let universal_id = format!("missing-{}", std::process::id());
+    let mut universal = cc_switch_lib::UniversalProvider::new(
+        universal_id.clone(),
+        "Shared".into(),
+        "custom".into(),
+        "https://new.example/v1".into(),
+        "new-key".into(),
+    );
+    universal.apps.claude = true;
+    universal.apps.codex = false;
+    state.db.save_universal_provider(&universal).unwrap();
+
+    ProviderService::sync_universal_api_config_to_apps(&state, &universal_id).unwrap();
+    assert!(!state
+        .db
+        .get_all_providers("claude")
+        .unwrap()
+        .contains_key(&format!("universal-claude-{universal_id}")));
+    assert!(!state
+        .db
+        .get_all_providers("codex")
+        .unwrap()
+        .contains_key(&format!("universal-codex-{universal_id}")));
 }
 
 #[test]
@@ -706,12 +804,14 @@ wire_api = "responses"
 }
 
 #[test]
-fn provider_service_switch_codex_default_overwrites_official_auth_when_preservation_off() {
+fn provider_service_switch_codex_default_removes_auth_json_when_preservation_off() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     // Intentionally do NOT enable preservation: this locks the default opt-out
-    // behavior where switching to a third-party provider rewrites auth.json,
-    // discarding the user's ChatGPT OAuth login. It is the dual of
+    // behavior where a third-party switch deletes auth.json outright — the
+    // official OAuth login is not preserved, and the third-party key never
+    // lands there either (it travels as the provider-scoped bearer token in
+    // config.toml). It is the dual of
     // `provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token`.
     let _home = ensure_test_home();
 
@@ -780,16 +880,449 @@ requires_openai_auth = true
     ProviderService::switch(&state, AppType::Codex, "third-party")
         .expect("switch to third-party provider should succeed");
 
+    assert!(
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "default (preservation off) must delete auth.json on a third-party switch — \
+         the official login goes away and the key rides in config.toml instead"
+    );
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        live_config.contains("experimental_bearer_token = \"third-party-key\""),
+        "the third-party key must be injected as the provider-scoped bearer token; got:\n{live_config}"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_default_injects_bearer_token_into_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Preservation stays OFF (default). Since Codex 0.149 (openai/codex#39214)
+    // custom providers no longer inherit ambient auth, so third-party switches
+    // are config-only on every path: the key travels as a provider-scoped
+    // `experimental_bearer_token` and auth.json is removed.
+    let _home = ensure_test_home();
+
+    let third_party_config = r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = false
+"#;
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "third-party".to_string(),
+            Provider::with_id(
+                "third-party".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "third-party-key"},
+                    "config": third_party_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "third-party")
+        .expect("switch to third-party provider should succeed");
+
+    assert!(
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "third-party switches are config-only: no auth.json is written"
+    );
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        live_config.contains("experimental_bearer_token = \"third-party-key\""),
+        "default switch must inject the API key into config.toml so Codex >= 0.149 \
+         custom providers authenticate (openai/codex#39214); got:\n{live_config}"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_preserved_login_rejects_empty_third_party_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Preservation ON + third-party provider with an empty config: auth.json is
+    // not written, and an empty config.toml has no provider table to carry the
+    // bearer token, so the API key has nowhere to land while the official
+    // OAuth login stays live — Codex would silently fall back to the official
+    // provider and bill the ChatGPT account. The switch must be refused, as it
+    // was before the bearer-token injection change.
+    let _home = ensure_test_home();
+    enable_codex_official_auth_preservation();
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "empty-config".to_string(),
+            Provider::with_id(
+                "empty-config".to_string(),
+                "EmptyConfig".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "third-party-key"},
+                    "config": ""
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    let err = ProviderService::switch(&state, AppType::Codex, "empty-config").expect_err(
+        "switching to an empty-config third-party provider with preservation on must fail",
+    );
+    assert!(
+        err.to_string().contains("config.toml"),
+        "error should explain the missing config.toml, got: {err}"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_preserved_login_normalizes_legacy_reroute_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Preservation ON + a legacy-shape third-party config (top-level
+    // openai_base_url rerouting the built-in `openai` provider): the shape
+    // has no provider table to carry the bearer token — since 0.149 the
+    // built-in provider would keep using the preserved official OAuth from
+    // auth.json and send it to the third-party base URL. The switch must
+    // normalize the config into a cc-switch-owned custom table with the key
+    // injected, leaving the official login untouched.
+    let _home = ensure_test_home();
+    enable_codex_official_auth_preservation();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "official-oauth-token",
+            "account_id": "acct-1"
+        }
+    });
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed official OAuth live config");
+
+    let legacy_shape_config = r#"model_provider = "openai"
+model = "gpt-5.4"
+openai_base_url = "https://relay.example/v1"
+"#;
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "legacy-shape".to_string(),
+            Provider::with_id(
+                "legacy-shape".to_string(),
+                "LegacyShape".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "third-party-key"},
+                    "config": legacy_shape_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "legacy-shape")
+        .expect("legacy reroute shape must be normalized, not rejected");
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        !live_config.contains("openai_base_url"),
+        "the top-level reroute must be rewritten away; got:\n{live_config}"
+    );
+    assert!(
+        live_config.contains("[model_providers.cc-switch]")
+            && live_config.contains("base_url = \"https://relay.example/v1\"")
+            && live_config.contains("experimental_bearer_token = \"third-party-key\""),
+        "routing and key must move into the cc-switch provider table; got:\n{live_config}"
+    );
+
     let auth_value: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
-        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
-        Some("third-party-key"),
-        "default (preservation off) should overwrite auth.json with the third-party API key"
+        auth_value
+            .pointer("/tokens/access_token")
+            .and_then(|v| v.as_str()),
+        Some("official-oauth-token"),
+        "the preserved official OAuth login must stay untouched"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_preserved_login_normalizes_config_carried_token() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Same legacy reroute shape, but the key sits in the config text itself
+    // (raw-edited provider with `auth = {}`): normalization must see
+    // config-carried tokens too, not only auth.OPENAI_API_KEY, and the
+    // injected token must land inside the rewritten provider table.
+    let _home = ensure_test_home();
+    enable_codex_official_auth_preservation();
+
+    let raw_edited_config = r#"model_provider = "openai"
+model = "gpt-5.4"
+openai_base_url = "https://relay.example/v1"
+experimental_bearer_token = "config-carried-key"
+"#;
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "raw-edited".to_string(),
+            Provider::with_id(
+                "raw-edited".to_string(),
+                "RawEdited".to_string(),
+                json!({
+                    "auth": {},
+                    "config": raw_edited_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "raw-edited")
+        .expect("legacy reroute with a config-carried token must be normalized");
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        !live_config.contains("openai_base_url"),
+        "the top-level reroute must be rewritten away; got:\n{live_config}"
     );
     assert!(
-        auth_value.pointer("/tokens/access_token").is_none(),
-        "default switch must clear the official ChatGPT OAuth token from live auth.json"
+        live_config.contains("[model_providers.cc-switch]"),
+        "a cc-switch provider table must be created; got:\n{live_config}"
+    );
+    assert_eq!(
+        cc_switch_lib::extract_codex_experimental_bearer_token(&live_config).as_deref(),
+        Some("config-carried-key"),
+        "the config-carried key must resolve for the rewritten provider; got:\n{live_config}"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_default_normalizes_legacy_reroute_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Same legacy shape with preservation OFF (default): the switch is
+    // config-only on every path, so instead of feeding the built-in
+    // provider's ambient auth through auth.json the shape is normalized into
+    // a custom table and auth.json is removed.
+    let _home = ensure_test_home();
+
+    let legacy_shape_config = r#"model_provider = "openai"
+model = "gpt-5.4"
+openai_base_url = "https://relay.example/v1"
+"#;
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "legacy-shape".to_string(),
+            Provider::with_id(
+                "legacy-shape".to_string(),
+                "LegacyShape".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "third-party-key"},
+                    "config": legacy_shape_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "legacy-shape")
+        .expect("default-path switch must normalize the legacy ambient-auth shape");
+
+    assert!(
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "third-party switches are config-only: no auth.json is written"
+    );
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        !live_config.contains("openai_base_url")
+            && live_config.contains("[model_providers.cc-switch]")
+            && live_config.contains("experimental_bearer_token = \"third-party-key\""),
+        "routing and key must move into the cc-switch provider table; got:\n{live_config}"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_preserved_login_rejects_keyless_official_auth_fallback() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Preservation ON + a header-auth card with NO API key anywhere
+    // (`auth = {}`) whose config also sets `requires_openai_auth = true`:
+    // there is no token to inject, so Codex 0.149 resolves auth from the
+    // preserved official OAuth in auth.json and applies it AFTER provider
+    // headers — the explicit Authorization header is overwritten and the
+    // ChatGPT access token + account id go to the third-party endpoint.
+    // The switch must be refused (fail closed).
+    let _home = ensure_test_home();
+    enable_codex_official_auth_preservation();
+
+    let header_auth_with_fallback = r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+http_headers = { Authorization = "Bearer explicit-header-token" }
+"#;
+
+    let good_config = r#"model_provider = "good"
+model = "gpt-5.4"
+
+[model_providers.good]
+name = "Good"
+base_url = "https://good.example/v1"
+wire_api = "responses"
+"#;
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "good".to_string(),
+            Provider::with_id(
+                "good".to_string(),
+                "Good".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "sk-good"},
+                    "config": good_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "header-auth".to_string(),
+            Provider::with_id(
+                "header-auth".to_string(),
+                "HeaderAuth".to_string(),
+                json!({
+                    "auth": {},
+                    "config": header_auth_with_fallback
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "good").expect("switch to the good provider");
+
+    ProviderService::switch(&state, AppType::Codex, "header-auth").expect_err(
+        "preservation-on switch must fail when a keyless config falls back to the official auth",
+    );
+
+    // The refusal happens in the pre-commit preflight: current must not move,
+    // otherwise the next switch would backfill the good provider's live
+    // config into the refused card's DB row.
+    let current = state
+        .db
+        .get_current_provider(AppType::Codex.as_str())
+        .expect("read current provider");
+    assert_eq!(
+        current.as_deref(),
+        Some("good"),
+        "a refused switch must leave current on the previous provider"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_preserved_login_allows_keyless_header_auth_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Same keyless header-auth card WITHOUT the fallback flag: 0.149 resolves
+    // this provider as unauthenticated, provider headers survive untouched,
+    // and the third-party key in http_headers.Authorization does the auth.
+    // This legitimate shape must keep switching under preservation.
+    let _home = ensure_test_home();
+    enable_codex_official_auth_preservation();
+
+    let header_auth_config = r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+http_headers = { Authorization = "Bearer explicit-header-token" }
+"#;
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "header-auth".to_string(),
+            Provider::with_id(
+                "header-auth".to_string(),
+                "HeaderAuth".to_string(),
+                json!({
+                    "auth": {},
+                    "config": header_auth_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "header-auth")
+        .expect("preservation-on switch must keep supporting keyless header-auth providers");
+
+    let config_text =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        config_text.contains("Authorization = \"Bearer explicit-header-token\""),
+        "the provider's own Authorization header must be written verbatim; got:\n{config_text}"
+    );
+    assert!(
+        !config_text.contains("experimental_bearer_token"),
+        "no token exists, nothing must be injected; got:\n{config_text}"
     );
 }
 
@@ -834,8 +1367,8 @@ requires_openai_auth = true
                 None,
             ),
         );
-        let mut official_provider = Provider::with_id(
-            "official-provider".to_string(),
+        let official_provider = Provider::with_id(
+            "codex-official".to_string(),
             "OpenAI Official".to_string(),
             json!({
                 "auth": {},
@@ -843,15 +1376,14 @@ requires_openai_auth = true
             }),
             None,
         );
-        official_provider.category = Some("official".to_string());
         manager
             .providers
-            .insert("official-provider".to_string(), official_provider);
+            .insert("codex-official".to_string(), official_provider);
     }
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "official-provider")
+    ProviderService::switch(&state, AppType::Codex, "codex-official")
         .expect("switch to official provider should succeed without API key");
 
     let auth_value: serde_json::Value =
@@ -1062,8 +1594,8 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
         let manager = initial_config
             .get_manager_mut(&AppType::Codex)
             .expect("codex manager");
-        let mut official = Provider::with_id(
-            "official-provider".to_string(),
+        let official = Provider::with_id(
+            "codex-official".to_string(),
             "Official".to_string(),
             json!({
                 "auth": {
@@ -1075,10 +1607,9 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
             }),
             None,
         );
-        official.category = Some("official".to_string());
         manager
             .providers
-            .insert("official-provider".to_string(), official);
+            .insert("codex-official".to_string(), official);
     }
     let servers = initial_config
         .mcp
@@ -1110,7 +1641,7 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "official-provider")
+    ProviderService::switch(&state, AppType::Codex, "codex-official")
         .expect("switch to official provider");
     let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
         .expect("read config.toml after switch");

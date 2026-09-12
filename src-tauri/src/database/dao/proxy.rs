@@ -630,7 +630,7 @@ impl Database {
         };
 
         // UPSERT
-        conn.execute(
+        if let Err(e) = conn.execute(
             "INSERT OR REPLACE INTO provider_health
              (provider_id, app_type, is_healthy, consecutive_failures,
               last_success_at, last_failure_at, last_error, updated_at)
@@ -650,8 +650,13 @@ impl Database {
                 error_msg,
                 &now,
             ],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        ) {
+            if e.to_string().contains("FOREIGN KEY constraint failed") {
+                log::debug!("跳过健康记录（路由 provider 不在 providers 表中）: {provider_id}");
+            } else {
+                return Err(AppError::Database(e.to_string()));
+            }
+        }
 
         Ok(())
     }

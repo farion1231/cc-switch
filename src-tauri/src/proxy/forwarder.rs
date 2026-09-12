@@ -2,10 +2,10 @@
 //!
 //! 负责将请求转发到上游Provider，支持故障转移
 
-use super::hyper_client::ProxyResponse;
+use super::hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES};
 use super::{
     body_filter::filter_private_params_with_whitelist,
-    content_encoding::{decompress_body, get_content_encoding},
+    content_encoding::{decompress_body_with_limit, get_content_encoding},
     error::*,
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
@@ -23,7 +23,6 @@ use super::{
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
@@ -40,7 +39,27 @@ use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
-fn validate_codex_official_authorization(headers: &http::HeaderMap) -> Result<(), ProxyError> {
+fn codex_bearer_access_token(headers: &http::HeaderMap) -> Option<&str> {
+    let authorization = headers
+        .get(http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .trim();
+    let mut parts = authorization.split_whitespace();
+    let scheme = parts.next()?;
+    let token = parts.next()?;
+    if !scheme.eq_ignore_ascii_case("bearer") || token.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(token)
+}
+
+fn validate_codex_official_authorization(
+    headers: &http::HeaderMap,
+    provider: &Provider,
+    expected_chatgpt_account_id: Option<&str>,
+    managed_session_matches: Option<bool>,
+) -> Result<(), ProxyError> {
     let authorization = headers
         .get(http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -52,7 +71,30 @@ fn validate_codex_official_authorization(headers: &http::HeaderMap) -> Result<()
         Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
             "已切换到 OpenAI 官方供应商，请重启 Codex 或新建会话以加载官方登录配置".to_string(),
         )),
-        Some(_) => Ok(()),
+        Some(_) => {
+            let managed_account_id = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+                .map(|account_id| account_id.trim().to_string())
+                .filter(|account_id| !account_id.is_empty());
+            if managed_account_id.is_some() {
+                let request_account_id = headers
+                    .get("chatgpt-account-id")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::trim)
+                    .filter(|account_id| !account_id.is_empty());
+                if request_account_id != expected_chatgpt_account_id
+                    || managed_session_matches != Some(true)
+                {
+                    return Err(ProxyError::AuthError(
+                        "当前 Codex 会话未加载所选 ChatGPT 账号，请重启 Codex 或新建会话后重试"
+                            .to_string(),
+                    ));
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -395,7 +437,13 @@ impl RequestForwarder {
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
-        let adapter = get_adapter(app_type);
+        let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
+            error: ProxyError::ConfigError(format!(
+                "{} does not support proxy routing",
+                app_type.as_str()
+            )),
+            provider: None,
+        })?;
         let app_type_str = app_type.as_str();
 
         if providers.is_empty() {
@@ -547,7 +595,7 @@ impl RequestForwarder {
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
                         provider_type,
-                        ProviderType::Claude | ProviderType::ClaudeAuth
+                        Some(ProviderType::Claude | ProviderType::ClaudeAuth)
                     );
                     let mut signature_rectifier_non_retryable_client_error = false;
 
@@ -1153,7 +1201,45 @@ impl RequestForwarder {
             && super::providers::is_codex_official_provider(provider);
 
         if codex_official_auth_passthrough {
-            validate_codex_official_authorization(headers)?;
+            let (expected_chatgpt_account_id, managed_session_matches) = match provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            {
+                Some(local_account_id) => {
+                    let app_handle = self.app_handle.as_ref().ok_or_else(|| {
+                        ProxyError::AuthError("Codex OAuth 认证不可用（无 AppHandle）".to_string())
+                    })?;
+                    let codex_state = app_handle.state::<CodexOAuthState>();
+                    let chatgpt_account_id = codex_state
+                        .0
+                        .chatgpt_account_id_for_account(&local_account_id)
+                        .await
+                        .map_err(|error| {
+                            ProxyError::AuthError(format!("Codex OAuth 账号解析失败: {error}"))
+                        })?;
+                    let session_matches = match codex_bearer_access_token(headers) {
+                        Some(access_token) => {
+                            crate::codex_config::codex_live_auth_matches_managed_request(
+                                &local_account_id,
+                                access_token,
+                            )
+                            .map_err(|error| {
+                                ProxyError::AuthError(format!("Codex OAuth 会话校验失败: {error}"))
+                            })?
+                        }
+                        None => false,
+                    };
+                    (Some(chatgpt_account_id), Some(session_matches))
+                }
+                None => (None, None),
+            };
+            validate_codex_official_authorization(
+                headers,
+                provider,
+                expected_chatgpt_account_id.as_deref(),
+                managed_session_matches,
+            )?;
         }
 
         // 应用模型映射（独立于格式转换）
@@ -1395,16 +1481,34 @@ impl RequestForwarder {
         let codex_anthropic_base_is_full_endpoint =
             codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
+        let codex_standalone_endpoint = matches!(app_type, AppType::Codex)
+            .then(|| CodexStandaloneEndpoint::from_effective_endpoint(&effective_endpoint))
+            .flatten();
+
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
                 is_full_url,
             )
-        } else if is_full_url
-            || codex_chat_base_is_full_endpoint
-            || codex_anthropic_base_is_full_endpoint
+        } else if is_full_url {
+            if let Some(endpoint) = codex_standalone_endpoint {
+                rewrite_codex_standalone_full_url(
+                    &base_url,
+                    passthrough_query.as_deref(),
+                    endpoint,
+                )?
+            } else {
+                append_query_to_full_url(&base_url, passthrough_query.as_deref())
+            }
+        } else if let Some(endpoint) = codex_standalone_endpoint
+            .filter(|endpoint| endpoint.base_url_is_source_endpoint(&base_url))
         {
+            // Same tolerance as `codex_chat_base_is_full_endpoint` below: a base URL
+            // pasted as a complete endpoint with the full-URL switch off would
+            // otherwise become `.../chat/completions/images/generations`.
+            rewrite_codex_standalone_full_url(&base_url, passthrough_query.as_deref(), endpoint)?
+        } else if codex_chat_base_is_full_endpoint || codex_anthropic_base_is_full_endpoint {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
@@ -1530,46 +1634,50 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // Native Responses passthrough to a strict third-party gateway (xAI):
-        // flatten Codex's private `namespace`/plugin tool declarations into
-        // top-level function tools so the upstream's strict serde parser does
-        // not 422 on `unknown variant "namespace"`. The Chat/Anthropic paths
-        // above already unwrap namespaces, so this only fires on the native
-        // passthrough. The response handler restores the flat names using a map
-        // re-derived from the same request tools.
+        // Native Responses passthrough to a strict third-party gateway (xAI).
+        // One gate so rebase conflicts stay here plus the isolate file, not
+        // scattered across sanitizers. Flatten namespaces first; then apply
+        // xAI request rewrites (schema, agent_message, unknown models).
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && super::providers::provider_needs_responses_namespace_flatten(provider)
-            && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
-                &mut request_body,
-            )?
         {
-            log::debug!(
-                "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
-                provider.id
+            if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
+                &mut request_body,
+            )? {
+                log::debug!(
+                    "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+                &mut request_body,
+                &provider.id,
+                super::providers::codex_provider_upstream_model(provider).as_deref(),
+                &provider.settings_config,
             );
         }
 
-        // Same native-Responses path: scrub the OpenAI-backend-private fields
-        // and tool carriers (`external_web_access`, `prompt_cache_retention`,
-        // `additional_tools`, `tool_search`, …) that xAI's strict serde parser
-        // rejects with 400/422. Deterministic field removals only, gated on the
-        // xAI OAuth path, so the prompt-cache prefix stays stable and no other
-        // provider is affected. Runs after the flatten above so lifted
-        // `namespace` tools survive the tool-type whitelist.
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && !codex_responses_to_chat
-            && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
-            && super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
-                &mut request_body,
+        // Moonshot / Kimi Chat Completions reject `$ref` nodes that carry sibling
+        // keywords, which Codex Desktop's built-in tool schemas do (#6867). Move
+        // each such `$ref` into `allOf` for that upstream only; every other
+        // provider keeps byte-identical tool schemas (prompt-cache prefix intact).
+        if codex_responses_to_chat
+            && super::providers::transform_codex_chat_moonshot_schema::upstream_requires_ref_sibling_all_of(
+                &base_url,
             )
         {
-            log::debug!(
-                "[Codex] Sanitized xAI-unsupported Responses fields (provider={})",
-                provider.id
-            );
+            let rewritten =
+                super::providers::transform_codex_chat_moonshot_schema::wrap_ref_siblings_in_chat_tools(
+                    &mut request_body,
+                );
+            if rewritten > 0 {
+                log::debug!(
+                    "[Codex] Moved `$ref` siblings into allOf for {rewritten} tool schema(s) (Moonshot upstream, provider={})",
+                    provider.id
+                );
+            }
         }
 
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
@@ -1676,8 +1784,7 @@ impl RequestForwarder {
             if auth.strategy == AuthStrategy::CodexOAuth {
                 if let Some(app_handle) = &self.app_handle {
                     let codex_state = app_handle.state::<CodexOAuthState>();
-                    let codex_auth: tokio::sync::RwLockReadGuard<'_, CodexOAuthManager> =
-                        codex_state.0.read().await;
+                    let codex_auth = &codex_state.0;
 
                     // 从 provider.meta 获取关联的 ChatGPT 账号 ID
                     let account_id = provider
@@ -1685,14 +1792,20 @@ impl RequestForwarder {
                         .as_ref()
                         .and_then(|m| m.managed_account_id_for("codex_oauth"));
 
-                    let token_result = match &account_id {
+                    let resolved_account_id = match account_id {
+                        Some(id) => Some(id),
+                        None => codex_auth.default_account_id().await,
+                    };
+
+                    let token_result = match &resolved_account_id {
                         Some(id) => {
                             log::debug!("[CodexOAuth] 使用指定账号 {id} 获取 token");
                             codex_auth.get_valid_token_for_account(id).await
                         }
                         None => {
-                            log::debug!("[CodexOAuth] 使用默认账号获取 token");
-                            codex_auth.get_valid_token().await
+                            return Err(ProxyError::AuthError(
+                                "Codex OAuth 认证失败: 无可用的 ChatGPT 账号".to_string(),
+                            ));
                         }
                     };
 
@@ -1700,10 +1813,19 @@ impl RequestForwarder {
                         Ok(token) => {
                             auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
                             should_send_codex_oauth_session_headers = true;
-                            // 解析使用的 account_id（用于注入 ChatGPT-Account-Id header）
-                            codex_oauth_account_id = match account_id {
-                                Some(id) => Some(id),
-                                None => codex_auth.default_account_id().await,
+                            // 本地账号 ID 只用于绑定；请求头必须使用上游 workspace ID。
+                            codex_oauth_account_id = match resolved_account_id.as_deref() {
+                                Some(id) => Some(
+                                    codex_auth
+                                        .chatgpt_account_id_for_account(id)
+                                        .await
+                                        .map_err(|e| {
+                                            ProxyError::AuthError(format!(
+                                                "Codex OAuth 账号解析失败: {e}"
+                                            ))
+                                        })?,
+                                ),
+                                None => None,
                             };
                             log::debug!(
                                 "[CodexOAuth] 成功获取 access_token (account={})",
@@ -1773,13 +1895,6 @@ impl RequestForwarder {
         } else {
             Vec::new()
         };
-
-        // 注入 Codex OAuth 的 ChatGPT-Account-Id header（如果有 account_id）
-        if let Some(ref account_id) = codex_oauth_account_id {
-            if let Ok(hv) = http::HeaderValue::from_str(account_id) {
-                auth_headers.push((http::HeaderName::from_static("chatgpt-account-id"), hv));
-            }
-        }
 
         let codex_oauth_session_headers =
             if should_send_codex_oauth_session_headers && self.session_client_provided {
@@ -1969,11 +2084,11 @@ impl RequestForwarder {
                 || key_str.eq_ignore_ascii_case("x-api-key")
                 || key_str.eq_ignore_ascii_case("x-goog-api-key")
             {
-                // The built-in Codex official provider deliberately has no
-                // credential in CC Switch. `requires_openai_auth = true` makes
-                // Codex send its native ChatGPT authorization, which must reach
-                // the fixed official upstream unchanged. Other credential
-                // headers are still discarded.
+                // Codex official account cards deliberately keep credentials
+                // out of provider storage. `requires_openai_auth = true` makes
+                // Codex send the active ChatGPT authorization, which must reach
+                // the official upstream unchanged. Other credential headers
+                // are still discarded.
                 if codex_official_auth_passthrough && key_str.eq_ignore_ascii_case("authorization")
                 {
                     saw_auth = true;
@@ -2172,6 +2287,13 @@ impl RequestForwarder {
             is_copilot,
         );
 
+        // 托管 OAuth 的 workspace 由账号绑定决定，覆盖客户端或本地代理配置的旧值。
+        if let Some(ref account_id) = codex_oauth_account_id {
+            if let Ok(value) = http::HeaderValue::from_str(account_id) {
+                ordered_headers.insert("chatgpt-account-id", value);
+            }
+        }
+
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
 
         // 日志目标 URL 的脱敏分两种情形：
@@ -2317,13 +2439,16 @@ impl RequestForwarder {
             // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
             // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
             let encoding = get_content_encoding(response.headers());
-            let raw = response.bytes().await?;
+            let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
             let decoded = match encoding {
-                Some(encoding) => match decompress_body(&encoding, &raw) {
-                    Ok(Some(decompressed)) => decompressed,
-                    // 不支持的编码 / 解压失败：退回原始字节，尽量保留可读信息
-                    _ => raw.to_vec(),
-                },
+                Some(encoding) => {
+                    match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
+                        Ok(Some(decompressed)) => decompressed,
+                        // 不支持的编码 / 解压失败 / 解压后超限：退回（已有上限的）
+                        // 原始字节，尽量保留可读信息
+                        _ => raw.to_vec(),
+                    }
+                }
                 None => raw.to_vec(),
             };
             let body_text = String::from_utf8(decoded).ok();
@@ -2355,14 +2480,17 @@ impl RequestForwarder {
         let status = response.status();
         let headers = response.headers().clone();
         let body_timeout = self.non_streaming_timeout;
-        let body = tokio::time::timeout(body_timeout, response.bytes())
-            .await
-            .map_err(|_| {
-                ProxyError::Timeout(format!(
-                    "响应体读取超时: {}s（上游发完响应头后 body 未到达）",
-                    body_timeout.as_secs()
-                ))
-            })??;
+        let body = tokio::time::timeout(
+            body_timeout,
+            response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES),
+        )
+        .await
+        .map_err(|_| {
+            ProxyError::Timeout(format!(
+                "响应体读取超时: {}s（上游发完响应头后 body 未到达）",
+                body_timeout.as_secs()
+            ))
+        })??;
 
         Ok(ProxyResponse::buffered(status, headers, body))
     }
@@ -2377,12 +2505,14 @@ impl RequestForwarder {
         let status = response.status();
         let headers = response.headers().clone();
         let encoding = get_content_encoding(&headers);
-        let raw = response.bytes().await?;
+        let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
         let decoded = match encoding {
-            Some(encoding) => match decompress_body(&encoding, &raw) {
-                Ok(Some(decompressed)) => decompressed,
-                _ => raw.to_vec(),
-            },
+            Some(encoding) => {
+                match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
+                    Ok(Some(decompressed)) => decompressed,
+                    _ => raw.to_vec(),
+                }
+            }
             None => raw.to_vec(),
         };
 
@@ -2402,12 +2532,14 @@ impl RequestForwarder {
         let status = response.status();
         let headers = response.headers().clone();
         let encoding = get_content_encoding(&headers);
-        let raw = response.bytes().await?;
+        let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
         let decoded = match encoding {
-            Some(encoding) => match decompress_body(&encoding, &raw) {
-                Ok(Some(decompressed)) => decompressed,
-                _ => raw.to_vec(),
-            },
+            Some(encoding) => {
+                match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
+                    Ok(Some(decompressed)) => decompressed,
+                    _ => raw.to_vec(),
+                }
+            }
             None => raw.to_vec(),
         };
 
@@ -2643,19 +2775,10 @@ impl RequestForwarder {
     }
 
     fn categorize_proxy_error(&self, error: &ProxyError, provider: &Provider) -> ErrorCategory {
-        // Authentication belongs to the Codex client for the built-in official
-        // route. Retrying another provider would silently move the conversation
-        // away from the selected official account and poison its health state.
-        if super::providers::is_codex_official_provider(provider)
-            && (matches!(error, ProxyError::AuthError(_))
-                || matches!(
-                    error,
-                    ProxyError::UpstreamError {
-                        status: 401 | 403,
-                        ..
-                    }
-                ))
-        {
+        // Authentication belongs to the Codex client for an official route.
+        // Every retry would reuse the selected account's inbound Authorization
+        // header against another card, so no official-route error may fail over.
+        if super::providers::is_codex_official_provider(provider) {
             return ErrorCategory::NonRetryable;
         }
 
@@ -3193,6 +3316,145 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
         }
         _ => base_url.to_string(),
     }
+}
+
+#[derive(Clone, Copy)]
+enum CodexStandaloneEndpoint {
+    AlphaSearch,
+    ImagesGenerations,
+    ImagesEdits,
+}
+
+impl CodexStandaloneEndpoint {
+    fn from_effective_endpoint(endpoint: &str) -> Option<Self> {
+        match split_endpoint_and_query(endpoint).0 {
+            "/alpha/search" => Some(Self::AlphaSearch),
+            "/images/generations" => Some(Self::ImagesGenerations),
+            "/images/edits" => Some(Self::ImagesEdits),
+            _ => None,
+        }
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "/alpha/search",
+            Self::ImagesGenerations => "/images/generations",
+            Self::ImagesEdits => "/images/edits",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "Codex Alpha Search",
+            Self::ImagesGenerations => "Codex Images generations",
+            Self::ImagesEdits => "Codex Images edits",
+        }
+    }
+
+    fn full_url_hint(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "/responses",
+            Self::ImagesGenerations | Self::ImagesEdits => {
+                "/responses, /chat/completions, /images/generations, or /images/edits"
+            }
+        }
+    }
+
+    /// Full-URL suffixes that unambiguously locate this endpoint's sibling.
+    ///
+    /// Order matters: a longer suffix must precede any suffix it ends with
+    /// (`/responses/compact` before `/responses`), otherwise the shorter one
+    /// wins and the rewrite keeps a stray `/compact` segment.
+    fn source_suffixes(self) -> &'static [&'static str] {
+        match self {
+            Self::AlphaSearch => &["/responses/compact", "/responses"],
+            // Both Images routes live next to each other, so a full URL pasted
+            // for either one is a valid source for the other.
+            Self::ImagesGenerations | Self::ImagesEdits => &[
+                "/images/generations",
+                "/images/edits",
+                "/chat/completions",
+                "/responses/compact",
+                "/responses",
+            ],
+        }
+    }
+
+    fn source_suffix(self, parsed_path: &str) -> Option<&'static str> {
+        // Match the case-insensitive pasted-endpoint check. Only normalize for
+        // matching; the rewrite keeps the original URL prefix and query intact.
+        let parsed_path = parsed_path.to_ascii_lowercase();
+        self.source_suffixes()
+            .iter()
+            .copied()
+            .find(|suffix| parsed_path.ends_with(suffix))
+    }
+
+    /// Whether a base URL (full-URL switch off) already ends in one of this
+    /// endpoint's source suffixes, i.e. was pasted as a complete endpoint URL.
+    fn base_url_is_source_endpoint(self, base_url: &str) -> bool {
+        self.source_suffixes()
+            .iter()
+            .any(|suffix| base_url_is_full_endpoint(base_url, suffix))
+    }
+}
+
+/// Derive Codex standalone sibling endpoints from a provider configured with a
+/// complete Codex-compatible API URL.
+///
+/// Full-URL mode normally means "use this exact URL". That is correct for the
+/// request type it was configured for, but standalone Codex protocols cannot be
+/// posted to chat/responses endpoints. Only rewrite URL shapes whose sibling
+/// endpoint is unambiguous; opaque full URLs fail closed instead of leaking the
+/// payload to an unrelated route.
+fn rewrite_codex_standalone_full_url(
+    base_url: &str,
+    request_query: Option<&str>,
+    endpoint: CodexStandaloneEndpoint,
+) -> Result<String, ProxyError> {
+    let trimmed = base_url.trim();
+    let parsed = url::Url::parse(trimmed).map_err(|_| {
+        ProxyError::ConfigError(format!("{} requires a valid full URL", endpoint.label()))
+    })?;
+
+    // Fragments are never sent in HTTP requests. Drop one before splitting the
+    // query so an accidental fragment cannot move the incoming query behind `#`.
+    let without_fragment = trimmed
+        .split_once('#')
+        .map_or(trimmed, |(head, _fragment)| head);
+    let (url_without_query, base_query) = without_fragment
+        .split_once('?')
+        .map_or((without_fragment, None), |(head, query)| {
+            (head, Some(query))
+        });
+    let url_without_query = url_without_query.trim_end_matches('/');
+
+    let parsed_path = parsed.path().trim_end_matches('/').to_string();
+    let suffix = endpoint.source_suffix(&parsed_path).ok_or_else(|| {
+        ProxyError::ConfigError(format!(
+            "{} cannot derive {} from an opaque full URL; use a base URL or a full URL ending in {}",
+            endpoint.label(),
+            endpoint.path(),
+            endpoint.full_url_hint()
+        ))
+    })?;
+
+    let prefix_len = url_without_query
+        .len()
+        .checked_sub(suffix.len())
+        .ok_or_else(|| ProxyError::ConfigError("Invalid Codex full URL".to_string()))?;
+    let mut rewritten = format!("{}{}", &url_without_query[..prefix_len], endpoint.path());
+
+    let request_query = request_query.filter(|query| !query.is_empty());
+    let base_query = base_query.filter(|query| !query.is_empty());
+    match (base_query, request_query) {
+        (Some(base), Some(request)) => rewritten.push_str(&format!("?{base}&{request}")),
+        (Some(base), None) => rewritten.push_str(&format!("?{base}")),
+        (None, Some(request)) => rewritten.push_str(&format!("?{request}")),
+        (None, None) => {}
+    }
+
+    Ok(rewritten)
 }
 
 fn build_codex_oauth_session_headers(
@@ -3893,7 +4155,10 @@ mod tests {
             .expect("response should be buffered");
 
         assert_eq!(
-            prepared.bytes().await.unwrap(),
+            prepared
+                .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
+                .await
+                .unwrap(),
             Bytes::from_static(b"{\"ok\":true}")
         );
     }
@@ -3938,7 +4203,10 @@ mod tests {
             .expect("stream should be primed");
 
         assert_eq!(
-            prepared.bytes().await.unwrap(),
+            prepared
+                .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
+                .await
+                .unwrap(),
             Bytes::from_static(b"firstsecond")
         );
     }
@@ -4378,7 +4646,7 @@ mod tests {
     }
 
     #[test]
-    fn official_codex_auth_failures_are_not_retryable() {
+    fn official_codex_failures_are_not_retryable() {
         let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
         let mut provider = test_provider_with_type(None);
         provider.id = "codex-official".to_string();
@@ -4394,6 +4662,11 @@ mod tests {
                 status: 403,
                 body: None,
             },
+            ProxyError::UpstreamError {
+                status: 429,
+                body: None,
+            },
+            ProxyError::Timeout("timeout".to_string()),
         ] {
             assert_eq!(
                 forwarder.categorize_proxy_error(&error, &provider),
@@ -4435,9 +4708,50 @@ mod tests {
             http::header::AUTHORIZATION,
             HeaderValue::from_static("Bearer PROXY_MANAGED"),
         );
-        let error = validate_codex_official_authorization(&headers)
+        let mut provider = test_provider_with_type(None);
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+        let error = validate_codex_official_authorization(&headers, &provider, None, None)
             .expect_err("stale placeholder must be rejected");
         assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
+    }
+
+    #[test]
+    fn managed_codex_official_rejects_a_different_session_account() {
+        let mut provider = test_provider_with_type(Some("codex_oauth"));
+        provider.category = Some("official".to_string());
+        provider.meta.as_mut().expect("provider meta").auth_binding =
+            Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("local-account-b".to_string()),
+            });
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer account-a-token"),
+        );
+        headers.insert(
+            "chatgpt-account-id",
+            HeaderValue::from_static("workspace-shared"),
+        );
+        let error = validate_codex_official_authorization(
+            &headers,
+            &provider,
+            Some("workspace-shared"),
+            Some(false),
+        )
+        .expect_err("another user's bearer in the same workspace must be rejected");
+        assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
+
+        validate_codex_official_authorization(
+            &headers,
+            &provider,
+            Some("workspace-shared"),
+            Some(true),
+        )
+        .expect("the selected account may pass through");
     }
 
     #[test]
@@ -4527,6 +4841,210 @@ mod tests {
         let url = append_query_to_full_url("https://relay.example/api?foo=bar", Some("x-id=1"));
 
         assert_eq!(url, "https://relay.example/api?foo=bar&x-id=1");
+    }
+
+    #[test]
+    fn alpha_search_rewrites_known_full_responses_urls() {
+        let cases = [
+            (
+                "https://relay.example/Gateway/%2F/v1/Responses/Compact/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/%2F/v1/alpha/search?api-version=CaseValue&client_version=0.144.6",
+            ),
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/alpha/search?client_version=0.144.6",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/alpha/search?client_version=0.144.6",
+            ),
+            (
+                "https://relay.example/custom/%2F/v1/responses?api-version=2026-07",
+                "https://relay.example/custom/%2F/v1/alpha/search?api-version=2026-07&client_version=0.144.6",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.144.6"),
+                    CodexStandaloneEndpoint::AlphaSearch,
+                )
+                .expect("known Responses full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_generations_rewrites_known_full_codex_urls() {
+        let cases = [
+            (
+                "https://relay.example/Gateway/v1/Images/Edits/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/v1/images/generations?api-version=CaseValue&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/images/generations?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/images/generations?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/custom/%2F/v1/responses?api-version=2026-07",
+                "https://relay.example/custom/%2F/v1/images/generations?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/chat/completions?api-version=2026-07",
+                "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/images/edits",
+                "https://relay.example/v1/images/generations?client_version=0.145.0",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.145.0"),
+                    CodexStandaloneEndpoint::ImagesGenerations,
+                )
+                .expect("known Codex full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_generations_preserves_existing_full_images_url() {
+        let url = rewrite_codex_standalone_full_url(
+            "https://relay.example/v1/images/generations?api-version=2026-07",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesGenerations,
+        )
+        .expect("full Images URL should be preserved");
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0"
+        );
+    }
+
+    #[test]
+    fn images_generations_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesGenerations,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /images/generations")
+        ));
+    }
+
+    #[test]
+    fn codex_standalone_endpoint_recognizes_images_edits() {
+        assert!(matches!(
+            CodexStandaloneEndpoint::from_effective_endpoint(
+                "/images/edits?client_version=0.145.0"
+            ),
+            Some(CodexStandaloneEndpoint::ImagesEdits)
+        ));
+        // Codex ImageGen never calls the variations route; keep it unrouted.
+        assert!(CodexStandaloneEndpoint::from_effective_endpoint("/images/variations").is_none());
+    }
+
+    #[test]
+    fn images_edits_rewrites_known_full_codex_urls() {
+        let cases = [
+            (
+                "https://relay.example/Gateway/v1/Chat/Completions/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/v1/images/edits?api-version=CaseValue&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/images/edits?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/images/edits?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/chat/completions?api-version=2026-07",
+                "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/images/generations?api-version=2026-07",
+                "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.145.0"),
+                    CodexStandaloneEndpoint::ImagesEdits,
+                )
+                .expect("known Codex full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_edits_preserves_existing_full_edits_url() {
+        let url = rewrite_codex_standalone_full_url(
+            "https://relay.example/v1/images/edits?api-version=2026-07",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesEdits,
+        )
+        .expect("full Images edits URL should be preserved");
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0"
+        );
+    }
+
+    #[test]
+    fn images_edits_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesEdits,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /images/edits")
+        ));
+    }
+
+    #[test]
+    fn alpha_search_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.144.6"),
+            CodexStandaloneEndpoint::AlphaSearch,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /alpha/search")
+        ));
     }
 
     #[test]
@@ -4830,7 +5348,7 @@ mod tests {
     fn prevention_replaces_when_all_switches_on_and_model_in_heuristic_list() {
         let fwd = forwarder_with_rectifier(RectifierConfig::default());
         let provider = provider_with_settings(json!({}));
-        let mut body = body_with_image("deepseek-v4-pro");
+        let mut body = body_with_image("qwen3-coder-plus");
 
         let replaced = fwd.apply_media_prevention(&mut body, &provider);
 
@@ -4846,7 +5364,7 @@ mod tests {
             ..RectifierConfig::default()
         });
         let provider = provider_with_settings(json!({}));
-        let mut body = body_with_image("deepseek-v4-pro");
+        let mut body = body_with_image("qwen3-coder-plus");
 
         let replaced = fwd.apply_media_prevention(&mut body, &provider);
 
@@ -4861,7 +5379,7 @@ mod tests {
             ..RectifierConfig::default()
         });
         let provider = provider_with_settings(json!({}));
-        let mut body = body_with_image("deepseek-v4-pro");
+        let mut body = body_with_image("qwen3-coder-plus");
 
         assert_eq!(fwd.apply_media_prevention(&mut body, &provider), 0);
         assert_eq!(body["messages"][0]["content"][0]["type"], "image");
@@ -4877,7 +5395,7 @@ mod tests {
 
         // (a) 名单内模型、无显式声明 → 不再预替换
         let bare_provider = provider_with_settings(json!({}));
-        let mut list_body = body_with_image("deepseek-v4-pro");
+        let mut list_body = body_with_image("qwen3-coder-plus");
         assert_eq!(
             fwd.apply_media_prevention(&mut list_body, &bare_provider),
             0,
