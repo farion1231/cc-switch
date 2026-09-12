@@ -265,6 +265,64 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(document.activeElement).toBe(currentInput);
   });
 
+  // #6308: 菜单显示名是用户手输的中文，走输入法合成。合成期间任何父级回写都会
+  // 替换掉浏览器自己管理的候选区。#6333 为 Hermes / OpenClaw 的同类行做了修复，
+  // 这个编辑器此前仍是原生受控输入。
+  it("模型映射的菜单显示名在输入法提交前不写回路由状态", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+            ANTHROPIC_AUTH_TOKEN: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-old": {
+              model: "upstream-old",
+            },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    const input = screen.getAllByPlaceholderText(
+      "DeepSeek V4 Pro",
+    )[0] as HTMLInputElement;
+    input.focus();
+
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "深度求索" } });
+
+    // 候选文本留在本地草稿里，输入框既不被重建也不丢焦点。
+    expect(input).toHaveValue("深度求索");
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.compositionEnd(input, {
+      data: "深度求索 V4 Pro",
+      target: { value: "深度求索 V4 Pro" },
+    });
+
+    expect(screen.getAllByPlaceholderText("DeepSeek V4 Pro")[0]).toHaveValue(
+      "深度求索 V4 Pro",
+    );
+
+    // 显示值对不足以说明问题：原生受控输入没有 compositionend 处理器，界面上留着
+    // 合成后的文本，写进路由的却仍是合成中途那半截。所以要断言落库的值。
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(
+      onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes["claude-sonnet-5"]
+        .labelOverride,
+    ).toBe("深度求索 V4 Pro");
+  });
+
   it("代理模式始终渲染 Sonnet / Opus / Fable / Haiku 四档（即使只配了一档）", () => {
     renderForm({
       name: "Proxy Provider",

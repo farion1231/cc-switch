@@ -103,11 +103,13 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     ...overrides,
   };
 
-  return render(
+  const view = render(
     <FormShell>
       <ClaudeFormFields {...props} />
     </FormShell>,
   );
+
+  return { ...view, props };
 };
 
 const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
@@ -193,6 +195,40 @@ describe("ClaudeFormFields", () => {
     expect(onModelChange).toHaveBeenCalledWith(
       "CLAUDE_CODE_SUBAGENT_MODEL",
       "shared-model[1M]",
+    );
+  });
+
+  // #6308: the model display name is free-form text that CJK users type through
+  // an IME. #6333 fixed the equivalent Hermes / OpenClaw rows; this editor kept
+  // a raw controlled input, so a parent render mid-composition could replace the
+  // marked text the platform IME still owns.
+  it("keeps model display name composition local until the IME commits", () => {
+    const onModelChange = vi.fn();
+    const { props, rerender } = renderCopilotForm({ onModelChange });
+    const displayNameInput = screen.getByDisplayValue("Claude Sonnet");
+
+    fireEvent.compositionStart(displayNameInput);
+    fireEvent.change(displayNameInput, { target: { value: "深度求索 V4" } });
+
+    expect(displayNameInput).toHaveValue("深度求索 V4");
+    expect(onModelChange).not.toHaveBeenCalled();
+
+    rerender(
+      <FormShell>
+        <ClaudeFormFields {...props} />
+      </FormShell>,
+    );
+    expect(displayNameInput).toHaveValue("深度求索 V4");
+
+    fireEvent.compositionEnd(displayNameInput, {
+      data: "深度求索 V4",
+      target: { value: "深度求索 V4" },
+    });
+
+    expect(onModelChange).toHaveBeenCalledTimes(1);
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+      "深度求索 V4",
     );
   });
 });
