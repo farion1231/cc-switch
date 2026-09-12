@@ -1356,24 +1356,94 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
-/// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
+/// Normalize a function's `parameters` JSON Schema for strict Chat Completions
+/// providers while preserving the schema's validation semantics.
 ///
-/// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
-/// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
+/// Some Responses tools carry `parameters: null`, `parameters: {"type": null}`
+/// or `required: null`. A few strict OpenAI-compatible gateways also require
+/// `required` to be an array whenever `additionalProperties` is `false`.
 fn normalize_function_parameters(params: Option<&Value>) -> Value {
     let mut params = match params {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
-    if let Some(obj) = params.as_object_mut() {
-        match obj.get("type").and_then(|v| v.as_str()) {
-            Some("object") => {}
-            _ => {
-                obj.insert("type".to_string(), json!("object"));
+    sanitize_parameter_schema(&mut params, true);
+    params
+}
+
+fn sanitize_parameter_schema(schema: &mut Value, is_root: bool) {
+    let Value::Object(obj) = schema else {
+        return;
+    };
+
+    if is_root && obj.get("type").and_then(Value::as_str) != Some("object") {
+        obj.insert("type".to_string(), json!("object"));
+    }
+
+    let invalid_required = obj
+        .get("required")
+        .is_some_and(|required| !required.is_array());
+    let strict_object_without_required = obj.get("required").is_none()
+        && obj.get("additionalProperties") == Some(&Value::Bool(false));
+    if invalid_required || strict_object_without_required {
+        obj.insert("required".to_string(), json!([]));
+    }
+
+    // Recurse only through keywords whose values are themselves schemas. This
+    // avoids rewriting arbitrary JSON objects in `default` or `examples`.
+    for key in [
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "dependencies",
+    ] {
+        if let Some(children) = obj.get_mut(key).and_then(Value::as_object_mut) {
+            for child in children.values_mut() {
+                sanitize_parameter_schema_value(child, false);
             }
         }
     }
-    params
+
+    for key in [
+        "items",
+        "additionalItems",
+        "contains",
+        "propertyNames",
+        "additionalProperties",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "contentSchema",
+        "not",
+        "if",
+        "then",
+        "else",
+    ] {
+        if let Some(child) = obj.get_mut(key) {
+            sanitize_parameter_schema_value(child, false);
+        }
+    }
+
+    for key in ["prefixItems", "allOf", "anyOf", "oneOf"] {
+        if let Some(children) = obj.get_mut(key).and_then(Value::as_array_mut) {
+            for child in children {
+                sanitize_parameter_schema_value(child, false);
+            }
+        }
+    }
+}
+
+fn sanitize_parameter_schema_value(value: &mut Value, is_root: bool) {
+    match value {
+        Value::Object(_) => sanitize_parameter_schema(value, is_root),
+        Value::Array(children) => {
+            for child in children {
+                sanitize_parameter_schema_value(child, false);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
@@ -1390,7 +1460,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             .get_mut("function")
             .and_then(|value| value.as_object_mut())
         {
-            // Ensure parameters.type is "object" for strict OpenAI-compatible providers
+            // Normalize parameters for strict OpenAI-compatible providers.
             let parameters = normalize_function_parameters(obj.get("parameters"));
             obj.insert("parameters".to_string(), parameters);
 
@@ -2491,6 +2561,171 @@ mod tests {
         assert_eq!(parameters["type"], "object");
         assert_eq!(parameters["properties"]["query"]["type"], "string");
         assert_eq!(parameters["required"], json!(["query"]));
+    }
+
+    #[test]
+    fn responses_request_to_chat_normalizes_null_required_and_preserves_closed_schema() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "search",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": null,
+                    "additionalProperties": false
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["required"], json!([]));
+        assert_eq!(parameters["additionalProperties"], json!(false));
+        assert_eq!(parameters["properties"]["query"]["type"], json!("string"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_adds_required_for_closed_nested_schemas() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "inspect",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "options": {
+                            "type": "object",
+                            "properties": {"verbose": {"type": "boolean"}},
+                            "additionalProperties": false
+                        },
+                        "entries": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"id": {"type": "string"}},
+                                "required": null,
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": ["options", "entries"]
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["properties"]["options"]["required"], json!([]));
+        assert_eq!(
+            parameters["properties"]["options"]["additionalProperties"],
+            json!(false)
+        );
+        assert_eq!(
+            parameters["properties"]["entries"]["items"]["required"],
+            json!([])
+        );
+        assert_eq!(
+            parameters["properties"]["entries"]["items"]["additionalProperties"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_sanitizes_schema_combinators_and_defs() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "choose",
+                "parameters": {
+                    "type": "object",
+                    "oneOf": [{
+                        "type": "object",
+                        "required": null,
+                        "additionalProperties": false
+                    }],
+                    "$defs": {
+                        "payload": {
+                            "type": "object",
+                            "required": null,
+                            "additionalProperties": false
+                        }
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["oneOf"][0]["required"], json!([]));
+        assert_eq!(parameters["oneOf"][0]["additionalProperties"], json!(false));
+        assert_eq!(parameters["$defs"]["payload"]["required"], json!([]));
+        assert_eq!(
+            parameters["$defs"]["payload"]["additionalProperties"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_valid_and_unconstrained_schemas() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "default": {"required": null}
+                        }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }
+            }, {
+                "type": "function",
+                "name": "open_lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}}
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "default": {"required": null}
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            })
+        );
+        assert_eq!(
+            result["tools"][1]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {"query": {"type": "string"}}
+            })
+        );
     }
 
     #[test]
