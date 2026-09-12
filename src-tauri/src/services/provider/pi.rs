@@ -1,9 +1,10 @@
 use super::{ProviderService, SwitchResult};
 use crate::app_config::AppType;
 use crate::error::AppError;
+use crate::pi_config::PI_LOGIN_PROVIDER_TYPE;
 use crate::provider::{Provider, ProviderMeta, UsageScript};
 use crate::store::AppState;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde_json::Value;
 
 const PI_APP: &str = "pi";
@@ -14,6 +15,22 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
         Ok(native) => {
             if let Err(error) = sync_native_locked(state, &native) {
                 log::warn!("Failed to sync Pi providers from native config: {error}");
+            }
+            match crate::pi_config::read_pi_auth_provider_ids() {
+                Ok(auth_provider_ids) => {
+                    if let Err(error) = sync_login_locked(state, &native, &auth_provider_ids) {
+                        log::warn!("Failed to sync Pi /login providers: {error}");
+                    }
+                }
+                Err(error) => {
+                    // Preserve the saved login catalog when auth.json is
+                    // temporarily unreadable; never turn a read failure into
+                    // destructive cleanup.
+                    log::warn!("Failed to read Pi /login providers: {error}");
+                    if let Err(error) = mark_native_login_origins_pending(state, &native) {
+                        log::warn!("Failed to preserve pending Pi /login origins: {error}");
+                    }
+                }
             }
         }
         Err(error) => {
@@ -26,7 +43,10 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
     let native = crate::pi_config::read_pi_native_providers()?;
-    sync_native_locked(state, &native)
+    let auth_provider_ids = crate::pi_config::read_pi_auth_provider_ids()?;
+    let native_changed = sync_native_locked(state, &native)?;
+    let login_changed = sync_login_locked(state, &native, &auth_provider_ids)?;
+    Ok(native_changed + login_changed)
 }
 
 pub(super) fn add(
@@ -96,11 +116,14 @@ pub(super) fn update_usage_script(
         .db
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
+    ensure_pi_provider_is_managed_by_cc_switch(&provider)?;
+    let pi_login_origin = has_pi_login_origin(&provider);
     provider
         .meta
         .get_or_insert_with(ProviderMeta::default)
         .usage_script = Some(script);
     strip_unsupported_pi_metadata(&mut provider);
+    restore_pi_login_origin(&mut provider, pi_login_origin);
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
     state.db.save_provider(app_type.as_str(), &provider)?;
     Ok(true)
@@ -121,11 +144,14 @@ pub(super) fn update(
         ));
     }
 
-    state
+    let existing = state
         .db
         .get_provider_by_id(&original_id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{original_id}' not found")))?;
+    ensure_pi_provider_is_managed_by_cc_switch(&existing)?;
+    let pi_login_origin = has_pi_login_origin(&existing);
     strip_unsupported_pi_metadata(&mut provider);
+    restore_pi_login_origin(&mut provider, pi_login_origin);
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
@@ -152,9 +178,10 @@ pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
     let app_type = AppType::Pi;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    let Some(_) = state.db.get_provider_by_id(id, app_type.as_str())? else {
+    let Some(provider) = state.db.get_provider_by_id(id, app_type.as_str())? else {
         return Ok(());
     };
+    ensure_pi_provider_is_managed_by_cc_switch(&provider)?;
     // Delete is intentionally keyed by provider ID. Once the user confirms
     // deleting the provider itself, supported field edits do not change that
     // intent; the latest native value is retained only for rollback.
@@ -181,6 +208,7 @@ pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
         .db
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
+    ensure_pi_provider_is_managed_by_cc_switch(&provider)?;
     let Some(removed) = crate::pi_config::remove_pi_provider(id)? else {
         return Ok(());
     };
@@ -205,6 +233,7 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         .db
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
+    ensure_pi_provider_is_managed_by_cc_switch(&provider)?;
 
     if let Some(native) = crate::pi_config::read_pi_native_provider(id)? {
         let mut synced = provider;
@@ -236,8 +265,19 @@ fn sync_native_locked(
         let is_new = !saved.contains_key(id);
         let previous_name = provider.name.clone();
         let previous_config = provider.settings_config.clone();
+        let was_login_managed = is_pi_login_provider(&provider);
         merge_native_config(&mut provider, config.clone());
-        if !is_new && provider.name == previous_name && provider.settings_config == previous_config
+        if was_login_managed {
+            let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+            meta.provider_type = None;
+            meta.pi_login_origin = Some(true);
+            meta.pi_login_synthetic = Some(false);
+            provider.category = Some("custom".to_string());
+        }
+        if !is_new
+            && !was_login_managed
+            && provider.name == previous_name
+            && provider.settings_config == previous_config
         {
             continue;
         }
@@ -247,6 +287,198 @@ fn sync_native_locked(
     }
 
     Ok(changed)
+}
+
+fn sync_login_locked(
+    state: &AppState,
+    native: &IndexMap<String, Value>,
+    auth_provider_ids: &IndexSet<String>,
+) -> Result<usize, AppError> {
+    let saved = state.db.get_all_providers(PI_APP)?;
+    let mut changed = 0;
+
+    for id in auth_provider_ids {
+        // An explicit models.json node is already represented by the normal
+        // editable provider path and always wins over the /login projection.
+        // 首次同步时两份文件可能已经同时存在，仍需记录登录来源，确保显式
+        // 节点以后移除时可以恢复为只读卡片。
+        if native.contains_key(id) {
+            if let Some(existing) = saved.get(id) {
+                let previous_origin = has_pi_login_origin(existing);
+                let previous_synthetic = existing
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.pi_login_synthetic);
+                if !previous_origin
+                    || previous_synthetic != Some(false)
+                    || is_pi_login_provider(existing)
+                {
+                    let mut explicit = existing.clone();
+                    let meta = explicit.meta.get_or_insert_with(ProviderMeta::default);
+                    meta.provider_type = None;
+                    meta.pi_login_origin = Some(true);
+                    meta.pi_login_synthetic = Some(false);
+                    state.db.save_provider(PI_APP, &explicit)?;
+                    changed += 1;
+                }
+            }
+            continue;
+        }
+
+        if let Some(existing) = saved.get(id) {
+            // Never overwrite a provider the user already created in CC
+            // Switch. Only refresh entries projected from /login, including
+            // entries that temporarily became explicit models.json overrides.
+            if !is_pi_login_provider(existing) && !has_pi_login_origin(existing) {
+                continue;
+            }
+        }
+
+        let name = crate::pi_config::pi_provider_display_name(id);
+        let config = serde_json::json!({ "name": name, "source": "pi-login" });
+        let mut provider = saved.get(id).cloned().unwrap_or_else(|| {
+            let mut imported =
+                Provider::with_id(id.clone(), name.to_string(), config.clone(), None);
+            imported.category = Some("official".to_string());
+            imported.icon = Some("pi".to_string());
+            imported
+        });
+        let is_new = !saved.contains_key(id);
+        let previous_name = provider.name.clone();
+        let previous_config = provider.settings_config.clone();
+        let was_login_managed = is_pi_login_provider(&provider);
+        let previous_origin = has_pi_login_origin(&provider);
+        let previous_synthetic = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.pi_login_synthetic);
+        let should_use_synthetic_config = is_new || is_synthetic_pi_login_provider(&provider);
+
+        // 纯登录投影使用合成展示配置；经历过显式覆盖的条目保留最后一份
+        // models.json 配置，待 `/logout` 后仍可作为普通未启用卡片继续使用。
+        if should_use_synthetic_config {
+            provider.name = name.to_string();
+            provider.settings_config = config;
+            provider.category = Some("official".to_string());
+            provider.icon = Some("pi".to_string());
+        }
+        let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+        meta.provider_type = Some(PI_LOGIN_PROVIDER_TYPE.to_string());
+        meta.pi_login_origin = Some(true);
+        meta.pi_login_synthetic = Some(should_use_synthetic_config);
+
+        if !is_new
+            && provider.name == previous_name
+            && provider.settings_config == previous_config
+            && was_login_managed
+            && previous_origin
+            && previous_synthetic == Some(should_use_synthetic_config)
+        {
+            continue;
+        }
+        state.db.save_provider(PI_APP, &provider)?;
+        changed += 1;
+    }
+
+    // `/logout` removes the auth.json key。纯登录投影直接删除；曾经转为显式
+    // 覆盖的条目只清理来源标记，保留最后一份可再次启用的配置。
+    for (id, provider) in &saved {
+        if auth_provider_ids.contains(id) {
+            continue;
+        }
+        if is_pi_login_provider(provider) && !native.contains_key(id) {
+            if is_synthetic_pi_login_provider(provider) {
+                state.db.delete_provider(PI_APP, id)?;
+            } else {
+                let mut restored = provider.clone();
+                clear_pi_login_origin(&mut restored);
+                state.db.save_provider(PI_APP, &restored)?;
+            }
+            changed += 1;
+        } else if has_pi_login_origin(provider) {
+            let mut restored = provider.clone();
+            clear_pi_login_origin(&mut restored);
+            state.db.save_provider(PI_APP, &restored)?;
+            changed += 1;
+        }
+    }
+
+    Ok(changed)
+}
+
+fn mark_native_login_origins_pending(
+    state: &AppState,
+    native: &IndexMap<String, Value>,
+) -> Result<usize, AppError> {
+    let saved = state.db.get_all_providers(PI_APP)?;
+    let mut changed = 0;
+
+    for id in native.keys() {
+        let Some(provider) = saved.get(id) else {
+            continue;
+        };
+        if has_pi_login_origin(provider) {
+            continue;
+        }
+
+        // auth.json 不可读时无法判断显式节点是否同时具有登录来源。先保留一个
+        // 待核对标记；下一次成功读取 auth.json 后，sync_login_locked 会确认
+        // 登录来源，或在未登录时清除此标记并保留普通 Provider。
+        let mut pending = provider.clone();
+        let meta = pending.meta.get_or_insert_with(ProviderMeta::default);
+        meta.pi_login_origin = Some(true);
+        meta.pi_login_synthetic = Some(false);
+        state.db.save_provider(PI_APP, &pending)?;
+        changed += 1;
+    }
+
+    Ok(changed)
+}
+
+fn is_pi_login_provider(provider: &Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        == Some(PI_LOGIN_PROVIDER_TYPE)
+}
+
+fn has_pi_login_origin(provider: &Provider) -> bool {
+    provider.meta.as_ref().and_then(|meta| meta.pi_login_origin) == Some(true)
+}
+
+fn is_synthetic_pi_login_provider(provider: &Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.pi_login_synthetic)
+        == Some(true)
+}
+
+fn clear_pi_login_origin(provider: &mut Provider) {
+    if let Some(meta) = provider.meta.as_mut() {
+        meta.provider_type = None;
+        meta.pi_login_origin = None;
+        meta.pi_login_synthetic = None;
+    }
+}
+
+fn restore_pi_login_origin(provider: &mut Provider, should_restore: bool) {
+    if should_restore {
+        let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+        meta.pi_login_origin = Some(true);
+        meta.pi_login_synthetic = Some(false);
+    }
+}
+
+fn ensure_pi_provider_is_managed_by_cc_switch(provider: &Provider) -> Result<(), AppError> {
+    if is_pi_login_provider(provider) {
+        return Err(AppError::InvalidInput(format!(
+            "Pi provider '{}' is managed by Pi /login",
+            provider.id
+        )));
+    }
+    Ok(())
 }
 
 fn merge_native_config(provider: &mut Provider, config: Value) {
@@ -624,6 +856,200 @@ mod tests {
             providers["native-oauth"].settings_config["oauth"],
             json!("example")
         );
+    }
+
+    #[test]
+    #[serial]
+    fn login_sync_imports_only_configured_auth_providers_without_secrets() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        fs::write(
+            agent_dir.join("models.json"),
+            r#"{"providers":{"5090":{"name":"5090"}}}"#,
+        )
+        .expect("write models");
+        fs::write(
+            agent_dir.join("auth.json"),
+            r#"{
+                "deepseek":{"type":"api_key","key":"secret-deepseek"},
+                "kimi-coding":{"type":"api_key","key":"secret-kimi"}
+            }"#,
+        )
+        .expect("write auth");
+
+        let providers = ProviderService::list(&state, AppType::Pi).expect("sync providers");
+        assert_eq!(providers.len(), 3);
+        assert!(providers.contains_key("5090"));
+        for id in ["deepseek", "kimi-coding"] {
+            let provider = &providers[id];
+            assert_eq!(
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.provider_type.as_deref()),
+                Some(PI_LOGIN_PROVIDER_TYPE)
+            );
+            assert!(provider.settings_config.get("apiKey").is_none());
+            assert!(!provider.settings_config.to_string().contains("secret"));
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn explicit_models_provider_wins_over_matching_login_provider() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        let models_path = agent_dir.join("models.json");
+        fs::write(
+            &models_path,
+            r#"{"providers":{"deepseek":{"name":"Explicit DeepSeek","futureField":true}}}"#,
+        )
+        .expect("write models");
+        fs::write(
+            agent_dir.join("auth.json"),
+            r#"{"deepseek":{"type":"api_key","key":"secret"}}"#,
+        )
+        .expect("write auth");
+
+        let providers = ProviderService::list(&state, AppType::Pi).expect("sync providers");
+        assert_eq!(providers.len(), 1);
+        let deepseek = &providers["deepseek"];
+        assert_eq!(deepseek.name, "Explicit DeepSeek");
+        assert_eq!(deepseek.settings_config["futureField"], json!(true));
+        assert!(!is_pi_login_provider(deepseek));
+        assert!(has_pi_login_origin(deepseek));
+        assert!(!is_synthetic_pi_login_provider(deepseek));
+
+        fs::write(&models_path, r#"{"providers":{}}"#).expect("remove explicit provider");
+        let providers = ProviderService::list(&state, AppType::Pi)
+            .expect("restore login provider after explicit removal");
+        let deepseek = &providers["deepseek"];
+        assert!(is_pi_login_provider(deepseek));
+        assert!(!is_synthetic_pi_login_provider(deepseek));
+        assert_eq!(deepseek.settings_config["futureField"], json!(true));
+    }
+
+    #[test]
+    #[serial]
+    fn initial_auth_read_failure_preserves_native_login_origin_for_recovery() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        let models_path = agent_dir.join("models.json");
+        let auth_path = agent_dir.join("auth.json");
+        fs::write(
+            &models_path,
+            r#"{"providers":{"deepseek":{"name":"Explicit DeepSeek","futureField":true}}}"#,
+        )
+        .expect("write explicit provider");
+        fs::write(&auth_path, "{").expect("write invalid auth");
+
+        let providers = ProviderService::list(&state, AppType::Pi)
+            .expect("sync native provider while auth is unreadable");
+        let deepseek = &providers["deepseek"];
+        assert!(!is_pi_login_provider(deepseek));
+        assert!(has_pi_login_origin(deepseek));
+
+        fs::write(&models_path, r#"{"providers":{}}"#).expect("remove explicit provider");
+        fs::write(
+            &auth_path,
+            r#"{"deepseek":{"type":"api_key","key":"secret"}}"#,
+        )
+        .expect("repair auth");
+
+        let providers = ProviderService::list(&state, AppType::Pi)
+            .expect("restore login provider after auth recovery");
+        let deepseek = &providers["deepseek"];
+        assert!(is_pi_login_provider(deepseek));
+        assert!(!is_synthetic_pi_login_provider(deepseek));
+        assert_eq!(deepseek.settings_config["futureField"], json!(true));
+    }
+
+    #[test]
+    #[serial]
+    fn login_provider_becomes_read_only_again_after_explicit_override_is_removed() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        let models_path = agent_dir.join("models.json");
+        fs::write(
+            agent_dir.join("auth.json"),
+            r#"{"deepseek":{"type":"api_key","key":"secret"}}"#,
+        )
+        .expect("write auth");
+
+        ProviderService::list(&state, AppType::Pi).expect("import login provider");
+        fs::write(
+            &models_path,
+            r#"{"providers":{"deepseek":{"name":"Explicit DeepSeek","source":"pi-login","futureField":{"preserve":true}}}}"#,
+        )
+        .expect("write explicit override");
+        ProviderService::list(&state, AppType::Pi).expect("sync explicit override");
+
+        fs::write(&models_path, r#"{"providers":{}}"#).expect("remove explicit override");
+        ProviderService::list(&state, AppType::Pi).expect("sync removed override");
+
+        let current =
+            crate::services::pi_state::PiStateService::current(&state).expect("read current state");
+        assert_eq!(current.login_provider_ids, vec!["deepseek".to_string()]);
+        let restored = state
+            .db
+            .get_provider_by_id("deepseek", PI_APP)
+            .expect("read restored provider")
+            .expect("restored provider");
+        assert!(is_pi_login_provider(&restored));
+        assert_eq!(restored.name, "Explicit DeepSeek");
+        let error = ProviderService::delete(&state, AppType::Pi, "deepseek")
+            .expect_err("active login provider must remain read-only");
+        assert!(error.to_string().contains("managed by Pi /login"));
+
+        fs::write(agent_dir.join("auth.json"), "{}").expect("logout provider");
+        let providers = ProviderService::list(&state, AppType::Pi).expect("sync logout");
+        let restored = &providers["deepseek"];
+        assert!(!is_pi_login_provider(restored));
+        assert!(!has_pi_login_origin(restored));
+        assert_eq!(restored.name, "Explicit DeepSeek");
+        assert_eq!(restored.settings_config["source"], json!("pi-login"));
+        assert_eq!(
+            restored.settings_config["futureField"],
+            json!({"preserve": true})
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn login_provider_is_read_only_and_disappears_after_logout() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        let auth_path = agent_dir.join("auth.json");
+        fs::write(
+            &auth_path,
+            r#"{"deepseek":{"type":"api_key","key":"secret"}}"#,
+        )
+        .expect("write auth");
+
+        ProviderService::list(&state, AppType::Pi).expect("import login provider");
+        let projected = state
+            .db
+            .get_provider_by_id("deepseek", PI_APP)
+            .expect("read login provider")
+            .expect("login provider");
+        assert!(is_synthetic_pi_login_provider(&projected));
+        let error = ProviderService::delete(&state, AppType::Pi, "deepseek")
+            .expect_err("login provider must be read-only");
+        assert!(error.to_string().contains("managed by Pi /login"));
+
+        fs::write(&auth_path, "{}").expect("logout provider");
+        let providers = ProviderService::list(&state, AppType::Pi).expect("sync logout");
+        assert!(!providers.contains_key("deepseek"));
     }
 
     #[test]

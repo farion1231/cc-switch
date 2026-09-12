@@ -988,6 +988,10 @@
       "readFailed": "無法讀取 Pi 供應商設定",
       "stateUnavailableHint": "CC Switch 讀取到 Pi 供應商設定前，供應商變更會暫時停用。"
     },
+    "login": {
+      "configured": "已透過 /login 設定",
+      "managedHint": "由 Pi /login 管理，請在 Pi 中使用 /login 或 /logout 修改"
+    },
     "prompts": {
       "globalTab": "全域提示",
       "systemTab": "全域系統提示",

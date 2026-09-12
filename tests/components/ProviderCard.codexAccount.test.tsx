@@ -92,6 +92,8 @@ function renderCard(
   options: {
     status?: ManagedAuthStatus;
     isCurrent?: boolean;
+    appId?: "codex" | "pi";
+    isReadOnly?: boolean;
     onEdit?: (provider: Provider) => void;
     onConfigureUsage?: (provider: Provider) => void;
   } = {},
@@ -108,8 +110,9 @@ function renderCard(
     <QueryClientProvider client={queryClient}>
       <ProviderCard
         provider={provider}
-        appId="codex"
+        appId={options.appId ?? "codex"}
         isCurrent={options.isCurrent ?? false}
+        isReadOnly={options.isReadOnly}
         isProxyRunning={false}
         onSwitch={vi.fn()}
         onEdit={options.onEdit ?? vi.fn()}
@@ -123,6 +126,22 @@ function renderCard(
 }
 
 describe("ProviderCard Codex Official account identity", () => {
+  it("hides usage configuration for a read-only Pi login card", () => {
+    renderCard(
+      {
+        id: "deepseek",
+        name: "DeepSeek override",
+        category: "custom",
+        settingsConfig: { name: "DeepSeek override" },
+      },
+      { appId: "pi", isReadOnly: true },
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "configure-usage" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps existing managed OAuth quota enabled and exposes its configuration", async () => {
     const user = userEvent.setup();
     const onConfigureUsage = vi.fn();
@@ -287,7 +306,7 @@ describe("ProviderCard Codex Official account identity", () => {
     };
     renderCard(provider, { isCurrent: true });
 
-expect(
+    expect(
       screen.getByText("账号会随 Codex CLI 当前登录变化"),
     ).toBeInTheDocument();
     expect(

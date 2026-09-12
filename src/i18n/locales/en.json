@@ -987,6 +987,10 @@
       "readFailed": "Could not read Pi's provider configuration",
       "stateUnavailableHint": "Provider changes are disabled until CC Switch can read Pi's provider configuration."
     },
+    "login": {
+      "configured": "Configured via /login",
+      "managedHint": "Managed by Pi /login. Use /login or /logout in Pi to make changes."
+    },
     "prompts": {
       "globalTab": "Global prompts",
       "systemTab": "Global system prompt",

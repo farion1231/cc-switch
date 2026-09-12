@@ -987,6 +987,10 @@
       "readFailed": "无法读取 Pi 供应商配置",
       "stateUnavailableHint": "CC Switch 读取到 Pi 供应商配置前，供应商变更已暂时禁用。"
     },
+    "login": {
+      "configured": "已通过 /login 配置",
+      "managedHint": "由 Pi /login 管理，请在 Pi 中使用 /login 或 /logout 修改"
+    },
     "prompts": {
       "globalTab": "全局提示",
       "systemTab": "全局系统提示",

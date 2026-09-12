@@ -214,12 +214,20 @@ export function ProviderList({
     error: piCurrentStateError,
   } = usePiCurrentState(appId === "pi");
   const isPiAuthoritativeStateReady = appId !== "pi" || isPiCurrentStateSuccess;
+  const isPiLoginProvider = useCallback(
+    (providerId: string): boolean =>
+      piCurrentState?.loginProviderIds?.includes(providerId) ?? false,
+    [piCurrentState],
+  );
   const isPiProviderInConfig = useCallback(
     (provider: Provider): boolean => {
       if (!isPiAuthoritativeStateReady) return false;
-      return piCurrentState?.enabledProviderIds.includes(provider.id) ?? false;
+      return (
+        piCurrentState?.enabledProviderIds.includes(provider.id) === true ||
+        isPiLoginProvider(provider.id)
+      );
     },
-    [isPiAuthoritativeStateReady, piCurrentState],
+    [isPiAuthoritativeStateReady, isPiLoginProvider, piCurrentState],
   );
 
   // 连通性检查不发真实请求、无封号/计费风险，直接执行（无需确认弹窗）。
@@ -505,8 +513,11 @@ export function ProviderList({
                         ? isProviderDefaultModel(provider.id)
                         : false
                 }
+                isReadOnly={appId === "pi" && isPiLoginProvider(provider.id)}
                 isStateChangeProtected={
-                  appId === "pi" && !isPiAuthoritativeStateReady
+                  appId === "pi" &&
+                  (!isPiAuthoritativeStateReady ||
+                    isPiLoginProvider(provider.id))
                 }
                 onSetAsDefault={
                   onSetAsDefault
@@ -645,6 +656,7 @@ interface SortableProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
+  isReadOnly?: boolean;
   isStateChangeProtected?: boolean;
   onSetAsDefault?: (modelId?: string) => void;
 }
@@ -677,6 +689,7 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   isRemovalProtected,
+  isReadOnly,
   isStateChangeProtected,
   onSetAsDefault,
 }: SortableProviderCardProps) {
@@ -732,6 +745,7 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         isRemovalProtected={isRemovalProtected}
+        isReadOnly={isReadOnly}
         isStateChangeProtected={isStateChangeProtected}
         onSetAsDefault={onSetAsDefault}
       />
