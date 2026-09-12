@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { configApi } from "@/lib/api";
+import { useCommonConfigSyncGuard } from "./useCommonConfigSyncGuard";
 
 const LEGACY_STORAGE_KEY = "cc-switch:gemini-common-config-snippet";
 const DEFAULT_GEMINI_COMMON_CONFIG_SNIPPET = "{}";
@@ -61,7 +62,7 @@ const SENSITIVE_CONTAINS = [
   "BEARER_TOKEN",
 ];
 
-function isForbiddenCommonEnvKey(name: string): boolean {
+export function isForbiddenCommonEnvKey(name: string): boolean {
   if (
     GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(
       name as (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number],
@@ -122,18 +123,20 @@ export function useGeminiCommonConfig({
   const [isLoading, setIsLoading] = useState(true);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  // 用于跟踪是否正在通过通用配置更新
-  const isUpdatingFromCommonConfig = useRef(false);
+  // 程序性配置写入的回显保护（替代 setTimeout 重置标记）
+  const syncGuard = useCommonConfigSyncGuard();
   // 用于跟踪新建模式是否已初始化默认勾选
   const hasInitializedNewMode = useRef(false);
-  // 用于跟踪编辑模式是否已初始化显式开关/预览
-  const hasInitializedEditMode = useRef(false);
+  // 用于识别 initialData 被 live 配置替换后的 env 重置
+  const lastInitialDataRef = useRef<typeof initialData | undefined>(undefined);
+  const lastInitialEnabledRef = useRef<boolean | undefined>(undefined);
 
   // 当预设变化时，重置初始化标记，使新预设能够重新触发初始化逻辑
   useEffect(() => {
     hasInitializedNewMode.current = false;
-    hasInitializedEditMode.current = false;
-  }, [selectedPresetId, initialEnabled]);
+    lastInitialDataRef.current = undefined;
+    lastInitialEnabledRef.current = undefined;
+  }, [selectedPresetId]);
 
   const parseSnippetEnv = useCallback(
     (
@@ -278,78 +281,61 @@ export function useGeminiCommonConfig({
     };
   }, [parseSnippetEnv]);
 
-  // 初始化时检查通用配置片段（编辑模式）
+  // 编辑态初始化 / live 配置刷新：勾选状态以 meta.commonConfigEnabled 为准。
+  //
+  // 片段已由 useInitialDataCommonConfig 在数据层合并进 initialData，所以这里
+  // 只需同步勾选状态。env 随后会被重置到 expectedEnv，把这次重置登记给
+  // syncGuard，避免同步 effect 在重置落地前用旧值做一次无谓的推断。
   useEffect(() => {
     if (
       !initialData?.settingsConfig ||
       isLoading ||
-      hasInitializedEditMode.current
+      (lastInitialDataRef.current === initialData &&
+        lastInitialEnabledRef.current === initialEnabled)
     ) {
       return;
     }
 
-    hasInitializedEditMode.current = true;
+    lastInitialDataRef.current = initialData;
+    lastInitialEnabledRef.current = initialEnabled;
 
-    try {
-      const env =
-        isPlainObject(initialData.settingsConfig.env) &&
-        Object.keys(initialData.settingsConfig.env).length > 0
-          ? (initialData.settingsConfig.env as Record<string, string>)
-          : {};
-      const parsed = parseSnippetEnv(commonConfigSnippet);
-      if (parsed.error) {
-        if (commonConfigSnippet.trim()) {
-          setCommonConfigError(parsed.error);
-        }
-        setUseCommonConfig(false);
-        return;
+    const env =
+      isPlainObject(initialData.settingsConfig.env) &&
+      Object.keys(initialData.settingsConfig.env).length > 0
+        ? (initialData.settingsConfig.env as Record<string, string>)
+        : {};
+    const parsed = parseSnippetEnv(commonConfigSnippet);
+    if (parsed.error) {
+      if (commonConfigSnippet.trim()) {
+        setCommonConfigError(parsed.error);
       }
-      const inferredHasCommon = hasEnvCommonConfigSnippet(
-        env,
-        parsed.env as Record<string, string>,
-      );
-
-      // 优先级：显式设置的 initialEnabled > 从配置推断的值
-      // 如果 initialEnabled 为 undefined，使用推断值
-      const hasCommon =
-        initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
-
-      // 如果应该启用通用配置但配置中还没有，则自动添加
-      if (
-        hasCommon &&
-        !inferredHasCommon &&
-        Object.keys(parsed.env).length > 0
-      ) {
-        const currentEnv = envStringToObj(envValue);
-        const merged = applySnippetToEnv(currentEnv, parsed.env);
-        const nextEnvString = envObjToString(merged);
-
-        setCommonConfigError("");
-        setUseCommonConfig(true);
-        isUpdatingFromCommonConfig.current = true;
-        onEnvChange(nextEnvString);
-        setTimeout(() => {
-          isUpdatingFromCommonConfig.current = false;
-        }, 0);
-        return;
-      }
-
-      setCommonConfigError("");
-      setUseCommonConfig(hasCommon);
-    } catch {
-      // ignore parse error
+      setUseCommonConfig(false);
+      return;
     }
+
+    const inferredHasCommon = hasEnvCommonConfigSnippet(
+      env,
+      parsed.env as Record<string, string>,
+    );
+
+    // 优先级：显式设置的 initialEnabled > 从配置推断的值
+    // 如果 initialEnabled 为 undefined，使用推断值
+    const hasCommon =
+      initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
+
+    setCommonConfigError("");
+    setUseCommonConfig(hasCommon);
+    // 无条件登记：即使 env 当前已经是 expectedEnv，也要让同步 effect 跳过这一轮
+    // 推断，否则片段为空/不匹配时会把刚设好的勾选状态又推断成 false。
+    syncGuard.schedule(envValue, envObjToString(env));
   }, [
-    applySnippetToEnv,
     commonConfigSnippet,
     envObjToString,
-    envStringToObj,
     envValue,
     hasEnvCommonConfigSnippet,
     initialData,
     initialEnabled,
     isLoading,
-    onEnvChange,
     parseSnippetEnv,
   ]);
 
@@ -378,11 +364,8 @@ export function useGeminiCommonConfig({
     const merged = applySnippetToEnv(currentEnv, parsed.env);
     const nextEnvString = envObjToString(merged);
 
-    isUpdatingFromCommonConfig.current = true;
+    syncGuard.schedule(envValue, nextEnvString);
     onEnvChange(nextEnvString);
-    setTimeout(() => {
-      isUpdatingFromCommonConfig.current = false;
-    }, 0);
   }, [
     initialData,
     isLoading,
@@ -418,11 +401,9 @@ export function useGeminiCommonConfig({
       setCommonConfigError("");
       setUseCommonConfig(checked);
 
-      isUpdatingFromCommonConfig.current = true;
-      onEnvChange(envObjToString(updatedEnvObj));
-      setTimeout(() => {
-        isUpdatingFromCommonConfig.current = false;
-      }, 0);
+      const nextEnvString = envObjToString(updatedEnvObj);
+      syncGuard.schedule(envValue, nextEnvString);
+      onEnvChange(nextEnvString);
     },
     [
       applySnippetToEnv,
@@ -456,7 +437,9 @@ export function useGeminiCommonConfig({
               currentEnv,
               parsedPrevious.env,
             );
-            onEnvChange(envObjToString(updatedEnv));
+            const nextEnvString = envObjToString(updatedEnv);
+            syncGuard.schedule(envValue, nextEnvString);
+            onEnvChange(nextEnvString);
           }
           setUseCommonConfig(false);
         }
@@ -496,11 +479,9 @@ export function useGeminiCommonConfig({
             ? applySnippetToEnv(withoutOld, nextEnv)
             : withoutOld;
 
-        isUpdatingFromCommonConfig.current = true;
-        onEnvChange(envObjToString(withNew));
-        setTimeout(() => {
-          isUpdatingFromCommonConfig.current = false;
-        }, 0);
+        const nextEnvString = envObjToString(withNew);
+        syncGuard.schedule(envValue, nextEnvString);
+        onEnvChange(nextEnvString);
       }
 
       setCommonConfigError("");
@@ -532,11 +513,14 @@ export function useGeminiCommonConfig({
 
   // 当 env 变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）
   useEffect(() => {
-    if (isUpdatingFromCommonConfig.current || isLoading) {
+    if (isLoading || syncGuard.skip(envValue)) {
       return;
     }
     const parsed = parseSnippetEnv(commonConfigSnippet);
     if (parsed.error) return;
+    // 没有片段可比对时，推断不出任何信息——保持当前勾选状态，
+    // 否则会把 meta.commonConfigEnabled 静默改写成 false。
+    if (Object.keys(parsed.env).length === 0) return;
     const envObj = envStringToObj(envValue);
     setUseCommonConfig(
       hasEnvCommonConfigSnippet(envObj, parsed.env as Record<string, string>),
