@@ -66,6 +66,34 @@ function renderEditor(value: string, onChange = vi.fn()) {
 const effortCheckbox = () =>
   screen.getByRole("checkbox", { name: "claudeConfig.effortMax" });
 
+const hideAttributionCheckbox = () =>
+  screen.getByRole("checkbox", { name: "claudeConfig.hideAttribution" });
+
+describe("CommonConfigEditor hide attribution toggle", () => {
+  it("requires sessionUrl=false to treat attribution as hidden", () => {
+    renderEditor(
+      JSON.stringify({ attribution: { commit: "", pr: "" } }, null, 2),
+    );
+
+    expect(hideAttributionCheckbox()).not.toBeChecked();
+  });
+
+  it("disables commit, PR, and session URL attribution", () => {
+    const onChange = renderEditor("{}");
+
+    fireEvent.click(hideAttributionCheckbox());
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({
+      attribution: {
+        commit: "",
+        pr: "",
+        sessionUrl: false,
+      },
+    });
+  });
+});
+
 describe("CommonConfigEditor max effort toggle", () => {
   it("does not treat legacy top-level effortLevel=max as checked", () => {
     renderEditor(JSON.stringify({ effortLevel: "max" }, null, 2));
