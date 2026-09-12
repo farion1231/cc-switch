@@ -14,6 +14,17 @@ type UsageQueryOptions = {
   refetchIntervalInBackground?: boolean;
 };
 
+type HermesScopeFilters = Pick<UsageScopeFilters, "profileName" | "task">;
+
+/**
+ * Keep legacy query keys byte-for-byte compatible when Hermes-only filters are
+ * absent, while distinguishing profile/task combinations when they are used.
+ */
+function hermesFilterKey(filters?: HermesScopeFilters) {
+  if (filters?.profileName == null && filters?.task == null) return [];
+  return [filters?.profileName ?? null, filters?.task ?? null] as const;
+}
+
 type RequestLogsQueryArgs = {
   filters: LogFilters;
   range: UsageRangeSelection;
@@ -53,12 +64,16 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...hermesFilterKey(filters),
     ] as const,
   summaryByApp: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+    filters?: Pick<
+      UsageScopeFilters,
+      "providerName" | "model" | "profileName" | "task"
+    >,
     liveEndTime?: boolean,
   ) =>
     [
@@ -70,6 +85,7 @@ export const usageKeys = {
       liveEndTime ?? false,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...hermesFilterKey(filters),
     ] as const,
   trends: (
     preset: UsageRangeSelection["preset"],
@@ -88,6 +104,7 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...hermesFilterKey(filters),
     ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
@@ -106,6 +123,7 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...hermesFilterKey(filters),
     ] as const,
   modelStats: (
     preset: UsageRangeSelection["preset"],
@@ -124,6 +142,7 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...hermesFilterKey(filters),
     ] as const,
   logs: (key: RequestLogsKey, page: number, pageSize: number) =>
     [
@@ -147,6 +166,7 @@ export const usageKeys = {
     [...usageKeys.all, "limits", providerId, appType] as const,
   script: (providerId: string, appType: string) =>
     [...usageKeys.all, providerId, appType] as const,
+  hermesMetadata: () => [...usageKeys.all, "hermes-metadata"] as const,
 };
 
 /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
@@ -155,6 +175,8 @@ function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
     appType: filters?.appType === "all" ? undefined : filters?.appType,
     providerName: filters?.providerName,
     model: filters?.model,
+    profileName: filters?.profileName,
+    task: filters?.task,
   };
 }
 
@@ -181,6 +203,8 @@ export function useUsageSummary(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.profileName,
+        effective.task,
       );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -190,7 +214,10 @@ export function useUsageSummary(
 
 export function useUsageSummaryByApp(
   range: UsageRangeSelection,
-  filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+  filters?: Pick<
+    UsageScopeFilters,
+    "providerName" | "model" | "profileName" | "task"
+  >,
   options?: UsageQueryOptions,
 ) {
   return useQuery({
@@ -208,6 +235,8 @@ export function useUsageSummaryByApp(
         endDate,
         filters?.providerName,
         filters?.model,
+        filters?.profileName,
+        filters?.task,
       );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -237,6 +266,8 @@ export function useUsageTrends(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.profileName,
+        effective.task,
       );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -266,6 +297,8 @@ export function useProviderStats(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.profileName,
+        effective.task,
       );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -295,6 +328,8 @@ export function useModelStats(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.profileName,
+        effective.task,
       );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -343,6 +378,14 @@ export function useModelPricing() {
   return useQuery({
     queryKey: usageKeys.pricing(),
     queryFn: usageApi.getModelPricing,
+  });
+}
+
+export function useHermesUsageMetadata(enabled = true) {
+  return useQuery({
+    queryKey: usageKeys.hermesMetadata(),
+    queryFn: usageApi.getHermesUsageMetadata,
+    enabled,
   });
 }
 

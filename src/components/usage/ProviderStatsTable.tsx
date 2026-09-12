@@ -16,7 +16,15 @@ interface ProviderStatsTableProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
+}
+
+function countLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.countLabel.hermesApiCalls";
+  if (!appType || appType === "all") return "usage.countLabel.mixedActivity";
+  return "usage.countLabel.requests";
 }
 
 export function ProviderStatsTable({
@@ -24,12 +32,14 @@ export function ProviderStatsTable({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t } = useTranslation();
   const { data: stats, isLoading } = useProviderStats(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -39,6 +49,8 @@ export function ProviderStatsTable({
     return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
   }
 
+  const showStatusMetrics = appType !== "hermes";
+
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-hidden">
       <Table>
@@ -46,7 +58,7 @@ export function ProviderStatsTable({
           <TableRow>
             <TableHead>{t("usage.provider", "Provider")}</TableHead>
             <TableHead className="text-right">
-              {t("usage.requests", "请求数")}
+              {t(countLabelKey(appType))}
             </TableHead>
             <TableHead className="text-right">
               {t("usage.tokens", "Tokens")}
@@ -54,19 +66,23 @@ export function ProviderStatsTable({
             <TableHead className="text-right">
               {t("usage.cost", "成本")}
             </TableHead>
-            <TableHead className="text-right">
-              {t("usage.successRate", "成功率")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.avgLatency", "平均延迟")}
-            </TableHead>
+            {showStatusMetrics && (
+              <TableHead className="text-right">
+                {t("usage.successRate", "成功率")}
+              </TableHead>
+            )}
+            {showStatusMetrics && (
+              <TableHead className="text-right">
+                {t("usage.avgLatency", "平均延迟")}
+              </TableHead>
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
           {stats?.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={6}
+                colSpan={showStatusMetrics ? 6 : 4}
                 className="text-center text-muted-foreground"
               >
                 {t("usage.noData", "暂无数据")}
@@ -87,12 +103,20 @@ export function ProviderStatsTable({
                 <TableCell className="text-right">
                   {fmtUsd(stat.totalCost, 4)}
                 </TableCell>
-                <TableCell className="text-right">
-                  {stat.successRate.toFixed(1)}%
-                </TableCell>
-                <TableCell className="text-right">
-                  {stat.avgLatencyMs}ms
-                </TableCell>
+                {showStatusMetrics && (
+                  <TableCell className="text-right">
+                    {stat.statusAvailable === false
+                      ? t("usage.hermes.notAvailable")
+                      : `${stat.successRate.toFixed(1)}%`}
+                  </TableCell>
+                )}
+                {showStatusMetrics && (
+                  <TableCell className="text-right">
+                    {stat.latencyAvailable === false
+                      ? t("usage.hermes.notAvailable")
+                      : `${stat.avgLatencyMs}ms`}
+                  </TableCell>
+                )}
               </TableRow>
             ))
           )}

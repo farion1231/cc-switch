@@ -27,6 +27,8 @@ interface UsageTrendChartProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
 }
 
@@ -36,6 +38,8 @@ export interface UsageTrendStatLike {
   totalOutputTokens: number;
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
+  totalCacheWriteTokens?: number;
+  totalReasoningTokens?: number;
   totalCost: string | number;
 }
 
@@ -52,6 +56,8 @@ export interface UsageTrendChartPoint {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
   cost: number | null;
 }
 
@@ -70,6 +76,10 @@ export function buildUsageTrendChartData(
   const startYear = new Date(startDate * 1000).getFullYear();
   const endYear = new Date(endDate * 1000).getFullYear();
   const spansMultipleYears = startYear !== endYear;
+  const hasCacheWriteTokens =
+    trends?.some((stat) => (stat.totalCacheWriteTokens ?? 0) !== 0) ?? false;
+  const hasReasoningTokens =
+    trends?.some((stat) => (stat.totalReasoningTokens ?? 0) !== 0) ?? false;
 
   return (
     trends?.map((stat) => {
@@ -120,6 +130,12 @@ export function buildUsageTrendChartData(
         outputTokens: stat.totalOutputTokens,
         cacheCreationTokens: stat.totalCacheCreationTokens,
         cacheReadTokens: stat.totalCacheReadTokens,
+        ...(hasCacheWriteTokens
+          ? { cacheWriteTokens: stat.totalCacheWriteTokens }
+          : {}),
+        ...(hasReasoningTokens
+          ? { reasoningTokens: stat.totalReasoningTokens }
+          : {}),
         cost: cost ?? null,
       };
     }) || []
@@ -161,13 +177,15 @@ export function UsageTrendChart({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -177,6 +195,10 @@ export function UsageTrendChart({
   const isHourly = durationSeconds <= 24 * 60 * 60;
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const dateLocale = getLocaleFromLanguage(language);
+  const hasCacheWriteTokens =
+    trends?.some((stat) => (stat.totalCacheWriteTokens ?? 0) !== 0) ?? false;
+  const hasReasoningTokens =
+    trends?.some((stat) => (stat.totalReasoningTokens ?? 0) !== 0) ?? false;
   const tokenTickFormatter = useMemo(
     () => createUsageTrendTokenTickFormatter(dateLocale),
     [dateLocale],
@@ -351,6 +373,28 @@ export function UsageTrendChart({
               fill="url(#colorCacheRead)"
               strokeWidth={2}
             />
+            {hasCacheWriteTokens && (
+              <Area
+                yAxisId="tokens"
+                type="monotone"
+                dataKey="cacheWriteTokens"
+                name={t("usage.cacheWrite")}
+                stroke="#eab308"
+                fill="none"
+                strokeWidth={2}
+              />
+            )}
+            {hasReasoningTokens && (
+              <Area
+                yAxisId="tokens"
+                type="monotone"
+                dataKey="reasoningTokens"
+                name={t("usage.hermes.reasoningTokens")}
+                stroke="#06b6d4"
+                fill="none"
+                strokeWidth={2}
+              />
+            )}
             <Area
               yAxisId="cost"
               type="monotone"

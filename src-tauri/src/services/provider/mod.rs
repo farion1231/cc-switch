@@ -141,6 +141,7 @@ mod tests {
         original_local_app_data: Option<String>,
         original_userprofile: Option<String>,
         original_test_home: Option<String>,
+        original_hermes_home: Option<String>,
     }
 
     impl TempHome {
@@ -151,12 +152,14 @@ mod tests {
             let original_local_app_data = env::var("LOCALAPPDATA").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
             let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            let original_hermes_home = env::var("HERMES_HOME").ok();
 
             env::set_var("HOME", dir.path());
             #[cfg(windows)]
             env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
             env::set_var("USERPROFILE", dir.path());
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            env::set_var("HERMES_HOME", dir.path().join("hermes"));
 
             Self {
                 dir,
@@ -165,6 +168,7 @@ mod tests {
                 original_local_app_data,
                 original_userprofile,
                 original_test_home,
+                original_hermes_home,
             }
         }
     }
@@ -192,6 +196,11 @@ mod tests {
             match &self.original_test_home {
                 Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+
+            match &self.original_hermes_home {
+                Some(value) => env::set_var("HERMES_HOME", value),
+                None => env::remove_var("HERMES_HOME"),
             }
         }
     }
@@ -223,26 +232,11 @@ mod tests {
 
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
         let _guard = test_guard();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        let old_home = std::env::var_os("HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-        std::env::set_var("HOME", temp.path());
+        let home = TempHome::new();
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
-        let result = test(&state, temp.path());
-
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match old_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-
-        result
+        test(&state, home.dir.path())
     }
 
     fn codex_settings(base_url: &str, api_key: &str) -> Value {
