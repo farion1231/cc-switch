@@ -2692,15 +2692,24 @@ fn sibling_bin(bin_path: &str, exe: &str) -> Option<String> {
 /// commonly inherit only the system PATH, while nvm/fnm/mise keep Node in a
 /// user directory. Prefixing npm's sibling directory makes both npm and its
 /// transitive Node interpreter resolve to the installation we selected.
+///
+/// `pkg` 同时作为 `npm_config_allow_scripts` 的值注入：npm 12 起默认拦截未加白
+/// 名单包的 install 脚本（只 warning、exit 0），而 claude-code / grok /
+/// opencode / openclaw 的可执行入口全靠 postinstall 安置——被拦即得到"安装
+/// 成功"toast + tarball 原样 500 字节占位入口的假成功损坏（`claude --version`
+/// 报 "native binary not installed"，实测复现）。走环境变量而非 CLI 旗标
+/// `--allow-scripts=`：未知 npm_config_* 在 npm <12 会被静默忽略，旗标则会
+/// EUNKNOWNCONFIG 硬失败。按命令注入单一包名而非改写用户全局 allow-scripts
+/// 配置，权限最小化；平台二进制 optional 依赖本身不带脚本，不受影响。
 #[cfg(not(target_os = "windows"))]
-fn anchored_npm_command(bin_path: &str, args: &str) -> Option<String> {
+fn anchored_npm_command(bin_path: &str, pkg: &str, args: &str) -> Option<String> {
     let dir = parent_dir(bin_path);
     if dir.is_empty() {
         return None;
     }
     let npm = sibling_bin(bin_path, "npm")?;
     Some(format!(
-        "PATH={}:\"$PATH\" {} {args}",
+        "npm_config_allow_scripts={pkg} PATH={}:\"$PATH\" {} {args}",
         shell_single_quote(&dir),
         quote_path_if_spaced(&npm)
     ))
@@ -2841,8 +2850,8 @@ fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
         return None;
     }
     let pkg = "@openai/codex";
-    let uninstall = anchored_npm_command(bin_path, &format!("uninstall -g {pkg}"))?;
-    let install = anchored_npm_command(bin_path, &format!("i -g {pkg}@latest"))?;
+    let uninstall = anchored_npm_command(bin_path, pkg, &format!("uninstall -g {pkg}"))?;
+    let install = anchored_npm_command(bin_path, pkg, &format!("i -g {pkg}@latest"))?;
     Some(format!("{uninstall} || true; {install}"))
 }
 
@@ -2851,6 +2860,39 @@ fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
 /// 需要单独设计；先在本问题实际发生的 POSIX 平台落地。返回 None → 上游走正常锚定命令。
 #[cfg(target_os = "windows")]
 fn codex_repair_command(_bin_path: &str, _real: &str) -> Option<String> {
+    None
+}
+
+/// Claude Code 平台分发包损坏的自愈命令，与 `codex_repair_command` 同构。Claude Code 2.x
+/// 的 npm 包同为「纯 JS 壳 + 平台二进制 optional 依赖」，且比 codex 多一步：postinstall
+/// （`install.cjs`）负责把平台二进制安置成 `bin/claude.exe`。npm 12 起默认拦截未白名单包
+/// 的 install 脚本（只 warning、exit 0），被拦后主包"装好"但入口仍是 tarball 里的 500 字节
+/// 占位脚本——`claude --version` 报 "native binary not installed" 退出非 0，enumerate 标记
+/// runnable=false。此状态下 primary 的 `claude update`（占位脚本本体）必然失败白跑，
+/// 带 `npm_config_allow_scripts` 的 `npm i -g @latest` 实测可自愈（npm 12 对全局同版本
+/// 重装非 no-op，实测 `changed 2 packages`），但 uninstall+install 直达重装还顺带覆盖
+/// optional 依赖漏装的另一种损坏，与 codex 保持同一形态。白名单来源收窄理由见
+/// `codex_repair_command` 的 doc（brew formula 归 brew、volta/bun/system 无可靠 sibling npm）。
+#[cfg(not(target_os = "windows"))]
+fn claude_repair_command(bin_path: &str, real: &str) -> Option<String> {
+    if brew_formula_from_path(real).is_some() {
+        return None;
+    }
+    if !matches!(
+        infer_install_source(Path::new(bin_path)),
+        "nvm" | "fnm" | "mise" | "homebrew"
+    ) {
+        return None;
+    }
+    let pkg = "@anthropic-ai/claude-code";
+    let uninstall = anchored_npm_command(bin_path, pkg, &format!("uninstall -g {pkg}"))?;
+    let install = anchored_npm_command(bin_path, pkg, &format!("i -g {pkg}@latest"))?;
+    Some(format!("{uninstall} || true; {install}"))
+}
+
+/// Windows 暂不做 claude 分发自愈，理由同 `codex_repair_command` 的 Windows 版。
+#[cfg(target_os = "windows")]
+fn claude_repair_command(_bin_path: &str, _real: &str) -> Option<String> {
     None
 }
 
@@ -2883,7 +2925,7 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest"))
+    anchored_npm_command(bin_path, pkg, &format!("i -g {pkg}@latest"))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -2937,7 +2979,22 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return package_command;
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
-        let update = anchored_official_update_command(tool, bin_path)?;
+        let mut update = anchored_official_update_command(tool, bin_path)?;
+        // npm-installed Claude invokes npm from its own updater. npm 12 can skip
+        // postinstall and still exit 0, so the fallback alone cannot protect it.
+        // Match the sibling-npm sources above; native/formula installs have
+        // already returned, and other package managers keep their own policy.
+        if tool == "claude"
+            && matches!(
+                infer_install_source(Path::new(bin_path)),
+                "nvm" | "fnm" | "mise" | "homebrew"
+            )
+        {
+            update = format!(
+                "npm_config_allow_scripts={} {update}",
+                npm_package_for(tool)?
+            );
+        }
         return Some(match package_command {
             Some(fallback) => chain_update_commands(update, fallback, LifecycleCommandShell::Posix),
             None => update,
@@ -3535,6 +3592,14 @@ fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Optio
     // 路径（且因 codex 不在 prefers_official_update，不会再跑会假成功掩盖损坏的 `codex update`）。
     if tool == "codex" && !inst.runnable {
         if let Some(cmd) = codex_repair_command(&inst.path, &real) {
+            return Some(cmd);
+        }
+    }
+    // Claude 平台分发包损坏自愈（npm 12 默认拦截 postinstall → 500 字节占位入口，
+    // 见 `claude_repair_command` doc）。runnable=true 的正常升级仍走下方
+    // `claude update || npm` 锚定链。
+    if tool == "claude" && !inst.runnable {
+        if let Some(cmd) = claude_repair_command(&inst.path, &real) {
             return Some(cmd);
         }
     }
@@ -5909,7 +5974,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
+                    "npm_config_allow_scripts=@google/gemini-cli PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
                 )
             );
         }
@@ -5924,7 +5989,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
+                    "npm_config_allow_scripts=@xai-official/grok PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
                 )
             );
         }
@@ -5941,7 +6006,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("npm_config_allow_scripts=@openai/codex PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
@@ -5956,7 +6021,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/opt/homebrew/bin/openclaw update --yes || PATH='/opt/homebrew/bin':\"$PATH\" /opt/homebrew/bin/npm i -g openclaw@latest")
+                Some("/opt/homebrew/bin/openclaw update --yes || npm_config_allow_scripts=openclaw PATH='/opt/homebrew/bin':\"$PATH\" /opt/homebrew/bin/npm i -g openclaw@latest")
             );
         }
 
@@ -6083,7 +6148,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "PATH='/Users/me/.local/share/fnm_multishells/12345_abc/bin':\"$PATH\" /Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
+                    "npm_config_allow_scripts=@openai/codex PATH='/Users/me/.local/share/fnm_multishells/12345_abc/bin':\"$PATH\" /Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
                 )
             );
         }
@@ -6097,7 +6162,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("PATH='/Users/my name/.nvm/versions/node/v22/bin':\"$PATH\" '/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
+                Some("npm_config_allow_scripts=@openai/codex PATH='/Users/my name/.nvm/versions/node/v22/bin':\"$PATH\" '/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
             );
         }
 
@@ -6259,7 +6324,7 @@ mod tests {
             broken.runnable = false;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
-                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("npm_config_allow_scripts=@openai/codex PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; npm_config_allow_scripts=@openai/codex PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
@@ -6271,7 +6336,7 @@ mod tests {
             let cmd = installs_anchored_command("codex", &[healthy]);
             assert_eq!(
                 cmd.as_deref(),
-                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("npm_config_allow_scripts=@openai/codex PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
             assert!(!cmd.unwrap().contains("uninstall"));
         }
@@ -6319,6 +6384,152 @@ mod tests {
                 Some("/Users/me/.bun/bin/bun add -g @openai/codex@latest")
             );
             assert!(!cmd.unwrap().contains("npm"));
+        }
+
+        #[test]
+        fn claude_missing_binary_self_heals_via_uninstall_install() {
+            // npm 12 起默认拦截未白名单包的 postinstall（只 warning、exit 0），装出来的
+            // claude-code 入口还是 tarball 里的 500 字节占位脚本——`--version` 退出非 0
+            // → enumerate 标记 runnable=false。此状态下 primary 的 `claude update`
+            // （占位脚本本体）必然失败白跑；与 codex 同理由 uninstall+install 重装自愈，
+            // npm 端带 `npm_config_allow_scripts` 让 postinstall 真正跑起来。
+            let mut broken = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/claude", true);
+            broken.runnable = false;
+            assert_eq!(
+                installs_anchored_command("claude", &[broken]).as_deref(),
+                Some("npm_config_allow_scripts=@anthropic-ai/claude-code PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @anthropic-ai/claude-code || true; npm_config_allow_scripts=@anthropic-ai/claude-code PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @anthropic-ai/claude-code@latest")
+            );
+        }
+
+        #[test]
+        fn claude_broken_homebrew_npm_global_self_heals() {
+            // Homebrew node 的 npm 全局包（real 在 lib/node_modules，非 Cellar）同样
+            // 归 sibling npm 自愈管辖——npm 12 拦脚本问题在这类安装上同样致命。
+            let mut broken = inst("/opt/homebrew/bin/claude", true);
+            broken.runnable = false;
+            broken.real = std::path::PathBuf::from(
+                "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+            );
+            assert!(
+                installs_anchored_command("claude", &[broken])
+                    .unwrap()
+                    .contains("uninstall -g @anthropic-ai/claude-code"),
+                "homebrew npm-global broken claude should self-heal via npm reinstall"
+            );
+        }
+
+        #[test]
+        fn claude_runnable_keeps_official_update_chain() {
+            for path in [
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/claude",
+                "/Users/me/.local/share/fnm_multishells/12345_abc/bin/claude",
+                "/Users/me/.local/share/mise/installs/node/22/bin/claude",
+                "/opt/homebrew/bin/claude",
+            ] {
+                let cmd = installs_anchored_command("claude", &[inst(path, true)]).unwrap();
+                let (primary, fallback) = cmd.split_once(" || ").unwrap();
+                assert_eq!(
+                    primary,
+                    format!("npm_config_allow_scripts=@anthropic-ai/claude-code {path} update")
+                );
+                assert!(fallback.starts_with("npm_config_allow_scripts=@anthropic-ai/claude-code "));
+                assert!(!cmd.contains("uninstall"));
+            }
+        }
+
+        #[test]
+        fn claude_other_install_sources_keep_their_update_policy() {
+            for (path, real, expected) in [
+                (
+                    "/Users/me/.nvm/versions/node/v22/bin/claude",
+                    "/Users/me/.local/share/claude/versions/2.1.146",
+                    "/Users/me/.nvm/versions/node/v22/bin/claude update",
+                ),
+                (
+                    "/opt/homebrew/bin/claude",
+                    "/opt/homebrew/Cellar/claude-code/2.1.146/bin/claude",
+                    "/opt/homebrew/bin/brew upgrade claude-code",
+                ),
+                (
+                    "/Users/me/.volta/bin/claude",
+                    "/Users/me/.volta/bin/claude",
+                    "/Users/me/.volta/bin/claude update || /Users/me/.volta/bin/volta install @anthropic-ai/claude-code",
+                ),
+                (
+                    "/Users/me/.bun/bin/claude",
+                    "/Users/me/.bun/bin/claude",
+                    "/Users/me/.bun/bin/claude update || /Users/me/.bun/bin/bun add -g @anthropic-ai/claude-code@latest",
+                ),
+                (
+                    "/usr/local/bin/claude",
+                    "/usr/local/bin/claude",
+                    "/usr/local/bin/claude update",
+                ),
+            ] {
+                assert_eq!(
+                    anchored_command_from_paths("claude", path, real).as_deref(),
+                    Some(expected)
+                );
+            }
+        }
+
+        #[test]
+        fn claude_updater_child_and_fallback_receive_scoped_script_permission() {
+            use std::os::unix::fs::PermissionsExt;
+            use std::process::Command;
+
+            let temp = tempfile::tempdir().expect("temp dir should be created");
+            let bin = temp.path().join("home dir/.nvm/versions/node/v22/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let claude = bin.join("claude");
+            let npm = bin.join("npm");
+            std::fs::write(
+                &claude,
+                "#!/bin/sh\n[ \"$1\" = update ] || exit 99\nnpm install -g @anthropic-ai/claude-code@latest\nexit \"$TEST_CLAUDE_EXIT\"\n",
+            )
+            .unwrap();
+            std::fs::write(
+                &npm,
+                "#!/bin/sh\nprintf '%s|%s\\n' \"${npm_config_allow_scripts-unset}\" \"$*\"\n[ \"$1\" != i ] || exit \"$TEST_FALLBACK_EXIT\"\n",
+            )
+            .unwrap();
+            for executable in [&claude, &npm] {
+                std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+            let command =
+                installs_anchored_command("claude", &[inst(&claude.to_string_lossy(), true)])
+                    .unwrap();
+            let script =
+                format!("set -e\n{command}\nprintf 'after|%s\\n' \"$npm_config_allow_scripts\"");
+            let primary = "@anthropic-ai/claude-code|install -g @anthropic-ai/claude-code@latest\n";
+            let fallback = "@anthropic-ai/claude-code|i -g @anthropic-ai/claude-code@latest\n";
+            for (primary_exit, fallback_exit, expected_code, expected_output) in [
+                ("0", "0", 0, format!("{primary}after|previous-package\n")),
+                (
+                    "1",
+                    "0",
+                    0,
+                    format!("{primary}{fallback}after|previous-package\n"),
+                ),
+                ("1", "42", 42, format!("{primary}{fallback}")),
+            ] {
+                let output = Command::new("/bin/bash")
+                    .args(["-c", &script])
+                    .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+                    .env("npm_config_allow_scripts", "previous-package")
+                    .env("TEST_CLAUDE_EXIT", primary_exit)
+                    .env("TEST_FALLBACK_EXIT", fallback_exit)
+                    .output()
+                    .expect("Claude update chain should start");
+                assert_eq!(
+                    output.status.code(),
+                    Some(expected_code),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(String::from_utf8_lossy(&output.stdout), expected_output);
+            }
         }
 
         #[test]
