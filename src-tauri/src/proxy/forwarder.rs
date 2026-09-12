@@ -1287,6 +1287,10 @@ impl RequestForwarder {
                 super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
         }
 
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
+            mapped_body = sanitize_codex_orphan_function_call_outputs(mapped_body);
+        }
+
         // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---
         // 注意：确定性 ID 也在此处计算，因为 mapped_body 在格式转换时会被 move
         //
@@ -3734,6 +3738,32 @@ fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
     )
 }
 
+/// Sanitize Codex / GrokBuild input history by removing orphan `function_call_output` items
+/// that lack a `call_id` (#7074).
+///
+/// Codex App injects `automation_update` outputs without a `call_id` during automated/cron runs.
+/// Strict upstream APIs (e.g. DeepSeek /v1/responses or Chat completions) reject these with
+/// `missing field call_id` or 400 invalid tool message ordering.
+pub(crate) fn sanitize_codex_orphan_function_call_outputs(mut body: Value) -> Value {
+    if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
+        input.retain(|item| {
+            if item.get("type").and_then(Value::as_str) == Some("function_call_output") {
+                let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
+                if call_id.is_empty() {
+                    log::debug!(
+                        "[Codex] Dropping function_call_output lacking call_id: id={:?}, name={:?}",
+                        item.get("id"),
+                        item.get("name")
+                    );
+                    return false;
+                }
+            }
+            true
+        });
+    }
+    body
+}
+
 fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
@@ -5521,5 +5551,37 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    #[test]
+    fn sanitize_codex_orphan_function_call_outputs_drops_item_without_call_id() {
+        let body = json!({
+            "model": "deepseek-v4-flash",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}]
+                },
+                {
+                    "type": "function_call_output",
+                    "id": "fco_test",
+                    "name": "automation_update",
+                    "output": "Automation: daily review"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_valid_123",
+                    "output": "{\"status\":\"ok\"}"
+                }
+            ]
+        });
+
+        let sanitized = sanitize_codex_orphan_function_call_outputs(body);
+        let input = sanitized["input"].as_array().expect("input must be array");
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[1]["type"], "function_call_output");
+        assert_eq!(input[1]["call_id"], "call_valid_123");
     }
 }

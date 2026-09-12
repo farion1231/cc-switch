@@ -699,6 +699,14 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            if call_id.is_empty() {
+                log::debug!(
+                    "[Codex] Dropping function_call_output lacking call_id in chat transform: id={:?}, name={:?}",
+                    item.get("id"),
+                    item.get("name")
+                );
+                return Ok(());
+            }
             let media_plan = item
                 .get("output")
                 .cloned()
