@@ -2318,6 +2318,30 @@ fn codex_model_catalog_from_settings(
     )))
 }
 
+/// Value written into the top-level `model_catalog_json` field when cc-switch
+/// owns the pointer.
+///
+/// Newer Codex builds re-read config.toml when resolving a custom permission
+/// profile (e.g. validating `default_permissions`) and deserialize this field
+/// as an absolute path — a bare relative filename is rejected there with
+/// `AbsolutePathBuf deserialized without a base path`, which surfaces as a
+/// hard failure in plan mode. Write the absolute path so both the startup
+/// reader (which resolves relative paths against the config dir) and the
+/// strict re-reader accept the pointer.
+///
+/// Exception: paths that are not absolute for the host OS, or Windows UNC
+/// dirs (`\\wsl.localhost\...`) that only a WSL-side Codex reads — for those
+/// the absolute form is meaningless to the reader, so keep the bare filename
+/// Codex resolves against its own config dir (#3614).
+fn codex_catalog_pointer_value(catalog_path: &Path) -> String {
+    let text = catalog_path.to_string_lossy();
+    let is_unc = text.starts_with(r"\\") || text.starts_with("//");
+    if is_unc || !catalog_path.is_absolute() {
+        return CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME.to_string();
+    }
+    text.into_owned()
+}
+
 fn set_codex_model_catalog_json_field(
     config_text: &str,
     catalog_path: Option<&Path>,
@@ -2327,7 +2351,7 @@ fn set_codex_model_catalog_json_field(
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
     match catalog_path {
-        Some(_) => {
+        Some(catalog_path) => {
             // Only claim the pointer when it is absent or already cc-switch-owned.
             // A user-managed external catalog file (custom filename or path) is
             // left untouched, mirroring the None arm's ownership rule that
@@ -2342,7 +2366,7 @@ fn set_codex_model_catalog_json_field(
                 .unwrap_or(true);
             if is_cc_switch_owned {
                 doc["model_catalog_json"] =
-                    toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+                    toml_edit::value(codex_catalog_pointer_value(catalog_path));
             }
         }
         None => {
@@ -2529,8 +2553,9 @@ pub(crate) fn resolve_cc_switch_catalog_path(
     // 注意（有意的行为变更）：Windows 上 `/…` 形式的旧 WSL 风格 Linux 路径也会
     // 被视为绝对路径，从而在下方的包含性校验中失败——此前这类路径会因无法匹配
     // 生成文件名而回退为按文件名解析、碰巧能工作。可接受：下一次切换供应商时
-    // 写入侧会重新落一个裸文件名，配置自愈（见
-    // `set_catalog_json_none_removes_cc_switch_owned_by_filename` 的场景注释）。
+    // 写入侧会重写指针（原生目录写绝对路径、WSL 形态目录写裸文件名），配置
+    // 自愈（见 `set_catalog_json_none_removes_cc_switch_owned_by_filename`
+    // 的场景注释）。
     let is_unix_absolute = catalog_path_str.starts_with('/');
     let resolved = if referenced_path.is_absolute() || is_unix_absolute {
         referenced_path.to_path_buf()
@@ -7573,7 +7598,8 @@ wire_api = "responses"
     }
 
     #[test]
-    fn model_catalog_json_field_writes_relative_filename() {
+    #[cfg(unix)]
+    fn model_catalog_json_field_writes_absolute_path() {
         let input = r#"model_provider = "any"
 
 [model_providers.any]
@@ -7587,7 +7613,8 @@ name = "any"
             parsed
                 .get("model_catalog_json")
                 .and_then(|value| value.as_str()),
-            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some("/tmp/cc-switch-model-catalog.json"),
+            "absolute config dir must yield an absolute pointer (strict Codex re-reads)"
         );
         assert!(
             parsed
@@ -8104,8 +8131,9 @@ web_search = "disabled"
         let input = r#"model_provider = "custom"
 model = "glm-5"
 "#;
-        // Simulate a WSL UNC path as cc-switch would see it on Windows;
-        // the function now writes just the relative filename.
+        // Simulate a WSL UNC path as cc-switch would see it on Windows: only a
+        // WSL-side Codex reads that config, and it cannot consume a UNC pointer,
+        // so the field keeps the bare filename resolved against its config dir.
         let unc_path =
             Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\cc-switch-model-catalog.json");
 
@@ -8123,20 +8151,60 @@ model = "glm-5"
     }
 
     #[test]
-    fn set_catalog_json_field_writes_filename_for_any_path() {
+    #[cfg(target_os = "windows")]
+    fn set_catalog_json_field_writes_windows_absolute_path() {
         let input = r#"model_provider = "custom"
 model = "glm-5"
 "#;
-        let regular_path = Path::new("/home/user/.codex/cc-switch-model-catalog.json");
+        let catalog_path = Path::new(r"C:\Users\user\.codex\cc-switch-model-catalog.json");
 
-        let result = set_codex_model_catalog_json_field(input, Some(regular_path)).unwrap();
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some(r"C:\Users\user\.codex\cc-switch-model-catalog.json"),
+            "native Windows config dir must yield an absolute pointer (strict Codex re-reads)"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn set_catalog_json_field_writes_filename_for_wsl_style_path() {
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+"#;
+        // A Linux-style dir is not a Windows path at all; the WSL-side Codex
+        // that reads it needs the bare filename form (#3614).
+        let wsl_style = Path::new("/home/user/.codex/cc-switch-model-catalog.json");
+
+        let result = set_codex_model_catalog_json_field(input, Some(wsl_style)).unwrap();
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         assert_eq!(
             parsed.get("model_catalog_json").and_then(|v| v.as_str()),
             Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
-            "should write only the relative filename, not the full path"
+            "WSL-style dir must keep the bare filename pointer"
         );
+    }
+
+    #[test]
+    fn set_catalog_json_field_pointer_round_trips_through_resolver() {
+        // Whatever pointer form the writer picks for the host OS, the resolver
+        // must land back on the same catalog file.
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+"#;
+        let catalog_path = std::env::temp_dir().join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        let base_dir = catalog_path
+            .parent()
+            .expect("temp dir has a parent")
+            .to_path_buf();
+
+        let config_text = set_codex_model_catalog_json_field(input, Some(&catalog_path)).unwrap();
+        let resolved = resolve_cc_switch_catalog_path(&config_text, &base_dir)
+            .expect("cc-switch-owned pointer should resolve");
+        assert_eq!(resolved, catalog_path);
     }
 
     #[test]
