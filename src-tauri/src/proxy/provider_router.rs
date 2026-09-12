@@ -144,6 +144,20 @@ impl ProviderRouter {
         breaker.allow_request().await
     }
 
+    /// 非占用式的熔断可用性判断（不消耗 HalfOpen 探测名额）
+    ///
+    /// 用于路由选择阶段判断某 provider 是否可被纳入候选：
+    /// - Closed / HalfOpen：可用
+    /// - Open：超时已到则切换到 HalfOpen 并返回 true，否则返回 false
+    ///
+    /// 注意：真正发起请求前仍需 forwarder 通过 `allow_provider_request` 获取探测名额，
+    /// 并在请求结束后用 `record_result()` / `release_permit_neutral()` 释放。
+    pub async fn is_available(&self, provider_id: &str, app_type: &str) -> bool {
+        let circuit_key = format!("{app_type}:{provider_id}");
+        let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+        breaker.is_available().await
+    }
+
     /// 记录供应商请求结果
     pub async fn record_result(
         &self,

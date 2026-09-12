@@ -26,6 +26,7 @@ pub mod providers;
 pub mod response_processor;
 pub(crate) mod server;
 pub mod session;
+pub(crate) mod session_router;
 pub(crate) mod sse;
 pub(crate) mod switch_lock;
 pub mod thinking_budget_rectifier;
@@ -46,6 +47,8 @@ pub use error::ProxyError;
 pub use provider_router::ProviderRouter;
 #[allow(unused_imports)]
 pub use session::{extract_session_id, SessionIdResult, SessionIdSource};
+#[allow(unused_imports)]
+pub use session_router::{RoutingStrategy, SessionRouteInfo, SessionRouter, SessionRoutingConfig};
 #[allow(unused_imports)]
 pub use types::{ProxyConfig, ProxyServerInfo, ProxyStatus};
 

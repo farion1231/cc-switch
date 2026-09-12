@@ -430,6 +430,50 @@ impl Database {
             [],
         );
 
+        // Session 路由表：新库在 create_tables 直接建表（幂等），
+        // 老库由迁移 v18→v19 补齐，两条路径都走 CREATE IF NOT EXISTS
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_routes (
+                session_id    TEXT NOT NULL,
+                app_type      TEXT NOT NULL,
+                provider_id   TEXT NOT NULL,
+                assigned_at   INTEGER NOT NULL,
+                last_used_at  INTEGER NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                failover_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_routes_last_used
+             ON session_routes(last_used_at)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_routes_provider
+             ON session_routes(app_type, provider_id)",
+            [],
+        );
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_routing_config (
+                app_type          TEXT PRIMARY KEY,
+                enabled           INTEGER NOT NULL DEFAULT 0,
+                strategy          TEXT NOT NULL DEFAULT 'round_robin',
+                session_ttl_seconds INTEGER NOT NULL DEFAULT 3600,
+                max_sessions_per_provider INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO session_routing_config (app_type)
+             VALUES ('claude'), ('codex'), ('gemini'), ('grokbuild')",
+            [],
+        );
+
         Ok(())
     }
 
@@ -548,6 +592,11 @@ impl Database {
                         log::info!("迁移数据库从 v17 到 v18（会话日志字节游标列）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（添加 Session 路由表）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1596,6 +1645,38 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// 迁移 v18 → v19：添加 Session 路由表
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_routes (
+                session_id    TEXT NOT NULL,
+                app_type      TEXT NOT NULL,
+                provider_id   TEXT NOT NULL,
+                assigned_at   INTEGER NOT NULL,
+                last_used_at  INTEGER NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                failover_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, app_type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_routes_last_used
+                ON session_routes(last_used_at);
+            CREATE INDEX IF NOT EXISTS idx_session_routes_provider
+                ON session_routes(app_type, provider_id);
+
+            CREATE TABLE IF NOT EXISTS session_routing_config (
+                app_type          TEXT PRIMARY KEY,
+                enabled           INTEGER NOT NULL DEFAULT 0,
+                strategy          TEXT NOT NULL DEFAULT 'round_robin',
+                session_ttl_seconds INTEGER NOT NULL DEFAULT 3600,
+                max_sessions_per_provider INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT OR IGNORE INTO session_routing_config (app_type)
+                VALUES ('claude'), ('codex'), ('gemini'), ('grokbuild');",
+        )
+        .map_err(|error| AppError::Database(format!("创建 Session 路由表失败: {error}")))?;
         Ok(())
     }
 
