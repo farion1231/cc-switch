@@ -15,6 +15,9 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
+/// 改价重算按 request_id 分块 UPDATE 的块大小（SQLite 变量数上限 999）。
+const REPRICE_UPDATE_CHUNK_SIZE: usize = 500;
+
 /// 使用量汇总
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1867,6 +1870,65 @@ impl Database {
         }
 
         Ok(updated)
+    }
+
+    /// 改价重算：把该模型作用域内已有成本的明细行五个成本列清零，再复用
+    /// 零成本回填按新价补回。行作用域筛选必须与
+    /// `backfill_missing_usage_costs_for_model` 共用同一套
+    /// model_pricing_candidates＋log_pricing_scope_matches 归一化，另造第二套
+    /// 会漏掉以原始别名落库的行。查不到价的行清零后保持 0，等待下次补价。
+    pub(crate) fn reprice_usage_costs_for_model(&self, model_id: &str) -> Result<u64, AppError> {
+        const PRICED_ROWS_SQL: &str =
+            "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
+                        cost_multiplier,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                        cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
+                        first_token_ms, duration_ms, status_code, error_message, created_at,
+                        data_source, pricing_model, input_token_semantics
+             FROM proxy_request_logs
+             WHERE CAST(total_cost_usd AS REAL) > 0
+               AND (input_tokens > 0 OR output_tokens > 0
+                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)
+               AND COALESCE(data_source, 'proxy') NOT IN ('pi_session', 'grok_session')";
+
+        let zeroed = {
+            let conn = lock_conn!(self.conn);
+            let target = model_pricing_candidates(model_id);
+            let request_ids = {
+                let mut stmt = conn.prepare(PRICED_ROWS_SQL)?;
+                let rows = stmt.query_map([], row_to_request_log_detail)?;
+                rows.collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .filter(|log| log_pricing_scope_matches(log, &target))
+                    .map(|log| log.request_id)
+                    .collect::<Vec<_>>()
+            };
+            if request_ids.is_empty() {
+                return Ok(0);
+            }
+
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| AppError::Database(format!("改价重算清零事务失败: {e}")))?;
+            let mut zeroed = 0u64;
+            for chunk in request_ids.chunks(REPRICE_UPDATE_CHUNK_SIZE) {
+                let placeholders = vec!["?"; chunk.len()].join(",");
+                let sql = format!(
+                    "UPDATE proxy_request_logs
+                     SET input_cost_usd = '0', output_cost_usd = '0', cache_read_cost_usd = '0',
+                         cache_creation_cost_usd = '0', total_cost_usd = '0'
+                     WHERE request_id IN ({placeholders})"
+                );
+                zeroed += tx.execute(&sql, rusqlite::params_from_iter(chunk.iter()))? as u64;
+            }
+            tx.commit()
+                .map_err(|e| AppError::Database(format!("提交改价重算清零事务失败: {e}")))?;
+            zeroed
+        };
+
+        self.backfill_missing_usage_costs_for_model(model_id)?;
+        Ok(zeroed)
     }
 
     /// 尝试为单条 log 回填成本字段。返回是否实际写入（true=已 UPDATE，false=跳过）。
