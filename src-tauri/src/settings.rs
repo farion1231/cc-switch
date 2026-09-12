@@ -367,6 +367,11 @@ pub struct AppSettings {
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
+    /// 启动时是否自动恢复路由接管（代理自启，默认关闭）。关闭时，退出程序即恢复
+    /// Live 配置并清除接管标志，不在客户端配置中残留失效的路由地址；开启时保持
+    /// 旧行为：退出保留 proxy_config.enabled，下次启动自动恢复接管（需配合开机自启）。
+    #[serde(default)]
+    pub proxy_restore_on_startup: bool,
     /// User has confirmed the local proxy first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_confirmed: Option<bool>,
@@ -528,6 +533,7 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
+            proxy_restore_on_startup: false,
             proxy_confirmed: None,
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,

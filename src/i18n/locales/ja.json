@@ -367,6 +367,9 @@
         "enableFeatureDescription": "有効にすると、メインページ上部にルーティングとフェイルオーバーの切り替えが表示されます",
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
+        "autoRestoreOnStartup": "起動時にルーティングを自動再開",
+        "autoRestoreOnStartupDescription": "有効にすると、CC Switch 起動時に前回のルーティングテイクオーバー状態を自動復元します（「起動時に自動実行」との併用が必要）。無効の場合、アプリ終了時にクライアントの元の設定が復元され、無効なルーティングアドレスが残りません。",
+        "autoRestoreOnStartupNeedsAutostart": "「起動時に自動実行」が現在オフのため、自動再開は CC Switch がシステムと共に起動したときにのみ有効になります",
         "running": "実行中",
         "stopped": "停止中"
       },

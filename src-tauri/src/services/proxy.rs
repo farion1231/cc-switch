@@ -1416,6 +1416,69 @@ impl ProxyService {
         Ok(())
     }
 
+    /// Clear stale per-app takeover flags left behind by startup crash recovery.
+    ///
+    /// Used when "auto-resume routing on startup" is disabled: startup crash
+    /// recovery has already restored the live configs and deleted the backups,
+    /// so any remaining `proxy_config.enabled = true` is residue that must not
+    /// re-arm takeover on the next launch.
+    ///
+    /// Holds the per-app switch lock so this cleanup serializes against
+    /// `set_takeover_for_app`: it can never clobber an in-flight enable, and an
+    /// enable that already committed inside the startup window is preserved —
+    /// a genuinely active takeover (live placeholder or backup present) is left
+    /// untouched instead of being reported as residue.
+    pub async fn clear_stale_takeover_flags(&self) {
+        let mut active_takeover_left = false;
+
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::GrokBuild,
+        ] {
+            let app_type_str = app.as_str();
+            let _guard = self.switch_locks.lock_for_app(app_type_str).await;
+
+            let mut config = match self.db.get_proxy_config_for_app(app_type_str).await {
+                Ok(config) => config,
+                Err(e) => {
+                    log::warn!("读取 {app_type_str} 接管标志失败: {e}");
+                    continue;
+                }
+            };
+            if !config.enabled {
+                continue;
+            }
+
+            // After startup crash recovery a stale flag has neither a live backup
+            // nor a taken-over live config. If either is present, takeover was
+            // (re-)enabled inside the startup window and is genuinely active.
+            let has_backup = self
+                .db
+                .get_live_backup(app_type_str)
+                .await
+                .map(|backup| backup.is_some())
+                .unwrap_or(false);
+            if has_backup || self.detect_takeover_in_live_config_for_app(&app) {
+                log::info!("{app_type_str} 接管处于激活状态（启动窗口内重新启用），保留接管标志");
+                active_takeover_left = true;
+                continue;
+            }
+
+            config.enabled = false;
+            if let Err(e) = self.db.update_proxy_config_for_app(config).await {
+                log::warn!("清除 {app_type_str} 接管标志失败: {e}");
+                continue;
+            }
+            log::info!("已清除 {app_type_str} 的残留接管标志");
+        }
+
+        if !active_takeover_left {
+            let _ = self.db.set_live_takeover_active(false).await;
+        }
+    }
+
     /// 同步 Live 配置中的 Token 到数据库
     ///
     /// 在清空 Live Token 之前调用，确保数据库中的 Provider 配置有最新的 Token。
@@ -4813,6 +4876,171 @@ mod tests {
             .stop_with_restore()
             .await
             .expect("stop proxy and restore live config");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stop_with_restore_clears_per_app_enabled_flag_and_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "provider-key",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "live-key",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }))
+            .expect("seed claude live config");
+
+        service
+            .set_takeover_for_app("claude", true)
+            .await
+            .expect("enable takeover");
+
+        let taken_over = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read claude proxy config");
+        assert!(taken_over.enabled, "takeover should be enabled before stop");
+
+        service
+            .stop_with_restore()
+            .await
+            .expect("stop proxy and restore live config");
+
+        let restored = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read claude proxy config after stop");
+        assert!(
+            !restored.enabled,
+            "stop_with_restore must clear the per-app enabled flag"
+        );
+        assert!(
+            db.get_live_backup("claude")
+                .await
+                .expect("read live backup")
+                .is_none(),
+            "stop_with_restore must delete the live backup"
+        );
+
+        let live = service.read_claude_live().expect("read restored live");
+        let base_url = live
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|value| value.as_str())
+            .expect("restored base url");
+        assert_eq!(
+            base_url, "https://api.anthropic.com",
+            "stop_with_restore must restore the original base url"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn clear_stale_takeover_flags_clears_residue_and_spares_active_takeover() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+
+        // Claude mimics the Codex-review race: an enable that committed inside
+        // the startup window. It is genuinely taken over (live backup +
+        // placeholder in the live config), so its flag must be spared.
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "provider-key",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "live-key",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }))
+            .expect("seed claude live config");
+        service
+            .set_takeover_for_app("claude", true)
+            .await
+            .expect("enable takeover inside the startup window");
+
+        // Codex mimics the intended target: a stale flag whose live config was
+        // already restored by startup crash recovery (no placeholder, no backup).
+        let mut codex_config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("read codex proxy config");
+        codex_config.enabled = true;
+        db.update_proxy_config_for_app(codex_config)
+            .await
+            .expect("seed stale codex enabled flag");
+
+        service.clear_stale_takeover_flags().await;
+
+        let claude_after = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read claude proxy config after cleanup");
+        assert!(
+            claude_after.enabled,
+            "active takeover inside the startup window must keep its enabled flag"
+        );
+        let live = service.read_claude_live().expect("read claude live");
+        let base_url = live
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|value| value.as_str())
+            .expect("claude base url");
+        assert!(
+            base_url.starts_with("http://127.0.0.1:"),
+            "active takeover must keep the proxy base url in live config"
+        );
+
+        let codex_after = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("read codex proxy config after cleanup");
+        assert!(
+            !codex_after.enabled,
+            "stale residue flag must be cleared so it cannot re-arm takeover"
+        );
     }
 
     #[tokio::test]

@@ -372,6 +372,8 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
+  // 启动时自动恢复路由接管（代理自启，默认关闭）；需配合 launchOnStartup 使用
+  proxyRestoreOnStartup?: boolean;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice

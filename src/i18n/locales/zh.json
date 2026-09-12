@@ -367,6 +367,9 @@
         "enableFeatureDescription": "开启后，主页面顶部将显示路由和故障转移开关",
         "enableFailoverToggle": "在主页面显示故障转移开关",
         "enableFailoverToggleDescription": "开启后，主页面顶部将独立显示故障转移开关",
+        "autoRestoreOnStartup": "开机自动恢复路由接管",
+        "autoRestoreOnStartupDescription": "开启后，CC Switch 启动时自动恢复上次的路由接管状态（需配合「开机自启」）。关闭时，退出程序会自动恢复客户端原始配置，不会残留失效的路由地址。",
+        "autoRestoreOnStartupNeedsAutostart": "当前未开启「开机自启」，自动恢复仅在 CC Switch 随系统启动时生效",
         "running": "运行中",
         "stopped": "已停止"
       },
