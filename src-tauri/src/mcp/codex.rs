@@ -19,6 +19,19 @@ fn should_sync_codex_mcp() -> bool {
     crate::codex_config::get_codex_config_dir().exists()
 }
 
+/// Infer the MCP transport when `type` is absent.
+///
+/// Codex configs may omit `type` on URL-based servers. Defaulting to `stdio`
+/// corrupts them: the live projection writes `command = ""` and the server
+/// breaks. Infer `http` when only a URL is present; otherwise keep `stdio`.
+fn infer_codex_mcp_type(entry_tbl: &toml::value::Table) -> &'static str {
+    if entry_tbl.contains_key("url") && !entry_tbl.contains_key("command") {
+        "http"
+    } else {
+        "stdio"
+    }
+}
+
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
 fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     let mut out = HashMap::new();
@@ -71,11 +84,11 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 continue;
             };
 
-            // type 缺省为 stdio
+            // type 缺省时从字段推断（url-only → http，避免误判为 stdio）
             let typ = entry_tbl
                 .get("type")
                 .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
+                .unwrap_or_else(|| infer_codex_mcp_type(entry_tbl));
 
             // 构建 JSON 规范
             let mut spec = serde_json::Map::new();
@@ -612,6 +625,23 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
 
     let mut t = Table::new();
     let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
+    // Repair legacy malformed specs: url-only servers misclassified as stdio
+    // by the old import default should be projected as http.
+    let has_command = spec
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let has_url = spec
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let typ = if typ == "stdio" && !has_command && has_url {
+        "http"
+    } else {
+        typ
+    };
     t["type"] = toml_edit::value(typ);
 
     // 定义核心字段（已在下方处理，跳过通用转换）
@@ -652,8 +682,11 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
     // 1. 处理核心字段（强类型）
     match typ {
         "stdio" => {
-            let cmd = spec.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            t["command"] = toml_edit::value(cmd);
+            if let Some(cmd) = spec.get("command").and_then(|v| v.as_str()) {
+                if !cmd.is_empty() {
+                    t["command"] = toml_edit::value(cmd);
+                }
+            }
 
             if let Some(args) = spec.get("args").and_then(|v| v.as_array()) {
                 let mut arr_v = Array::default();
@@ -684,8 +717,11 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
             }
         }
         "http" | "sse" => {
-            let url = spec.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            t["url"] = toml_edit::value(url);
+            if let Some(url) = spec.get("url").and_then(|v| v.as_str()) {
+                if !url.is_empty() {
+                    t["url"] = toml_edit::value(url);
+                }
+            }
 
             if let Some(headers) = spec.get("headers").and_then(|v| v.as_object()) {
                 let mut h_tbl = Table::new();
@@ -842,6 +878,143 @@ mod tests {
         assert_eq!(
             table.get("timeout").and_then(|item| item.as_integer()),
             Some(30)
+        );
+    }
+
+    #[test]
+    fn infer_type_for_url_only_server_is_http() {
+        let entry: toml::value::Table =
+            toml::from_str(r#"url = "https://mcp.example.com/docs""#).expect("parse");
+        assert_eq!(infer_codex_mcp_type(&entry), "http");
+    }
+
+    #[test]
+    fn infer_type_defaults_to_stdio_without_url() {
+        let entry: toml::value::Table =
+            toml::from_str(r#"command = "npx""#).expect("parse");
+        assert_eq!(infer_codex_mcp_type(&entry), "stdio");
+    }
+
+    #[test]
+    fn stdio_spec_without_command_does_not_emit_empty_command() {
+        // A spec that reached the DB with type=stdio but no command (e.g. a
+        // url-only server misclassified by the old import default) must not
+        // project `command = ""` into the live config.
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "url": "https://mcp.example.com/docs"
+        }))
+        .expect("table");
+        assert!(
+            table.get("command").is_none(),
+            "must not write command = \"\" when command is absent"
+        );
+    }
+
+    #[test]
+    fn legacy_stdio_url_only_spec_is_repaired_to_http() {
+        // Legacy DB records created by the old import default stored url-only
+        // servers as {"type":"stdio","url":"..."}. The write path must repair
+        // these to http so the projected config is valid.
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "url": "https://mcp.example.com/docs"
+        }))
+        .expect("table");
+        assert_eq!(
+            table.get("type").and_then(|i| i.as_str()),
+            Some("http"),
+            "legacy stdio+url spec must be repaired to http"
+        );
+        assert_eq!(
+            table.get("url").and_then(|i| i.as_str()),
+            Some("https://mcp.example.com/docs"),
+            "url must be preserved"
+        );
+        assert!(table.get("command").is_none());
+    }
+
+    #[test]
+    fn explicit_stdio_with_command_is_not_repaired() {
+        // A genuine stdio server with a command must not be reclassified.
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "command": "npx",
+            "url": "https://mcp.example.com/docs"
+        }))
+        .expect("table");
+        assert_eq!(
+            table.get("type").and_then(|i| i.as_str()),
+            Some("stdio"),
+            "explicit stdio with command must stay stdio"
+        );
+        assert_eq!(
+            table.get("command").and_then(|i| i.as_str()),
+            Some("npx")
+        );
+    }
+
+    #[test]
+    fn http_spec_without_url_does_not_emit_empty_url() {
+        let table = json_server_to_toml_table(&json!({
+            "type": "http"
+        }))
+        .expect("table");
+        assert!(
+            table.get("url").is_none(),
+            "must not write url = \"\" when url is absent"
+        );
+    }
+
+    #[test]
+    fn url_only_server_round_trip_preserves_http_type() {
+        // Simulate the full import → project pipeline for a url-only MCP
+        // server that omits `type` (as Codex configs commonly do).
+        let doc: toml::value::Table = toml::from_str(
+            r#"
+                [mcp_servers.esp-cn-docs]
+                url = "https://mcp.espressif.com/docs"
+            "#,
+        )
+        .expect("parse");
+        let servers = doc
+            .get("mcp_servers")
+            .and_then(|v| v.as_table())
+            .expect("mcp_servers");
+        let entry = servers
+            .get("esp-cn-docs")
+            .and_then(|v| v.as_table())
+            .expect("entry");
+
+        // Same type-resolution logic as the import closure.
+        let typ = entry
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| infer_codex_mcp_type(entry));
+        assert_eq!(typ, "http", "url-only server must be inferred as http");
+
+        // Build spec as the import closure does.
+        let mut spec = serde_json::Map::new();
+        spec.insert("type".into(), json!(typ));
+        if let Some(url) = entry.get("url").and_then(|v| v.as_str()) {
+            spec.insert("url".into(), json!(url));
+        }
+
+        // Project to TOML.
+        let table = json_server_to_toml_table(&Value::Object(spec)).expect("table");
+        assert_eq!(
+            table.get("type").and_then(|i| i.as_str()),
+            Some("http"),
+            "projected type must be http"
+        );
+        assert_eq!(
+            table.get("url").and_then(|i| i.as_str()),
+            Some("https://mcp.espressif.com/docs"),
+            "url must be preserved"
+        );
+        assert!(
+            table.get("command").is_none(),
+            "must not write command = \"\" for a url-only server"
         );
     }
 }
