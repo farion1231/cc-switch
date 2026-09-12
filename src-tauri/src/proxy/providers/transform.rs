@@ -66,8 +66,8 @@ pub fn is_openai_o_series(model: &str) -> bool {
 /// Supported families:
 /// - o-series: o1, o3, o4-mini, etc.
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
-/// - xAI Grok Build models. `grok-4.5` is the current documented Grok Build
-///   model; retain the previous `grok-build-*` family for saved providers.
+/// - xAI Grok Build models. `grok-4.5`/`grok-4.6` are the documented Grok
+///   Build models; retain the previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_lowercase();
     is_openai_o_series(&normalized)
@@ -77,6 +77,8 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
         || normalized == "grok-4.5"
         || normalized.starts_with("grok-4.5-")
+        || normalized == "grok-4.6"
+        || normalized.starts_with("grok-4.6-")
         || normalized.starts_with("grok-build-")
 }
 
@@ -84,7 +86,8 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
 ///
 /// Priority:
 /// 1. Explicit `output_config.effort` — preserves the user's intent directly.
-///    `low`/`medium`/`high` map 1:1; `max` maps to `xhigh`
+///    `low`/`medium`/`high`/`xhigh` map 1:1 (`xhigh` is what Claude Code's
+///    `/effort xhigh` sends); `max` maps to `xhigh`
 ///    (supported by mainstream GPT models). Unknown values are ignored.
 /// 2. Fallback: `thinking.type` + `budget_tokens`:
 ///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
@@ -101,6 +104,7 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "low" => Some("low"),
             "medium" => Some("medium"),
             "high" => Some("high"),
+            "xhigh" => Some("xhigh"),
             "max" => Some("xhigh"), // OpenAI xhigh = maximum reasoning effort
             _ => None,              // unknown value — do not inject
         };
@@ -1736,9 +1740,12 @@ mod tests {
         assert!(supports_reasoning_effort("gpt-5.4"));
         assert!(supports_reasoning_effort("gpt-5-codex"));
         assert!(supports_reasoning_effort("grok-4.5"));
+        assert!(supports_reasoning_effort("grok-4.6"));
+        assert!(supports_reasoning_effort("grok-4.6-build"));
         assert!(supports_reasoning_effort("grok-build-0.1"));
         assert!(!supports_reasoning_effort("gpt-4o"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));
+        assert!(!supports_reasoning_effort("grok-4"));
     }
 
     // ── resolve_reasoning_effort unit tests ──
@@ -1764,6 +1771,13 @@ mod tests {
     #[test]
     fn test_output_config_max_maps_to_reasoning_effort_xhigh() {
         let body = json!({"output_config": {"effort": "max"}});
+        assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+    }
+
+    #[test]
+    fn test_output_config_xhigh_maps_verbatim() {
+        // Claude Code's `/effort xhigh` sends output_config.effort="xhigh"
+        let body = json!({"output_config": {"effort": "xhigh"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
     }
 
