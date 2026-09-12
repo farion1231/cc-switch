@@ -17,17 +17,17 @@ import { getAppLabel } from "@/config/appConfig";
 /**
  * 代理服务状态管理
  */
-export function useProxyStatus() {
+export function useProxyStatus(options?: { enabled?: boolean }) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
   // 查询状态（自动轮询）
   const { data: status, isPending: isProxyStatusPending } =
-    useProxyStatusQuery();
+    useProxyStatusQuery(options);
 
   // 查询各应用接管状态
   const { data: takeoverStatus, isPending: isTakeoverStatusPending } =
-    useProxyTakeoverStatus(false);
+    useProxyTakeoverStatus(false, options);
 
   // 启动服务器（总开关：仅启动服务，不接管）
   const startProxyServerMutation = useMutation({

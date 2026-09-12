@@ -66,10 +66,22 @@ export const settingsApi = {
   },
 
   async getConfigDir(appId: AppId): Promise<string> {
+    if (appId === "dsh") {
+      return await invoke("dsh_get_home");
+    }
     return await invoke("get_config_dir", { app: appId });
   },
 
+  /** Resolve the DSH environment/default home while ignoring cc-switch's override. */
+  async getDshDefaultHome(): Promise<string> {
+    return await invoke("dsh_get_default_home");
+  },
+
   async openConfigFolder(appId: AppId): Promise<void> {
+    if (appId === "dsh") {
+      await invoke("dsh_open_home");
+      return;
+    }
     await invoke("open_config_folder", { app: appId });
   },
 
