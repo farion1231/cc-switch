@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -146,6 +147,8 @@ interface CodexFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+
+  modelRoutingField?: ReactNode;
 }
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
@@ -424,6 +427,7 @@ export function CodexFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  modelRoutingField,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -868,6 +872,8 @@ export function CodexFormFields({
           )}
         </div>
       )}
+
+      {modelRoutingField}
 
       {/* 高级选项 —— 上游格式/模型映射/思考能力/自定义 UA；预设供应商通常无需展开 */}
       {category !== "official" && (

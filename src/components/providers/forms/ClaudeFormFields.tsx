@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -159,6 +160,8 @@ interface ClaudeFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+
+  modelRoutingField?: ReactNode;
 }
 
 export function ClaudeFormFields({
@@ -225,6 +228,7 @@ export function ClaudeFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  modelRoutingField,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasRequestOverrides = Boolean(
@@ -780,6 +784,8 @@ export function ClaudeFormFields({
           onCustomEndpointsChange={onCustomEndpointsChange}
         />
       )}
+
+      {modelRoutingField}
 
       {shouldShowModelSelector && (
         <Collapsible

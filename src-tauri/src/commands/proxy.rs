@@ -3,6 +3,7 @@
 //! 提供前端调用的 API 接口
 
 use crate::error::AppError;
+use crate::proxy::model_router::{first_matching_route_index, ProviderModelRoute};
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
@@ -15,6 +16,12 @@ fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, Strin
         return Err(format!("{} 不支持本地路由", app.as_str()));
     }
     Ok(app)
+}
+
+/// 使用代理实际采用的规则测试模型路由。
+#[tauri::command(rename_all = "camelCase")]
+pub fn test_model_routes(routes: Vec<ProviderModelRoute>, model: String) -> Option<usize> {
+    first_matching_route_index(&routes, &model)
 }
 
 /// 启动代理服务器（仅启动服务，不接管 Live 配置）
