@@ -2,12 +2,35 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  "9527code": {
+    name: "9527code",
+    displayName: "9527CODE",
+    category: "ai-provider",
+    keywords: ["9527code", "9527", "codes", "aggregator", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
   a6api: {
     name: "a6api",
     displayName: "A6API",
     category: "ai-provider",
     keywords: ["a6api", "a6", "aggregator", "relay", "gateway", "claude"],
     defaultColor: "#3B82F6",
+  },
+  aicodewith: {
+    name: "aicodewith",
+    displayName: "AICodeWith",
+    category: "ai-provider",
+    keywords: [
+      "aicodewith",
+      "ai code with",
+      "aggregator",
+      "relay",
+      "gateway",
+      "claude",
+      "codex",
+      "gemini",
+    ],
+    defaultColor: "#3A3B40",
   },
   aigocode: {
     name: "aigocode",
@@ -60,6 +83,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
       "claude",
     ],
     defaultColor: "#111111",
+  },
+  soleapi: {
+    name: "soleapi",
+    displayName: "SoleAPI",
+    category: "ai-provider",
+    keywords: ["soleapi", "sole", "aggregator", "relay", "gateway", "claude"],
+    defaultColor: "currentColor",
   },
   sudocode: {
     name: "sudocode",
@@ -519,12 +549,26 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["perplexity"],
     defaultColor: "#20808D",
   },
+  qianwenai: {
+    name: "qianwenai",
+    displayName: "千问AI平台",
+    category: "ai-provider",
+    keywords: ["qianwenai", "qianwen", "qwen", "aliyun", "alibaba"],
+    defaultColor: "#624AFF",
+  },
   qwen: {
     name: "qwen",
     displayName: "qwen",
     category: "other",
     keywords: [],
     defaultColor: "currentColor",
+  },
+  qwencloud: {
+    name: "qwencloud",
+    displayName: "QwenCloud",
+    category: "ai-provider",
+    keywords: ["qwencloud", "qwen", "aliyun", "alibaba"],
+    defaultColor: "#6336E7",
   },
   stability: {
     name: "stability",
@@ -702,6 +746,27 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
     defaultColor: "#005AFF",
+  },
+  ppio: {
+    name: "ppio",
+    displayName: "PPIO",
+    category: "ai-provider",
+    keywords: ["ppio", "派欧云"],
+    defaultColor: "#2874FF",
+  },
+  jiekou: {
+    name: "jiekou",
+    displayName: "JieKou AI",
+    category: "ai-provider",
+    keywords: ["jiekou", "jiekou ai", "interface ai", "aggregator"],
+    defaultColor: "#000000",
+  },
+  xycai: {
+    name: "xycai",
+    displayName: "XycAi",
+    category: "ai-provider",
+    keywords: ["xycai", "xyc", "aggregator", "relay", "gateway", "token"],
+    defaultColor: "#1E88E5",
   },
 };
 

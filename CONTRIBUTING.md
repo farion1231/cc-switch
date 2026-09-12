@@ -24,6 +24,14 @@ There are many ways to contribute:
 - Rust 1.85+ and Cargo
 - [Tauri 2.0 prerequisites](https://v2.tauri.app/start/prerequisites/)
 
+> **pnpm version**: the exact version is pinned via the `packageManager` field
+> in `package.json` (and used by CI, which sets pnpm up through Corepack).
+> With Corepack enabled locally (`corepack enable`), your pnpm shim switches
+> to the pinned version automatically, with a one-time download on first use;
+> without Corepack, any pnpm 8+ keeps working (`package-manager-strict-version`
+> defaults to off). To upgrade pnpm, edit the `packageManager` field — Dependabot
+> bumps no longer cover the version.
+
 ### Quick Start
 
 ```bash
@@ -151,6 +159,12 @@ CC Switch supports three languages. When modifying user-facing text:
 - Node.js 18+ 和 pnpm 8+
 - Rust 1.85+ 和 Cargo
 - [Tauri 2.0 开发环境](https://v2.tauri.app/start/prerequisites/)
+
+> **pnpm 版本**：确切版本由 `package.json` 的 `packageManager` 字段固定
+> （CI 通过 Corepack 按此字段安装）。本地启用 Corepack（`corepack enable`）
+> 后，pnpm shim 会自动切到该版本（首次使用需一次性下载）；未启用 Corepack
+> 时任意 pnpm 8+ 均可正常使用（`package-manager-strict-version` 默认关闭）。
+> 升级 pnpm 请直接修改 `packageManager` 字段，不再由 Dependabot 代劳。
 
 ### 快速开始
 

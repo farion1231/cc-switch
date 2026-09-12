@@ -185,7 +185,11 @@ function ModelCombobox({
         collisionPadding={8}
         className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
       >
-        <Command>
+        <Command
+          label={t("omo.searchModel", {
+            defaultValue: "Search model...",
+          })}
+        >
           <CommandInput
             placeholder={t("omo.searchModel", {
               defaultValue: "Search model...",

@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useState, useRef, useCallback } from "react";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -11,30 +12,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import {
-  Download,
-  Plus,
-  Trash2,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-} from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -88,9 +69,7 @@ export function OpenClawFormFields({
   onUserAgentChange,
 }: OpenClawFormFieldsProps) {
   const { t } = useTranslation();
-  const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
-    {},
-  );
+  const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
@@ -110,8 +89,16 @@ export function OpenClawFormFields({
   const modelKeys = getModelKeys();
 
   // Toggle advanced section for a model
-  const toggleModelAdvanced = (index: number) => {
-    setExpandedModels((prev) => ({ ...prev, [index]: !prev[index] }));
+  const toggleModelAdvanced = (modelKey: string) => {
+    setExpandedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(modelKey)) {
+        next.delete(modelKey);
+      } else {
+        next.add(modelKey);
+      }
+      return next;
+    });
   };
 
   // Add a new model entry
@@ -160,16 +147,18 @@ export function OpenClawFormFields({
 
   // Remove a model entry
   const handleRemoveModel = (index: number) => {
+    const removedKey = modelKeysRef.current[index];
     modelKeysRef.current.splice(index, 1);
     const newModels = [...models];
     newModels.splice(index, 1);
     onModelsChange(newModels);
-    // Clean up expanded state
-    setExpandedModels((prev) => {
-      const updated = { ...prev };
-      delete updated[index];
-      return updated;
-    });
+    if (removedKey) {
+      setExpandedModels((prev) => {
+        const next = new Set(prev);
+        next.delete(removedKey);
+        return next;
+      });
+    }
   };
 
   // Update model field
@@ -240,10 +229,10 @@ export function OpenClawFormFields({
         <FormLabel htmlFor="openclaw-baseurl">
           {t("openclaw.baseUrl", { defaultValue: "API 端点" })}
         </FormLabel>
-        <Input
+        <ImeSafeInput
           id="openclaw-baseurl"
           value={baseUrl}
-          onChange={(e) => onBaseUrlChange(e.target.value)}
+          onValueChange={onBaseUrlChange}
           placeholder="https://api.example.com/v1"
         />
         <p className="text-xs text-muted-foreground">
@@ -267,7 +256,7 @@ export function OpenClawFormFields({
       />
 
       {/* User-Agent */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between border-l border-border-default pl-3">
         <div className="space-y-0.5">
           <FormLabel>
             {t("openclaw.userAgent", { defaultValue: "发送 User-Agent" })}
@@ -282,10 +271,10 @@ export function OpenClawFormFields({
       </div>
 
       {/* Models Editor */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
+      <div className="space-y-3 border-l border-border-default pl-3">
+        <div className="flex items-center justify-between gap-3">
           <FormLabel>
-            {t("openclaw.models", { defaultValue: "模型列表" })}
+            {t("openclaw.models", { defaultValue: "模型配置" })}
           </FormLabel>
           <div className="flex gap-1">
             <Button
@@ -317,191 +306,124 @@ export function OpenClawFormFields({
         </div>
 
         {models.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">
+          <p role="status" className="py-2 text-sm text-muted-foreground">
             {t("openclaw.noModels", {
-              defaultValue: "暂无模型配置。点击添加模型来配置可用模型。",
+              defaultValue: "暂无模型配置",
             })}
           </p>
         ) : (
-          <div className="space-y-4">
-            {models.map((model, index) => (
-              <div
-                key={modelKeys[index]}
-                className="p-3 border border-border/50 rounded-lg space-y-3"
-              >
-                {/* Role badge */}
-                <div className="flex items-center">
-                  <span
-                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                      index === 0
-                        ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
-                        : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {index === 0
-                      ? t("openclaw.primaryModel", {
-                          defaultValue: "默认模型",
-                        })
-                      : t("openclaw.fallbackModel", {
-                          defaultValue: "回退模型",
-                        })}
-                  </span>
-                </div>
-                {/* Model ID and Name row */}
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {t("openclaw.modelId", { defaultValue: "模型 ID" })}
-                    </label>
-                    <div className="flex gap-1">
-                      <Input
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+              <span className="w-9" />
+              <span className="flex-1">
+                {t("openclaw.modelId", { defaultValue: "模型 ID" })}
+              </span>
+              <span className="flex-1">
+                {t("openclaw.modelName", { defaultValue: "显示名称" })}
+              </span>
+              <span className="w-9" />
+            </div>
+            {models.map((model, index) => {
+              const modelKey = modelKeys[index];
+              const isExpanded = expandedModels.has(modelKey);
+              return (
+                <div key={modelKey} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => toggleModelAdvanced(modelKey)}
+                      aria-expanded={isExpanded}
+                      aria-label={t("openclaw.toggleModelDetails", {
+                        defaultValue: "展开或收起模型详情",
+                      })}
+                      className="h-9 w-9 shrink-0"
+                    >
+                      <ChevronRight
+                        className={`h-4 w-4 transition-transform motion-reduce:transition-none ${
+                          isExpanded ? "rotate-90" : ""
+                        }`}
+                      />
+                    </Button>
+                    <div className="flex min-w-0 flex-1 gap-1">
+                      <ImeSafeInput
                         value={model.id}
-                        onChange={(e) =>
-                          handleModelChange(index, "id", e.target.value)
+                        onValueChange={(value) =>
+                          handleModelChange(index, "id", value)
                         }
                         placeholder={t("openclaw.modelIdPlaceholder", {
                           defaultValue: "claude-3-sonnet",
                         })}
-                        className="flex-1"
+                        aria-label={t("openclaw.modelId", {
+                          defaultValue: "模型 ID",
+                        })}
+                        className="min-w-0 flex-1"
                       />
                       {fetchedModels.length > 0 && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="shrink-0"
-                            >
-                              <ChevronDown className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="end"
-                            className="max-h-64 overflow-y-auto z-[200]"
-                          >
-                            {Object.entries(
-                              fetchedModels.reduce(
-                                (acc, m) => {
-                                  const v = m.ownedBy || "Other";
-                                  if (!acc[v]) acc[v] = [];
-                                  acc[v].push(m);
-                                  return acc;
-                                },
-                                {} as Record<string, FetchedModel[]>,
-                              ),
-                            )
-                              .sort(([a], [b]) => a.localeCompare(b))
-                              .map(([vendor, vModels], vi) => (
-                                <div key={vendor}>
-                                  {vi > 0 && <DropdownMenuSeparator />}
-                                  <DropdownMenuLabel>
-                                    {vendor}
-                                  </DropdownMenuLabel>
-                                  {vModels.map((m) => (
-                                    <DropdownMenuItem
-                                      key={m.id}
-                                      onSelect={() =>
-                                        handleModelChange(index, "id", m.id)
-                                      }
-                                    >
-                                      {m.id}
-                                    </DropdownMenuItem>
-                                  ))}
-                                </div>
-                              ))}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <ModelDropdown
+                          models={fetchedModels}
+                          onSelect={(id) => handleModelChange(index, "id", id)}
+                        />
                       )}
                     </div>
-                  </div>
-                  <div className="flex-1 space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {t("openclaw.modelName", { defaultValue: "显示名称" })}
-                    </label>
-                    <Input
+                    <ImeSafeInput
                       value={model.name}
-                      onChange={(e) =>
-                        handleModelChange(index, "name", e.target.value)
+                      onValueChange={(value) =>
+                        handleModelChange(index, "name", value)
                       }
                       placeholder={t("openclaw.modelNamePlaceholder", {
                         defaultValue: "Claude 3 Sonnet",
                       })}
+                      aria-label={t("openclaw.modelName", {
+                        defaultValue: "显示名称",
+                      })}
+                      className="min-w-0 flex-1"
                     />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveModel(index)}
-                    className="h-9 w-9 mt-5 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-
-                {/* Advanced Options (Collapsible) */}
-                <Collapsible
-                  open={expandedModels[index] ?? false}
-                  onOpenChange={() => toggleModelAdvanced(index)}
-                >
-                  <CollapsibleTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
-                      size="sm"
-                      className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      {expandedModels[index] ? (
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      )}
-                      {t("openclaw.advancedOptions", {
-                        defaultValue: "高级选项",
+                      size="icon"
+                      onClick={() => handleRemoveModel(index)}
+                      aria-label={t("openclaw.removeModel", {
+                        defaultValue: "移除模型",
                       })}
+                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
                     </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-3 pt-2">
-                    {/* Reasoning, Input Types row */}
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("openclaw.reasoning", {
-                            defaultValue: "推理模式",
-                          })}
-                        </label>
-                        <div className="flex items-center h-9 gap-2">
+                  </div>
+
+                  {isExpanded && (
+                    <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2 animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none">
+                      <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
+                        <div className="flex items-center gap-2.5">
+                          <FormLabel
+                            htmlFor={`openclaw-model-reasoning-${modelKey}`}
+                            className="cursor-pointer"
+                          >
+                            {t("openclaw.reasoning", {
+                              defaultValue: "支持扩展思考",
+                            })}
+                          </FormLabel>
                           <Switch
+                            id={`openclaw-model-reasoning-${modelKey}`}
                             checked={model.reasoning ?? false}
                             onCheckedChange={(checked) =>
                               handleModelChange(index, "reasoning", checked)
                             }
                           />
-                          <span className="text-xs text-muted-foreground">
-                            {model.reasoning
-                              ? t("openclaw.reasoningOn", {
-                                  defaultValue: "启用",
-                                })
-                              : t("openclaw.reasoningOff", {
-                                  defaultValue: "关闭",
-                                })}
-                          </span>
                         </div>
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("openclaw.inputTypes", {
-                            defaultValue: "输入类型",
-                          })}
-                        </label>
-                        {/* "text" is checked by default but can be unchecked —
-                            some models genuinely don't support text input, and
-                            OpenClaw works fine with an empty or image-only array. */}
-                        <div className="flex items-center gap-4 h-9">
+                        <div className="flex items-center gap-3">
+                          <FormLabel>
+                            {t("openclaw.inputTypes", {
+                              defaultValue: "输入类型",
+                            })}
+                          </FormLabel>
                           {(["text", "image"] as const).map((type) => (
                             <label
                               key={type}
-                              className="flex items-center gap-1.5 cursor-pointer select-none"
+                              className="flex cursor-pointer select-none items-center gap-1.5"
                             >
                               <Checkbox
                                 checked={(model.input ?? ["text"]).includes(
@@ -511,7 +433,7 @@ export function OpenClawFormFields({
                                   const current = model.input ?? ["text"];
                                   const next = checked
                                     ? [...new Set([...current, type])]
-                                    : current.filter((v) => v !== type);
+                                    : current.filter((value) => value !== type);
                                   handleModelChange(index, "input", next);
                                 }}
                               />
@@ -520,152 +442,178 @@ export function OpenClawFormFields({
                           ))}
                         </div>
                       </div>
-                      <div className="flex-1" />
-                    </div>
 
-                    {/* Context Window and Max Tokens row */}
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
+                      <div className="space-y-1">
+                        <FormLabel
+                          htmlFor={`openclaw-model-context-${modelKey}`}
+                          className="text-xs text-muted-foreground"
+                        >
                           {t("openclaw.contextWindow", {
-                            defaultValue: "上下文窗口",
+                            defaultValue: "上下文长度",
                           })}
-                        </label>
+                        </FormLabel>
                         <Input
+                          id={`openclaw-model-context-${modelKey}`}
                           type="number"
+                          min={1}
+                          step={1}
                           value={model.contextWindow ?? ""}
-                          onChange={(e) =>
+                          onChange={(event) =>
                             handleModelChange(
                               index,
                               "contextWindow",
-                              e.target.value
-                                ? parseInt(e.target.value)
+                              event.target.value
+                                ? parseInt(event.target.value)
                                 : undefined,
                             )
                           }
                           placeholder="200000"
                         />
                       </div>
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
+                      <div className="space-y-1">
+                        <FormLabel
+                          htmlFor={`openclaw-model-max-tokens-${modelKey}`}
+                          className="text-xs text-muted-foreground"
+                        >
                           {t("openclaw.maxTokens", {
-                            defaultValue: "最大输出 Tokens",
+                            defaultValue: "最大输出 Token 数",
                           })}
-                        </label>
+                        </FormLabel>
                         <Input
+                          id={`openclaw-model-max-tokens-${modelKey}`}
                           type="number"
+                          min={1}
+                          step={1}
                           value={model.maxTokens ?? ""}
-                          onChange={(e) =>
+                          onChange={(event) =>
                             handleModelChange(
                               index,
                               "maxTokens",
-                              e.target.value
-                                ? parseInt(e.target.value)
+                              event.target.value
+                                ? parseInt(event.target.value)
                                 : undefined,
                             )
                           }
                           placeholder="32000"
                         />
                       </div>
-                      <div className="flex-1" />
-                    </div>
 
-                    {/* Cost row */}
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("openclaw.inputCost", {
-                            defaultValue: "输入价格 ($/M tokens)",
+                      <div className="space-y-2 sm:col-span-2">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t("openclaw.modelCost", {
+                            defaultValue: "成本（$/百万 Token）",
                           })}
-                        </label>
-                        <Input
-                          type="number"
-                          step="0.001"
-                          value={model.cost?.input ?? ""}
-                          onChange={(e) =>
-                            handleCostChange(index, "input", e.target.value)
-                          }
-                          placeholder="3"
-                        />
+                        </span>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <FormLabel
+                              htmlFor={`openclaw-model-input-cost-${modelKey}`}
+                              className="text-xs text-muted-foreground"
+                            >
+                              {t("openclaw.inputCost", {
+                                defaultValue: "输入",
+                              })}
+                            </FormLabel>
+                            <Input
+                              id={`openclaw-model-input-cost-${modelKey}`}
+                              type="number"
+                              min={0}
+                              step="0.001"
+                              value={model.cost?.input ?? ""}
+                              onChange={(event) =>
+                                handleCostChange(
+                                  index,
+                                  "input",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="3"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <FormLabel
+                              htmlFor={`openclaw-model-output-cost-${modelKey}`}
+                              className="text-xs text-muted-foreground"
+                            >
+                              {t("openclaw.outputCost", {
+                                defaultValue: "输出",
+                              })}
+                            </FormLabel>
+                            <Input
+                              id={`openclaw-model-output-cost-${modelKey}`}
+                              type="number"
+                              min={0}
+                              step="0.001"
+                              value={model.cost?.output ?? ""}
+                              onChange={(event) =>
+                                handleCostChange(
+                                  index,
+                                  "output",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="15"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <FormLabel
+                              htmlFor={`openclaw-model-cache-read-${modelKey}`}
+                              className="text-xs text-muted-foreground"
+                            >
+                              {t("openclaw.cacheReadCost", {
+                                defaultValue: "缓存读取",
+                              })}
+                            </FormLabel>
+                            <Input
+                              id={`openclaw-model-cache-read-${modelKey}`}
+                              type="number"
+                              min={0}
+                              step="0.001"
+                              value={model.cost?.cacheRead ?? ""}
+                              onChange={(event) =>
+                                handleCostChange(
+                                  index,
+                                  "cacheRead",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="0.3"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <FormLabel
+                              htmlFor={`openclaw-model-cache-write-${modelKey}`}
+                              className="text-xs text-muted-foreground"
+                            >
+                              {t("openclaw.cacheWriteCost", {
+                                defaultValue: "缓存写入",
+                              })}
+                            </FormLabel>
+                            <Input
+                              id={`openclaw-model-cache-write-${modelKey}`}
+                              type="number"
+                              min={0}
+                              step="0.001"
+                              value={model.cost?.cacheWrite ?? ""}
+                              onChange={(event) =>
+                                handleCostChange(
+                                  index,
+                                  "cacheWrite",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="3.75"
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("openclaw.outputCost", {
-                            defaultValue: "输出价格 ($/M tokens)",
-                          })}
-                        </label>
-                        <Input
-                          type="number"
-                          step="0.001"
-                          value={model.cost?.output ?? ""}
-                          onChange={(e) =>
-                            handleCostChange(index, "output", e.target.value)
-                          }
-                          placeholder="15"
-                        />
-                      </div>
-                      <div className="flex-1" />
                     </div>
-
-                    {/* Cache Cost row */}
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("openclaw.cacheReadCost", {
-                            defaultValue: "缓存读取价格 ($/M tokens)",
-                          })}
-                        </label>
-                        <Input
-                          type="number"
-                          step="0.001"
-                          value={model.cost?.cacheRead ?? ""}
-                          onChange={(e) =>
-                            handleCostChange(index, "cacheRead", e.target.value)
-                          }
-                          placeholder="0.3"
-                        />
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("openclaw.cacheWriteCost", {
-                            defaultValue: "缓存写入价格 ($/M tokens)",
-                          })}
-                        </label>
-                        <Input
-                          type="number"
-                          step="0.001"
-                          value={model.cost?.cacheWrite ?? ""}
-                          onChange={(e) =>
-                            handleCostChange(
-                              index,
-                              "cacheWrite",
-                              e.target.value,
-                            )
-                          }
-                          placeholder="3.75"
-                        />
-                      </div>
-                      <div className="flex-1" />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {t("openclaw.cacheCostHint", {
-                        defaultValue:
-                          "缓存价格用于计算 Prompt Caching 的成本。如不使用缓存可留空。",
-                      })}
-                    </p>
-                  </CollapsibleContent>
-                </Collapsible>
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
-
-        <p className="text-xs text-muted-foreground">
-          {t("openclaw.modelsHint", {
-            defaultValue:
-              "配置该供应商支持的模型。第一个模型为默认模型（Primary），其余为回退模型（Fallback）。拖拽或调整顺序可更改默认模型。",
-          })}
-        </p>
       </div>
     </>
   );

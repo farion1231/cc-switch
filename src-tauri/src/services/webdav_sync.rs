@@ -4,8 +4,6 @@
 //! primitives in [`super::webdav`]. Artifact set: `db.sql` + `skills.zip`.
 
 use std::collections::BTreeMap;
-use std::future::Future;
-use std::sync::OnceLock;
 
 use chrono::Utc;
 use serde_json::Value;
@@ -17,6 +15,7 @@ use crate::services::webdav::{
 };
 use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncStatus};
 
+pub(crate) use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, effective_db_compat_version, localized,
     persist_sync_success_best_effort, sha256_hex, validate_artifact_size_limit,
@@ -25,22 +24,12 @@ use super::sync_protocol::{
     REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
+#[cfg(test)]
+pub(crate) fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
+    super::sync_protocol::sync_mutex()
+}
+
 pub(crate) mod archive;
-
-// ─── Sync lock ───────────────────────────────────────────────
-
-pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
-pub async fn run_with_sync_lock<T, Fut>(operation: Fut) -> Result<T, AppError>
-where
-    Fut: Future<Output = Result<T, AppError>>,
-{
-    let _guard = sync_mutex().lock().await;
-    operation.await
-}
 
 struct RemoteSnapshot {
     layout: RemoteLayout,
