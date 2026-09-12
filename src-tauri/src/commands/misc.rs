@@ -762,39 +762,58 @@ async fn get_single_tool_version_impl(
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
 
-    // 1. 获取本地版本
-    let probe = if let Some(distro) = wsl_distro.as_deref() {
-        try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
-    } else {
-        #[cfg(target_os = "windows")]
-        {
-            // Probe the PATH-default entry (what `tool` resolves to in a
-            // terminal) first, and only fall back to the directory scan when it
-            // is genuinely absent (NotFound). Two goals:
-            // 1. Keep the displayed "current version" aligned with the version
-            //    the user actually runs — a stale shim in a hardcoded fallback
-            //    dir (e.g. an old `%APPDATA%\npm`) must not override a newer
-            //    PATH install (#4701: "updated but still shows the old version").
-            // 2. Mirror the non-Windows structure (`try_get_version` →
-            //    `scan_cli_version`).
-            // `probe_path_default_version` executes only the real executable
-            //    resolved by `where` (App Execution Aliases filtered out), so
-            //    it never `cmd /C tool` into a protocol handler.
-            match probe_path_default_version(tool) {
-                ShellProbe::NotFound(_) => scan_cli_version(tool),
-                found => found,
+    // 1. Local version. Probing is blocking subprocess work (login shells,
+    //    per-path `--version` runs); move it into spawn_blocking — same pattern
+    //    as `probe_tool_installations` — so it cannot starve tokio workers. The
+    //    About page fires one IPC per tool concurrently; login shells loading
+    //    rc files can take seconds each, and workers pinned by those calls
+    //    delay every pending IPC, which users experience as a frozen page.
+    let probe_tool = tool.to_string();
+    let probe_wsl_distro = wsl_distro.clone();
+    let probe_wsl_shell = wsl_shell.map(str::to_string);
+    let probe_wsl_shell_flag = wsl_shell_flag.map(str::to_string);
+    let probe = tokio::task::spawn_blocking(move || {
+        if let Some(distro) = probe_wsl_distro.as_deref() {
+            try_get_version_wsl(
+                &probe_tool,
+                distro,
+                probe_wsl_shell.as_deref(),
+                probe_wsl_shell_flag.as_deref(),
+            )
+        } else {
+            #[cfg(target_os = "windows")]
+            {
+                // Probe the PATH-default entry (what `tool` resolves to in a
+                // terminal) first, and only fall back to the directory scan when it
+                // is genuinely absent (NotFound). Two goals:
+                // 1. Keep the displayed "current version" aligned with the version
+                //    the user actually runs — a stale shim in a hardcoded fallback
+                //    dir (e.g. an old `%APPDATA%\npm`) must not override a newer
+                //    PATH install (#4701: "updated but still shows the old version").
+                // 2. Mirror the non-Windows structure (`try_get_version` →
+                //    `scan_cli_version`).
+                // `probe_path_default_version` executes only the real executable
+                //    resolved by `where` (App Execution Aliases filtered out), so
+                //    it never `cmd /C tool` into a protocol handler.
+                match probe_path_default_version(&probe_tool) {
+                    ShellProbe::NotFound(_) => scan_cli_version(&probe_tool),
+                    found => found,
+                }
             }
-        }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            // PATH 第一个命令优先；只有它确实没装(NotFound)才去常见目录兜底扫描。
-            match try_get_version(tool) {
-                ShellProbe::NotFound(_) => scan_cli_version(tool),
-                found => found,
+            #[cfg(not(target_os = "windows"))]
+            {
+                // PATH first; only fall back to the common-dir scan when the
+                // PATH default is genuinely absent (NotFound).
+                match try_get_version(&probe_tool) {
+                    ShellProbe::NotFound(_) => scan_cli_version(&probe_tool),
+                    found => found,
+                }
             }
         }
-    };
+    })
+    .await
+    .unwrap_or_else(|e| ShellProbe::NotFound(format!("local version probe join error: {e}")));
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),
@@ -1085,6 +1104,7 @@ const NOT_INSTALLED: &str = "not installed or not executable";
 /// 关键区分"没装"与"装了但 `--version` 自身报错退出"（如工具要求更高的 Node 版本）：
 /// 后者必须如实上报、不去别处捞旧版掩盖，否则"升级到新版却跑不起来"会被旧版盖住，
 /// 表现为"升级成功但版本号不变"。
+#[derive(Debug)]
 enum ShellProbe {
     /// 成功拿到版本号
     Found(String),
@@ -1101,19 +1121,45 @@ enum ShellProbe {
 /// 只执行已定位到的真实可执行文件。
 #[cfg(not(target_os = "windows"))]
 fn try_get_version(tool: &str) -> ShellProbe {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
-    let output = {
+    let spawn = {
         let shell = std::env::var("SHELL")
             .ok()
             .filter(|s| is_valid_shell(s))
             .unwrap_or_else(|| "sh".to_string());
         let flag = default_flag_for_shell(&shell);
-        Command::new(shell)
-            .arg(flag)
+        let mut cmd = Command::new(shell);
+        cmd.arg(flag)
             .arg(format!("{tool} --version"))
-            .output()
+            // spawn() no longer implies output()'s stdin=null; keep it explicit so
+            // rc files cannot block on reads from our stdin.
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // setsid: detach the probe shell from the controlling terminal. A `-lic`
+        // shell that keeps the TTY runs with job control, and concurrent probes
+        // race for the TTY foreground process group while running `--version` as
+        // a job — losers of the race (or later tcsetpgrp attempts from the now
+        // background group) get SIGTTIN/SIGTTOU, whose default action stops the
+        // entire CC Switch foreground group and freezes the GUI on the About
+        // page (#7075). With no controlling TTY, job control stays off; the
+        // rc-file PATH lookup that `-lic` exists for is unaffected.
+        isolate_child_process_group(&mut cmd);
+        cmd.spawn()
     };
+
+    // Bounded like every other login-shell probe: a hung rc file degrades to
+    // NotFound (which falls back to scan_cli_version) instead of pinning the
+    // caller thread forever.
+    let child = match spawn {
+        Ok(child) => child,
+        Err(_) => return ShellProbe::NotFound(NOT_INSTALLED.to_string()),
+    };
+    let output = wait_child_output(
+        child,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    );
 
     match output {
         Ok(out) => {
@@ -1127,8 +1173,10 @@ fn try_get_version(tool: &str) -> ShellProbe {
                     ShellProbe::Found(extract_version(raw))
                 }
             } else {
-                // exit 127 = shell 找不到命令（可放心 fallback 到搜索路径）；其它非零码
-                // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
+                // exit 127 = command not found by the shell (safe to fall back
+                // to the search-path scan); any other non-zero exit = the tool
+                // exists but `--version` itself failed — report as-is, no
+                // fallback masking.
                 let err = if stderr.is_empty() { stdout } else { stderr };
                 if out.status.code() == Some(127) || err.is_empty() {
                     ShellProbe::NotFound(NOT_INSTALLED.to_string())
@@ -2055,9 +2103,6 @@ fn probe_path_default_version(tool: &str) -> ShellProbe {
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
 fn scan_cli_version(tool: &str) -> ShellProbe {
-    #[cfg(not(target_os = "windows"))]
-    use std::process::Command;
-
     let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
@@ -2084,13 +2129,11 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
             #[cfg(target_os = "windows")]
             let output = run_windows_tool_version_command(&tool_path, &new_path);
 
+            // Setsid + bounded wait, same as the enumerate path: candidate
+            // executables here are real files (no shell involved), but they can
+            // still hang, and an unbounded `.output()` would pin this worker.
             #[cfg(not(target_os = "windows"))]
-            let output = {
-                Command::new(&tool_path)
-                    .arg("--version")
-                    .env("PATH", &new_path)
-                    .output()
-            };
+            let output = run_probe_version_command(&tool_path, &new_path);
 
             if let Ok(out) = output {
                 let stdout = decode_command_output(&out.stdout).trim().to_string();
@@ -2237,17 +2280,28 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 /// 解析不到时返回 `None`，调用方保持原有行为（不注入），不引入新的失败模式。
 #[cfg(not(target_os = "windows"))]
 fn login_shell_path() -> Option<String> {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let out = Command::new(shell)
-        .arg(flag)
+    let mut cmd = Command::new(shell);
+    cmd.arg(flag)
         .arg("/usr/bin/env")
-        .output()
-        .ok()?;
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Same TTY/job-control hazard as every other `-lic` probe (#7075): detach
+    // from the controlling terminal and bound the wait so a hung rc file only
+    // loses the PATH merge, never the caller.
+    isolate_child_process_group(&mut cmd);
+    let child = cmd.spawn().ok()?;
+    let out = wait_child_output(
+        child,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -2364,12 +2418,17 @@ fn resolve_path_default(
 /// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
 /// 安装跑一次 `--version`，任何一条挂死（.zshrc 阻塞、nvm shim 指向已删除的 node 等）
 /// 都会卡住整个"全部升级"预检——到点整组击杀，该条按探测失败降级，预检继续。
+/// The About page version probes (`try_get_version`/`login_shell_path`/
+/// `scan_cli_version`) share this budget so one hung probe cannot stall the
+/// whole page load.
 const INSTALL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// 带超时的 `--version` 探测（非 Windows）。与 `scan_cli_version` 的裸 `output()`
-/// 不同：stdin 显式置 null、经 `isolate_child_process_group` 进独立会话，超时可整组击杀。
-/// `new_path` 取 `&OsStr` 而非 `&str`：与 `prepend_search_dir_to_path` 同一约定，
-/// 非 UTF-8 的 PATH 段不能在传递途中被有损转换丢弃。
+/// Timed `--version` probe (non-Windows). stdin is explicitly nulled, and the
+/// child goes through `isolate_child_process_group` into its own session so a
+/// timeout can kill the whole group.
+/// `new_path` takes `&OsStr` rather than `&str`: same convention as
+/// `prepend_search_dir_to_path`, so non-UTF-8 PATH segments cannot be lossily
+/// dropped in transit.
 #[cfg(not(target_os = "windows"))]
 fn run_probe_version_command(
     tool_path: &Path,
@@ -4778,6 +4837,69 @@ mod tests {
         assert!(
             started.elapsed() < std::time::Duration::from_secs(5),
             "kill should return promptly instead of waiting out the sleep"
+        );
+    }
+
+    /// #7075 regression: the `try_get_version` probe shell must leave the
+    /// controlling terminal (setsid). With SHELL pointing at bash/zsh this runs
+    /// `-lic`; if the TTY is kept, concurrent About-page probes race for the
+    /// foreground process group and the losers get SIGTTIN/SIGTTOU, stopping
+    /// the whole CC Switch process group.
+    ///
+    /// Two stable assertions, robust to whether the probe shell forks or execs
+    /// the inner `sh -c`:
+    /// 1. the probe child's session ID differs from this test process's session
+    ///    ID (setsid always mints a fresh session, inherited otherwise);
+    /// 2. the probe child has no controlling terminal (`ps -o tty=` prints `?`)
+    ///    — the precise property that disables job control / tcsetpgrp races.
+    /// (2) is vacuous on CI runners without a TTY but exact on dev machines;
+    /// (1) is meaningful everywhere.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn try_get_version_probe_detaches_from_controlling_terminal() {
+        let runner_sid_out = std::process::Command::new("/bin/sh")
+            .args(["-c", &format!("ps -o sid= -p {}", std::process::id())])
+            .output()
+            .expect("run ps for runner sid");
+        let runner_sid: u32 = String::from_utf8_lossy(&runner_sid_out.stdout)
+            .trim()
+            .parse()
+            .expect("runner session id should be numeric");
+
+        let sid_probe = try_get_version("sh -c 'ps -o sid= -p $$'");
+        let ShellProbe::Found(sid_text) = sid_probe else {
+            panic!("session probe should succeed, got {sid_probe:?}");
+        };
+        let probe_sid: u32 = sid_text
+            .trim()
+            .parse()
+            .expect("probe sid should be numeric");
+        assert_ne!(
+            probe_sid, runner_sid,
+            "probe shell must run in its own session (setsid missing?)"
+        );
+
+        let tty_probe = try_get_version("sh -c 'ps -o tty= -p $$'");
+        let ShellProbe::Found(tty_text) = tty_probe else {
+            panic!("tty probe should succeed, got {tty_probe:?}");
+        };
+        assert_eq!(
+            tty_text.trim(),
+            "?",
+            "probe shell must have no controlling terminal (setsid missing?)"
+        );
+    }
+
+    /// Healthy path: the setsid-based `try_get_version` still captures
+    /// `--version` output. `echo 2.0.0 --version` prints a version string, so
+    /// extract_version should match it.
+    #[cfg(unix)]
+    #[test]
+    fn try_get_version_captures_healthy_output() {
+        let probe = try_get_version("echo 2.0.0");
+        assert!(
+            matches!(&probe, ShellProbe::Found(v) if v.contains("2.0.0")),
+            "expected Found(2.0.0), got {probe:?}"
         );
     }
 
