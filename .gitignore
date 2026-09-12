@@ -31,3 +31,8 @@ copilot-api
 .history
 CODEBUDDY.md
 mainWindow.js
+
+# Local agent memory and workflow artifacts (never push machine-local records)
+docs/agent-memory/
+docs/superpowers/
+AGENTS.md
