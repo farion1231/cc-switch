@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Tooltip,
   TooltipContent,
@@ -25,6 +26,11 @@ interface SessionMessageItemProps {
   isActive: boolean;
   searchQuery?: string;
   onCopy: (content: string) => void;
+  selection?: {
+    checked: boolean;
+    label: string;
+    onChange: (checked: boolean) => void;
+  };
 }
 
 export const SessionMessageItem = memo(function SessionMessageItem({
@@ -32,6 +38,7 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   isActive,
   searchQuery,
   onCopy,
+  selection,
 }: SessionMessageItemProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -76,12 +83,19 @@ export const SessionMessageItem = memo(function SessionMessageItem({
           })}
         </TooltipContent>
       </Tooltip>
-      <div className="flex items-center justify-between text-xs mb-1.5 pr-6">
+      <div className="flex items-center gap-2 text-xs mb-1.5 pr-6">
+        {selection && (
+          <Checkbox
+            checked={selection.checked}
+            aria-label={selection.label}
+            onCheckedChange={selection.onChange}
+          />
+        )}
         <span className={cn("font-semibold", getRoleTone(message.role))}>
           {getRoleLabel(message.role, t)}
         </span>
         {message.ts && (
-          <span className="text-muted-foreground">
+          <span className="text-muted-foreground ml-auto">
             {formatTimestamp(message.ts)}
           </span>
         )}

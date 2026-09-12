@@ -69,6 +69,7 @@ import {
   getBaseName,
   getProviderIconName,
   getProviderLabel,
+  getRoleLabel,
   getSessionDirectoryGroupKey,
   getSessionKey,
   groupSessionsByProviderAndDirectory,
@@ -222,6 +223,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     appId as ProviderFilter,
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [messageSelectionMode, setMessageSelectionMode] = useState(false);
+  const [selectedMessages, setSelectedMessages] = useState<Set<number>>(
+    new Set(),
+  );
   const [listViewMode, setListViewMode] = useState<SessionListViewMode>(
     readInitialSessionListViewMode,
   );
@@ -350,6 +355,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   });
 
   useEffect(() => {
+    setSelectedMessages(new Set());
+    setMessageSelectionMode(false);
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
@@ -427,6 +434,25 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     },
     [handleCopy, t],
   );
+
+  const selectMessageRange = (start: number, end: number, checked: boolean) => {
+    setSelectedMessages((previous) => {
+      const next = new Set(previous);
+      for (let index = start; index < end; index++) {
+        if (checked) next.add(index);
+        else next.delete(index);
+      }
+      return next;
+    });
+  };
+
+  const copySelectedMessages = () => {
+    const text = messages
+      .filter((_, index) => selectedMessages.has(index))
+      .map((message) => `${getRoleLabel(message.role, t)}\n${message.content}`)
+      .join("\n\n");
+    void handleCopy(text, t("sessionManager.messageCopied"));
+  };
 
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
@@ -1668,7 +1694,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                       {/* 消息列表 */}
                       <div className="flex-1 min-w-0 flex flex-col">
                         <div className="px-4 pt-4 pb-2 min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <MessageSquare className="size-4 text-muted-foreground" />
                             <span className="text-sm font-medium">
                               {t("sessionManager.conversationHistory", {
@@ -1678,6 +1704,54 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             <Badge variant="secondary" className="text-xs">
                               {messages.length}
                             </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="ml-auto h-7"
+                              onClick={() => {
+                                setMessageSelectionMode(!messageSelectionMode);
+                                setSelectedMessages(new Set());
+                              }}
+                            >
+                              {t(
+                                messageSelectionMode
+                                  ? "common.cancel"
+                                  : "sessionManager.selectMessages",
+                              )}
+                            </Button>
+                            {messageSelectionMode && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7"
+                                  onClick={() =>
+                                    selectMessageRange(
+                                      0,
+                                      messages.length,
+                                      selectedMessages.size !== messages.length,
+                                    )
+                                  }
+                                >
+                                  {t(
+                                    selectedMessages.size === messages.length
+                                      ? "sessionManager.clearMessageSelection"
+                                      : "sessionManager.selectAllMessages",
+                                  )}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  className="h-7"
+                                  disabled={selectedMessages.size === 0}
+                                  onClick={copySelectedMessages}
+                                >
+                                  <Copy className="size-3.5 mr-1" />
+                                  {t("sessionManager.copySelectedMessages", {
+                                    count: selectedMessages.size,
+                                  })}
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </div>
                         <div
@@ -1724,6 +1798,27 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                       }
                                       searchQuery={search}
                                       onCopy={handleMessageCopy}
+                                      selection={
+                                        messageSelectionMode
+                                          ? {
+                                              checked: selectedMessages.has(
+                                                virtualRow.index,
+                                              ),
+                                              label: t(
+                                                "sessionManager.selectMessage",
+                                                {
+                                                  number: virtualRow.index + 1,
+                                                },
+                                              ),
+                                              onChange: (checked) =>
+                                                selectMessageRange(
+                                                  virtualRow.index,
+                                                  virtualRow.index + 1,
+                                                  checked,
+                                                ),
+                                            }
+                                          : undefined
+                                      }
                                     />
                                   </div>
                                 ))}
@@ -1735,6 +1830,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                       {/* 右侧目录 - 类似少数派 (大屏幕) */}
                       <SessionTocSidebar
                         items={userMessagesToc}
+                        selection={
+                          messageSelectionMode
+                            ? {
+                                selected: selectedMessages,
+                                messageCount: messages.length,
+                                onChange: selectMessageRange,
+                              }
+                            : undefined
+                        }
                         onItemClick={scrollToMessage}
                       />
                     </div>
@@ -1742,6 +1846,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     {/* 浮动目录按钮 (小屏幕) */}
                     <SessionTocDialog
                       items={userMessagesToc}
+                      selection={
+                        messageSelectionMode
+                          ? {
+                              selected: selectedMessages,
+                              messageCount: messages.length,
+                              onChange: selectMessageRange,
+                            }
+                          : undefined
+                      }
                       onItemClick={scrollToMessage}
                       open={tocDialogOpen}
                       onOpenChange={setTocDialogOpen}
