@@ -2892,6 +2892,10 @@
       "enabled": "{{app}} routing enabled",
       "disabled": "{{app}} routing disabled",
       "failed": "Failed to toggle routing: {{detail}}",
+      "cleanup": {
+        "officialAuthFallback": "Cannot safely clean up Codex takeover configuration: cleanup would cause a retained URL to fall back to official credentials. Restore the original configuration first, or configure independent credentials for that URL.",
+        "unverifiedProfiles": "Cannot safely clean up Codex takeover configuration: profiles exist or the configuration directory cannot be inspected, so fallback to official credentials cannot be ruled out. Restore the original configuration and check the relevant profiles first."
+      },
       "tooltip": {
         "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitch provider for hot switching",
         "broken": "{{appLabel}} is routing, but routing service is not running",

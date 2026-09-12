@@ -135,7 +135,7 @@ export const useApplyProfileMutation = () => {
         toast.warning(
           t("profiles.applyWarnings", {
             warningCount: warnings.length,
-            details: warnings.join("\n"),
+            details: warnings.map(extractErrorMessage).join("\n"),
           }),
           { closeButton: true, duration: 10000 },
         );
