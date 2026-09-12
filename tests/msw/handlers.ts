@@ -24,6 +24,7 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
+  getCopyProviderToAppsOutcomes,
 } from "./state";
 
 const TAURI_ENDPOINT = "http://tauri.local";
@@ -119,6 +120,25 @@ export const handlers = [
     const { id, app } = await withJson<{ id: string; app: AppId }>(request);
     deleteProvider(app, id);
     return success(true);
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/copy_provider_to_apps`, async ({ request }) => {
+    const { providerId, targetApps } = await withJson<{
+      providerId: string;
+      targetApps: AppId[];
+    }>(request);
+    const scripted = getCopyProviderToAppsOutcomes();
+    return success(
+      (targetApps ?? []).map(
+        (targetApp) =>
+          scripted?.[targetApp] ?? {
+            targetApp,
+            status: "copied",
+            newProviderId: providerId,
+            reason: null,
+          },
+      ),
+    );
   }),
 
   http.post(`${TAURI_ENDPOINT}/remove_provider_from_live_config`, () =>

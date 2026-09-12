@@ -179,7 +179,28 @@
         "apiKeyPlaceholder": "Enter Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again"
+    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
+    "copyToApps": {
+      "title": "Copy to other apps",
+      "description": "Copy \"{{name}}\" to the selected apps",
+      "selectAll": "Select all",
+      "selectedCount": "{{count}} / {{total}} selected",
+      "copy": "Copy to {{count}} apps",
+      "copying": "Copying…",
+      "modelHint": "Verify models after copying.",
+      "success": "Copied to {{count}} apps",
+      "successPartial": "Copy finished: {{copied}} copied, {{skipped}} skipped",
+      "resultSummary": "Copy finished: {{copied}} copied / {{skipped}} skipped / {{failed}} failed",
+      "copyError": "Copy to other apps failed",
+      "reasons": {
+        "sameAsSource": "Target app is the same as the source app",
+        "alreadyExists": "Target app already has a provider with the same ID \"{{name}}\", skipped",
+        "incompatibleClaudeDesktop": "This provider's configuration cannot be converted for Claude Desktop, skipped",
+        "missingCredentials": "Cannot extract base_url and API key, skipped",
+        "unsupportedTarget": "Unsupported target app",
+        "saveFailed": "Failed to save to the target app: {{error}}"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",

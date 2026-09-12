@@ -19,8 +19,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import type { CopyTargetOutcome } from "@/lib/api/providers";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { getAppLabel } from "@/config/appConfig";
+import { CopyToAppsDialog } from "@/components/providers/CopyToAppsDialog";
 import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
@@ -201,6 +204,10 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // 跨应用复制对话框：持有当前源供应商；非空即打开。
+  const [copyToAppsProvider, setCopyToAppsProvider] = useState<Provider | null>(
+    null,
+  );
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -272,6 +279,92 @@ export function ProviderList({
       queryClient.invalidateQueries({ queryKey: ["providers", appId] });
     },
   });
+
+  // 跨应用复制：逐目标呈现 copied / skipped / failed，并刷新受影响的目标应用。
+  const handleCopyToApps = useCallback(
+    async (provider: Provider, targetApps: AppId[]) => {
+      let outcomes: CopyTargetOutcome[];
+      try {
+        outcomes = await providersApi.copyToApps(
+          appId,
+          provider.id,
+          targetApps,
+        );
+      } catch (error) {
+        toast.error(t("provider.copyToApps.copyError"), {
+          description: extractErrorMessage(error),
+        });
+        // rethrow：对话框保持打开，用户可直接重试。
+        throw error;
+      }
+
+      const copied: string[] = [];
+      const skipped: { appLabel: string; reason: string }[] = [];
+      const failed: { appLabel: string; reason: string }[] = [];
+      for (const outcome of outcomes) {
+        if (outcome.status === "copied") {
+          copied.push(outcome.targetApp);
+          continue;
+        }
+        const reason = outcome.reason
+          ? t(`provider.copyToApps.reasons.${outcome.reason.key}`, {
+              ...outcome.reason.params,
+              defaultValue: outcome.reason.fallback,
+            })
+          : "";
+        (outcome.status === "skipped" ? skipped : failed).push({
+          appLabel: getAppLabel(outcome.targetApp),
+          reason,
+        });
+      }
+
+      for (const targetApp of targetApps) {
+        queryClient.invalidateQueries({ queryKey: ["providers", targetApp] });
+      }
+      if (targetApps.includes("claude-desktop")) {
+        queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
+      }
+
+      if (failed.length === 0) {
+        if (skipped.length === 0) {
+          toast.success(
+            t("provider.copyToApps.success", { count: copied.length }),
+          );
+        } else {
+          // 仅跳过（无失败）也必须给出明细：ID 冲突 / Desktop 不兼容等
+          // 原因只有逐目标文案能说清，只报数量用户无从排查。
+          const description = skipped.map(({ appLabel, reason }) => (
+            <div key={`${appLabel}: ${reason}`}>{`${appLabel}: ${reason}`}</div>
+          ));
+          const title = t("provider.copyToApps.successPartial", {
+            copied: copied.length,
+            skipped: skipped.length,
+          });
+          // 全部被跳过 = 没有任何目标生效，用 warning 而不是 success。
+          if (copied.length === 0) {
+            toast.warning(title, { description });
+          } else {
+            toast.success(title, { description });
+          }
+        }
+        return;
+      }
+
+      toast.error(
+        t("provider.copyToApps.resultSummary", {
+          copied: copied.length,
+          skipped: skipped.length,
+          failed: failed.length,
+        }),
+        {
+          description: [...skipped, ...failed].map(({ appLabel, reason }) => (
+            <div key={`${appLabel}: ${reason}`}>{`${appLabel}: ${reason}`}</div>
+          )),
+        },
+      );
+    },
+    [appId, queryClient, t],
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -473,6 +566,7 @@ export function ProviderList({
                 onDisableOmo={onDisableOmo}
                 onDisableOmoSlim={onDisableOmoSlim}
                 onDuplicate={onDuplicate}
+                onCopyToApps={(item) => setCopyToAppsProvider(item)}
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
@@ -612,6 +706,14 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
+
+      <CopyToAppsDialog
+        isOpen={copyToAppsProvider !== null}
+        onClose={() => setCopyToAppsProvider(null)}
+        provider={copyToAppsProvider}
+        sourceApp={appId}
+        onCopy={handleCopyToApps}
+      />
     </div>
   );
 }
@@ -630,6 +732,7 @@ interface SortableProviderCardProps {
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
+  onCopyToApps?: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
@@ -663,6 +766,7 @@ function SortableProviderCard({
   onDisableOmo,
   onDisableOmoSlim,
   onDuplicate,
+  onCopyToApps,
   onConfigureUsage,
   onOpenWebsite,
   onOpenTerminal,
@@ -710,6 +814,7 @@ function SortableProviderCard({
         onDisableOmo={onDisableOmo}
         onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
+        onCopyToApps={onCopyToApps}
         onConfigureUsage={
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
         }

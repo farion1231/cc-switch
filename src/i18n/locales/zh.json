@@ -179,7 +179,28 @@
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试"
+    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",
+    "copyToApps": {
+      "title": "复制到其他应用",
+      "description": "将“{{name}}”的配置复制到选定的应用中",
+      "selectAll": "全选",
+      "selectedCount": "已选 {{count}} / {{total}}",
+      "copy": "复制到 {{count}} 个应用",
+      "copying": "正在复制…",
+      "modelHint": "复制后请核对模型与协议参数",
+      "success": "已成功复制到 {{count}} 个应用",
+      "successPartial": "复制完成：成功 {{copied}} 个，跳过 {{skipped}} 个",
+      "resultSummary": "复制完成：成功 {{copied}} / 跳过 {{skipped}} / 失败 {{failed}}",
+      "copyError": "跨应用复制失败",
+      "reasons": {
+        "sameAsSource": "目标应用与源应用相同",
+        "alreadyExists": "目标应用已存在同 ID 供应商“{{name}}”，已跳过",
+        "incompatibleClaudeDesktop": "该供应商的配置无法转换为 Claude Desktop 配置，已跳过",
+        "missingCredentials": "无法提取 base_url 与 API key，已跳过",
+        "unsupportedTarget": "不支持的目标应用",
+        "saveFailed": "写入目标应用失败：{{error}}"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "需要路由",
