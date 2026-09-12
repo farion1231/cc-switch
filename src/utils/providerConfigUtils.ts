@@ -28,8 +28,8 @@ const FORBIDDEN_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 /**
  * 递归剥掉禁键，得到"实际会被写进配置的那份片段"。
  *
- * 只给**读取侧**（`hasCommonConfigSnippet` / `hasTomlCommonConfigSnippet`）用，
- * 写入侧不需要——`deepMerge` / `deepRemove` 自身就跳过禁键，净化前后输出相同。
+ * 写入和读取侧都使用：数组元素会被整体插入，必须在进入遍历函数前净化；读取侧
+ * 也要比对同一份净化结果，避免开关状态与实际写入内容不一致。
  *
  * 之所以读取侧非做不可：两侧对禁键的处理**语义不同**。写入侧是"跳过这个键、
  * 继续处理其余字段"，而 `isSubset` 出于安全必须"见到禁键就整体否决"。于是
@@ -57,13 +57,24 @@ const deepMerge = (
   Object.entries(source).forEach(([key, value]) => {
     if (FORBIDDEN_MERGE_KEYS.has(key)) return;
 
-    if (isPlainObject(value)) {
+    if (Array.isArray(value)) {
+      if (!Array.isArray(target[key])) {
+        target[key] = [];
+      }
+      value.forEach((item) => {
+        const exists = (target[key] as any[]).some(
+          (existing: any) =>
+            isSubset(existing, item) && isSubset(item, existing),
+        );
+        if (!exists) (target[key] as any[]).push(item);
+      });
+    } else if (isPlainObject(value)) {
       if (!isPlainObject(target[key])) {
         target[key] = {};
       }
       deepMerge(target[key], value);
     } else {
-      // 直接覆盖非对象字段（数组/基础类型）
+      // 直接覆盖基础类型字段
       target[key] = value;
     }
   });
@@ -80,7 +91,21 @@ const deepRemove = (
     if (FORBIDDEN_MERGE_KEYS.has(key)) return;
     if (!(key in target)) return;
 
-    if (isPlainObject(value) && isPlainObject(target[key])) {
+    if (Array.isArray(value) && Array.isArray(target[key])) {
+      const arr = [...(target[key] as any[])];
+      for (const sourceItem of value) {
+        const idx = arr.findIndex(
+          (item: any) =>
+            isSubset(item, sourceItem) && isSubset(sourceItem, item),
+        );
+        if (idx !== -1) arr.splice(idx, 1);
+      }
+      if (arr.length === 0) {
+        delete target[key];
+      } else {
+        target[key] = arr;
+      }
+    } else if (isPlainObject(value) && isPlainObject(target[key])) {
       // 只移除完全匹配的嵌套属性
       deepRemove(target[key], value);
       if (Object.keys(target[key]).length === 0) {
@@ -110,8 +135,31 @@ const isSubset = (target: any, source: any): boolean => {
   }
 
   if (Array.isArray(source)) {
-    if (!Array.isArray(target) || target.length !== source.length) return false;
-    return source.every((item, index) => isSubset(target[index], item));
+    if (!Array.isArray(target)) return false;
+    // Bipartite matching with reassignment so each source element claims a
+    // distinct target element. Greedy first-match fails when a broader target
+    // is claimed by an earlier source that could also match a narrower one.
+    const matchedSourceByTarget = new Array<number>(target.length).fill(-1);
+    const tryMatch = (sourceIndex: number, seen: boolean[]): boolean => {
+      for (let targetIndex = 0; targetIndex < target.length; targetIndex += 1) {
+        if (
+          seen[targetIndex] ||
+          !isSubset(target[targetIndex], source[sourceIndex])
+        ) {
+          continue;
+        }
+        seen[targetIndex] = true;
+        const matchedSource = matchedSourceByTarget[targetIndex];
+        if (matchedSource === -1 || tryMatch(matchedSource, seen)) {
+          matchedSourceByTarget[targetIndex] = sourceIndex;
+          return true;
+        }
+      }
+      return false;
+    };
+    return source.every((_, sourceIndex) =>
+      tryMatch(sourceIndex, new Array(target.length).fill(false)),
+    );
   }
 
   return target === source;
@@ -172,9 +220,10 @@ export const updateCommonConfigSnippet = (
     };
   }
 
-  // 这里不必净化：deepMerge / deepRemove 自身就跳过禁键，净化前后输出逐字节相同。
-  // 需要净化的是**读取侧**（hasCommonConfigSnippet），原因见 sanitizeSnippet。
-  const snippet = JSON.parse(snippetString) as Record<string, any>;
+  const snippet = sanitizeSnippet(JSON.parse(snippetString)) as Record<
+    string,
+    any
+  >;
 
   if (enabled) {
     const merged = deepMerge(deepClone(config), snippet);

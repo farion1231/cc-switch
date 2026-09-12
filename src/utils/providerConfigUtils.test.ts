@@ -190,6 +190,65 @@ name = "Example"
   });
 });
 
+describe("common config array merging", () => {
+  const providerConfig = JSON.stringify({
+    permissions: { deny: ["WebSearch"] },
+  });
+  const commonSnippet = JSON.stringify({
+    permissions: { deny: ["Read(~/.ssh/**)"] },
+  });
+
+  it("keeps provider entries and does not duplicate common entries", () => {
+    const merged = updateCommonConfigSnippet(
+      providerConfig,
+      commonSnippet,
+      true,
+    ).updatedConfig;
+    const mergedAgain = updateCommonConfigSnippet(
+      merged,
+      commonSnippet,
+      true,
+    ).updatedConfig;
+
+    expect(JSON.parse(mergedAgain).permissions.deny).toEqual([
+      "WebSearch",
+      "Read(~/.ssh/**)",
+    ]);
+    expect(hasCommonConfigSnippet(mergedAgain, commonSnippet)).toBe(true);
+  });
+
+  it("removes only the common entries when disabled", () => {
+    const merged = updateCommonConfigSnippet(
+      providerConfig,
+      commonSnippet,
+      true,
+    ).updatedConfig;
+    const removed = updateCommonConfigSnippet(
+      merged,
+      commonSnippet,
+      false,
+    ).updatedConfig;
+
+    expect(JSON.parse(removed).permissions.deny).toEqual(["WebSearch"]);
+    expect(hasCommonConfigSnippet(removed, commonSnippet)).toBe(false);
+  });
+
+  it("does not reuse one target item for multiple snippet entries", () => {
+    const config = JSON.stringify({ hooks: [{ a: 1, b: 2 }] });
+    const snippet = JSON.stringify({ hooks: [{ a: 1 }, { a: 1, b: 2 }] });
+
+    expect(hasCommonConfigSnippet(config, snippet)).toBe(false);
+
+    const merged = updateCommonConfigSnippet(
+      config,
+      snippet,
+      true,
+    ).updatedConfig;
+    expect(JSON.parse(merged).hooks).toEqual([{ a: 1, b: 2 }, { a: 1 }]);
+    expect(hasCommonConfigSnippet(merged, snippet)).toBe(true);
+  });
+});
+
 describe("common config snippet prototype-pollution guards", () => {
   // 污染是全局的：一旦漏进 Object.prototype，同文件后续用例会读到幽灵属性，
   // 失败点会飘到无关的断言上。每条用例后强制清干净。
@@ -239,6 +298,27 @@ describe("common config snippet prototype-pollution guards", () => {
 
     // 写进去了，就必须报"已启用"
     expect(hasCommonConfigSnippet(merged, snippet)).toBe(true);
+  });
+
+  it("sanitizes forbidden keys inside array elements", () => {
+    const snippet = JSON.stringify({
+      hooks: [{ ["__proto__"]: { polluted: "YES" } }],
+    });
+
+    const merged = updateCommonConfigSnippet("{}", snippet, true).updatedConfig;
+    const mergedAgain = updateCommonConfigSnippet(
+      merged,
+      snippet,
+      true,
+    ).updatedConfig;
+    expect(JSON.parse(mergedAgain).hooks).toEqual([{}]);
+
+    const removed = updateCommonConfigSnippet(
+      mergedAgain,
+      snippet,
+      false,
+    ).updatedConfig;
+    expect(JSON.parse(removed)).toEqual({});
   });
 
   it("still reports a genuinely applied snippet as applied", () => {
