@@ -2891,6 +2891,10 @@
       "enabled": "{{app}} 路由已啟用",
       "disabled": "{{app}} 路由已關閉",
       "failed": "切換路由狀態失敗：{{detail}}",
+      "cleanup": {
+        "officialAuthFallback": "無法安全清理 Codex 接管設定：清理會讓保留的位址回退使用官方認證。請先還原原始設定，或為該位址設定獨立認證。",
+        "unverifiedProfiles": "無法安全清理 Codex 接管設定：存在 profile 或無法檢查設定目錄，無法排除回退使用官方認證的可能。請先還原原始設定並檢查相關 profile。"
+      },
       "tooltip": {
         "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切換該應用程式供應商為熱切換",
         "broken": "{{appLabel}} 路由中，但路由服務未執行",

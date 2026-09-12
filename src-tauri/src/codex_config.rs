@@ -3828,6 +3828,12 @@ fn plan_codex_live_write(
     if let Some(text) = config_text {
         preflight_codex_provider_table_conflicts(text)?;
     }
+    // Ordinary writes, including official writes that bypass third-party
+    // preparation, must not carry a previous takeover's endpoint ownership.
+    let unmarked_config = config_text
+        .map(strip_codex_takeover_endpoint_marker)
+        .transpose()?;
+    let config_text = unmarked_config.as_deref();
     if category == Some("official") {
         // Official configs seeded by older cc-switch versions can carry
         // stale reserved tables too — Codex refuses those at load, so
@@ -4009,6 +4015,149 @@ fn remove_codex_live_auth_after_third_party_switch() {
 // only takeover-created routes, as a comment Codex ignores, not a config key.
 const CODEX_TAKEOVER_ROUTE_MARKER: &str = "# cc-switch: temporary-route-v1 ";
 
+// An existing user table is never temporary, but its takeover-written URL still
+// needs provenance when the configured proxy endpoint changes before recovery.
+const CODEX_TAKEOVER_ENDPOINT_MARKER: &str = "# cc-switch: proxy-endpoint-v1 ";
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodexTakeoverEndpoint {
+    provider_id: String,
+    base_url: String,
+}
+
+fn codex_takeover_endpoint_marker(doc: &DocumentMut) -> Option<CodexTakeoverEndpoint> {
+    // Read an actual comment on the root selector, never marker-looking text
+    // inside user data. Multiple records are ambiguous and grant no ownership.
+    let prefix = doc
+        .as_table()
+        .key("model_provider")?
+        .leaf_decor()
+        .prefix()?
+        .as_str()?;
+    let mut records = prefix
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix(CODEX_TAKEOVER_ENDPOINT_MARKER));
+    let payload = records.next()?;
+    if records.next().is_some() {
+        return None;
+    }
+    serde_json::from_str(payload).ok()
+}
+
+fn clear_codex_takeover_endpoint_marker(doc: &mut DocumentMut) -> bool {
+    let Some(mut key) = doc.as_table_mut().key_mut("model_provider") else {
+        return false;
+    };
+    let Some(prefix) = key.leaf_decor().prefix().and_then(|raw| raw.as_str()) else {
+        return false;
+    };
+    let retained: String = prefix
+        .split_inclusive('\n')
+        .filter(|line| {
+            !line
+                .trim_start()
+                .starts_with(CODEX_TAKEOVER_ENDPOINT_MARKER)
+        })
+        .collect();
+    if retained == prefix {
+        return false;
+    }
+    key.leaf_decor_mut().set_prefix(retained);
+    true
+}
+
+fn strip_codex_takeover_endpoint_marker(config_text: &str) -> Result<String, AppError> {
+    if !config_text.contains(CODEX_TAKEOVER_ENDPOINT_MARKER) {
+        return Ok(config_text.to_string());
+    }
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    if clear_codex_takeover_endpoint_marker(&mut doc) {
+        Ok(doc.to_string())
+    } else {
+        Ok(config_text.to_string())
+    }
+}
+
+fn record_codex_takeover_endpoint(doc: &mut DocumentMut, proxy_url: &str) -> Result<(), AppError> {
+    clear_codex_takeover_endpoint_marker(doc);
+    let Some(provider_id) = doc.get("model_provider").and_then(|item| item.as_str()) else {
+        // The built-in OpenAI path is normalized into a temporary table later;
+        // its existing route marker already records the takeover-written URL.
+        return Ok(());
+    };
+    if !is_custom_codex_model_provider_id(provider_id) {
+        return Ok(());
+    }
+    let written_url = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .and_then(|providers| providers.get(provider_id))
+        .and_then(|item| item.as_table_like())
+        .and_then(|table| table.get("base_url"))
+        .and_then(|item| item.as_str());
+    if written_url != Some(proxy_url.trim()) || proxy_url.trim().is_empty() {
+        return Ok(());
+    }
+    let payload = serde_json::to_string(&CodexTakeoverEndpoint {
+        provider_id: provider_id.to_string(),
+        base_url: proxy_url.trim().to_string(),
+    })
+    .map_err(|e| AppError::Message(format!("Invalid Codex takeover endpoint: {e}")))?;
+    if let Some(mut key) = doc.as_table_mut().key_mut("model_provider") {
+        let prefix = key
+            .leaf_decor()
+            .prefix()
+            .and_then(|raw| raw.as_str())
+            .unwrap_or("");
+        // A full comment before the selector is valid even with inline provider
+        // tables. Preserve the user's existing comments and selector indentation.
+        let prefix = format!("{CODEX_TAKEOVER_ENDPOINT_MARKER}{payload}\n{prefix}");
+        key.leaf_decor_mut().set_prefix(prefix);
+    }
+    Ok(())
+}
+
+/// Clear only the recorded provider URL, never its table/selector or other URLs.
+/// The caller still validates the complete candidate before writing live files.
+pub(crate) fn remove_codex_takeover_endpoint(config_text: &str) -> Result<String, AppError> {
+    if !config_text.contains(CODEX_TAKEOVER_ENDPOINT_MARKER) {
+        return Ok(config_text.to_string());
+    }
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    if let Some(endpoint) = codex_takeover_endpoint_marker(&doc) {
+        if doc.get("model_provider").and_then(|item| item.as_str())
+            == Some(endpoint.provider_id.as_str())
+        {
+            if let Some(table) = doc
+                .get_mut("model_providers")
+                .and_then(|item| item.as_table_like_mut())
+                .and_then(|providers| providers.get_mut(&endpoint.provider_id))
+                .and_then(|item| item.as_table_like_mut())
+            {
+                if table.get("base_url").and_then(|item| item.as_str())
+                    == Some(endpoint.base_url.as_str())
+                    && table
+                        .get("experimental_bearer_token")
+                        .and_then(|item| item.as_str())
+                        == Some(CODEX_PROXY_AUTH_PLACEHOLDER)
+                {
+                    table.remove("base_url");
+                }
+            }
+        }
+    }
+    if clear_codex_takeover_endpoint_marker(&mut doc) {
+        Ok(doc.to_string())
+    } else {
+        Ok(config_text.to_string())
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum CodexTakeoverAuthState {
@@ -4145,12 +4294,13 @@ pub(crate) fn update_codex_takeover_base_url(
         config_text.to_string()
     };
     let updated = update_codex_toml_field(&config_text, "base_url", proxy_url)?;
-    let Some(mut route) = route else {
-        return Ok(updated);
-    };
-    route.base_url = proxy_url.to_string();
     let mut doc = updated.parse::<DocumentMut>().map_err(|e| e.to_string())?;
-    mark_codex_takeover_route(&mut doc, &route).map_err(|e| e.to_string())?;
+    if let Some(mut route) = route {
+        route.base_url = proxy_url.to_string();
+        mark_codex_takeover_route(&mut doc, &route).map_err(|e| e.to_string())?;
+    } else {
+        record_codex_takeover_endpoint(&mut doc, proxy_url).map_err(|e| e.to_string())?;
+    }
     Ok(doc.to_string())
 }
 
@@ -4360,6 +4510,7 @@ pub fn prepare_codex_provider_live_config(
     config_text: &str,
 ) -> Result<String, AppError> {
     let config_text = strip_codex_takeover_route_marker(config_text)?;
+    let config_text = strip_codex_takeover_endpoint_marker(&config_text)?;
     prepare_codex_provider_live_config_inner(auth, &config_text, false)
 }
 
@@ -4477,7 +4628,8 @@ pub fn restore_codex_settings_for_backfill(
     // Ownership belongs to the live takeover, never to a persisted card,
     // including keyless/OAuth backfills that skip provider-token restoration.
     if let Some(config_text) = settings.get("config").and_then(Value::as_str) {
-        settings["config"] = Value::String(strip_codex_takeover_route_marker(config_text)?);
+        let config_text = strip_codex_takeover_route_marker(config_text)?;
+        settings["config"] = Value::String(strip_codex_takeover_endpoint_marker(&config_text)?);
     }
     if restore_provider_token {
         restore_codex_provider_token_for_backfill(settings, template_settings)?;
@@ -4679,6 +4831,230 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::ffi::OsString;
+
+    fn takeover_endpoint_fixture(inline: bool) -> String {
+        let providers = if inline {
+            "model_providers = { mine = { name = 'Mine', base_url = 'https://user.example/v1', wire_api = 'responses', experimental_bearer_token = 'PROXY_MANAGED' }, inactive = { name = 'Other', base_url = 'http://127.0.0.1:15721/v1' } }\n"
+        } else {
+            "[model_providers.mine]\nname = 'Mine'\nbase_url = 'https://user.example/v1'\nwire_api = 'responses'\nexperimental_bearer_token = 'PROXY_MANAGED'\n[model_providers.inactive]\nname = 'Other'\nbase_url = 'http://127.0.0.1:15721/v1'\n"
+        };
+        format!("# user comment\n  model_provider = 'mine' # selector comment\nbase_url = 'http://127.0.0.1:15721/v1'\n{providers}")
+    }
+
+    #[test]
+    fn takeover_endpoint_cleanup_preserves_user_tables_comments_and_other_urls() {
+        for inline in [false, true] {
+            let original = takeover_endpoint_fixture(inline);
+            let projected =
+                update_codex_takeover_base_url(&original, "http://127.0.0.1:15721/v1").unwrap();
+            assert_eq!(
+                strip_codex_takeover_endpoint_marker(&projected).unwrap(),
+                update_codex_toml_field(&original, "base_url", "http://127.0.0.1:15721/v1")
+                    .unwrap()
+            );
+            let mut doc = projected.parse::<DocumentMut>().unwrap();
+            let table = doc["model_providers"]["mine"].as_table_like_mut().unwrap();
+            table.insert("name", toml_edit::value("User renamed this"));
+            table.insert("requires_openai_auth", toml_edit::value(false));
+            table.insert("request_max_retries", toml_edit::value(7));
+            let edited = doc.to_string();
+            let mut expected: toml::Value = toml::from_str(&edited).unwrap();
+            expected["model_providers"]["mine"]
+                .as_table_mut()
+                .unwrap()
+                .remove("base_url");
+            let cleaned = remove_codex_takeover_endpoint(&edited).unwrap();
+            assert_eq!(toml::from_str::<toml::Value>(&cleaned).unwrap(), expected);
+            assert!(
+                cleaned.contains("# user comment\n  model_provider = 'mine' # selector comment")
+            );
+            assert!(!cleaned.contains(CODEX_TAKEOVER_ENDPOINT_MARKER));
+            assert_eq!(remove_codex_takeover_endpoint(&cleaned).unwrap(), cleaned);
+        }
+    }
+
+    #[test]
+    fn takeover_endpoint_reprojection_refreshes_one_record_through_auth_alignment() {
+        for inline in [false, true] {
+            let mut live = takeover_endpoint_fixture(inline);
+            for url in [
+                "http://127.0.0.1:15721/v1",
+                "http://[::1]:28764/v1",
+                "http://[::1]:28764/v1",
+            ] {
+                live = update_codex_takeover_base_url(&live, url).unwrap();
+                live = prepare_codex_takeover_live_config(
+                    &json!({ "OPENAI_API_KEY": CODEX_PROXY_AUTH_PLACEHOLDER }),
+                    &live,
+                )
+                .unwrap();
+                live = align_codex_takeover_requires_openai_auth(&live, true).unwrap();
+                let doc = live.parse::<DocumentMut>().unwrap();
+                let endpoint = codex_takeover_endpoint_marker(&doc).unwrap();
+                assert_eq!(endpoint.provider_id, "mine");
+                assert_eq!(endpoint.base_url, url);
+                assert_eq!(live.matches(CODEX_TAKEOVER_ENDPOINT_MARKER).count(), 1);
+                assert!(verified_codex_takeover_route(&doc).is_none());
+                assert!(remove_codex_takeover_endpoint(&live)
+                    .unwrap()
+                    .parse::<DocumentMut>()
+                    .unwrap()["model_providers"]["mine"]
+                    .get("base_url")
+                    .is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn takeover_endpoint_cleanup_does_not_claim_user_url_token_or_selector_edits() {
+        for inline in [false, true] {
+            let live = update_codex_takeover_base_url(
+                &takeover_endpoint_fixture(inline),
+                "http://127.0.0.1:15721/v1",
+            )
+            .unwrap();
+            for (key, replacement) in [
+                ("base_url", Some("http://localhost:11434/v1")),
+                ("experimental_bearer_token", Some("fixture-user-key")),
+                ("model_provider", Some("inactive")),
+                ("base_url", None),
+                ("experimental_bearer_token", None),
+                ("model_provider", None),
+            ] {
+                let mut doc = live.parse::<DocumentMut>().unwrap();
+                let table: &mut dyn toml_edit::TableLike = if key == "model_provider" {
+                    doc.as_table_mut()
+                } else {
+                    doc["model_providers"]["mine"].as_table_like_mut().unwrap()
+                };
+                if let Some(value) = replacement {
+                    table.insert(key, toml_edit::value(value));
+                } else {
+                    table.remove(key);
+                }
+                let edited = doc.to_string();
+                assert_eq!(
+                    toml::from_str::<toml::Value>(
+                        &remove_codex_takeover_endpoint(&edited).unwrap()
+                    )
+                    .unwrap(),
+                    toml::from_str::<toml::Value>(&edited).unwrap(),
+                    "changed {key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn takeover_endpoint_cleanup_rejects_malformed_or_duplicate_records() {
+        let live = update_codex_takeover_base_url(
+            &takeover_endpoint_fixture(false),
+            "http://127.0.0.1:15721/v1",
+        )
+        .unwrap();
+        let valid = format!("{CODEX_TAKEOVER_ENDPOINT_MARKER}{{\"provider_id\":\"mine\",\"base_url\":\"http://127.0.0.1:15721/v1\"}}\n");
+        for prefix in [
+            format!("{CODEX_TAKEOVER_ENDPOINT_MARKER}{{broken-json}}\n"),
+            format!("{valid}{valid}"),
+            valid.replace("\"mine\"", "null"),
+        ] {
+            let mut doc = live.parse::<DocumentMut>().unwrap();
+            doc.as_table_mut()
+                .key_mut("model_provider")
+                .unwrap()
+                .leaf_decor_mut()
+                .set_prefix(format!("{prefix}# keep comment\n  "));
+            let input = doc.to_string();
+            let cleaned = remove_codex_takeover_endpoint(&input).unwrap();
+            assert_eq!(
+                toml::from_str::<toml::Value>(&cleaned).unwrap(),
+                toml::from_str::<toml::Value>(&input).unwrap()
+            );
+            assert!(cleaned.contains("# keep comment\n  "));
+            assert!(!cleaned.contains(CODEX_TAKEOVER_ENDPOINT_MARKER));
+        }
+    }
+
+    #[test]
+    fn takeover_endpoint_cleanup_ignores_marker_looking_user_data() {
+        let base = update_codex_toml_field(
+            &takeover_endpoint_fixture(false),
+            "base_url",
+            "http://127.0.0.1:15721/v1",
+        )
+        .unwrap();
+        let marker = format!("{CODEX_TAKEOVER_ENDPOINT_MARKER}{{\"provider_id\":\"mine\",\"base_url\":\"http://127.0.0.1:15721/v1\"}}");
+        for position in ["value", "other-key-comment", "selector-suffix"] {
+            let mut doc = base.parse::<DocumentMut>().unwrap();
+            doc["notes"] = toml_edit::value(format!("user data\n{marker}\nkeep me"));
+            if position == "other-key-comment" {
+                doc.as_table_mut()
+                    .key_mut("notes")
+                    .unwrap()
+                    .leaf_decor_mut()
+                    .set_prefix(format!("{marker}\n"));
+            } else if position == "selector-suffix" {
+                doc["model_provider"]
+                    .as_value_mut()
+                    .unwrap()
+                    .decor_mut()
+                    .set_suffix(format!(" {marker}"));
+            }
+            let input = doc.to_string();
+            assert_eq!(
+                remove_codex_takeover_endpoint(&input).unwrap(),
+                input,
+                "marker in {position} grants no ownership"
+            );
+        }
+    }
+
+    #[test]
+    fn takeover_endpoint_marker_is_stripped_from_normal_writes_and_keyless_backfills() {
+        for inline in [false, true] {
+            let live = update_codex_takeover_base_url(
+                &takeover_endpoint_fixture(inline),
+                "http://127.0.0.1:15721/v1",
+            )
+            .unwrap();
+            for has_token in [false, true] {
+                let input = if has_token {
+                    live.clone()
+                } else {
+                    remove_codex_experimental_bearer_token(&live).unwrap()
+                };
+                let prepared = prepare_codex_provider_live_config(&json!({}), &input).unwrap();
+                assert!(!prepared.contains(CODEX_TAKEOVER_ENDPOINT_MARKER));
+                assert_eq!(
+                    toml::from_str::<toml::Value>(&prepared).unwrap(),
+                    toml::from_str::<toml::Value>(&input).unwrap()
+                );
+                let official =
+                    plan_codex_live_write(Some("official"), &json!({}), Some(&input), false)
+                        .unwrap();
+                assert!(!official
+                    .config_text
+                    .unwrap()
+                    .contains(CODEX_TAKEOVER_ENDPOINT_MARKER));
+                for restore_token in [false, true] {
+                    let mut settings = json!({ "auth": {}, "config": input });
+                    restore_codex_settings_for_backfill(&mut settings, &json!({}), restore_token)
+                        .unwrap();
+                    let config = settings["config"].as_str().unwrap();
+                    assert!(!config.contains(CODEX_TAKEOVER_ENDPOINT_MARKER));
+                    let expected = if restore_token {
+                        remove_codex_experimental_bearer_token(&input).unwrap()
+                    } else {
+                        input.clone()
+                    };
+                    assert_eq!(
+                        toml::from_str::<toml::Value>(config).unwrap(),
+                        toml::from_str::<toml::Value>(&expected).unwrap()
+                    );
+                }
+            }
+        }
+    }
 
     fn temporary_takeover_test_config() -> String {
         prepare_codex_takeover_live_config(

@@ -1,9 +1,19 @@
-/**
- * 从各种错误对象中提取错误信息
- * @param error 错误对象
- * @returns 提取的错误信息字符串
- */
-export const extractErrorMessage = (error: unknown): string => {
+import i18n from "i18next";
+
+// Match complete messages from validate_codex_takeover_cleanup. Keep the
+// backend string protocol and any surrounding/aggregated error details intact.
+const codexTakeoverCleanupErrors = [
+  [
+    "无法安全清理 Codex 接管配置：清理会让保留的地址回退使用官方认证。请先恢复原配置，或为该地址配置独立认证。",
+    "proxy.takeover.cleanup.officialAuthFallback",
+  ],
+  [
+    "无法安全清理 Codex 接管配置：存在 profile 或无法检查配置目录，不能排除官方认证回退。请先恢复原配置并检查相关 profile。",
+    "proxy.takeover.cleanup.unverifiedProfiles",
+  ],
+] as const;
+
+const extractRawErrorMessage = (error: unknown): string => {
   if (!error) return "";
   if (typeof error === "string") {
     return error;
@@ -35,6 +45,18 @@ export const extractErrorMessage = (error: unknown): string => {
   }
 
   return "";
+};
+
+/** Extract error details and localize known cleanup messages for all UI callers. */
+export const extractErrorMessage = (error: unknown): string => {
+  let message = extractRawErrorMessage(error);
+  for (const [source, key] of codexTakeoverCleanupErrors) {
+    if (message.includes(source)) {
+      const translated = i18n.t(key, { defaultValue: source }) || source;
+      message = message.split(source).join(translated);
+    }
+  }
+  return message;
 };
 
 export const translatePiProviderMutationError = (

@@ -2890,6 +2890,10 @@
       "enabled": "{{app}} 路由已启用",
       "disabled": "{{app}} 路由已关闭",
       "failed": "切换路由状态失败: {{detail}}",
+      "cleanup": {
+        "officialAuthFallback": "无法安全清理 Codex 接管配置：清理会让保留的地址回退使用官方认证。请先恢复原配置，或为该地址配置独立认证。",
+        "unverifiedProfiles": "无法安全清理 Codex 接管配置：存在 profile 或无法检查配置目录，不能排除官方认证回退。请先恢复原配置并检查相关 profile。"
+      },
       "tooltip": {
         "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切换该应用供应商为热切换",
         "broken": "{{appLabel}} 路由中，但路由服务未运行",

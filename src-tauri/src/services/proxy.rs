@@ -2604,6 +2604,8 @@ impl ProxyService {
                 &crate::codex_config::get_codex_config_dir(),
             )
             .map_err(|e| format!("清理 Codex 临时接管路由失败: {e}"))?;
+            let updated = crate::codex_config::remove_codex_takeover_endpoint(&updated)
+                .map_err(|e| format!("清理 Codex 接管占位符失败: {e}"))?;
             let updated = crate::codex_config::remove_codex_toml_base_url_if(&updated, |url| {
                 proxy_base_url
                     .as_deref()
@@ -7344,6 +7346,226 @@ experimental_bearer_token = "PROXY_MANAGED"
             .await;
             crate::settings::update_settings(crate::settings::AppSettings::default())
                 .expect("reset isolated settings");
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_cleanup_removes_recorded_endpoint_after_proxy_settings_change() {
+        for inline in [false, true] {
+            let profile = "[model_providers.user-route]\nbase_url = \"https://profile.example/v1\"\nrequires_openai_auth = true\n";
+            for (new_host, new_port, oauth, edited_url, profile_config, reject) in [
+                ("127.0.0.1", 28764, false, None, None, false),
+                ("localhost", 15721, false, None, None, false),
+                ("127.0.0.1", 0, false, None, None, false),
+                ("127.0.0.1", 28764, true, None, None, false),
+                (
+                    "127.0.0.1",
+                    28764,
+                    false,
+                    Some("http://localhost:11434/v1"),
+                    None,
+                    false,
+                ),
+                (
+                    "127.0.0.1",
+                    28764,
+                    true,
+                    Some("http://localhost:11434/v1"),
+                    None,
+                    true,
+                ),
+                ("127.0.0.1", 28764, false, None, Some(profile), true),
+                ("127.0.0.1", 28764, true, None, Some(profile), true),
+            ] {
+                let _home = TempHome::new();
+                crate::settings::reload_settings().expect("reload isolated settings");
+                let db = Arc::new(Database::memory().expect("init db"));
+                let service = ProxyService::new(db.clone());
+                let user_route = if inline {
+                    "model_providers = { user-route = { name = \"User gateway\", \
+                     base_url = \"https://user-gateway.example/v1\", wire_api = \"responses\", \
+                     requires_openai_auth = true, request_max_retries = 7 } }\n"
+                } else {
+                    "[model_providers.user-route]\nname = \"User gateway\"\n\
+                     base_url = \"https://user-gateway.example/v1\"\nwire_api = \"responses\"\n\
+                     requires_openai_auth = true\nrequest_max_retries = 7\n"
+                };
+                let config = format!(
+                    "# User-owned route selection.\nmodel_provider = \"user-route\"\n\
+                     model = \"gpt-5.4\"\nmodel_reasoning_effort = \"high\"\n\
+                     # User-owned route table.\n{user_route}\n\
+                     [mcp_servers.cleanup_fixture]\ncommand = \"test-mcp-command\"\nargs = [\"--test\"]\n"
+                );
+                if oauth {
+                    crate::codex_config::write_codex_live_atomic(
+                        &json!({
+                            "auth_mode": "chatgpt",
+                            "tokens": {
+                                "id_token": "test-oauth-id",
+                                "access_token": "test-oauth-access",
+                                "refresh_token": "test-oauth-refresh"
+                            }
+                        }),
+                        Some(&config),
+                    )
+                    .expect("seed user-owned route with OAuth login");
+                } else {
+                    crate::codex_config::write_codex_live_config_atomic(Some(&config))
+                        .expect("seed user-owned route without OAuth login");
+                }
+                let auth_path = crate::codex_config::get_codex_auth_path();
+                let auth_before = auth_path
+                    .exists()
+                    .then(|| std::fs::read(&auth_path).unwrap());
+                let mut provider = Provider::with_id(
+                    "cleanup-provider".to_string(),
+                    "Cleanup fixture".to_string(),
+                    json!({ "auth": { "OPENAI_API_KEY": "test-key" }, "config": config }),
+                    None,
+                );
+                provider.category = Some("custom".to_string());
+                db.save_provider("codex", &provider).expect("save provider");
+                db.set_current_provider("codex", &provider.id)
+                    .expect("set DB current provider");
+                crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id))
+                    .expect("set local current provider");
+                let old_endpoint = service
+                    .build_proxy_urls()
+                    .await
+                    .expect("resolve old endpoint")
+                    .1;
+                assert_eq!(old_endpoint, "http://127.0.0.1:15721/v1");
+                service
+                    .takeover_live_config_strict(&AppType::Codex)
+                    .await
+                    .expect("take over through the production writer");
+                let mut takeover_text =
+                    std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                        .expect("read taken-over config");
+                let mut doc: toml_edit::DocumentMut =
+                    takeover_text.parse().expect("parse takeover");
+                let table = doc["model_providers"]["user-route"]
+                    .as_table_like_mut()
+                    .expect("user-owned provider table");
+                assert_eq!(
+                    table.get("base_url").and_then(toml_edit::Item::as_str),
+                    Some(old_endpoint.as_str())
+                );
+                assert_eq!(
+                    table
+                        .get("experimental_bearer_token")
+                        .and_then(toml_edit::Item::as_str),
+                    Some(PROXY_TOKEN_PLACEHOLDER)
+                );
+                assert_eq!(
+                    table
+                        .get("requires_openai_auth")
+                        .and_then(toml_edit::Item::as_bool),
+                    Some(oauth)
+                );
+                if let Some(url) = edited_url {
+                    table.insert("base_url", toml_edit::value(url));
+                    takeover_text = doc.to_string();
+                    crate::codex_config::write_codex_live_config_atomic(Some(&takeover_text))
+                        .expect("write user's different local gateway");
+                }
+                let profile_path =
+                    crate::codex_config::get_codex_config_dir().join("work.config.toml");
+                if let Some(profile_config) = profile_config {
+                    std::fs::write(&profile_path, profile_config)
+                        .expect("write independent profile");
+                }
+                let mut expected: toml::Value =
+                    toml::from_str(&takeover_text).expect("parse expected config");
+                let expected_table = expected["model_providers"]["user-route"]
+                    .as_table_mut()
+                    .unwrap();
+                if edited_url.is_none() {
+                    expected_table.remove("base_url");
+                }
+                expected_table.remove("experimental_bearer_token");
+
+                db.delete_live_backup("codex")
+                    .await
+                    .expect("remove restore backup");
+                db.delete_provider("codex", &provider.id)
+                    .expect("remove SSOT provider");
+                crate::settings::set_current_provider(&AppType::Codex, None)
+                    .expect("clear local current provider");
+                let mut proxy_config = db.get_proxy_config().await.expect("read proxy config");
+                proxy_config.listen_address = new_host.to_string();
+                proxy_config.listen_port = new_port;
+                db.update_proxy_config(proxy_config)
+                    .await
+                    .expect("change configured endpoint");
+                drop(service);
+                let restarted_service = ProxyService::new(db.clone());
+                let current_endpoint = restarted_service.build_proxy_urls().await;
+                if new_port == 0 {
+                    assert!(
+                        current_endpoint.is_err(),
+                        "an unresolved endpoint must not defeat recorded ownership"
+                    );
+                } else {
+                    assert_ne!(
+                        current_endpoint.expect("resolve new endpoint").1,
+                        old_endpoint,
+                        "a restarted service must observe the changed endpoint"
+                    );
+                }
+                assert!(db.get_live_backup("codex").await.unwrap().is_none());
+                assert!(db.get_all_providers("codex").unwrap().is_empty());
+                let cleanup_result = restarted_service
+                    .restore_live_config_for_app_with_fallback(&AppType::Codex)
+                    .await;
+                let cleaned_text =
+                    std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                        .expect("read cleaned config");
+                if reject {
+                    let error = cleanup_result
+                        .expect_err("recorded ownership must not bypass the official-auth guard");
+                    assert!(error.contains("官方认证"), "explain rejection: {error}");
+                    assert_eq!(
+                        cleaned_text.as_bytes(),
+                        takeover_text.as_bytes(),
+                        "rejected config must remain byte for byte unchanged"
+                    );
+                } else {
+                    cleanup_result
+                        .expect("clean recorded takeover fields without a restore source");
+                    let cleaned: toml::Value =
+                        toml::from_str(&cleaned_text).expect("parse cleaned config");
+                    assert_eq!(
+                        cleaned, expected,
+                        "cleanup must remove only the recorded endpoint and placeholder, preserving a user-edited URL"
+                    );
+                }
+                for comment in ["# User-owned route selection.", "# User-owned route table."] {
+                    assert!(takeover_text.contains(comment));
+                    assert!(
+                        cleaned_text.contains(comment),
+                        "preserve user comment: {comment}"
+                    );
+                }
+                assert_eq!(auth_path.exists(), auth_before.is_some());
+                if let Some(auth_before) = auth_before {
+                    assert_eq!(
+                        std::fs::read(&auth_path).unwrap(),
+                        auth_before,
+                        "keep the complete OAuth file byte for byte"
+                    );
+                }
+                if let Some(profile_config) = profile_config {
+                    assert_eq!(
+                        std::fs::read(&profile_path).unwrap(),
+                        profile_config.as_bytes(),
+                        "never modify the user's profile"
+                    );
+                }
+                crate::settings::update_settings(crate::settings::AppSettings::default())
+                    .expect("reset isolated settings");
+            }
         }
     }
 
