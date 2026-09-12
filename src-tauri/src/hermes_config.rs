@@ -581,6 +581,70 @@ fn normalize_provider_models_for_write(config: &mut serde_json::Value) {
     }
 }
 
+/// Pin the final declared `models:` mapping as Hermes' only source of truth.
+///
+/// Hermes live-probes `/v1/models` by default and treats a dict-shaped
+/// `models:` field as per-model metadata, not an allowlist. CC Switch users
+/// expect their configured model list to be authoritative. This must run
+/// after forward-compatible fields are restored from disk: an unrelated UI
+/// update can omit `models` while the final provider still declares them.
+fn pin_discover_models_for_write(config: &mut serde_yaml::Value) -> bool {
+    let Some(map) = config.as_mapping_mut() else {
+        return false;
+    };
+    let models_key = serde_yaml::Value::String("models".to_string());
+    let has_models = map
+        .get(&models_key)
+        .and_then(|v| v.as_mapping())
+        .map(|m| !m.is_empty())
+        .unwrap_or(false);
+    if has_models {
+        let discover_models_key = serde_yaml::Value::String("discover_models".to_string());
+        if map.get(&discover_models_key) == Some(&serde_yaml::Value::Bool(false)) {
+            return false;
+        }
+        map.insert(discover_models_key, serde_yaml::Value::Bool(false));
+        return true;
+    }
+    false
+}
+
+/// Backfill the live-discovery guard for existing CC Switch providers.
+///
+/// Older config entries may already declare a non-empty `models:` mapping
+/// without `discover_models: false`. Hermes treats that mapping as metadata
+/// and still probes `/v1/models`, so the picker exposes models that CC Switch
+/// never configured. Keep this migration scoped to the writable
+/// `custom_providers:` list; `providers:` dict entries are Hermes-managed.
+/// Returns the number of providers changed.
+pub fn pin_discover_models_for_existing_providers() -> Result<usize, AppError> {
+    let _guard = hermes_write_lock().lock()?;
+    let config = read_hermes_config()?;
+    let Some(existing_providers) = config
+        .get("custom_providers")
+        .and_then(|value| value.as_sequence())
+    else {
+        return Ok(0);
+    };
+
+    let mut providers = existing_providers.clone();
+    let mut changed = 0;
+    for provider in &mut providers {
+        if pin_discover_models_for_write(provider) {
+            changed += 1;
+        }
+    }
+
+    if changed > 0 {
+        write_yaml_section_to_config_locked(
+            "custom_providers",
+            &serde_yaml::Value::Sequence(providers),
+        )?;
+    }
+
+    Ok(changed)
+}
+
 /// If `config.models` is a JSON dict, convert it in-place to the ordered array
 /// shape. No-op when `models` is absent or already an array.
 fn denormalize_provider_models_for_read(config: &mut serde_json::Value) {
@@ -854,6 +918,15 @@ pub fn set_provider(
         *existing = yaml_val;
     } else {
         providers.push(yaml_val);
+    }
+
+    // Pin after the forward-compatible merge, because an unrelated partial
+    // update may omit `models` that were retained from the on-disk provider.
+    if let Some(provider) = providers
+        .iter_mut()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name))
+    {
+        pin_discover_models_for_write(provider);
     }
 
     let providers_value = serde_yaml::Value::Sequence(providers);
@@ -1661,6 +1734,82 @@ custom_providers:
 
     #[test]
     #[serial]
+    fn set_provider_pins_discovery_after_merging_retained_models() {
+        // Partial updates do not always include the UI's models field. The
+        // retained on-disk mapping must still disable Hermes live discovery.
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: acme
+    base_url: https://old.example.com
+    models:
+      model-a:
+        context_length: 200000
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            set_provider(
+                "acme",
+                serde_json::json!({
+                    "base_url": "https://new.example.com"
+                }),
+            )
+            .unwrap();
+
+            let provider = get_provider("acme").unwrap().unwrap();
+            assert_eq!(provider["base_url"], "https://new.example.com");
+            assert_eq!(provider["models"][0]["id"], "model-a");
+            assert_eq!(provider["discover_models"], false);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn existing_providers_with_declared_models_are_pinned_once() {
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: configured
+    base_url: https://configured.example.com
+    models:
+      model-a:
+        context_length: 200000
+  - name: no-models
+    base_url: https://no-models.example.com
+  - name: already-pinned
+    base_url: https://pinned.example.com
+    models:
+      model-b: {}
+    discover_models: false
+providers:
+  hermes-managed:
+    models:
+      model-c: {}
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            assert_eq!(pin_discover_models_for_existing_providers().unwrap(), 1);
+
+            let config = read_hermes_config().unwrap();
+            let providers = config["custom_providers"].as_sequence().unwrap();
+            assert_eq!(providers[0]["discover_models"], false);
+            assert!(providers[1].get("discover_models").is_none());
+            assert_eq!(providers[2]["discover_models"], false);
+            assert_eq!(
+                config["providers"]["hermes-managed"].get("discover_models"),
+                None
+            );
+
+            assert_eq!(pin_discover_models_for_existing_providers().unwrap(), 0);
+        });
+    }
+
+    #[test]
+    #[serial]
     fn get_providers_surfaces_providers_dict_as_read_only() {
         with_test_home(|| {
             let yaml = "\
@@ -1955,6 +2104,11 @@ custom_providers:
                     .unwrap(),
                 200000
             );
+            assert_eq!(
+                provider.get("discover_models").and_then(|v| v.as_bool()),
+                Some(false),
+                "declared models must opt out of Hermes live discovery"
+            );
             // id should not leak into each model value
             assert!(model_a.get("id").is_none());
         });
@@ -1999,6 +2153,10 @@ custom_providers:
             let providers = get_providers().unwrap();
             let provider = providers.get("simple").unwrap();
             assert!(provider.get("models").is_none());
+            assert!(
+                provider.get("discover_models").is_none(),
+                "no pin needed when there are no declared models"
+            );
             assert!(
                 provider.get("model").is_none(),
                 "singular `model:` should not appear when no models are declared"
