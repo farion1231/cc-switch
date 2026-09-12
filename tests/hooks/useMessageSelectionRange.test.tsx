@@ -36,6 +36,15 @@ it("keeps a reverse selection and the intervening rows mounted, then releases th
     Array.from({ length: 22 }, (_, i) => i + 2),
   );
   act(() => {
+    document
+      .getSelection()!
+      .setBaseAndExtent(container.lastChild!.firstChild!, 1, container, 1);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  expect(result.current(range)).toEqual(
+    Array.from({ length: 22 }, (_, i) => i + 2),
+  );
+  act(() => {
     document.getSelection()!.removeAllRanges();
     document.dispatchEvent(new Event("selectionchange"));
   });

@@ -352,7 +352,6 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     estimateSize: () => 120,
     overscan: 5,
     rangeExtractor,
-    gap: 12,
   });
 
   useEffect(() => {
@@ -1720,6 +1719,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                       top: 0,
                                       left: 0,
                                       width: "100%",
+                                      paddingBottom:
+                                        virtualRow.index === messages.length - 1
+                                          ? 0
+                                          : 12,
                                       transform: `translateY(${virtualRow.start}px)`,
                                     }}
                                   >

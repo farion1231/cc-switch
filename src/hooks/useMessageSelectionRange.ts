@@ -34,7 +34,6 @@ export function useMessageSelectionRange(
       const anchor = getMessage(selection.anchorNode);
       const focus = getMessage(selection.focusNode);
       if (!anchor || !focus) {
-        setSelectedRange(null);
         return;
       }
       const start = Math.min(
