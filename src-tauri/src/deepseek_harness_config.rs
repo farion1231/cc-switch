@@ -876,25 +876,28 @@ mod tests {
         with_temp_home(|home| {
             std::fs::write(
                 home.join("settings.yaml"),
-                "llm-deepseek:\n  baseURL: https://api.deepseek.com\n  apiKeyEnv: DEEPSEEK_API_KEY\n  models:\n    - id: deepseek-v4-pro\n      name: DeepSeek V4 Pro\nllm-pi-ai:\n  providers:\n    yuzuvalley:\n      displayName: Company Gateway\n      api: openai-completions\n      baseURL: https://gateway.example/v1\n      apiKeyEnv: YUZUVALLEY_API_KEY\n      models:\n        - id: glm-5.3\n          name: GLM 5.3\nagent-default-model:\n  provider: yuzuvalley\n  model: glm-5.3\n",
+                "llm-deepseek:\n  baseURL: https://api.deepseek.com\n  apiKeyEnv: DEEPSEEK_API_KEY\n  models:\n    - id: deepseek-v4-pro\n      name: DeepSeek V4 Pro\nllm-pi-ai:\n  providers:\n    company-gateway:\n      displayName: Company Gateway\n      api: openai-completions\n      baseURL: https://gateway.example/v1\n      apiKeyEnv: COMPANY_GATEWAY_API_KEY\n      models:\n        - id: example-model-1\n          name: Example Model\nagent-default-model:\n  provider: company-gateway\n  model: example-model-1\n",
             )
             .unwrap();
             std::fs::write(
                 home.join(".credentials.yaml"),
-                "version: 1\nrefs:\n  DEEPSEEK_API_KEY: deepseek-secret\n  YUZUVALLEY_API_KEY: gateway-secret\nrecords:\n  client-connection/browser-session:\n    kind: grant\n    payload:\n      version: 1\n      secret: keep\n",
+                "version: 1\nrefs:\n  DEEPSEEK_API_KEY: deepseek-secret\n  COMPANY_GATEWAY_API_KEY: gateway-secret\nrecords:\n  client-connection/browser-session:\n    kind: grant\n    payload:\n      version: 1\n      secret: keep\n",
             )
             .unwrap();
 
             let state = read_native_state().unwrap();
-            assert_eq!(state.current_provider.as_deref(), Some("yuzuvalley"));
-            assert_eq!(state.current_model.as_deref(), Some("glm-5.3"));
+            assert_eq!(
+                state.current_provider.as_deref(),
+                Some("company-gateway")
+            );
+            assert_eq!(state.current_model.as_deref(), Some("example-model-1"));
             assert_eq!(state.providers.len(), 2);
 
             let official = state.providers.get(OFFICIAL_PROVIDER_ID).unwrap();
             assert_eq!(official.source, NativeProviderSource::DeepSeek);
             assert_eq!(official.config["apiKey"], "deepseek-secret");
 
-            let gateway = state.providers.get("yuzuvalley").unwrap();
+            let gateway = state.providers.get("company-gateway").unwrap();
             assert_eq!(gateway.source, NativeProviderSource::PiAi);
             assert_eq!(gateway.name, "Company Gateway");
             assert_eq!(gateway.config["baseURL"], "https://gateway.example/v1");

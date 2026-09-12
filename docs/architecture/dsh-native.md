@@ -60,7 +60,7 @@ MCP and Skills entries are hidden for DSH because DSH 2.0.5 exposes neither an M
 
 ### Frontend
 
-The shared provider page displays DSH cards and current state. `DeepSeekHarnessProviderForm.tsx` provides the Codex-style structured editor and maps its values to the native DSH schema.
+The shared provider page displays DSH cards and current state. The DSH add/edit experience uses the same shared provider form shell as OpenCode: `useDeepSeekHarnessFormState` keeps the DSH structured state in sync with the `settingsConfig` JSON, and `DeepSeekHarnessFormFields` renders the credential reference, base URL, API format, model catalog, and default model. The preset catalog is derived from the OpenCode preset list so both apps stay aligned.
 
 ### Environment check
 
