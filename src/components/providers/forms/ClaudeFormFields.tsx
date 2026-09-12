@@ -759,7 +759,9 @@ export function ClaudeFormFields({
           onManageClick={
             showEndpointTools ? () => onEndpointModalToggle(true) : undefined
           }
-          showFullUrlToggle={showEndpointTools && !isXaiOauthPreset}
+          showFullUrlToggle={
+            showEndpointTools && !isXaiOauthPreset && !isCopilotPreset
+          }
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
         />

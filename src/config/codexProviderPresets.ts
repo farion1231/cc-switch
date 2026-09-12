@@ -33,8 +33,8 @@ export interface CodexProviderPreset {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
-  // 仅用于区分预设来源；ChatGPT/Codex 与 xAI/Grok 的认证流程彼此独立。
-  providerType?: "codex_oauth" | "xai_oauth";
+  // 仅用于区分预设来源；ChatGPT/Codex、xAI/Grok 与 GitHub Copilot 的认证流程彼此独立。
+  providerType?: "codex_oauth" | "xai_oauth" | "github_copilot";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -1181,6 +1181,24 @@ requires_openai_auth = true`,
     },
     icon: "azure",
     iconColor: "#0078D4",
+  },
+  {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    auth: generateThirdPartyAuth(""),
+    // model 留空：用户在表单里通过「获取模型」拉取账号可用模型后选择
+    config: generateThirdPartyConfig(
+      "github_copilot",
+      "https://api.githubcopilot.com",
+      "",
+    ),
+    endpointCandidates: ["https://api.githubcopilot.com"],
+    category: "third_party",
+    apiFormat: "openai_chat",
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    icon: "github",
+    iconColor: "#000000",
   },
   {
     name: "DeepSeek",
