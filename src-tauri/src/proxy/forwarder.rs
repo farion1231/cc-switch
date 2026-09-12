@@ -2137,9 +2137,7 @@ impl RequestForwarder {
             // --- Claude Code 指纹头 — 不泄露给非 Anthropic 上游 ---
             // 与上一条互为镜像：转换路径上的上游说另一种协议，客户端指纹头
             // 纯属身份泄露。名单集中在 is_claude_code_fingerprint_header。
-            if strip_claude_code_fingerprint_headers
-                && is_claude_code_fingerprint_header(key_str)
-            {
+            if strip_claude_code_fingerprint_headers && is_claude_code_fingerprint_header(key_str) {
                 continue;
             }
 
