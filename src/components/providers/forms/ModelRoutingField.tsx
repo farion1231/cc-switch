@@ -7,10 +7,11 @@ import {
   Shuffle,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { proxyApi } from "@/lib/api/proxy";
 import {
   Select,
   SelectContent,
@@ -56,27 +57,6 @@ function createRoute(): ModelRouteRow {
   };
 }
 
-function routeMatches(row: ModelRouteRow, model: string): boolean {
-  if (!row.enabled || !row.source.trim()) return false;
-  const source = row.source.trim();
-  switch (row.matchMode) {
-    case "prefix":
-      return model.startsWith(source);
-    case "suffix":
-      return model.endsWith(source);
-    case "contains":
-      return model.includes(source);
-    case "regex":
-      try {
-        return new RegExp(source).test(model);
-      } catch {
-        return false;
-      }
-    default:
-      return model === source;
-  }
-}
-
 export function ModelRoutingField({
   rows,
   onChange,
@@ -86,15 +66,16 @@ export function ModelRoutingField({
 }) {
   const { t } = useTranslation();
   const [testModel, setTestModel] = useState("");
-  const [testRequested, setTestRequested] = useState(false);
+  const [testState, setTestState] = useState<{
+    model: string;
+    matchIndex: number | null;
+  } | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
+  const testRequestId = useRef(0);
   const testResult = useMemo(() => {
-    const model = testModel.trim();
-    if (!testRequested || !model) return null;
-
-    const matchIndex = rows.findIndex((candidate) =>
-      routeMatches(candidate, model),
-    );
-    if (matchIndex === -1) {
+    if (!testState) return null;
+    const { model, matchIndex } = testState;
+    if (matchIndex === null) {
       return {
         kind: "miss" as const,
         status: t("providerForm.modelRouteTestNoMatchStatus"),
@@ -103,6 +84,7 @@ export function ModelRoutingField({
     }
 
     const row = rows[matchIndex];
+    if (!row) return null;
     const modeLabelKey =
       MATCH_MODES.find((mode) => mode.value === row.matchMode)?.labelKey ??
       "providerForm.modelRouteModeExact";
@@ -119,11 +101,42 @@ export function ModelRoutingField({
       }),
       target: row.target.trim() || t("providerForm.modelRouteTestEmptyTarget"),
     };
-  }, [rows, t, testModel, testRequested]);
+  }, [rows, t, testState]);
 
   const updateRows = (next: ModelRouteRow[]) => {
-    setTestRequested(false);
+    testRequestId.current += 1;
+    setTestState(null);
+    setIsTesting(false);
     onChange(next);
+  };
+
+  const handleTest = async () => {
+    const model = testModel.trim();
+    if (!model) return;
+
+    const requestId = ++testRequestId.current;
+    setTestState(null);
+    setIsTesting(true);
+    try {
+      const matchIndex = await proxyApi.testModelRoutes(
+        rows.map(({ enabled, matchMode, source, target }) => ({
+          enabled,
+          matchMode,
+          source: source.trim(),
+          target: target.trim(),
+        })),
+        model,
+      );
+      if (testRequestId.current === requestId) {
+        setTestState({ model, matchIndex });
+      }
+    } catch (error) {
+      console.error("[ModelRoutingField] Failed to test model routes:", error);
+    } finally {
+      if (testRequestId.current === requestId) {
+        setIsTesting(false);
+      }
+    }
   };
 
   const updateRow = (index: number, update: Partial<ModelRouteRow>) => {
@@ -292,7 +305,9 @@ export function ModelRoutingField({
             value={testModel}
             onChange={(event) => {
               setTestModel(event.target.value);
-              setTestRequested(false);
+              testRequestId.current += 1;
+              setTestState(null);
+              setIsTesting(false);
             }}
             placeholder={t("providerForm.modelRouteTestPlaceholder", {
               defaultValue: "输入模型进行路由测试",
@@ -311,7 +326,7 @@ export function ModelRoutingField({
             </span>
           )}
           {testResult?.kind === "miss" && (
-            <span className="ml-auto min-w-0 max-w-[360px] shrink truncate text-xs text-emerald-600 dark:text-emerald-400">
+            <span className="ml-auto min-w-0 max-w-[360px] shrink truncate text-xs text-foreground">
               {testResult.message}
             </span>
           )}
@@ -320,9 +335,12 @@ export function ModelRoutingField({
             variant="ghost"
             size="sm"
             className="h-7 shrink-0 px-2 text-xs"
-            onClick={() => setTestRequested(true)}
+            disabled={isTesting}
+            onClick={() => void handleTest()}
           >
-            {t("providerForm.modelRouteTest", { defaultValue: "测试" })}
+            {isTesting
+              ? t("common.loading")
+              : t("providerForm.modelRouteTest", { defaultValue: "测试" })}
           </Button>
         </div>
       </div>

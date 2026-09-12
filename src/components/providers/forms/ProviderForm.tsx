@@ -2018,6 +2018,7 @@ function ProviderFormFull({
     setSelectedPresetId(value);
     if (value === "custom") {
       setActivePreset(null);
+      setModelRoutes([]);
       form.reset(defaultValues);
 
       if (appId === "codex") {
@@ -2049,8 +2050,20 @@ function ProviderFormFull({
 
     const entry = presetEntries.find((item) => item.id === value);
     if (!entry) {
+      setModelRoutes([]);
       return;
     }
+
+    const presetSettingsConfig =
+      "settingsConfig" in entry.preset
+        ? entry.preset.settingsConfig
+        : undefined;
+    setModelRoutes(
+      readProviderModelRoutes(
+        (presetSettingsConfig as Record<string, unknown> | undefined)
+          ?.modelRoutes,
+      ),
+    );
 
     setActivePreset({
       id: value,

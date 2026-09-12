@@ -5,14 +5,26 @@
 use crate::claude_desktop_config::ONE_M_CONTEXT_MARKER;
 use crate::provider::Provider;
 use regex::Regex;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderModelRoute {
     pub enabled: bool,
     pub match_mode: String,
     pub source: String,
     pub target: String,
+}
+
+/// 返回按顺序匹配到的第一条有效路由索引，供代理转发和前端测试共用。
+pub fn first_matching_route_index(routes: &[ProviderModelRoute], model: &str) -> Option<usize> {
+    routes.iter().position(|route| {
+        route.enabled
+            && !route.source.trim().is_empty()
+            && !route.target.trim().is_empty()
+            && route_matches_model(route, model)
+    })
 }
 
 /// 模型路由配置。
@@ -107,12 +119,8 @@ impl ModelRouter {
 
     /// 根据原始模型名称获取路由目标模型。
     pub fn route_model(&self, original_model: &str) -> String {
-        if let Some(route) = self
-            .routes
-            .iter()
-            .find(|route| route.enabled && route_matches_model(route, original_model))
-        {
-            return route.target.clone();
+        if let Some(index) = first_matching_route_index(&self.routes, original_model) {
+            return self.routes[index].target.clone();
         }
 
         let model_lower = original_model.to_lowercase();
