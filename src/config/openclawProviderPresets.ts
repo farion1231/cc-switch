@@ -3790,4 +3790,38 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "LaonongAPI",
+    websiteUrl: "https://www.laonongapi.com",
+    apiKeyUrl: "https://www.laonongapi.com/#/workspace/keys",
+    settingsConfig: {
+      baseUrl: "https://api.laonongapi.com",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "openai/gpt-5.6-luna",
+          name: "openai/gpt-5.6-luna",
+          contextWindow: 1000000,
+          cost: { input: 0.7, output: 4.1, cacheRead: 0.1 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "laonongapi",
+    iconColor: "#7B61FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "openai/gpt-5.6-luna" },
+      modelCatalog: {
+        "openai/gpt-5.6-luna": { alias: "GPT-5.6 Luna" },
+      },
+    },
+  },
 ];

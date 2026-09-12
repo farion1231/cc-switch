@@ -30,6 +30,7 @@ import _teamorouter from "./TeamoRouter-icon-dark.png";
 import _unity2 from "./unity2.png";
 import _xycai from "./xycai-icon.png";
 import _zetaapi from "./zetaapi-icon.png";
+import _laonongapi from "./laonongapi.png";
 
 export const icons: Record<string, string> = {
   "9527code": `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" style="flex:none;line-height:1" viewBox="0 0 883 686"><title>9527 CODE</title><path fill="currentColor" opacity="0.82" d="M282 0 499 0 622 235 622 238 381 238 336 328 670 328 807 593 883 584 856 686 622 686 502 454 220 561 0 561Z"/><path fill="currentColor" d="M282 1 498 3 220 559 1 560Z M693 380 697 381 854 685 622 685 614 671 502 453Z"/></svg>`,
@@ -143,6 +144,7 @@ export const iconUrls: Record<string, string> = {
   unity2: _unity2,
   xycai: _xycai,
   zetaapi: _zetaapi,
+  laonongapi:_laonongapi
 };
 
 export const iconList = [
