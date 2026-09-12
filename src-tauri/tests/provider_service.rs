@@ -25,13 +25,16 @@ fn sanitize_provider_name(name: &str) -> String {
 
 #[test]
 fn universal_api_config_sync_updates_url_key_and_preserves_model_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
     let state = create_test_state().expect("create test state");
     let db = Arc::clone(&state.db);
+    let universal_id = format!("shared-{}", std::process::id());
     let mut universal = cc_switch_lib::UniversalProvider::new(
-        "shared".into(),
+        universal_id.clone(),
         "Shared".into(),
         "custom".into(),
         "https://new.example".into(),
@@ -41,12 +44,15 @@ fn universal_api_config_sync_updates_url_key_and_preserves_model_config() {
     universal.apps.codex = true;
     universal.apps.gemini = true;
     db.save_universal_provider(&universal).unwrap();
-    db.save_provider("claude", &Provider::with_id("universal-claude-shared".into(), "Claude".into(), json!({"env":{"ANTHROPIC_BASE_URL":"https://old.example","ANTHROPIC_AUTH_TOKEN":"old-key","ANTHROPIC_MODEL":"keep"},"custom":"keep"}), None)).unwrap();
-    db.save_provider("codex", &Provider::with_id("universal-codex-shared".into(), "Codex".into(), json!({"auth":{"OPENAI_API_KEY":"old-key"},"config":"model = \"keep\"\n[model_providers.custom]\nbase_url = \"https://old.example/v1\"\nwire_api = \"responses\"\n","modelCatalog":{"keep":true}}), None)).unwrap();
-    db.save_provider("gemini", &Provider::with_id("universal-gemini-shared".into(), "Gemini".into(), json!({"env":{"GOOGLE_GEMINI_BASE_URL":"https://old.example","GEMINI_API_KEY":"old-key","GEMINI_MODEL":"keep"},"custom":"keep"}), None)).unwrap();
-    ProviderService::sync_universal_api_config_to_apps(&state, "shared").unwrap();
+    let claude_id = format!("universal-claude-{universal_id}");
+    let codex_id = format!("universal-codex-{universal_id}");
+    let gemini_id = format!("universal-gemini-{universal_id}");
+    db.save_provider("claude", &Provider::with_id(claude_id.clone(), "Claude".into(), json!({"env":{"ANTHROPIC_BASE_URL":"https://old.example","ANTHROPIC_AUTH_TOKEN":"old-key","ANTHROPIC_MODEL":"keep"},"custom":"keep"}), None)).unwrap();
+    db.save_provider("codex", &Provider::with_id(codex_id.clone(), "Codex".into(), json!({"auth":{"OPENAI_API_KEY":"old-key"},"config":"model = \"keep\"\n[model_providers.custom]\nbase_url = \"https://old.example/v1\"\nwire_api = \"responses\"\n","modelCatalog":{"keep":true}}), None)).unwrap();
+    db.save_provider("gemini", &Provider::with_id(gemini_id.clone(), "Gemini".into(), json!({"env":{"GOOGLE_GEMINI_BASE_URL":"https://old.example","GEMINI_API_KEY":"old-key","GEMINI_MODEL":"keep"},"custom":"keep"}), None)).unwrap();
+    ProviderService::sync_universal_api_config_to_apps(&state, &universal_id).unwrap();
     let claude = db
-        .get_provider_by_id("universal-claude-shared", "claude")
+        .get_provider_by_id(&claude_id, "claude")
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -58,10 +64,7 @@ fn universal_api_config_sync_updates_url_key_and_preserves_model_config() {
         "new-key"
     );
     assert_eq!(claude.settings_config["env"]["ANTHROPIC_MODEL"], "keep");
-    let codex = db
-        .get_provider_by_id("universal-codex-shared", "codex")
-        .unwrap()
-        .unwrap();
+    let codex = db.get_provider_by_id(&codex_id, "codex").unwrap().unwrap();
     assert_eq!(codex.settings_config["auth"]["OPENAI_API_KEY"], "new-key");
     assert!(codex.settings_config["config"]
         .as_str()
@@ -73,7 +76,7 @@ fn universal_api_config_sync_updates_url_key_and_preserves_model_config() {
         .contains("model = \"keep\""));
     assert_eq!(codex.settings_config["modelCatalog"]["keep"], true);
     let gemini = db
-        .get_provider_by_id("universal-gemini-shared", "gemini")
+        .get_provider_by_id(&gemini_id, "gemini")
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -86,12 +89,15 @@ fn universal_api_config_sync_updates_url_key_and_preserves_model_config() {
 
 #[test]
 fn universal_api_config_sync_skips_missing_and_disabled_children() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
     let state = create_test_state().expect("create test state");
+    let universal_id = format!("missing-{}", std::process::id());
     let mut universal = cc_switch_lib::UniversalProvider::new(
-        "shared".into(),
+        universal_id.clone(),
         "Shared".into(),
         "custom".into(),
         "https://new.example/v1".into(),
@@ -101,17 +107,17 @@ fn universal_api_config_sync_skips_missing_and_disabled_children() {
     universal.apps.codex = false;
     state.db.save_universal_provider(&universal).unwrap();
 
-    ProviderService::sync_universal_api_config_to_apps(&state, "shared").unwrap();
+    ProviderService::sync_universal_api_config_to_apps(&state, &universal_id).unwrap();
     assert!(!state
         .db
         .get_all_providers("claude")
         .unwrap()
-        .contains_key("universal-claude-shared"));
+        .contains_key(&format!("universal-claude-{universal_id}")));
     assert!(!state
         .db
         .get_all_providers("codex")
         .unwrap()
-        .contains_key("universal-codex-shared"));
+        .contains_key(&format!("universal-codex-{universal_id}")));
 }
 
 #[test]

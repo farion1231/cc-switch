@@ -7080,10 +7080,7 @@ impl ProviderService {
     ///
     /// 与完整同步不同，此操作不会创建或删除子供应商，也不会覆盖模型、路由
     /// 或其它应用专属配置。
-    pub fn sync_universal_api_config_to_apps(
-        state: &AppState,
-        id: &str,
-    ) -> Result<bool, AppError> {
+    pub fn sync_universal_api_config_to_apps(state: &AppState, id: &str) -> Result<bool, AppError> {
         let provider = state
             .db
             .get_universal_provider(id)?
@@ -7144,9 +7141,9 @@ impl ProviderService {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
-                let mut doc = config
-                    .parse::<toml_edit::DocumentMut>()
-                    .map_err(|e| AppError::Message(format!("Codex config TOML parse error: {e}")))?;
+                let mut doc = config.parse::<toml_edit::DocumentMut>().map_err(|e| {
+                    AppError::Message(format!("Codex config TOML parse error: {e}"))
+                })?;
                 let base_url = provider.base_url.trim_end_matches('/');
                 let origin_only = match base_url.split_once("://") {
                     Some((_scheme, rest)) => !rest.contains('/'),
