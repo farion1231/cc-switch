@@ -142,7 +142,10 @@ export type CodexChatEffortValueMode =
   | "low_high"
   | "deepseek"
   // OpenRouter effort 枚举 xhigh|high|medium|low|minimal（无 max，max 钳到 xhigh）
-  | "openrouter";
+  | "openrouter"
+  // OpenCode Zen 网关：合法档位逐模型，见 modelCatalog 各条目 reasoningLevels
+  // （镜像 models.dev）；代理转换层按请求模型查表钳制，无表不发 effort 字段
+  | "zen";
 
 export type CodexChatReasoningOutputFormat =
   | "auto"
@@ -227,6 +230,8 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
+  // Whether this provider is currently projected into an additive app's live config.
+  liveConfigManaged?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -269,6 +274,14 @@ export interface CodexCatalogModel {
   // Codex requires this field in every catalog entry; when omitted the backend
   // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
   baseInstructions?: string;
+  // Per-model reasoning effort levels exposed in the generated Codex catalog
+  // (e.g. ["none", "low", "medium", "high", "xhigh", "max"]). When omitted the
+  // backend keeps the template's conservative none/high default.
+  reasoningLevels?: string[];
+  // Per-model default reasoning effort. Only meaningful together with
+  // reasoningLevels; when omitted the backend keeps the template default if it
+  // is still in the list, otherwise the highest declared level.
+  defaultReasoningLevel?: string;
 }
 
 // Claude 认证字段类型
@@ -284,6 +297,7 @@ export interface VisibleApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  pi: boolean;
 }
 
 // WebDAV 同步状态
@@ -363,6 +377,8 @@ export interface Settings {
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
   usageDashboardRefreshIntervalMs?: number;
+  // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
+  sessionAutoSyncEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
@@ -403,6 +419,8 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 Pi agent 配置目录（可选）
+  piConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -434,7 +452,7 @@ export interface Settings {
 
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）
-  // macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty" | "wezterm" | "kaku"
+  // macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty" | "otty" | "wezterm" | "kaku"
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;

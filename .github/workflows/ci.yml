@@ -205,15 +205,40 @@ jobs:
 
       - name: Compile backend tests with native temp
         # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
-        run: cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run
+        # Record the built test binary path so the run step below can execute
+        # it directly instead of re-invoking cargo with TEMP on \\wsl.localhost.
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        shell: pwsh
+        run: |
+          $testBinary = cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run --message-format=json |
+            ForEach-Object {
+              if ($_ -match '"reason":"compiler-artifact"') {
+                $artifact = $_ | ConvertFrom-Json
+                if ($artifact.executable -and $artifact.profile.test -and $artifact.target.name -eq 'cc_switch_lib') {
+                  $artifact.executable
+                }
+              }
+            } | Select-Object -First 1 -Wait
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          if (-not $testBinary) {
+            throw "cc_switch_lib test binary not found in cargo compiler artifacts"
+          }
+          "CC_SWITCH_TEST_EXE=$testBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows-to-WSL2 filesystem contract
+        # Run the test binary built in the previous step directly. Invoking cargo
+        # here with TEMP pointing at a WSL UNC path can re-link the crate, and
+        # link.exe/mt.exe cannot create manifest temp files on \\wsl.localhost.
         shell: pwsh
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = cargo test --lib --manifest-path src-tauri/Cargo.toml -- --ignored --list
+          $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -221,7 +246,7 @@ jobs:
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
-          cargo test --lib --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
+          & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }

@@ -43,6 +43,13 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
 > = {
   "@ai-sdk/openai-compatible": [
     {
+      id: "MiniMax-M3",
+      name: "MiniMax M3",
+      contextLimit: 1000000,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image"], output: ["text"] },
+    },
+    {
       id: "MiniMax-M2.7",
       name: "MiniMax M2.7",
       contextLimit: 204800,
@@ -504,13 +511,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "RunAPI",
       options: {
-        baseURL: "https://runapi.co",
+        baseURL: "https://runapi.host",
         apiKey: "",
         setCacheKey: true,
       },
@@ -710,6 +717,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "9527CODE",
+      options: {
+        baseURL: "https://9527.codes/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    icon: "9527code",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
@@ -739,14 +776,14 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "TeamoRouter",
       options: {
-        baseURL: "https://api.teamorouter.com/v1",
+        baseURL: "https://api.teamorouter.cn/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -758,6 +795,37 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "teamorouter",
     icon: "teamorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "PPIO",
+      options: {
+        baseURL: "https://api.ppio.com/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek/deepseek-v4-flash-0731": {
+          name: "Deepseek V4 Flash 0731",
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -797,14 +865,47 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "火山 Agent Plan",
+      options: {
+        baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "ark-code-latest": {
+          name: "Ark Code Latest",
+        },
+      },
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "火山 Coding Plan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "火山Agentplan",
+      name: "火山 Coding Plan",
       options: {
         baseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
         apiKey: "",
@@ -818,7 +919,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "cn_official",
     isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
+    partnerPromotionKey: "volcengine_codingplan",
     icon: "huoshan",
     iconColor: "#3370FF",
     templateValues: {
@@ -863,14 +964,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "DouBaoSeed",
+    name: "Volcengine Doubao",
+    nameKey: "providerForm.presets.doubaoseed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "DouBaoSeed",
+      name: "Volcengine Doubao",
       options: {
         baseURL: "https://ark.cn-beijing.volces.com/api/v3",
         apiKey: "",
@@ -915,34 +1017,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "a6api",
     icon: "a6api",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "AtlasCloud",
-      options: {
-        baseURL: "https://api.atlascloud.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "zai-org/glm-5.1": { name: "GLM 5.1" },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1001,6 +1075,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "sssaicode",
     icon: "sssaicode",
     iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "SoleAPI",
+      options: {
+        baseURL: "https://soleapi.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-haiku-4-5-20251001": { name: "Claude Haiku 4.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1242,6 +1346,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "XycAi",
+      options: {
+        baseURL: "https://apicdn.xycai.us/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Amux",
@@ -1261,6 +1393,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "aggregator",
     icon: "amux",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "AtlasCloud",
+      options: {
+        baseURL: "https://api.atlascloud.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "zai-org/glm-5.1": { name: "GLM 5.1" },
+      },
+    },
+    category: "aggregator",
+    icon: "atlascloud",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1363,27 +1521,507 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
-    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key，模型合并两系列；Auto 智能路由的调用 ID
+    // 是 tc-code-latest。端点 OpenAI 兼容（官方快速入门 1823/130119 未发
+    // OpenCode 专属接入页，按工具无关的 /plan/v3 + 阵容照文档收录）。
+    // kimi-k2.5 官方标注 2026-08-31 下线不收；minimax-m2.5 不在套餐文档
+    // 表内、但 /plan/v3/models 收录且真 Key 实测可用（2026-08-31），照实收
+    name: "Tencent Token Plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Bailian",
+      name: "Tencent Token Plan",
+      options: {
+        baseURL: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        "tc-code-latest": { name: "Auto" },
+        "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro" },
+        "minimax-m2.7": { name: "MiniMax M2.7" },
+        "glm-5": { name: "GLM-5" },
+        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5.2": { name: "GLM-5.2" },
+        hy3: { name: "Hy3" },
+        "hy3-preview": { name: "Hy3 Preview" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        defaultValue: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：Auto
+    // 调用 ID 是 auto（≠国内个人版 tc-code-latest），阵容与国内不同（无
+    // GLM-5/5.1/Hy3，多 GLM-5.2/MiniMax-M3）。端点用国际站文档钦定的
+    // tencentcloudmaas.com 域；Key 按站独立不跨站通用
+    name: "Tencent Token Plan (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "kimi-k2.6": { name: "Kimi K2.6" },
+        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash" },
+        "minimax-m3": { name: "MiniMax M3" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版，广州地域）：
+    // kimi-k2.5 官方标注 2026-08-31 下线不收；minimax-m2.5 型号列表已除名
+    // 但真 Key 实测仍可用（2026-08-31），照实收录
+    name: "Tencent Token Plan Enterprise Pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Pro",
+      options: {
+        baseURL: "https://tokenhub.tencentmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.3": { name: "GLM-5.3" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "glm-5": { name: "GLM-5" },
+        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5-turbo": { name: "GLM-5 Turbo" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "kimi-k2.7-code-highspeed": { name: "Kimi K2.7 Code HighSpeed" },
+        "kimi-k2.6": { name: "Kimi K2.6" },
+        "minimax-m2.7": { name: "MiniMax M2.7" },
+        "minimax-m3": { name: "MiniMax M3" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash 0731 GA" },
+        "deepseek-v4-pro-0813": { name: "DeepSeek V4 Pro 0813 GA" },
+        "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash Official" },
+        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro Official" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/plan/v3",
+        defaultValue: "https://tokenhub.tencentmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
+    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Pro (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.3": { name: "GLM-5.3" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "minimax-m3": { name: "MiniMax M3" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "kimi-k2.7-code-highspeed": { name: "Kimi K2.7 Code HighSpeed" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash 0731 GA" },
+        "deepseek-v4-pro-0813": { name: "DeepSeek V4 Pro 0813 GA" },
+        "deepseek-v4-flash-202605": { name: "DeepSeek V4 Flash Official" },
+        "deepseek-v4-pro-202606": { name: "DeepSeek V4 Pro Official" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Lite",
+      options: {
+        baseURL: "https://tokenhub.tencentmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/plan/v3",
+        defaultValue: "https://tokenhub.tencentmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
+    // Global），仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Lite (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）：官方
+    // OpenCode 接入页确认 /v2/tokenplan/personal + @ai-sdk/openai-compatible；
+    // 阵容=Token Plan 主文档 2026-08-14 版六模型（ernie-5.1 8/20 下线不收）
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Baidu Qianfan Token Plan",
+      options: {
+        baseURL: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        apiKey: "",
+      },
+      models: {
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash 0731" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "glm-5.1": { name: "GLM-5.1" },
+        "kimi-k2.6": { name: "Kimi K2.6" },
+      },
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        defaultValue: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "千问AI平台",
       options: {
         baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         apiKey: "",
         setCacheKey: true,
       },
-      models: {},
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+      },
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
     templateValues: {
       baseURL: {
         label: "Base URL",
         placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         defaultValue: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "千问AI平台 Token Plan",
+      options: {
+        baseURL:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  // ===== QwenCloud（DashScope 国际站）=====
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // 按量付费走 OpenAI 兼容层（/compatible-mode/v1）；Token Plan 官方给的是
+  // Anthropic 协议地址，且比 Claude Code 的多一段 /v1（AI SDK anthropic 惯例）。
+  {
+    name: "QwenCloud",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "QwenCloud",
+      options: {
+        baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.7-max": { name: "Qwen3.7 Max" },
+      },
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        defaultValue: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "QwenCloud For Coding",
+      options: {
+        baseURL: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.7-plus": { name: "Qwen3.7 Plus" },
+        "qwen3.6-plus": { name: "Qwen3.6 Plus" },
+        "qwen3-coder-plus": { name: "Qwen3 Coder Plus" },
+      },
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "QwenCloud Token Plan",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "QwenCloud Token Plan",
+      options: {
+        baseURL:
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.7-max": { name: "Qwen3.7 Max" },
+      },
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
@@ -1500,7 +2138,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "ZhipuAI/GLM-5.1": { name: "GLM-5.1" },
+        "ZhipuAI/GLM-5.2": { name: "GLM-5.2" },
       },
     },
     category: "aggregator",
@@ -1610,11 +2248,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.7": { name: "MiniMax M2.7" },
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1642,11 +2284,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.7": { name: "MiniMax M2.7" },
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -2092,26 +2738,56 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isCustomTemplate: true,
   },
   {
-    name: "PPIO",
-    websiteUrl: "https://ppio.com",
-    apiKeyUrl: "https://ppio.com/settings/key-management",
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "PPIO",
+      name: "JieKou AI",
       options: {
-        baseURL: "https://api.ppio.com/openai/v1",
+        baseURL: "https://api.jiekou.ai/openai/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "deepseek/deepseek-v4-flash-0731": {
-          name: "Deepseek V4 Flash 0731",
+        "claude-fable-5": {
+          name: "Claude Fable 5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
     },
     category: "aggregator",
-    icon: "ppio",
-    iconColor: "#2874FF",
+    icon: "jiekou",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "AICodeWith",
+      options: {
+        baseURL: "https://api.aicodewith.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-opus-5": { name: "Claude Opus 5" },
+      },
+    },
+    category: "aggregator",
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
     templateValues: {
       apiKey: {
         label: "API Key",

@@ -33,8 +33,8 @@ export interface CodexProviderPreset {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
-  // 托管账号预设：目前仅 xAI OAuth（Grok 订阅经本地代理注入 token 直连 api.x.ai）
-  providerType?: "xai_oauth";
+  // 仅用于区分预设来源；ChatGPT/Codex 与 xAI/Grok 的认证流程彼此独立。
+  providerType?: "codex_oauth" | "xai_oauth";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -61,8 +61,15 @@ export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
   modelName = "gpt-5.6-sol",
+  options?: {
+    // 托管 OAuth 预设（requiresOAuth 卡）必须传 false：这类卡无静态 key，
+    // requires_openai_auth = true 会被后端 keyless 安全闸拒绝切换
+    // （provider.codex.config.official_auth_fallback）。
+    requiresOpenAiAuth?: boolean;
+  },
 ): string {
   const tomlString = (value: string) => JSON.stringify(value);
+  const requiresOpenAiAuth = options?.requiresOpenAiAuth ?? true;
 
   return `model_provider = "custom"
 model = ${tomlString(modelName)}
@@ -73,7 +80,7 @@ disable_response_storage = true
 name = ${tomlString(providerName)}
 base_url = ${tomlString(baseUrl)}
 wire_api = "responses"
-requires_openai_auth = true`;
+requires_openai_auth = ${requiresOpenAiAuth}`;
 }
 
 function modelCatalog(
@@ -92,6 +99,12 @@ function modelCatalog(
         // Vendor's OFFICIAL base_instructions; omit to inherit the neutral
         // template default. Required by Codex, so the backend always emits one.
         baseInstructions?: string;
+        // Reasoning efforts the vendor's endpoint actually accepts (subset of
+        // none/minimal/low/medium/high/xhigh/max/ultra). Omit to keep the
+        // template's conservative none/high default. Pre-filled from official
+        // vendor docs; users can still edit per provider in the form.
+        reasoningLevels?: string[];
+        defaultReasoningLevel?: string;
       }
   >,
 ): CodexCatalogModel[] {
@@ -105,6 +118,8 @@ function modelCatalog(
           supportsParallelToolCalls: entry.supportsParallelToolCalls,
           inputModalities: entry.inputModalities,
           baseInstructions: entry.baseInstructions,
+          reasoningLevels: entry.reasoningLevels,
+          defaultReasoningLevel: entry.defaultReasoningLevel,
         },
   );
 }
@@ -115,6 +130,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     websiteUrl: "https://chatgpt.com/codex",
     isOfficial: true,
     category: "official",
+    providerType: "codex_oauth",
     auth: {},
     config: ``,
     theme: {
@@ -135,29 +151,53 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     config: generateThirdPartyConfig(
       "kimi",
       "https://api.moonshot.cn/v1",
-      "kimi-k2.7-code",
+      "kimi-k3",
     ),
     endpointCandidates: ["https://api.moonshot.cn/v1"],
-    apiFormat: "openai_chat",
+    // 原生 Responses 直连（不需要本地路由接管）：官方 Codex 接入文档
+    //（platform.kimi.com/docs/guide/codex-kimi.md，直接以 CC Switch 为例）
+    // 给出 base_url = https://api.moonshot.cn/v1 + wire_api = "responses"，
+    // 并明写开放平台「原生支持 Codex 使用的 Responses API，无需协议转换或本
+    // 地代理」；接口参考 platform.kimi.com/docs/api/responses.md（POST
+    // /v1/responses、reasoning.effort 枚举 low/high/max、tool_choice 仅
+    // auto、支持 prompt_cache_key，usage 带 cached_tokens）。2026-09-09 真
+    // Key 探针：Codex 0.153.4 的全量请求形态（include
+    // reasoning.encrypted_content + reasoning.summary + text.verbosity）与
+    // 流式事件序列均 200；kimi-k2.7-code 亦 200——文档只列 kimi-k3，属未文
+    // 档化能力，厂商若收回从 catalog 删行即可。存量 openai_chat 卡片的
+    // thinking/reasoning_effort 注入来自卡片自身 meta.codexChatReasoning
+    //（预设已不再携带），那条路径的 Kimi 400 仍首查该注入
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      {
-        model: "kimi-k2.7-code",
-        displayName: "Kimi K2.7 Code",
-        contextWindow: 262144,
-      },
+      // 首行 = 默认模型（catalog[0] 须与 config.toml 的 model 一致）：
+      // kimi-k3 是官方 Codex 文档与 Responses OpenAPI 唯一列出的模型
+      //（Jason 2026-09-10 拍板，推翻 07-17「k3 排在 k2.7-code 之后」的旧序）。
+      // 档位照抄官方参数文档（2026-08-15 盘点，2026-09-09 复核）：k3 不可关
+      // 思考、reasoning.effort 三档官方默认 max；k2.7-code 始终思考、官方标注
+      // 不支持 reasoning_effort → 单档 high（防模板假差异档，LongCat 先例）。
+      // 两模型都关不掉思考，none 一律不列。k3 不声明 default：native 模板
+      // 默认 high ∈ 子集 → 后端保留 high，与本预设 config.toml 顶层
+      // model_reasoning_effort = "high"（实际下发值）一致；catalog 默认只
+      // 标记 Codex /model 选择器，声明 max 会展示一个实际不下发的默认值。
+      // supportsParallelToolCalls 两行填 true：Kimi Code 官方 catalog 对同一
+      // K3 明写 true，且探针里两端点都把 parallel_tool_calls 回显为 true；
+      // 不填会让 Codex ≤0.148 用户从 ProxyChat 模板的 true 退化成 native
+      // 模板的 false（0.153.4 起该字段已不存在，填了无害）
       {
         model: "kimi-k3",
         displayName: "Kimi K3",
         contextWindow: 1048576,
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "kimi-k2.7-code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["high"],
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -175,22 +215,57 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       "kimi-for-coding",
     ),
     endpointCandidates: ["https://api.kimi.com/coding/v1"],
-    apiFormat: "openai_chat",
-    promptCacheRouting: "enabled",
+    // 原生 Responses 直连（不需要本地路由接管）：官方 Codex 接入文档
+    //（kimi.com/code/docs/third-party-tools/codex.html，以 CC Switch 为例）
+    // 给出 base_url = https://api.kimi.com/coding/v1 且 wire_api「必须填
+    // responses」，并明写「Kimi Code 服务端原生支持 OpenAI Responses API
+    //（流式/非流式、reasoning、function calling 均可用），无需任何本地路由
+    // 或协议转换工具」。2026-09-09 真 Key 探针：四个模型在 Codex 全量请求
+    // 形态下均 200，reasoning item 带真实 encrypted_content；同
+    // prompt_cache_key 的二次请求命中 cached_tokens——直连时
+    // prompt_cache_key 由 Codex 自己发，不再需要转换层的 promptCacheRouting
+    // 重注入
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
+      // 照抄同页官方 models.json（2026-09-09 核对）：
+      // kimi-for-coding(-highspeed)=K2.7 Code、Thinking 恒 ON 无档位 → 单档
+      // high；k3/k3-256k 三档且官方 default_reasoning_level = "high"（与
+      // native 模板回落值相同，显式声明只为表单可见，MiniMax/MiMo 先例）。
+      // none 不列——该网关关思考=静默路由到 K2.6（换模型换计费）。网关
+      // effort 白名单 ultra/max/xhigh/high/medium/low/minimum/light/none，
+      // 未知值 400（Codex 的 minimal 不在内，档位子集已挡住选择器，用户自改
+      // 档位需自担）。四行 supports_parallel_tool_calls 均照抄官方 true
       {
         model: "kimi-for-coding",
         displayName: "Kimi For Coding",
         contextWindow: 262144,
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "kimi-for-coding-highspeed",
+        displayName: "Kimi For Coding HighSpeed",
+        contextWindow: 262144,
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "k3-256k",
+        displayName: "Kimi K3 256K",
+        contextWindow: 262144,
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "kimi",
     iconColor: "#6366F1",
@@ -308,15 +383,16 @@ requires_openai_auth = true`,
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "runapi",
-      "https://runapi.co/v1",
+      "https://runapi.host/v1",
       "gpt-5.6-sol",
     ),
+    endpointCandidates: ["https://runapi.host/v1", "https://runapi.co/v1"],
     isPartner: true,
     partnerPromotionKey: "runapi",
     icon: "runapi",
@@ -433,6 +509,26 @@ requires_openai_auth = true`,
     icon: "apikeyfun",
   },
   {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "9527code",
+      "https://9527.codes/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://9527.codes/v1",
+      "https://api.9527.codes/v1",
+      "https://cdn.9527.codes/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    icon: "9527code",
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
@@ -450,20 +546,56 @@ requires_openai_auth = true`,
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.com",
+    websiteUrl: "https://teamorouter.cn",
     apiKeyUrl:
-      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "teamorouter",
-      "https://api.teamorouter.com/v1",
+      "https://api.teamorouter.cn/v1",
       "gpt-5.6-sol",
     ),
-    endpointCandidates: ["https://api.teamorouter.com/v1"],
+    endpointCandidates: [
+      "https://api.teamorouter.cn/v1",
+      "https://api.teamorouter.com/v1",
+    ],
     isPartner: true,
     partnerPromotionKey: "teamorouter",
     icon: "teamorouter",
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ppio",
+      "https://api.ppio.com/openai/v1",
+      "deepseek/deepseek-v4-flash-0731",
+    ),
+    endpointCandidates: ["https://api.ppio.com/openai/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "deepseek/deepseek-v4-flash-0731",
+        displayName: "Deepseek V4 Flash 0731",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+      },
+    ]),
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: false,
+      thinkingParam: "thinking",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
   },
   {
     name: "ClaudeCN",
@@ -481,33 +613,74 @@ requires_openai_auth = true`,
     icon: "claudecn",
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
     websiteUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "ark_agentplan",
-      "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "https://ark.cn-beijing.volces.com/api/plan/v3",
       "ark-code-latest",
     ),
-    // ⚠️ 计费红线（官方 warning）：Coding Plan 必须走 /api/coding/v3；
-    // 填按量端点 /api/v3 不消耗套餐额度、按量另计费，绝不能混入候选
-    endpointCandidates: ["https://ark.cn-beijing.volces.com/api/coding/v3"],
+    // ⚠️ 计费红线（官方 warning）：Agent Plan 必须走 /api/plan/v3；
+    // 按量端点 /api/v3 不消耗套餐额度、按量另计费，Coding Plan 的
+    // /api/coding/v3 是另一份订阅——两者都绝不能混入候选
+    endpointCandidates: ["https://ark.cn-beijing.volces.com/api/plan/v3"],
     // 官方 Codex 文档（volcengine.com/docs/82379/2556056，2026-07 更新）：
-    // Coding Plan /api/coding/v3 已支持 Responses API（wire_api=responses），无需路由接管转换
+    // Agent Plan /api/plan/v3 与 Coding Plan /api/coding/v3 均已支持
+    // Responses API（wire_api=responses），无需路由接管转换
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "ark-code-latest",
         displayName: "Ark Code Latest",
         contextWindow: 256000,
+        // 四份官方 Codex 接入文档（82379/2556054~2556057）一致限定
+        // model_reasoning_effort 只能是 low/medium/high；none/xhigh/max 是
+        // glm-5-2 专属值（82379/1449737），别名可指向任意后端模型故不可填
+        reasoningLevels: ["low", "medium", "high"],
       },
     ]),
     category: "cn_official",
     isPartner: true,
     partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+  },
+  {
+    name: "火山 Coding Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ark_codingplan",
+      "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "ark-code-latest",
+    ),
+    // ⚠️ 计费红线（官方 warning）：Coding Plan 必须走 /api/coding/v3；
+    // 按量端点 /api/v3 不消耗套餐额度、按量另计费，Agent Plan 的
+    // /api/plan/v3 是另一份订阅——两者都绝不能混入候选
+    endpointCandidates: ["https://ark.cn-beijing.volces.com/api/coding/v3"],
+    // 官方 Codex 文档（volcengine.com/docs/82379/2556056，2026-07 更新）：
+    // Coding Plan /api/coding/v3 已支持 Responses API（wire_api=responses），
+    // 无需路由接管转换
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "ark-code-latest",
+        displayName: "Ark Code Latest",
+        contextWindow: 256000,
+        // 同 Agent Plan：官方 Codex 文档钉死 low/medium/high 三档
+        reasoningLevels: ["low", "medium", "high"],
+      },
+    ]),
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_codingplan",
     icon: "huoshan",
     iconColor: "#3370FF",
   },
@@ -526,14 +699,20 @@ requires_openai_auth = true`,
     endpointCandidates: [
       "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
     ],
-    // 国内站 coding/v3 已切原生 Responses（见 火山Agentplan），但 BytePlus
-    // 国际站（bytepluses.com）文档未单独核实，暂保持 Chat 路由
-    apiFormat: "openai_chat",
+    // 国际站已核实（2026-08-15 盘点）：BytePlus 官方 Codex 接入文档
+    //（docs.byteplus.com/en/docs/ModelArk/2556056）标准 config.toml 的
+    // base_url 就是本端点且 wire_api="responses"，OpenCode 文档亦明写
+    // Responses 优先——与国内站火山双 Plan 对齐切原生直连
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "ark-code-latest",
         displayName: "Ark Code Latest",
         contextWindow: 256000,
+        // 官方 Codex 文档 model_reasoning_effort 限定 low/medium/high，与
+        // 国内站同名模型四份文档交叉印证。⚠️auto 路由别名固有不确定性：
+        // 路由到 glm-5-2-260617 时官方明载 low/medium 按 high 等价处理
+        reasoningLevels: ["low", "medium", "high"],
       },
     ]),
     category: "cn_official",
@@ -543,7 +722,8 @@ requires_openai_auth = true`,
     iconColor: "#3370FF",
   },
   {
-    name: "DouBaoSeed",
+    name: "Volcengine Doubao",
+    nameKey: "providerForm.presets.doubaoseed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -564,6 +744,10 @@ requires_openai_auth = true`,
         model: "doubao-seed-2-1-pro-260628",
         displayName: "Doubao Seed 2.1 Pro",
         contextWindow: 262144,
+        // 方舟深度思考文档（82379/1449737）7 值枚举中本模型无限制的通用四档；
+        // none/xhigh 仅 glm-5-2、max 的 deepseek 名单标注 Responses 待支持。
+        // minimal=方舟的"关闭思考直接回答"档；官方点名本模型服务端默认 high
+        reasoningLevels: ["minimal", "low", "medium", "high"],
       },
     ]),
     category: "cn_official",
@@ -580,17 +764,32 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "siliconflow",
       "https://api.siliconflow.cn/v1",
-      "Pro/MiniMaxAI/MiniMax-M2.7",
+      "deepseek-ai/DeepSeek-V4-Flash",
     ),
     endpointCandidates: ["https://api.siliconflow.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 国内 M2.5 于 2026-09-11 下线；siliconflow.cn/models 当前可用的
+      // V4 Flash 为 0731 版本。平台 Chat API 只区分 high/max，不能照抄原厂档位：
+      // https://docs.siliconflow.cn/docs/api/chat-completions-post
       {
-        model: "Pro/MiniMaxAI/MiniMax-M2.7",
-        displayName: "Pro / MiniMax M2.7",
-        contextWindow: 200000,
+        model: "deepseek-ai/DeepSeek-V4-Flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high", "max"],
+        defaultReasoningLevel: "high",
       },
     ]),
+    // 显式覆盖平台旧的 supportsEffort:false 推断，使目录中的两档实际下发。
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "enable_thinking",
+      effortParam: "reasoning_effort",
+      effortValueMode: "deepseek",
+      outputFormat: "reasoning_content",
+    },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "siliconflow",
@@ -605,15 +804,19 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "siliconflow_en",
       "https://api.siliconflow.com/v1",
-      "MiniMaxAI/MiniMax-M2.7",
+      "MiniMaxAI/MiniMax-M3",
     ),
     endpointCandidates: ["https://api.siliconflow.com/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 2026-08-15 盘点：M2.7 在 SiliconFlow 从未上架，.com 站换 M3（官方页
+      // 1M 窗口=1049K tokens；.cn 站无 M3 勿互套）。SiliconFlow 平台开关是
+      // enable_thinking 布尔（后端按平台推断兜底），M3 可关思考 → 两态
       {
-        model: "MiniMaxAI/MiniMax-M2.7",
-        displayName: "MiniMax M2.7",
-        contextWindow: 200000,
+        model: "MiniMaxAI/MiniMax-M3",
+        displayName: "MiniMax M3",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
       },
     ]),
     category: "aggregator",
@@ -637,34 +840,6 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "a6api",
     icon: "a6api",
-  },
-  {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: `model_provider = "custom"
-model = "zai-org/glm-5.1"
-disable_response_storage = true
-
-[model_providers.custom]
-name = "AtlasCloud"
-base_url = "https://api.atlascloud.ai/v1"
-wire_api = "responses"
-requires_openai_auth = true`,
-    endpointCandidates: ["https://api.atlascloud.ai/v1"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "zai-org/glm-5.1",
-        displayName: "GLM 5.1",
-        contextWindow: 200000,
-      },
-    ]),
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
   },
   {
     name: "Compshare",
@@ -740,6 +915,22 @@ requires_openai_auth = true`,
     partnerPromotionKey: "sssaicode", // 促销信息 i18n key
     icon: "sssaicode",
     iconColor: "#000000",
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "soleapi",
+      "https://soleapi.com/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: ["https://soleapi.com/v1"],
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
   },
   {
     name: "Micu",
@@ -890,6 +1081,25 @@ requires_openai_auth = true`,
     isPartner: true,
     icon: "sudocode-us",
   },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "xycai",
+      "https://apicdn.xycai.us/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://apicdn.xycai.us/v1",
+      "https://apicdn.xyc.ai/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Amux",
@@ -904,6 +1114,45 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://api.amux.ai/v1"],
     icon: "amux",
+  },
+  {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "zai-org/glm-5.2"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "AtlasCloud"
+base_url = "https://api.atlascloud.ai/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://api.atlascloud.ai/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // Coding Plan 当前收录的最新 GLM 是 5.2（2026-09-10）；按量目录的
+      // 5.3 不在套餐内。窗口来自 https://api.atlascloud.ai/v1/models。
+      {
+        model: "zai-org/glm-5.2",
+        displayName: "GLM 5.2",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+    ]),
+    // 平台未确认该模型的思考开关/effort 契约；单档仅表示思考模式，
+    // 显式覆盖以免后端按 GLM 模型名注入原厂 thinking 字段。
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: false,
+      thinkingParam: "none",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
+    icon: "atlascloud",
   },
   {
     name: "Azure OpenAI",
@@ -948,19 +1197,23 @@ requires_openai_auth = true`,
     // deepseek-v4-flash 原生 Responses（wire_api=responses 对自家 base_url），无需路由接管转换。
     // 后端按 deepseek.com host 直接镜像官方 models.json（freeform apply_patch +
     // GPT-5 harness + low/high/max 思考档，需 codex >= 0.144.0），这里只保留行清单与展示名。
+    // 档位照抄官方 catalog（low/high/max 默认 high，2026-08-15 复核 flash/pro
+    // 逐字节一致）：per-row 值会覆盖官方镜像，DeepSeek 官方目录变更时须同步这里
+    // （Jason 2026-08-15 拍板：表单可见性优先于快照过时风险，"未设置"误导性更大）
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
       },
-      // 官方预计 2026-08 初开通 pro 的 Codex 集成（官方 models.json 已含该条目），
-      // 在那之前切到 pro 会上游报错
+      // pro 已于 2026-08 开通 Responses/Codex 集成（官方 catalog 条目与 flash 仅差 priority）
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
         contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
       },
     ]),
     category: "cn_official",
@@ -972,23 +1225,45 @@ requires_openai_auth = true`,
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     auth: generateThirdPartyAuth(""),
+    // 智谱三端点分立（docs.bigmodel.cn/cn/coding-plan/tool/others）：Anthropic
+    // /api/anthropic、OpenAI Chat /api/coding/paas/v4、OpenAI Responses /api/v1，
+    // 并明示「错误配置端点将导致无法使用 GLM Coding Plan 套餐额度」。Codex 直连
+    // 发的是 Responses wire，base_url 必须是 /api/v1；Chat 端点上的 /responses
+    // 是严格旧网关（拒 type=custom 工具 → #6944 的 400）
     config: generateThirdPartyConfig(
       "zhipu_glm",
-      "https://open.bigmodel.cn/api/coding/paas/v4",
-      "glm-5.2",
+      "https://open.bigmodel.cn/api/v1",
+      "glm-5.3",
     ),
-    endpointCandidates: ["https://open.bigmodel.cn/api/coding/paas/v4"],
-    apiFormat: "openai_chat",
+    endpointCandidates: ["https://open.bigmodel.cn/api/v1"],
+    // 官方 Codex 接入页（docs.bigmodel.cn/cn/coding-plan/tool/codex，2026-09-04
+    // 核对）：wire_api=responses 对自家 /api/v1，与 MiMo/MiniMax 同为原生直连
+    // → NativeResponses profile（shell_command 编辑、不发 freeform apply_patch；
+    // 官方目录虽声明 freeform，无真机验证前按保守口径，不引入 400 风险）
+    apiFormat: "openai_responses",
+    // 档位/上下文/模态照抄官方 models.json：glm-5.3 low/high/max 默认 max；
+    // glm-5-turbo 官方档位为空、默认 max——cc-switch 表达不了空档位（回落会得到
+    // 模板 none/high，none 在原生直连下没有转换层兜底、会原样发给严格网关），
+    // 按官方默认收成单档 max。两模型 input_modalities=["text"]、并行工具调用 true
     modelCatalog: modelCatalog([
-      { model: "glm-5.2", displayName: "GLM-5.2", contextWindow: 200000 },
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
+      },
+      {
+        model: "glm-5-turbo",
+        displayName: "GLM-5-Turbo",
+        contextWindow: 204800,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["max"],
+      },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "zhipu",
     iconColor: "#0F62FE",
@@ -998,23 +1273,26 @@ requires_openai_auth = true`,
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     auth: generateThirdPartyAuth(""),
+    // 国际站同上（docs.z.ai/devpack/tool/others + devpack/tool/codex，2026-09-04
+    // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3
     config: generateThirdPartyConfig(
       "zhipu_glm_en",
-      "https://api.z.ai/api/coding/paas/v4",
-      "glm-5.2",
+      "https://api.z.ai/api/v1",
+      "glm-5.3",
     ),
-    endpointCandidates: ["https://api.z.ai/api/coding/paas/v4"],
-    apiFormat: "openai_chat",
+    endpointCandidates: ["https://api.z.ai/api/v1"],
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      { model: "glm-5.2", displayName: "GLM-5.2", contextWindow: 200000 },
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
+      },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "zhipu",
     iconColor: "#0F62FE",
@@ -1033,40 +1311,313 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://qianfan.baidubce.com/v2/coding"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 两态（2026-08-15 盘点）：千帆 v2 官方 thinking:{type:enabled/disabled}
+      // 覆盖 Coding Plan 主力六模型，官方 OpenCode 接入文档在 /v2/coding 上
+      // 对 minimax-m2.5/glm-5/kimi-k2.5 照发该字段。⚠️别名固有缺陷：控制台把
+      // qianfan-code-latest 解析到 ernie-4.5-turbo 时 none 不会真关思考
       {
         model: "qianfan-code-latest",
         displayName: "Qianfan Code Latest",
         contextWindow: 131072,
+        reasoningLevels: ["none", "high"],
       },
     ]),
+    // 千帆 v2 Chat API 官方顶层参数（与智谱同形态）；平台对不支持的参数
+    // "忽略不报错"（官方多处明载），别名解析到非清单模型时只失效不 400
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: false,
+      thinkingParam: "thinking",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
     category: "cn_official",
     icon: "baidu",
     iconColor: "#2932E1",
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
-    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    // Token Plan 个人版：2026-07-13 起替代 Coding Plan 发售（Coding Plan
+    // 停止新购、存量可用至到期，故上面的旧预设保留）。无别名机制，直接
+    // 指定真实模型 id；官方 Codex 接入指南 wire_api 省略=chat 默认，与
+    // Coding Plan 同走本地路由。API Key 是订阅页专属 Key（非通用应用 Key）
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "bailian",
+      "qianfan_tokenplan",
+      "https://qianfan.baidubce.com/v2/tokenplan/personal",
+      "deepseek-v4-pro",
+    ),
+    endpointCandidates: ["https://qianfan.baidubce.com/v2/tokenplan/personal"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 阵容与排序=Token Plan 个人版文档（2026-08-14 版）；ernie-5.1 官方
+      // 标注 8/20 下线不收。窗口=千帆平台模型列表页口径（2026-08-06 版，
+      // glm-5.1 与官方 OpenCode 接入页 198000 双重印证）
+      {
+        // 千帆 Token Plan 托管的 DeepSeek V4 是纯文本部署（Coding Plan 文档明写"暂未支持图像理解能力"，附图 400），
+        // 与官方端点把 v4-flash 路由到识图的 V4.1 Flash 不同——显式声明纯文本，勿依赖全局名单（#7283 follow-up）
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1048576,
+        // thinking + reasoning_effort 双官方清单模型：none=关思考，high/max
+        // =官方仅有的两档真实深度。不声明 default：官方对复杂 Agent 类请求
+        // 自动置 max=回落结果，显式钉 high 反而会压低平台该行为
+        reasoningLevels: ["none", "high", "max"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high", "max"],
+        inputModalities: ["text"],
+      },
+      {
+        // 平台模型列表无独立条目、思考双清单均未收录——窗口按 v4-flash
+        // 同款填，档位无证据不造
+        model: "deepseek-v4-flash-0731",
+        displayName: "DeepSeek V4 Flash 0731",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+      },
+      {
+        // 千帆平台标 1M（≠智谱自家 coding 端点 200K 口径，窗口是平台部署
+        // 属性）；thinking 清单（2026-05-27 版）未收录，档位不填
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1048576,
+      },
+      {
+        model: "glm-5.1",
+        displayName: "GLM-5.1",
+        contextWindow: 198000,
+        // thinking 清单内，且官方 OpenCode 接入页在 Token Plan 端点上对它
+        // 一手下发 thinking:{type:"enabled"} → 真实两态
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        // thinking 清单未收录，档位不填
+        model: "kimi-k2.6",
+        displayName: "Kimi K2.6",
+        contextWindow: 262144,
+      },
+    ]),
+    // 与 Coding Plan 的差异：这里开 supportsEffort——Coding Plan 因别名不知
+    // 解析到谁而保持 false；Token Plan catalog 全为显式模型，默认模型
+    // deepseek-v4-pro 在 reasoning_effort 官方清单内（清单仅 v4-pro/v4-flash，
+    // 档位仅 high/max）。effortValueMode:"deepseek"（max/xhigh/ultra→max、
+    // 其余→high）与千帆官方向下兼容映射（low/medium→high、xhigh→max）逐字
+    // 吻合；非清单模型收到 reasoning_effort 按平台明文"忽略不报错"，无害
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "thinking",
+      effortParam: "reasoning_effort",
+      effortValueMode: "deepseek",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+  },
+  {
+    name: "千问AI平台",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qianwenai",
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "qwen3-coder-plus",
+      "qwen3.8-max",
     ),
     endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
-    // 阿里百炼 DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
+    // DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
     apiFormat: "openai_responses",
-    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）
+    // 档位与窗口照抄官方 Codex model-catalog.local.json——该元数据段落不分
+    // 套餐，按量付费与 Token Plan 用同一份（qwen3.8 系只收 low/medium/xhigh，
+    // 默认 xhigh；无 high 档，勿按常规四档补齐）
     modelCatalog: modelCatalog([
       {
-        model: "qwen3-coder-plus",
-        displayName: "Qwen3 Coder Plus",
-        contextWindow: 1048576,
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
       },
     ]),
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qianwenai_token_plan",
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "qwen3.8-max",
+    ),
+    endpointCandidates: [
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    ],
+    apiFormat: "openai_responses",
+    // 档位与窗口照抄官方 Codex model-catalogs.json（qwen3.8 系只收
+    // low/medium/xhigh，默认 xhigh；无 high 档，勿按常规四档补齐）
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.8-flash",
+        displayName: "Qwen3.8 Flash",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+    ]),
+    category: "cn_official",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+  },
+  // ===== QwenCloud（DashScope 国际站）=====
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // 按量付费与 Token Plan 走 /compatible-mode/v1 原生 Responses。
+  {
+    name: "QwenCloud",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qwencloud",
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "qwen3.8-max",
+    ),
+    endpointCandidates: [
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    ],
+    apiFormat: "openai_responses",
+    // 档位与窗口照抄官方 Codex model-catalogs.json（qwen3.8 系只收
+    // low/medium/xhigh，默认 xhigh；无 high 档，勿按常规四档补齐）
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.8-flash",
+        displayName: "Qwen3.8 Flash",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.7-max",
+        displayName: "Qwen3.7 Max",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+  },
+  {
+    name: "QwenCloud For Coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qwencloud_coding",
+      "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "qwen3.7-plus",
+    ),
+    endpointCandidates: ["https://coding-intl.dashscope.aliyuncs.com/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.7-plus",
+        displayName: "Qwen3.7 Plus",
+        contextWindow: 1000000,
+      },
+      {
+        model: "qwen3.6-plus",
+        displayName: "Qwen3.6 Plus",
+        contextWindow: 1000000,
+      },
+      {
+        model: "qwen3-coder-plus",
+        displayName: "Qwen3 Coder Plus",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+  },
+  {
+    name: "QwenCloud Token Plan",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qwencloud_token_plan",
+      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "qwen3.8-max",
+    ),
+    endpointCandidates: [
+      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+    ],
+    apiFormat: "openai_responses",
+    // 档位与窗口照抄官方 Codex model-catalogs.json（qwen3.8 系只收
+    // low/medium/xhigh，默认 xhigh；无 high 档，勿按常规四档补齐）
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.8-max",
+        displayName: "Qwen3.8 Max",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.8-flash",
+        displayName: "Qwen3.8 Flash",
+        contextWindow: 983616,
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+      {
+        model: "qwen3.7-max",
+        displayName: "Qwen3.7 Max",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
   },
   {
     name: "Tencent Hunyuan",
@@ -1098,19 +1649,562 @@ requires_openai_auth = true`,
         model: "hy3",
         displayName: "Hy3",
         contextWindow: 256000,
-        // hy3 不在官方多模态理解模型名单（1823/130988），纯文本
+        // hy3 不在官方图片理解模型名单（1823/136956），纯文本
         inputModalities: ["text"],
+        // 官方档位枚举只有 low/high（1823/131208 + 开源权重 chat template
+        // 对其他 effort 值直接 raise）；带 tools 时 low 被服务端升为 high
+        reasoningLevels: ["low", "high"],
       },
       {
         model: "hy3-preview",
         displayName: "Hy3 Preview",
         contextWindow: 256000,
         inputModalities: ["text"],
+        // 同 hy3：官方枚举 low/high（1823/130930 交错式思考模式文档）
+        reasoningLevels: ["low", "high"],
       },
     ]),
     category: "cn_official",
     icon: "hunyuan",
     iconColor: "#0055E9",
+  },
+  {
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key，catalog 合并两系列；Auto 智能路由的调用
+    // ID 是 tc-code-latest。kimi-k2.5 官方标注 2026-08-31 下线不收（真 Key
+    // 实测仍通，过期即弃）。minimax-m2.5 不在套餐文档表内、但 /plan/v3/models
+    // 收录且真 Key 实测可用，照实收录。
+    // 注意与 TokenHub 按量 API 市场（1823 线，Hunyuan 预设的 /v1 端点）是
+    // 两条产品线：订阅 Key 只能走 /plan 端点，TokenHub Key 对 /plan 不通
+    name: "Tencent Token Plan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tencent_token_plan",
+      "https://api.lkeap.cloud.tencent.com/plan/v3",
+      "tc-code-latest",
+    ),
+    endpointCandidates: ["https://api.lkeap.cloud.tencent.com/plan/v3"],
+    // Token Plan 仅提供 Chat Completions；Codex 需要本地路由转换
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 阵容=个人版文档（2026-08-21 版）+ /models 实测；窗口=平台型号列表页
+      // （intl 1300/78934，2026-08-28 版）口径。思考档位全部真 Key 实测
+      // （2026-08-31）：thinking 开关对 tc-code-latest/deepseek/GLM/hy3
+      // 真实生效；minimax-m2.5/m2.7 关不掉（参数被静默忽略，非报错），
+      // 只列 high 防"选 none 却照样思考"的假档
+      {
+        model: "tc-code-latest",
+        displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "deepseek-v4-flash-202605",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "deepseek-v4-pro-202606",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "minimax-m2.7",
+        displayName: "MiniMax M2.7",
+        contextWindow: 200000,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "glm-5",
+        displayName: "GLM-5",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "glm-5.1",
+        displayName: "GLM-5.1",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      // Hy Token Plan 系列（与通用系列共用端点与 Key）；hy3-preview
+      // 调用自动路由至 hy3（官方公告）；纯文本（1823/136956 名单无 hy3）
+      {
+        model: "hy3",
+        displayName: "Hy3",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "hy3-preview",
+        displayName: "Hy3 Preview",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+        reasoningLevels: ["none", "high"],
+      },
+    ]),
+    // 真 Key 实测（2026-08-31）：thinking 参数在 /plan 端点真实生效
+    // （开/关均验证，thinking 文档 1300/80637 覆盖 /plan）；reasoning_effort
+    // 全模型容忍不报错（含默认 high）。effortValueMode 不声明=passthrough，
+    // 档位值域已由各模型 reasoningLevels 限定为实测安全集
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "thinking",
+      effortParam: "reasoning_effort",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：
+    // Auto 调用 ID 是 auto（≠国内个人版 tc-code-latest），阵容与国内不同
+    // （无 GLM-5/5.1/Hy3，多 GLM-5.2/MiniMax-M3）。端点用国际站文档钦定的
+    // tencentcloudmaas.com 域（DNS 实测解析新加坡节点）；国内站文档对新加坡
+    // 地域给的是 tokenhub-intl.tencentmaas.com，Key 按站独立不跨站通用，
+    // 故互不作候选
+    name: "Tencent Token Plan (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tencent_token_plan_intl",
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "auto",
+    ),
+    endpointCandidates: ["https://tokenhub-intl.tencentcloudmaas.com/plan/v3"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 思考档位真 Key 实测（2026-08-31）：INTL auto 的 thinking 开关真实
+      // 生效（与国内 auto 忽略关思考不同）；minimax-m3 关思考生效
+      {
+        model: "auto",
+        displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "kimi-k2.6",
+        displayName: "Kimi K2.6",
+        contextWindow: 262144,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "deepseek-v4-pro-202606",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "deepseek-v4-flash-202605",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "minimax-m3",
+        displayName: "MiniMax M3",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+    ]),
+    // thinking/reasoning_effort 实测同国内个人版（全模型容忍、开关生效）
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "thinking",
+      effortParam: "reasoning_effort",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版，广州地域）：
+    // kimi-k2.5 官方标注 2026-08-31 下线不收；minimax-m2.5 型号列表已除名
+    // 但真 Key 实测仍可用（2026-08-31），照实收录。新加坡地域阵容不同且
+    // Key 不跨站，见 (Intl) 预设
+    name: "Tencent Token Plan Enterprise Pro",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tencent_token_plan_enterprise_pro",
+      "https://tokenhub.tencentmaas.com/plan/v3",
+      "auto",
+    ),
+    // 广州地域为默认端点；国内站企业套餐另可选新加坡地域（1823/130659、
+    // 131173 双地域表：tokenhub-intl.tencentmaas.com，需开通新加坡地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/plan/v3",
+      "https://tokenhub-intl.tencentmaas.com/plan/v3",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 阵容与排序=企业专业版文档广州标签页（2026-08-25 版）。思考档位
+      // 全部真 Key 实测（2026-08-31）：glm-5.3 始终思考且档位严格枚举
+      // low/high/max（medium/xhigh 直接 400，错误信息即枚举来源）；
+      // kimi-k2.7-code(-highspeed) 仅接受 thinking:enabled；
+      // minimax-m2.5/m2.7 关思考被静默忽略；国内 auto 同样忽略关思考；
+      // 其余模型 thinking 开关真实生效
+      {
+        model: "auto",
+        displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
+        // 显式默认 high：模板默认 medium 不在严格枚举内会被丢弃，回落
+        // canonical.last()=max——最慢最耗额度，非厂商钦定默认（真 Key 实测
+        // 未发现无参默认值证据），按预算套餐取向选 high
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "glm-5",
+        displayName: "GLM-5",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "glm-5.1",
+        displayName: "GLM-5.1",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "glm-5-turbo",
+        displayName: "GLM-5 Turbo",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "kimi-k2.7-code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "kimi-k2.7-code-highspeed",
+        displayName: "Kimi K2.7 Code HighSpeed",
+        contextWindow: 262144,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "kimi-k2.6",
+        displayName: "Kimi K2.6",
+        contextWindow: 262144,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "minimax-m2.7",
+        displayName: "MiniMax M2.7",
+        contextWindow: 200000,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "minimax-m3",
+        displayName: "MiniMax M3",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        // 腾讯 Token Plan 托管的 DeepSeek V4 是纯文本部署（套餐清单 2026-09-10 版模态=文本；vision-exp 未入本预设），
+        // 与官方端点把 v4-flash 路由到识图的 V4.1 Flash 不同——显式声明纯文本，勿依赖全局名单（#7283 follow-up）
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-flash-0731",
+        displayName: "DeepSeek V4 Flash 0731 GA",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-pro-0813",
+        displayName: "DeepSeek V4 Pro 0813 GA",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-flash-202605",
+        displayName: "DeepSeek V4 Flash Official",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-pro-202606",
+        displayName: "DeepSeek V4 Pro Official",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+    ]),
+    // reasoning_effort 默认 high 全模型实测容忍；glm-5.3 的 medium/xhigh
+    // 会 400，档位值域已由各模型 reasoningLevels 限定为实测安全集
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "thinking",
+      effortParam: "reasoning_effort",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
+    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tencent_token_plan_enterprise_pro_intl",
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "auto",
+    ),
+    // 新加坡地域为默认端点；国际站企业套餐另可选广州地域（1300/81489、
+    // 81490 双地域表：tokenhub.tencentcloudmaas.com，需开通广州地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "https://tokenhub.tencentcloudmaas.com/plan/v3",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 阵容与排序=国际站企业专业版文档（新加坡地域）。思考档位真 Key
+      // 实测（2026-08-31）：INTL auto 关思考真实生效（≠国内 auto 忽略）；
+      // glm-5.3 严格枚举 low/high/max；kimi-k2.7-code(-highspeed) 仅
+      // thinking:enabled；其余开关生效
+      {
+        model: "auto",
+        displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
+        // 显式默认 high：模板默认 medium 不在严格枚举内会被丢弃，回落
+        // canonical.last()=max——最慢最耗额度，非厂商钦定默认（真 Key 实测
+        // 未发现无参默认值证据），按预算套餐取向选 high
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "minimax-m3",
+        displayName: "MiniMax M3",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+      },
+      {
+        model: "kimi-k2.7-code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "kimi-k2.7-code-highspeed",
+        displayName: "Kimi K2.7 Code HighSpeed",
+        contextWindow: 262144,
+        reasoningLevels: ["high"],
+      },
+      {
+        // 同国内版：腾讯托管 DeepSeek V4 纯文本，显式声明勿依赖全局名单（#7283 follow-up）
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-flash-0731",
+        displayName: "DeepSeek V4 Flash 0731 GA",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-pro-0813",
+        displayName: "DeepSeek V4 Pro 0813 GA",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-flash-202605",
+        displayName: "DeepSeek V4 Flash Official",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-pro-202606",
+        displayName: "DeepSeek V4 Pro Official",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
+        inputModalities: ["text"],
+      },
+    ]),
+    // reasoning_effort 默认 high 全模型实测容忍；同国内企业专业版
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "thinking",
+      effortParam: "reasoning_effort",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型。
+    // 国内 auto 关思考被静默忽略（真 Key 实测 2026-08-31），只列 high
+    name: "Tencent Token Plan Enterprise Lite",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tencent_token_plan_enterprise_lite",
+      "https://tokenhub.tencentmaas.com/plan/v3",
+      "auto",
+    ),
+    // 广州地域为默认端点；国内站企业套餐另可选新加坡地域（1823/130659、
+    // 131173 双地域表：tokenhub-intl.tencentmaas.com，需开通新加坡地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/plan/v3",
+      "https://tokenhub-intl.tencentmaas.com/plan/v3",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "auto",
+        displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
+        reasoningLevels: ["high"],
+      },
+    ]),
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "thinking",
+      effortParam: "reasoning_effort",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
+    // Global），仅 Auto 模型。INTL auto 关思考真实生效（真 Key 实测）
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tencent_token_plan_enterprise_lite_intl",
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "auto",
+    ),
+    // 新加坡地域为默认端点；国际站企业套餐另可选广州地域（1300/81489、
+    // 81490 双地域表：tokenhub.tencentcloudmaas.com，需开通广州地域，
+    // 不支持跨地域调用，故仅作候选端点）
+    endpointCandidates: [
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "https://tokenhub.tencentcloudmaas.com/plan/v3",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "auto",
+        displayName: "Auto",
+        // Auto 的窗口只有官方 OpenClaw 接入页给出（1823/130062、
+        // 1300/81503）：196608；不写则后端回落 128K 默认值
+        contextWindow: 196608,
+        reasoningLevels: ["none", "high"],
+      },
+    ]),
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "thinking",
+      effortParam: "reasoning_effort",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
   },
   {
     name: "StepFun",
@@ -1125,15 +2219,22 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.stepfun.com/step_plan/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 档位照抄官方两站模型页与 reasoning 指南（2026-08-15 盘点）：
+      // 3.7-flash 三档默认 medium、2603 两档；无后缀 3.5-flash 官方未暴露
+      // effort，不填。全系无关思考形态，none 一律不列。effort 下发由后端
+      // 按模型推断（2603=low_high 收敛、3.7=passthrough），预设不加
+      // codexChatReasoning——显式声明是 provider 级会丢 per-model 门控
       {
         model: "step-3.7-flash",
         displayName: "Step 3.7 Flash",
         contextWindow: 262144,
+        reasoningLevels: ["low", "medium", "high"],
       },
       {
         model: "step-3.5-flash-2603",
         displayName: "Step 3.5 Flash 2603",
         contextWindow: 262144,
+        reasoningLevels: ["low", "high"],
       },
       {
         model: "step-3.5-flash",
@@ -1158,15 +2259,22 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.stepfun.ai/step_plan/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 档位照抄官方两站模型页与 reasoning 指南（2026-08-15 盘点）：
+      // 3.7-flash 三档默认 medium、2603 两档；无后缀 3.5-flash 官方未暴露
+      // effort，不填。全系无关思考形态，none 一律不列。effort 下发由后端
+      // 按模型推断（2603=low_high 收敛、3.7=passthrough），预设不加
+      // codexChatReasoning——显式声明是 provider 级会丢 per-model 门控
       {
         model: "step-3.7-flash",
         displayName: "Step 3.7 Flash",
         contextWindow: 262144,
+        reasoningLevels: ["low", "medium", "high"],
       },
       {
         model: "step-3.5-flash-2603",
         displayName: "Step 3.5 Flash 2603",
         contextWindow: 262144,
+        reasoningLevels: ["low", "high"],
       },
       {
         model: "step-3.5-flash",
@@ -1186,21 +2294,29 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "modelscope",
       "https://api-inference.modelscope.cn/v1",
-      "ZhipuAI/GLM-5.1",
+      "ZhipuAI/GLM-5.2",
     ),
     endpointCandidates: ["https://api-inference.modelscope.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
-        model: "ZhipuAI/GLM-5.1",
-        displayName: "ZhipuAI / GLM-5.1",
+        // 2026-08-15 盘点：GLM-5.1 裸 id 不在 ModelScope 免费 API-Inference
+        // 43 条服务清单（只有需自托管阿里云密钥的 :DashScope 变体），换 GLM-5.2
+        //（在清单内、免费"魔搭社区"路由）。档位不填：ModelScope 是否把思考
+        // 字段透传给上游未证实
+        model: "ZhipuAI/GLM-5.2",
+        displayName: "ZhipuAI / GLM-5.2",
         contextWindow: 200000,
       },
     ]),
+    // 平台方言修正（2026-08-15 盘点）：thinking:{type} 是智谱自家端点形态，
+    // ModelScope 平台文档零出现；平台真实开关=顶层 enable_thinking 布尔
+    //（官方模型页 extra_body 范例+百炼 GLM 一手文档双证）。整块必须保留——
+    // 删掉会落到后端 glm 模型名推断、错误方言原地复活
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: false,
-      thinkingParam: "thinking",
+      thinkingParam: "enable_thinking",
       effortParam: "none",
       outputFormat: "reasoning_content",
     },
@@ -1228,6 +2344,10 @@ requires_openai_auth = true`,
         model: "LongCat-2.0",
         displayName: "LongCat 2.0",
         contextWindow: 1048576,
+        // LongCat 无档位可调：全站唯一 effort 证据=官方 Codex 示例的 high；
+        // 关思考走另一字段 thinking:{type:disabled}（effort 拼写无文档），
+        // models API 的 supported_parameters 也不含 reasoning，故不提供 none 假开关
+        reasoningLevels: ["high"],
       },
     ]),
     category: "cn_official",
@@ -1248,12 +2368,16 @@ requires_openai_auth = true`,
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
     // 官方 Codex catalog（platform.minimaxi.com/docs/token-plan/codex-cli）：
-    // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch
+    // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch。
+    // 档位照抄官方 catalog：none/high（M3 的 effort 是思考开关，minimal/low/medium
+    // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
+    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
         contextWindow: 1000000,
+        reasoningLevels: ["none", "high"],
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         baseInstructions:
@@ -1261,7 +2385,6 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
-    partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1283,12 +2406,16 @@ requires_openai_auth = true`,
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
     // 官方 Codex catalog（platform.minimax.io/docs/token-plan/codex）：
-    // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch
+    // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch。
+    // 档位照抄官方 catalog：none/high（M3 的 effort 是思考开关，minimal/low/medium
+    // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
+    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
         contextWindow: 1000000,
+        reasoningLevels: ["none", "high"],
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         baseInstructions:
@@ -1296,7 +2423,6 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
-    partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1339,13 +2465,17 @@ requires_openai_auth = true`,
     // 小米 MiMo 官方 Codex 文档已声明原生支持 Responses API（wire_api=responses 对自家 base_url），无需路由接管转换
     apiFormat: "openai_responses",
     // 官方 Codex catalog（mimo.mi.com/.../codex-configuration）：
-    // shell_command 编辑、不声明 freeform apply_patch
+    // shell_command 编辑、不声明 freeform apply_patch。
+    // 档位照抄官方 catalog：none/high（端点另收 low/medium 但官方自述三档
+    // "效果一致，暂不区分推理强度"，不给假差异档）。与模板默认一致故 Codex 侧
+    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
       {
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
         inputModalities: ["text"],
+        reasoningLevels: ["none", "high"],
         baseInstructions:
           "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
       },
@@ -1354,6 +2484,7 @@ requires_openai_auth = true`,
         displayName: "MiMo V2.5",
         contextWindow: 1048576,
         inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "high"],
         baseInstructions:
           "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
       },
@@ -1376,13 +2507,17 @@ requires_openai_auth = true`,
     // 小米 MiMo 官方 Codex 文档已声明原生支持 Responses API（wire_api=responses 对自家 base_url），无需路由接管转换
     apiFormat: "openai_responses",
     // 官方 Codex catalog（mimo.mi.com/.../codex-configuration）：
-    // shell_command 编辑、不声明 freeform apply_patch
+    // shell_command 编辑、不声明 freeform apply_patch。
+    // 档位照抄官方 catalog：none/high（端点另收 low/medium 但官方自述三档
+    // "效果一致，暂不区分推理强度"，不给假差异档）。与模板默认一致故 Codex 侧
+    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
       {
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
         inputModalities: ["text"],
+        reasoningLevels: ["none", "high"],
         baseInstructions:
           "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
       },
@@ -1391,6 +2526,7 @@ requires_openai_auth = true`,
         displayName: "MiMo V2.5",
         contextWindow: 1048576,
         inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "high"],
         baseInstructions:
           "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
       },
@@ -1407,21 +2543,26 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "novita",
       "https://api.novita.ai/openai/v1",
-      "zai-org/glm-5.1",
+      "zai-org/glm-5.3",
     ),
     endpointCandidates: ["https://api.novita.ai/openai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 官方可用目录（2026-09-10）：https://api.novita.ai/openai/v1/models
+      // GLM-5.3 为 text-only、1M；平台未逐模型确认 enable_thinking/effort。
       {
-        model: "zai-org/glm-5.1",
-        displayName: "GLM-5.1",
-        contextWindow: 202800,
+        model: "zai-org/glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
       },
     ]),
+    // 不沿用旧模型的开关推断；保留显式覆盖，阻止按模型名注入原厂参数。
     codexChatReasoning: {
-      supportsThinking: true,
+      supportsThinking: false,
       supportsEffort: false,
-      thinkingParam: "thinking",
+      thinkingParam: "none",
       effortParam: "none",
       outputFormat: "reasoning_content",
     },
@@ -1447,6 +2588,13 @@ requires_openai_auth = true`,
         contextWindow: 500000,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
+        // 实测（2026-08-30，native /v1/responses 逐档探测）：grok-4.5 接受
+        // low/medium/high/xhigh，拒绝 max（HTTP 400 "Invalid reasoning
+        // effort"）；"Reasoning cannot be disabled" 故无 none 档。Codex 不按
+        // catalog clamp 越界档位（Desktop UI 选出的 max 会原样发出），此列表
+        // 必须与上游实收集合一致，勿凭文档增删。
+        // ⚠️ docs.x.ai/developers/grok-4-5 页面实际渲染的是 grok-4.6 内容勿引
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
       },
     ]),
     category: "third_party",
@@ -1459,7 +2607,11 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     // 托管 OAuth：真实 token 由本地代理按请求注入，CodexAdapter 硬定向
     // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    // requires_openai_auth 必须是 false：keyless + true 会被后端安全闸
+    // 拒绝切换（后端写入层对存量卡也会强制归一为 false）。
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5", {
+      requiresOpenAiAuth: false,
+    }),
     apiFormat: "openai_responses",
     providerType: "xai_oauth",
     requiresOAuth: true,
@@ -1470,6 +2622,13 @@ requires_openai_auth = true`,
         contextWindow: 500000,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
+        // 实测（2026-08-30，native /v1/responses 逐档探测）：grok-4.5 接受
+        // low/medium/high/xhigh，拒绝 max（HTTP 400 "Invalid reasoning
+        // effort"）；"Reasoning cannot be disabled" 故无 none 档。Codex 不按
+        // catalog clamp 越界档位（Desktop UI 选出的 max 会原样发出），此列表
+        // 必须与上游实收集合一致，勿凭文档增删。
+        // ⚠️ docs.x.ai/developers/grok-4-5 页面实际渲染的是 grok-4.6 内容勿引
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
       },
     ]),
     category: "third_party",
@@ -1484,22 +2643,29 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "nvidia",
       "https://integrate.api.nvidia.com/v1",
-      "moonshotai/kimi-k2.5",
+      "moonshotai/kimi-k3",
     ),
     endpointCandidates: ["https://integrate.api.nvidia.com/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
-        model: "moonshotai/kimi-k2.5",
-        displayName: "Kimi K2.5",
-        contextWindow: 262144,
+        model: "moonshotai/kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
       },
     ]),
+    // NIM K3 始终思考，只接受 reasoning_effort: low/high/max，无 thinking：
+    // https://docs.api.nvidia.com/nim/re/reference/moonshotai-kimi-k3-infer
+    // API 未传 effort 时默认 max；此预设显式 high，与 config.toml 保持一致。
     codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
+      supportsThinking: false,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "passthrough",
       outputFormat: "reasoning_content",
     },
     category: "aggregator",
@@ -1515,27 +2681,59 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "opencode_go",
       "https://opencode.ai/zen/go/v1",
-      "glm-5.2",
+      "glm-5.3",
     ),
     endpointCandidates: ["https://opencode.ai/zen/go/v1"],
     apiFormat: "openai_chat",
+    // OpenCode Zen 网关：统一接受顶层 reasoning_effort（其自家客户端同款参数），
+    // 但合法档位逐模型（见各条目 reasoningLevels，镜像 models.dev；opencode
+    // 客户端同样严格按模型声明发值）——代理转换层按表钳制，未声明 effort 的
+    // 模型不发该字段。不发厂商原生 thinking 字段。
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "zen",
+      outputFormat: "reasoning_content",
+    },
     modelCatalog: modelCatalog([
-      { model: "glm-5.2", displayName: "GLM 5.2", contextWindow: 204800 },
-      { model: "glm-5.1", displayName: "GLM 5.1", contextWindow: 204800 },
+      // https://opencode.ai/docs/go/ 确认以下新模型均走 Chat；窗口/模态/档位
+      // 同步其官方依赖 https://models.dev/api.json（2026-09-10）。
       {
-        model: "kimi-k2.7-code",
-        displayName: "Kimi K2.7 Code",
-        contextWindow: 262144,
+        model: "glm-5.3",
+        displayName: "GLM 5.3",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["max"],
       },
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
         contextWindow: 1048576,
+        reasoningLevels: ["high", "max"],
       },
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
+        reasoningLevels: ["low", "high", "max"],
       },
       {
         model: "mimo-v2.5-pro",
@@ -1665,34 +2863,43 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     category: "aggregator",
   },
   {
-    name: "PPIO",
-    websiteUrl: "https://ppio.com",
-    apiKeyUrl: "https://ppio.com/settings/key-management",
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "ppio",
-      "https://api.ppio.com/openai/v1",
-      "deepseek/deepseek-v4-flash-0731",
+      "jiekou",
+      "https://api.jiekou.ai/openai/v1",
+      "claude-fable-5",
     ),
-    endpointCandidates: ["https://api.ppio.com/openai/v1"],
+    endpointCandidates: ["https://api.jiekou.ai/openai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
-        model: "deepseek/deepseek-v4-flash-0731",
-        displayName: "Deepseek V4 Flash 0731",
-        contextWindow: 1048576,
-        inputModalities: ["text"],
+        model: "claude-fable-5",
+        displayName: "Claude Fable 5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
     category: "aggregator",
-    icon: "ppio",
-    iconColor: "#2874FF",
+    icon: "jiekou",
+    iconColor: "#000000",
+  },
+  {
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 专用端点，不能用通用 /v1（协议不同）
+    config: generateThirdPartyConfig(
+      "aicodewith",
+      "https://api.aicodewith.ai/chatgpt/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: ["https://api.aicodewith.ai/chatgpt/v1"],
+    category: "aggregator",
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
   },
 ];
