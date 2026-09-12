@@ -1720,33 +1720,47 @@ impl ProxyService {
         Ok(())
     }
 
-    /// 停止代理服务器
-    pub async fn stop(&self) -> Result<(), String> {
+    async fn stop_server(&self) -> Result<(), String> {
         if let Some(server) = self.server.write().await.take() {
             server
                 .stop()
                 .await
                 .map_err(|e| format!("停止代理服务器失败: {e}"))?;
 
-            // 停止时设置 proxy_enabled = false
-            let mut global_config = self
-                .db
-                .get_global_proxy_config()
-                .await
-                .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
-
-            if global_config.proxy_enabled {
-                global_config.proxy_enabled = false;
-                if let Err(e) = self.db.update_global_proxy_config(global_config).await {
-                    log::warn!("更新代理总开关失败: {e}");
-                }
-            }
-
-            log::info!("代理服务器已停止");
             Ok(())
         } else {
             Err("代理服务器未运行".to_string())
         }
+    }
+
+    /// 停止代理服务器
+    pub async fn stop(&self) -> Result<(), String> {
+        self.stop_server().await?;
+
+        // 停止时设置 proxy_enabled = false
+        let mut global_config = self
+            .db
+            .get_global_proxy_config()
+            .await
+            .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
+
+        if global_config.proxy_enabled {
+            global_config.proxy_enabled = false;
+            if let Err(e) = self.db.update_global_proxy_config(global_config).await {
+                log::warn!("更新代理总开关失败: {e}");
+            }
+        }
+
+        log::info!("代理服务器已停止");
+        Ok(())
+    }
+
+    /// Stop the listener during app shutdown while preserving the user's
+    /// enabled state so a standalone route can be restored on next launch.
+    pub(crate) async fn stop_keep_enabled_state(&self) -> Result<(), String> {
+        self.stop_server().await?;
+        log::info!("代理服务器已停止（保留启用状态）");
+        Ok(())
     }
 
     /// 停止代理服务器（恢复 Live 配置，用户手动关闭时使用）
@@ -1801,7 +1815,7 @@ impl ProxyService {
     /// 用于程序正常退出时，保留代理状态以便下次启动时自动恢复
     pub async fn stop_with_restore_keep_state(&self) -> Result<(), String> {
         // 1. 停止代理服务器（即使未运行也继续执行恢复逻辑）
-        if let Err(e) = self.stop().await {
+        if let Err(e) = self.stop_keep_enabled_state().await {
             log::warn!("停止代理服务器失败（将继续恢复 Live 配置）: {e}");
         }
 
