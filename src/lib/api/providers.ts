@@ -245,4 +245,9 @@ export const universalProvidersApi = {
   async sync(id: string): Promise<boolean> {
     return await invoke("sync_universal_provider", { id });
   },
+
+  /** 仅更新已存在子供应商的 API 地址和认证信息，不同步其它配置 */
+  async syncApiConfig(id: string): Promise<boolean> {
+    return await invoke("sync_universal_provider_api_config", { id });
+  },
 };

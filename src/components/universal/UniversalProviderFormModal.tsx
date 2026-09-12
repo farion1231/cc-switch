@@ -29,6 +29,7 @@ interface UniversalProviderFormModalProps {
   onSave: (provider: UniversalProvider) => void;
   onSaveAndSync?: (provider: UniversalProvider) => void;
   onSaveRoutes?: (provider: UniversalProvider) => void;
+  onSaveApiConfig?: (provider: UniversalProvider) => void;
   editingProvider?: UniversalProvider | null;
   initialPreset?: UniversalProviderPreset | null;
 }
@@ -39,6 +40,7 @@ export function UniversalProviderFormModal({
   onSave,
   onSaveAndSync,
   onSaveRoutes,
+  onSaveApiConfig,
   editingProvider,
   initialPreset,
 }: UniversalProviderFormModalProps) {
@@ -385,6 +387,12 @@ requires_openai_auth = true`;
     onSaveRoutes(provider);
   }, [buildProvider, onSaveRoutes]);
 
+  const handleSaveApiConfig = useCallback(() => {
+    if (!onSaveApiConfig) return;
+    const provider = buildProvider();
+    if (provider) onSaveApiConfig(provider);
+  }, [buildProvider, onSaveApiConfig]);
+
   const footer = (
     <>
       <Button variant="outline" onClick={onClose}>
@@ -526,6 +534,19 @@ requires_openai_auth = true`;
                   </Button>
                 </div>
               </div>
+
+              {isEditMode && onSaveApiConfig && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleSaveApiConfig}
+                  disabled={!baseUrl.trim() || !apiKey.trim()}
+                >
+                  {t("universalProvider.updateApiConfig", {
+                    defaultValue: "更新 API 配置",
+                  })}
+                </Button>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="websiteUrl">

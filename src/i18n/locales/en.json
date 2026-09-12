@@ -2817,6 +2817,9 @@
     "saveAndSync": "Save & Sync",
     "savedAndSynced": "Saved and synced to all apps",
     "saveAndSyncError": "Failed to save and sync",
+    "updateApiConfig": "Update API Config",
+    "apiConfigUpdated": "API configuration updated in apps",
+    "apiConfigUpdateError": "Failed to update API configuration",
     "configJsonPreview": "Config JSON Preview",
     "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
   },

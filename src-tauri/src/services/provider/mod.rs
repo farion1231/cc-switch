@@ -2616,51 +2616,6 @@ impl ProviderService {
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
-        // 统一供应商生成的子行（universal-claude-*/universal-codex-*/universal-gemini-*）
-        // 是上游 UP 的只读镜像：保存子行本身会被下一次 sync_universal 覆盖回 UP 的值，
-        // 让用户困惑"明明改了却变回原来的 key"。检测到子行时直接回写对应的统一供应商
-        //（把用户改的 apiKey / baseUrl 合并进 UP），再重新同步到三应用，让修改真正落地。
-        let up_child_key = match app_type.as_str() {
-            "claude" => original_id.strip_prefix("universal-claude-"),
-            "codex" => original_id.strip_prefix("universal-codex-"),
-            "gemini" => original_id.strip_prefix("universal-gemini-"),
-            _ => None,
-        };
-
-        if let Some(up_id) = up_child_key {
-            if let Some(mut up) = state.db.get_universal_provider(up_id)? {
-                if let Some(env) = provider.settings_config.get("env").and_then(Value::as_object) {
-                    if let Some(key) = env.get("ANTHROPIC_AUTH_TOKEN")
-                        .or_else(|| env.get("ANTHROPIC_API_KEY"))
-                        .or_else(|| env.get("GEMINI_API_KEY"))
-                        .and_then(Value::as_str)
-                    {
-                        if is_up_key_editable(&key) {
-                            up.api_key = key.to_string();
-                        }
-                    }
-                    if let Some(base) = env.get("ANTHROPIC_BASE_URL")
-                        .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
-                        .and_then(Value::as_str)
-                    {
-                        up.base_url = base.to_string();
-                    }
-                }
-                if let Some(auth) = provider.settings_config.get("auth").and_then(Value::as_object) {
-                    if let Some(key) = auth.get("OPENAI_API_KEY").and_then(Value::as_str) {
-                        if is_up_key_editable(key) {
-                            up.api_key = key.to_string();
-                        }
-                    }
-                }
-                state.db.save_universal_provider(&up)?;
-                // 回写后重新同步三应用的子行（保留各子行已有 modelCatalog）。
-                // 注意不提前 return：让下面的正常 update 继续把当前应用写 live，
-                // 否则非接管模式下活动子行的 config.toml 不会落到磁盘。
-                Self::sync_universal_to_apps(state, up_id)?;
-            }
-        }
-
         if provider_id_changed {
             if !app_type.is_additive_mode() {
                 return Err(AppError::Message(
@@ -4743,6 +4698,137 @@ impl ProviderService {
         Ok(true)
     }
 
+    /// 仅将统一供应商的 API 地址和认证信息更新到已存在的子供应商。
+    ///
+    /// 与完整同步不同，此操作不会创建或删除子供应商，也不会覆盖模型、路由
+    /// 或其它应用专属配置。
+    pub fn sync_universal_api_config_to_apps(
+        state: &AppState,
+        id: &str,
+    ) -> Result<bool, AppError> {
+        let provider = state
+            .db
+            .get_universal_provider(id)?
+            .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
+
+        if provider.apps.claude {
+            let child_id = format!("universal-claude-{id}");
+            if let Some(mut child) = state.db.get_provider_by_id(&child_id, "claude")? {
+                let env = child
+                    .settings_config
+                    .as_object_mut()
+                    .map(|root| {
+                        root.entry("env")
+                            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                    })
+                    .and_then(Value::as_object_mut);
+                if let Some(env) = env {
+                    env.insert(
+                        "ANTHROPIC_BASE_URL".to_string(),
+                        Value::String(provider.base_url.clone()),
+                    );
+                    env.insert(
+                        "ANTHROPIC_AUTH_TOKEN".to_string(),
+                        Value::String(provider.api_key.clone()),
+                    );
+                    if env.contains_key("ANTHROPIC_API_KEY") {
+                        env.insert(
+                            "ANTHROPIC_API_KEY".to_string(),
+                            Value::String(provider.api_key.clone()),
+                        );
+                    }
+                }
+                state.db.save_provider("claude", &child)?;
+            }
+        }
+
+        if provider.apps.codex {
+            let child_id = format!("universal-codex-{id}");
+            if let Some(mut child) = state.db.get_provider_by_id(&child_id, "codex")? {
+                if let Some(auth) = child
+                    .settings_config
+                    .as_object_mut()
+                    .map(|root| {
+                        root.entry("auth")
+                            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                    })
+                    .and_then(Value::as_object_mut)
+                {
+                    auth.insert(
+                        "OPENAI_API_KEY".to_string(),
+                        Value::String(provider.api_key.clone()),
+                    );
+                }
+
+                let config = child
+                    .settings_config
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let mut doc = config
+                    .parse::<toml_edit::DocumentMut>()
+                    .map_err(|e| AppError::Message(format!("Codex config TOML parse error: {e}")))?;
+                let base_url = provider.base_url.trim_end_matches('/');
+                let origin_only = match base_url.split_once("://") {
+                    Some((_scheme, rest)) => !rest.contains('/'),
+                    None => !base_url.contains('/'),
+                };
+                let codex_base_url = if base_url.ends_with("/v1") || !origin_only {
+                    base_url.to_string()
+                } else {
+                    format!("{base_url}/v1")
+                };
+                let providers = doc
+                    .get_mut("model_providers")
+                    .and_then(|item| item.as_table_like_mut());
+                let custom = providers
+                    .and_then(|table| table.get_mut("custom"))
+                    .and_then(|item| item.as_table_like_mut());
+                if let Some(custom) = custom {
+                    custom.insert("base_url", toml_edit::value(codex_base_url));
+                } else if doc.get("base_url").is_some() {
+                    doc["base_url"] = toml_edit::value(codex_base_url);
+                } else {
+                    return Err(AppError::Message(
+                        "Codex 子供应商配置中缺少 model_providers.custom.base_url".to_string(),
+                    ));
+                }
+                if let Some(root) = child.settings_config.as_object_mut() {
+                    root.insert("config".to_string(), Value::String(doc.to_string()));
+                }
+                state.db.save_provider("codex", &child)?;
+            }
+        }
+
+        if provider.apps.gemini {
+            let child_id = format!("universal-gemini-{id}");
+            if let Some(mut child) = state.db.get_provider_by_id(&child_id, "gemini")? {
+                if let Some(env) = child
+                    .settings_config
+                    .as_object_mut()
+                    .map(|root| {
+                        root.entry("env")
+                            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                    })
+                    .and_then(Value::as_object_mut)
+                {
+                    env.insert(
+                        "GOOGLE_GEMINI_BASE_URL".to_string(),
+                        Value::String(provider.base_url.clone()),
+                    );
+                    env.insert(
+                        "GEMINI_API_KEY".to_string(),
+                        Value::String(provider.api_key.clone()),
+                    );
+                }
+                state.db.save_provider("gemini", &child)?;
+            }
+        }
+
+        Ok(true)
+    }
+
     /// 递归合并 JSON：base 为底，patch 覆盖同名字段
     fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
         use serde_json::Value;
@@ -4763,202 +4849,5 @@ impl ProviderService {
                 *base_val = patch_val.clone();
             }
         }
-    }
-}
-
-/// 从子行回写统一供应商时，仅允许真实的用户 key 覆盖 UP：
-/// 忽略空值 / 代理占位符 PROXY_MANAGED / 聚合代理的 localhost 标记
-///（这三个值都是代理接管的产物，写回会把错误 key 固化进 UP）。
-fn is_up_key_editable(key: &str) -> bool {
-    let trimmed = key.trim();
-    !trimmed.is_empty()
-        && trimmed != "PROXY_MANAGED"
-        && !trimmed.eq_ignore_ascii_case("localhost")
-}
-
-#[cfg(test)]
-mod universal_child_tests {
-    use super::*;
-    use crate::database::Database;
-    use crate::provider::CodexModelConfig;
-    use crate::services::provider::ProviderService;
-    use serde_json::json;
-    use serial_test::serial;
-    use std::sync::Arc;
-
-    /// 与首部 tests 模块同构的临时 HOME 隔离（回写链路会写 live 文件）
-    struct TempHome {
-        dir: tempfile::TempDir,
-        original_home: Option<String>,
-        #[cfg(windows)]
-        original_local_app_data: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-    }
-
-    impl TempHome {
-        fn new() -> Self {
-            let dir = tempfile::TempDir::new().expect("failed to create temp home");
-            let original_home = std::env::var("HOME").ok();
-            #[cfg(windows)]
-            let original_local_app_data = std::env::var("LOCALAPPDATA").ok();
-            let original_userprofile = std::env::var("USERPROFILE").ok();
-            let original_test_home = std::env::var("CC_SWITCH_TEST_HOME").ok();
-
-            std::env::set_var("HOME", dir.path());
-            #[cfg(windows)]
-            std::env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
-            std::env::set_var("USERPROFILE", dir.path());
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-
-            Self {
-                dir,
-                original_home,
-                #[cfg(windows)]
-                original_local_app_data,
-                original_userprofile,
-                original_test_home,
-            }
-        }
-    }
-
-    impl Drop for TempHome {
-        fn drop(&mut self) {
-            if let Some(value) = &self.original_home {
-                std::env::set_var("HOME", value);
-            } else {
-                std::env::remove_var("HOME");
-            }
-            #[cfg(windows)]
-            if let Some(value) = &self.original_local_app_data {
-                std::env::set_var("LOCALAPPDATA", value);
-            }
-            if let Some(value) = &self.original_userprofile {
-                std::env::set_var("USERPROFILE", value);
-            } else {
-                std::env::remove_var("USERPROFILE");
-            }
-            if let Some(value) = &self.original_test_home {
-                std::env::set_var("CC_SWITCH_TEST_HOME", value);
-            } else {
-                std::env::remove_var("CC_SWITCH_TEST_HOME");
-            }
-        }
-    }
-
-    /// 保存 universal 子行（codex）时，改动应回写到统一供应商并重同步，
-    /// 而不是仅存子行（否则下一次 sync_universal 又会被覆盖回旧值）。
-    #[tokio::test]
-    #[serial]
-    async fn update_universal_child_writeback_updates_up_and_resyncs() {
-        let _home = TempHome::new();
-        crate::settings::reload_settings().expect("reload settings");
-
-        let db = Arc::new(Database::memory().expect("init db"));
-        let state = AppState::new(db.clone());
-
-        // 先落一个 UP（newapi），包含三应用的 model 配置
-        let mut up = UniversalProvider::new(
-            "shared".to_string(),
-            "NewAPI".to_string(),
-            "newapi".to_string(),
-            "http://localhost:3688".to_string(),
-            "sk-original".to_string(),
-        );
-        up.apps.claude = true;
-        up.apps.codex = true;
-        up.apps.gemini = true;
-        up.models.codex = Some(CodexModelConfig {
-            model: Some("gpt-5.4".to_string()),
-            reasoning_effort: Some("high".to_string()),
-        });
-        db.save_universal_provider(&up).expect("save UP");
-        ProviderService::sync_universal_to_apps(&state, "shared")
-            .expect("initial sync to apps");
-
-        // 用户在 Codex 页面对 universal-codex-shared 行改了 key 并保存
-        let mut child = db
-            .get_provider_by_id("universal-codex-shared", "codex")
-            .expect("read child")
-            .expect("child exists");
-        child.settings_config["auth"]["OPENAI_API_KEY"] = json!("sk-new-key");
-        // 表单保存默认会带上 config 与 modelCatalog（保留原值）
-        ProviderService::update(&state, AppType::Codex, Some("universal-codex-shared"), child)
-            .expect("update universal child");
-
-        // UP 应已被回写为新 key
-        let stored_up = db
-            .get_universal_provider("shared")
-            .expect("read UP")
-            .expect("UP exists");
-        assert_eq!(stored_up.api_key, "sk-new-key");
-
-        // 三应用子行也应已用新 key 重同步
-        let codex_child = db
-            .get_provider_by_id("universal-codex-shared", "codex")
-            .expect("read codex child")
-            .expect("codex child exists");
-        assert_eq!(
-            codex_child.settings_config["auth"]["OPENAI_API_KEY"],
-            json!("sk-new-key")
-        );
-        let claude_child = db
-            .get_provider_by_id("universal-claude-shared", "claude")
-            .expect("read claude child")
-            .expect("claude child exists");
-        assert_eq!(
-            claude_child.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
-            json!("sk-new-key")
-        );
-    }
-
-    /// 编辑聚合代理（cc_switch）子行时，即使表单把 key 显示成 localhost，
-    /// 也不得把 localhost 回写进 UP（那是代理标记，不是真实 key）。
-    #[tokio::test]
-    #[serial]
-    async fn update_cc_switch_child_never_writebacks_localhost() {
-        let _home = TempHome::new();
-        crate::settings::reload_settings().expect("reload settings");
-
-        let db = Arc::new(Database::memory().expect("init db"));
-        let state = AppState::new(db.clone());
-
-        let mut up = UniversalProvider::new(
-            "agg".to_string(),
-            "聚合代理".to_string(),
-            "cc_switch".to_string(),
-            "http://127.0.0.1:15721".to_string(),
-            "localhost".to_string(),
-        );
-        up.apps.claude = true;
-        up.apps.codex = true;
-        up.apps.gemini = true;
-        db.save_universal_provider(&up).expect("save UP");
-        ProviderService::sync_universal_to_apps(&state, "agg")
-            .expect("initial sync to apps");
-
-        let mut child = db
-            .get_provider_by_id("universal-codex-agg", "codex")
-            .expect("read child")
-            .expect("child exists");
-        // 表单编辑其它字段（如 model），key 保持 localhost
-        child.settings_config["config"] = json!(r#"model_provider = "custom"
-model = "gpt-5.5"
-[model_providers.custom]
-name = "custom"
-base_url = "http://127.0.0.1:15721/v1"
-wire_api = "responses"
-requires_openai_auth = true"#);
-        ProviderService::update(&state, AppType::Codex, Some("universal-codex-agg"), child)
-            .expect("update cc_switch child");
-
-        let stored_up = db
-            .get_universal_provider("agg")
-            .expect("read UP")
-            .expect("UP exists");
-        assert_eq!(
-            stored_up.api_key, "localhost",
-            "localhost marker must never overwrite the UP api_key"
-        );
     }
 }

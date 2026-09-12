@@ -124,6 +124,33 @@ export function UniversalProviderPanel() {
     }
   }, []);
 
+  const handleSaveApiConfig = useCallback(
+    async (provider: UniversalProvider) => {
+      try {
+        await universalProvidersApi.upsert(provider);
+        await universalProvidersApi.syncApiConfig(provider.id);
+        const updated = await universalProvidersApi.get(provider.id);
+        if (updated) {
+          setProviders((current) => ({ ...current, [provider.id]: updated }));
+          setEditingProvider(updated);
+        }
+        toast.success(
+          t("universalProvider.apiConfigUpdated", {
+            defaultValue: "API 配置已更新到各应用",
+          }),
+        );
+      } catch (error) {
+        console.error("Failed to update universal provider API config:", error);
+        toast.error(
+          t("universalProvider.apiConfigUpdateError", {
+            defaultValue: "更新 API 配置失败",
+          }),
+        );
+      }
+    },
+    [t],
+  );
+
   // 保存并同步供应商
   const handleSaveAndSync = useCallback(
     async (provider: UniversalProvider) => {
@@ -329,6 +356,7 @@ export function UniversalProviderPanel() {
         onSave={handleSave}
         onSaveAndSync={handleSaveAndSync}
         onSaveRoutes={handleSaveRoutes}
+        onSaveApiConfig={handleSaveApiConfig}
         editingProvider={editingProvider}
       />
 

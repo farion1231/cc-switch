@@ -2817,6 +2817,9 @@
     "saveAndSync": "保存并同步",
     "savedAndSynced": "已保存并同步到所有应用",
     "saveAndSyncError": "保存并同步失败",
+    "updateApiConfig": "更新 API 配置",
+    "apiConfigUpdated": "API 配置已更新到各应用",
+    "apiConfigUpdateError": "更新 API 配置失败",
     "configJsonPreview": "配置 JSON 预览",
     "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）"
   },

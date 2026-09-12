@@ -932,6 +932,20 @@ pub fn sync_universal_provider(
 }
 
 #[tauri::command]
+pub fn sync_universal_provider_api_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    let result = ProviderService::sync_universal_api_config_to_apps(state.inner(), &id)
+        .map_err(|e| e.to_string())?;
+
+    emit_universal_provider_synced(&app, "api-config", &id);
+
+    Ok(result)
+}
+
+#[tauri::command]
 pub fn import_opencode_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
     crate::services::provider::import_opencode_providers_from_live(state.inner())
         .map_err(|e| e.to_string())

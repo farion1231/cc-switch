@@ -2817,6 +2817,9 @@
     "saveAndSync": "保存して同期",
     "savedAndSynced": "すべてのアプリに保存・同期されました",
     "saveAndSyncError": "保存と同期に失敗しました",
+    "updateApiConfig": "API 設定を更新",
+    "apiConfigUpdated": "API 設定を各アプリに更新しました",
+    "apiConfigUpdateError": "API 設定の更新に失敗しました",
     "configJsonPreview": "設定 JSON プレビュー",
     "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）"
   },
