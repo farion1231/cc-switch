@@ -100,6 +100,51 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     Ok(true)
 }
 
+/// Remove values that are owned by the selected Codex provider or another cc-switch store.
+///
+/// Common-config extraction and every later consumer must share this policy. Otherwise an old
+/// database row or manually edited snippet can bypass extraction and restore stale routing,
+/// credentials, generated catalog pointers, or DB-managed MCP servers.
+fn sanitize_codex_common_config_doc(doc: &mut toml_edit::DocumentMut) {
+    let root = doc.as_table_mut();
+    for key in [
+        "model",
+        "review_model",
+        "model_provider",
+        "base_url",
+        "wire_api",
+        "model_context_window",
+        "openai_base_url",
+        "experimental_bearer_token",
+        "model_catalog_json",
+    ] {
+        root.remove(key);
+    }
+
+    root.remove("model_providers");
+    root.remove("mcp_servers");
+
+    // Also remove the historical [mcp.servers] shape. The MCP database cannot reconcile it.
+    if let Some(mcp_table) = root
+        .get_mut("mcp")
+        .and_then(|item| item.as_table_like_mut())
+    {
+        mcp_table.remove("servers");
+        if mcp_table.is_empty() {
+            root.remove("mcp");
+        }
+    }
+
+    // Preserve explicit user choices, but never persist cc-switch's injected sentinel.
+    if root
+        .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+        .and_then(|item| item.as_str())
+        == Some(crate::codex_config::CODEX_WEB_SEARCH_DISABLED)
+    {
+        root.remove(crate::codex_config::CODEX_WEB_SEARCH_FIELD);
+    }
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -1660,6 +1705,9 @@ GEMINI_TIMEOUT_MS=30000
         // [mcp.servers] 是历史错误格式，sync_all_enabled 清不掉它。
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
+review_model = "gpt-4-review"
+model_context_window = 262144
+openai_base_url = "https://legacy-router.example/v1"
 wire_api = "chat"
 disable_response_storage = true
 experimental_bearer_token = "sk-live-secret"
@@ -1693,6 +1741,12 @@ command = "legacy-cmd"
                 .lines()
                 .any(|line| line.trim_start().starts_with("model =")),
             "should remove top-level model"
+        );
+        assert!(
+            !extracted.contains("review_model")
+                && !extracted.contains("model_context_window")
+                && !extracted.contains("openai_base_url"),
+            "should remove alternate provider-owned routing and model fields, got: {extracted}"
         );
         assert!(
             !extracted.contains("[model_providers"),
@@ -5972,53 +6026,7 @@ impl ProviderService {
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| AppError::Message(format!("TOML parse error: {e}")))?;
 
-        // Remove provider-specific fields.
-        let root = doc.as_table_mut();
-        root.remove("model");
-        root.remove("model_provider");
-        // Legacy/alt formats might use a top-level base_url.
-        root.remove("base_url");
-        // wire_api 与 base_url 同属供应商路由语义：无 model_provider 时
-        // update_codex_toml_field / 前端 setCodexWireApi 都会把它落在顶层，
-        // 进了片段会改写其它供应商的协议选择（chat vs responses）。
-        root.remove("wire_api");
-
-        // Remove entire model_providers table (provider-specific configuration)
-        root.remove("model_providers");
-
-        // MCP 服务器归 DB mcp_servers 表所有：进了共享片段会绕过按应用的
-        // 启用状态被合并进所有勾选通用配置的供应商，且在通用配置编辑框里
-        // 显示为一份"重复"的 MCP 配置。
-        root.remove("mcp_servers");
-        // 历史错误格式 [mcp.servers] 一并剥离（与 strip_codex_mcp_servers_from_settings
-        // 一致）：sync_all_enabled 只管理 [mcp_servers.*]，legacy 形态一旦进了
-        // 片段就会被合并进所有供应商，且没有任何同步路径能清掉这个孤儿。
-        if let Some(mcp_tbl) = root
-            .get_mut("mcp")
-            .and_then(|item| item.as_table_like_mut())
-        {
-            mcp_tbl.remove("servers");
-            if mcp_tbl.is_empty() {
-                root.remove("mcp");
-            }
-        }
-
-        // cc-switch 写 live 时注入的产物一律不进共享片段：
-        // - experimental_bearer_token 正常写在 [model_providers.<id>] 内（上面
-        //   整表已剥），但无活跃路由 / 内建保留 id / 路由表缺失三种 fallback
-        //   会落在顶层——不剥等于把 API 密钥写进共享片段。
-        root.remove("experimental_bearer_token");
-        // - model_catalog_json 指向按供应商生成的 catalog 投影文件（DB 为 SSOT）。
-        root.remove("model_catalog_json");
-        // - web_search 只剥 cc-switch 注入的 "disabled" 哨兵；用户手设的其它值
-        //   属于可共享偏好，保留。
-        if root
-            .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
-            .and_then(|item| item.as_str())
-            == Some(crate::codex_config::CODEX_WEB_SEARCH_DISABLED)
-        {
-            root.remove(crate::codex_config::CODEX_WEB_SEARCH_FIELD);
-        }
+        sanitize_codex_common_config_doc(&mut doc);
 
         // Clean up multiple empty lines (keep at most one blank line).
         let mut cleaned = String::new();
