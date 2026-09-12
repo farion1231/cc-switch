@@ -142,6 +142,10 @@ impl ConfigService {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
             }
+            AppType::CodeBuddy => {
+                // CodeBuddy is additive: providers are written straight into its
+                // models.json / settings.json by the provider service.
+            }
         }
 
         Ok(())

@@ -793,6 +793,8 @@
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
+    "codebuddyConfigDir": "CodeBuddy Configuration Directory",
+    "workbuddyConfigDir": "WorkBuddy Configuration Directory",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
@@ -802,6 +804,8 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderCodebuddy": "e.g., /home/<your-username>/.codebuddy",
+    "browsePlaceholderWorkbuddy": "e.g., /home/<your-username>/.workbuddy",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
@@ -914,7 +918,21 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "codebuddy": "CodeBuddy",
+    "workbuddy": "WorkBuddy"
+  },
+  "codebuddy": {
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "e.g., My DeepSeek endpoint",
+      "modelKey": "Model ID (id in models.json; cannot be changed after creation)",
+      "url": "API URL",
+      "apiKey": "API Key",
+      "supportsToolCall": "Supports tool calling",
+      "supportsImages": "Supports image input",
+      "supportsReasoning": "Supports reasoning"
+    }
   },
   "pi": {
     "empty": {
@@ -1722,7 +1740,9 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "codebuddy": "CodeBuddy",
+      "workbuddy": "WorkBuddy"
     },
     "rawInputLabel": "Raw",
     "sessionSync": {

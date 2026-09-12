@@ -157,6 +157,11 @@ pub(crate) fn build_provider_from_request(
                 "Pi providers must be added from the Pi provider page".to_string(),
             ));
         }
+        AppType::CodeBuddy => {
+            return Err(AppError::InvalidInput(
+                "CodeBuddy providers must be added from the CodeBuddy provider page".to_string(),
+            ));
+        }
     };
 
     // Build usage script configuration if provided

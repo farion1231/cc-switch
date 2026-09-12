@@ -239,7 +239,8 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
-      sharedFeatureApp !== "pi"
+      sharedFeatureApp !== "pi" &&
+      sharedFeatureApp !== "codebuddy"
     ) {
       setCurrentView("providers");
     }
@@ -307,7 +308,8 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "codebuddy";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -316,8 +318,12 @@ function App() {
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
-    sharedFeatureApp === "pi";
-  const hasMcpSupport = sharedFeatureApp !== "pi";
+    sharedFeatureApp === "pi" ||
+    sharedFeatureApp === "codebuddy";
+  const hasMcpSupport =
+    sharedFeatureApp !== "pi" && sharedFeatureApp !== "codebuddy";
+  // CodeBuddy 的 Prompts 未被接线（prompt_files 返回 unsupported），隐藏入口。
+  const hasPromptSupport = sharedFeatureApp !== "codebuddy";
 
   const {
     addProvider,
@@ -861,6 +867,18 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
+    } else if (activeApp === "codebuddy") {
+      // CodeBuddy model endpoints embed their id in the entry; a duplicate
+      // needs a fresh model key in both DB identity and the native JSON entry.
+      const newKey = generateUniqueProviderCopyKey(
+        provider.id,
+        Object.keys(providers),
+      );
+      duplicatedProvider.providerKey = newKey;
+      duplicatedProvider.settingsConfig = {
+        ...(duplicatedProvider.settingsConfig as Record<string, unknown>),
+        id: newKey,
+      };
     }
 
     if (provider.sortIndex !== undefined) {
@@ -1691,7 +1709,13 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("prompts")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasPromptSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
                                 title={t("prompts.manage")}
                               >
                                 <Book className="w-4 h-4" />

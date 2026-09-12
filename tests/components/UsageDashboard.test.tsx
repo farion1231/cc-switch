@@ -146,6 +146,54 @@ describe("UsageDashboard", () => {
     );
   });
 
+  it("filters usage queries to CodeBuddy", async () => {
+    renderDashboard();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.appFilter.codebuddy" }),
+    );
+
+    await waitFor(() =>
+      expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+        expect.anything(),
+        { appType: "codebuddy" },
+        expect.anything(),
+      ),
+    );
+    expect(useModelStatsMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      { appType: "codebuddy", providerName: undefined },
+      expect.anything(),
+    );
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appType: "codebuddy" }),
+    );
+  });
+
+  it("filters usage queries to WorkBuddy", async () => {
+    renderDashboard();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.appFilter.workbuddy" }),
+    );
+
+    await waitFor(() =>
+      expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+        expect.anything(),
+        { appType: "workbuddy" },
+        expect.anything(),
+      ),
+    );
+    expect(useModelStatsMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      { appType: "workbuddy", providerName: undefined },
+      expect.anything(),
+    );
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appType: "workbuddy" }),
+    );
+  });
+
   it("persists refresh interval changes", async () => {
     const onRefreshIntervalChange = vi.fn().mockResolvedValue(true);
     renderDashboard({ onRefreshIntervalChange });

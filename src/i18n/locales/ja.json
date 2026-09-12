@@ -793,6 +793,8 @@
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
+    "codebuddyConfigDir": "CodeBuddy 設定ディレクトリ",
+    "workbuddyConfigDir": "WorkBuddy 設定ディレクトリ",
     "piConfigDir": "Pi 設定ディレクトリ",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
@@ -802,6 +804,8 @@
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderCodebuddy": "例: /home/<your-username>/.codebuddy",
+    "browsePlaceholderWorkbuddy": "例: /home/<your-username>/.workbuddy",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
@@ -914,7 +918,21 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "codebuddy": "CodeBuddy",
+    "workbuddy": "WorkBuddy"
+  },
+  "codebuddy": {
+    "form": {
+      "name": "名前",
+      "namePlaceholder": "例：マイ DeepSeek エンドポイント",
+      "modelKey": "モデル ID（models.json の id。作成後は変更不可）",
+      "url": "API URL",
+      "apiKey": "API キー",
+      "supportsToolCall": "ツール呼び出しをサポート",
+      "supportsImages": "画像入力をサポート",
+      "supportsReasoning": "推論をサポート"
+    }
   },
   "pi": {
     "empty": {
@@ -1722,7 +1740,9 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "codebuddy": "CodeBuddy",
+      "workbuddy": "WorkBuddy"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
