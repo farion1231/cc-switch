@@ -53,6 +53,20 @@ describe("cocodot provider presets", () => {
       "mog-8-t",
       "mog-8-l",
     ]);
+    expect(
+      Object.fromEntries(
+        (preset?.modelCatalog ?? []).map((item) => [
+          item.model,
+          item.contextWindow,
+        ]),
+      ),
+    ).toEqual({
+      "mcs-6": 1_000_000,
+      "mco-6": 1_000_000,
+      "mog-8-s": 272_000,
+      "mog-8-t": 272_000,
+      "mog-8-l": 272_000,
+    });
   });
 
   it("ships a searchable cocodot icon", () => {
