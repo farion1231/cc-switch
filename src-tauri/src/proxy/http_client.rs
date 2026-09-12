@@ -206,6 +206,49 @@ pub fn get_current_proxy_url() -> Option<String> {
         .and_then(|url| url.clone())
 }
 
+/// 供应商级代理客户端缓存：同一代理 URL 复用连接池，避免每请求重建客户端。
+static OVERRIDE_CLIENTS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<String, Client>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// 获取指定代理 URL 的 HTTP 客户端。
+///
+/// - `None` / 空 / `"none"`：回退全局客户端（`"none"` 表示显式直连覆盖）。
+/// - 其余：按 URL 构建并缓存；构建失败时回退全局客户端，保证请求不被中断。
+///   该路径供"供应商级外部 API 代理"使用，优先级高于全局代理。
+pub fn client_for(proxy_url: Option<&str>) -> Client {
+    let trimmed = proxy_url.map(str::trim).filter(|value| !value.is_empty());
+    match trimmed {
+        None => get(),
+        // 显式 "none"：该供应商要求直连（禁用系统代理），避免跟随环境代理。
+        Some(value) if value.eq_ignore_ascii_case("none") => Client::builder()
+            .timeout(Duration::from_secs(600))
+            .connect_timeout(Duration::from_secs(30))
+            .no_proxy()
+            .build()
+            .unwrap_or_else(|_| get()),
+        Some(value) => {
+            if let Ok(cache) = OVERRIDE_CLIENTS.lock() {
+                if let Some(client) = cache.get(value) {
+                    return client.clone();
+                }
+            }
+            match build_client(Some(value)) {
+                Ok(client) => {
+                    if let Ok(mut cache) = OVERRIDE_CLIENTS.lock() {
+                        cache.insert(value.to_string(), client.clone());
+                    }
+                    client
+                }
+                Err(error) => {
+                    log::warn!("[GlobalProxy] invalid per-provider proxy URL: {error}");
+                    get()
+                }
+            }
+        }
+    }
+}
+
 /// 检查是否正在使用代理
 #[allow(dead_code)]
 pub fn is_proxy_enabled() -> bool {
@@ -227,7 +270,7 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         .no_zstd();
 
     // 有代理地址则使用代理，否则跟随系统代理
-    if let Some(url) = proxy_url {
+    if let Some(url) = proxy_url.filter(|value| !value.trim().is_empty()) {
         // 先验证 URL 格式和 scheme
         let parsed = url::Url::parse(url)
             .map_err(|e| format!("Invalid proxy URL '{}': {}", mask_url(url), e))?;

@@ -1335,6 +1335,8 @@
     "quickSetModels": "一括設定",
     "quickSetSuccess": "モデル名をすべての役割に適用しました",
     "advancedOptionsToggle": "高級オプション",
+    "outboundProxyUrl": "外部 API プロキシ",
+    "outboundProxyUrlHint": "このプロバイダーの残高照会と API 呼び出しはこのプロキシ経由で行われ、グローバルプロキシを上書きします。空欄の場合はグローバルプロキシを使用します。",
     "advancedOptionsHint": "API フォーマット、認証フィールド、モデルマッピングの設定を含みます。通常はデフォルトのままで問題ありません。",
     "categoryOfficial": "公式",
     "categoryCnOfficial": "オープンソース公式",
