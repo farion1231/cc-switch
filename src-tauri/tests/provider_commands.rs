@@ -373,7 +373,8 @@ command = "say"
             }),
             apps: McpApps {
                 claude: false,
-                codex: true, // 启用 Codex
+                codex: true,
+                cursor: false, // 启用 Codex
                 gemini: false,
                 grokbuild: false,
                 opencode: false,

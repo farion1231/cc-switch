@@ -69,11 +69,13 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     opencode: boolean;
     openclaw: boolean;
     hermes: boolean;
+    cursor: boolean;
   }>(() => {
     if (initialData?.apps) {
       return {
         ...initialData.apps,
         grokbuild: initialData.apps.grokbuild ?? false,
+        cursor: initialData.apps.cursor ?? false,
       };
     }
     return {
@@ -84,6 +86,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
+      cursor: defaultEnabledApps.includes("cursor"),
     };
   });
 
@@ -623,6 +626,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.hermes")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-cursor"
+                    checked={enabledApps.cursor}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, cursor: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-cursor"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.cursor")}
                   </label>
                 </div>
               </div>
