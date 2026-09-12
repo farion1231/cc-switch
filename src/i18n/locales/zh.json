@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "启用 Tool Search",
     "effortMax": "最大强度思考",
-    "disableAutoUpgrade": "禁用自动升级"
+    "disableAutoUpgrade": "禁用自动升级",
+    "disableArtifact": "禁用 Artifact 工具"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -1314,6 +1315,7 @@
       "ucloudCoding": "优云智算Coding Plan",
       "shengsuanyun": "胜算云",
       "qiniu": "七牛云",
+      "doubaoseed": "火山 豆包AI",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
@@ -3315,6 +3317,7 @@
     "title": "订阅额度",
     "fiveHour": "5小时",
     "sevenDay": "7天",
+    "sevenDayFable": "Fable",
     "sevenDayOpus": "7天(Opus)",
     "sevenDaySonnet": "7天(Sonnet)",
     "thirtyDay": "30天",

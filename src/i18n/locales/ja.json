@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortMax": "最大強度思考",
-    "disableAutoUpgrade": "自動アップグレードを無効化"
+    "disableAutoUpgrade": "自動アップグレードを無効化",
+    "disableArtifact": "Artifact ツールを無効化"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -1314,6 +1315,7 @@
       "ucloudCoding": "Compshare Coding Plan",
       "shengsuanyun": "Shengsuanyun",
       "qiniu": "Qiniu",
+      "doubaoseed": "Volcengine Doubao",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
@@ -3316,6 +3318,7 @@
     "fiveHour": "5時間",
     "sevenDay": "7日間",
     "sevenDayOpus": "7日間(Opus)",
+    "sevenDayFable": "Fable",
     "sevenDaySonnet": "7日間(Sonnet)",
     "thirtyDay": "30日間",
     "geminiPro": "Pro",

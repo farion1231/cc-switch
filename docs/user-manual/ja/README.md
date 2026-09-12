@@ -112,7 +112,7 @@ CC Switch ユーザーマニュアル
 
 ### v3.16.0 の注目機能
 
-- **Codex Chat Completions ルーティング**：DeepSeek、Kimi、GLM、MiniMax など Chat 専用プロバイダーを Codex で利用可能 — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
+- **Codex Chat Completions ルーティング**：Baidu Qianfan、StepFun、SiliconFlow など Chat 専用プロバイダーを Codex で利用可能 — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
 - **管理対象 CLI ツールのライフサイクル**：設定 / About で Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes のインストール、更新、一括更新、診断に対応 — 詳細は [1.5 個人設定](./1-getting-started/1.5-settings.md)
 - **プロバイダーとモデルマトリクス更新**：提携プリセットを追加し、既定モデルと価格表を更新。Claude Opus は 4.8、該当する GPT 既定値は 5.5 に更新
 - **ルーティング対応バッジ**：Claude Code / Codex のプロバイダーカードで Local Routing 対応可否を確認可能
