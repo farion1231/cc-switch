@@ -76,7 +76,7 @@ base64 = "0.22"
 rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks"] }
 indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"
-uuid = { version = "1.11", features = ["v4"] }
+uuid = { version = "1.11", features = ["v4", "v5"] }
 sha2 = "0.10"
 hmac = "0.12"
 json5 = "0.4"
@@ -95,8 +95,12 @@ libc = "0.2"
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
 windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
     "Win32_Globalization",
+    "Win32_Security",
     "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
     "Win32_UI_Shell",
 ] }
 
