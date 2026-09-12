@@ -88,6 +88,22 @@ impl CodexAuthFileSnapshot {
     }
 }
 
+/// Test-only injection for [`CodexAuthFileTransaction::copy_install_bytes`].
+/// Arming it forces the next install/restore through the copy fallback; with
+/// `Some(n)` the copy writes an `n`-byte prefix of the source first and then
+/// fails, simulating a crash/disk-full halfway through the install.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct MidCopyFailureInjection {
+    fail_after_bytes: Option<u64>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static MID_COPY_FAILURE_INJECTION: std::cell::Cell<Option<MidCopyFailureInjection>> =
+        const { std::cell::Cell::new(None) };
+}
+
 /// Owns the exact auth.json generation observed at restore start.
 ///
 /// A plain compare-then-write is unsafe because Codex can replace auth.json
@@ -122,9 +138,13 @@ impl CodexAuthFileTransaction {
             };
         };
 
-        // The no-clobber install/rollback protocol below requires hard links.
-        // Probe before moving the live credentials so unsupported custom Codex
-        // directories fail closed with auth.json still in place.
+        // The no-clobber install/rollback protocol below primarily relies on
+        // hard links; filesystems without hard-link support (WSL UNC paths
+        // reject their creation with os error 50) fall back to create_new +
+        // copy. Probe before moving the live credentials so unsupported custom
+        // Codex directories fail closed with auth.json still in place. (A
+        // concurrent auth.json removal is still caught: the quarantine rename
+        // below fails with NotFound.)
         let probe = Self::unique_sibling_path(&path, "restore-probe")?;
         match std::fs::hard_link(&path, &probe) {
             Ok(()) => {
@@ -134,6 +154,11 @@ impl CodexAuthFileTransaction {
                         probe.display()
                     )
                 })?;
+            }
+            Err(error) if Self::hard_link_unsupported(&error) => {
+                // No hard links on this filesystem; the copy fallback in
+                // install_file_if_vacant covers it, so allow the transaction.
+                let _ = std::fs::remove_file(&probe);
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(Self::changed_error());
@@ -218,7 +243,7 @@ impl CodexAuthFileTransaction {
                 })?;
             drop(file);
 
-            match std::fs::hard_link(&temporary, &self.path) {
+            match Self::install_file_if_vacant(&temporary, &self.path) {
                 Ok(()) => Ok(()),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     Err(Self::changed_error())
@@ -309,11 +334,95 @@ impl CodexAuthFileTransaction {
         Self::restore_file_if_vacant(&quarantined, &self.path)
     }
 
+    /// Install `source` at `destination` only if `destination` is vacant.
+    ///
+    /// Primary path: `hard_link` — an atomic no-clobber primitive whose failed
+    /// attempts never create the destination, so callers can keep treating an
+    /// existing destination as evidence of a concurrent writer.
+    ///
+    /// Fallback (only when hard links are unsupported — WSL UNC paths reject
+    /// their creation with ERROR_NOT_SUPPORTED, os error 50): `create_new` +
+    /// copy, which relies on file creation and rename only. A copy/flush
+    /// failure deletes the partially written destination before returning, so
+    /// a failed install still leaves the destination vacant and the
+    /// "exists ⇒ someone else wrote it" heuristic keeps its meaning.
+    ///
+    /// The source file is left in place so each caller keeps its own cleanup
+    /// semantics (best-effort for the install temp file, cleanup on success or
+    /// AlreadyExists for a quarantined generation).
+    fn install_file_if_vacant(
+        source: &std::path::Path,
+        destination: &std::path::Path,
+    ) -> std::io::Result<()> {
+        // While the mid-copy failure injection is armed, pretend hard links
+        // are unavailable so tests can exercise the copy fallback on any
+        // filesystem.
+        if Self::hard_link_primary_available() {
+            match std::fs::hard_link(source, destination) {
+                Ok(()) => return Ok(()),
+                Err(error) if Self::hard_link_unsupported(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        let mut source_file = std::fs::File::open(source)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut destination_file = options.open(destination)?;
+        let write_result = Self::copy_install_bytes(&mut source_file, &mut destination_file);
+        if write_result.is_err() {
+            // Close before unlinking: Windows refuses to remove open files.
+            drop(destination_file);
+            let _ = std::fs::remove_file(destination);
+        }
+        write_result
+    }
+
+    fn copy_install_bytes<R, W>(source: &mut R, destination: &mut W) -> std::io::Result<()>
+    where
+        R: std::io::Read + ?Sized,
+        W: std::io::Write + ?Sized,
+    {
+        #[cfg(test)]
+        if let Some(injection) = Self::take_mid_copy_failure_injection() {
+            if let Some(prefix_len) = injection.fail_after_bytes {
+                // Simulate a crash/disk-full mid-copy: a prefix of the source
+                // must already be in the destination when the failure surfaces.
+                let mut prefix = vec![0u8; prefix_len as usize];
+                source.read_exact(&mut prefix)?;
+                destination.write_all(&prefix)?;
+                return Err(std::io::Error::other("injected mid-copy failure"));
+            }
+        }
+        std::io::copy(source, destination)?;
+        destination.flush()
+    }
+
+    #[cfg(test)]
+    fn take_mid_copy_failure_injection() -> Option<MidCopyFailureInjection> {
+        MID_COPY_FAILURE_INJECTION.with(std::cell::Cell::take)
+    }
+
+    #[cfg(test)]
+    fn hard_link_primary_available() -> bool {
+        !MID_COPY_FAILURE_INJECTION.with(|cell| cell.get().is_some())
+    }
+
+    #[cfg(not(test))]
+    fn hard_link_primary_available() -> bool {
+        true
+    }
+
     fn restore_file_if_vacant(
         source: &std::path::Path,
         destination: &std::path::Path,
     ) -> Result<(), String> {
-        match std::fs::hard_link(source, destination) {
+        match Self::install_file_if_vacant(source, destination) {
             Ok(()) => {
                 std::fs::remove_file(source).map_err(|error| {
                     format!(
@@ -351,6 +460,17 @@ impl CodexAuthFileTransaction {
                 );
             }
         }
+    }
+
+    /// Whether this hard-link failure means "this filesystem cannot create
+    /// hard links at all" and the create_new + copy fallback should take over.
+    ///
+    /// `ErrorKind::Unsupported` alone is not sufficient: WSL UNC paths reject
+    /// link creation with Win32 `ERROR_NOT_SUPPORTED` (os error 50), which
+    /// this std's Windows error mapping leaves uncategorized, so the raw OS
+    /// code is matched as well.
+    fn hard_link_unsupported(error: &std::io::Error) -> bool {
+        error.kind() == std::io::ErrorKind::Unsupported || error.raw_os_error() == Some(50)
     }
 
     fn unique_sibling_path(
@@ -10197,6 +10317,293 @@ base_url = "https://third.example/v1"
                 .and_then(Value::as_str),
             Some("new-rt")
         );
+    }
+
+    #[test]
+    #[serial]
+    fn install_file_if_vacant_copies_bytes_and_refuses_occupied_destination() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let auth_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&auth_dir).expect("make codex dir");
+
+        let source = auth_dir.join("install-source");
+        let destination = auth_dir.join("install-dest");
+        std::fs::write(&source, b"source-bytes").expect("seed source");
+
+        // Vacant destination: bytes land, source stays for the caller to clean.
+        CodexAuthFileTransaction::install_file_if_vacant(&source, &destination)
+            .expect("install into vacant path");
+        assert_eq!(
+            std::fs::read(&destination).expect("read installed file"),
+            b"source-bytes"
+        );
+        assert!(source.exists(), "source cleanup belongs to the caller");
+        std::fs::remove_file(&source).expect("clean up source");
+
+        // Occupied destination: no-clobber failure, source and bytes preserved.
+        std::fs::write(&destination, b"existing").expect("occupy destination");
+        std::fs::write(&source, b"source-bytes").expect("reseed source");
+        let error = CodexAuthFileTransaction::install_file_if_vacant(&source, &destination)
+            .expect_err("occupied destination must fail the no-clobber check");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            std::fs::read(&destination).expect("destination stays untouched"),
+            b"existing"
+        );
+        assert!(
+            source.exists(),
+            "a failed install must not consume the source"
+        );
+    }
+
+    /// Regression guard for the P1 review finding: a copy failing halfway
+    /// (disk full, WSL UNC disconnect) must not leave a partially written
+    /// destination at the live path — the install error path treats an
+    /// existing path as proof of a concurrent newer generation and would
+    /// discard the quarantined original credentials.
+    #[test]
+    #[serial]
+    fn mid_copy_failure_leaves_destination_vacant_and_source_intact() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let auth_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&auth_dir).expect("make codex dir");
+
+        let source = auth_dir.join("mid-copy-source");
+        let destination = auth_dir.join("mid-copy-dest");
+        std::fs::write(&source, b"source-bytes").expect("seed source");
+
+        MID_COPY_FAILURE_INJECTION.with(|cell| arm_injection(cell, Some(7)));
+        let error = CodexAuthFileTransaction::install_file_if_vacant(&source, &destination)
+            .expect_err("injected mid-copy failure must surface");
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert!(
+            !destination.exists(),
+            "a failed fallback copy must not leave the partial destination behind"
+        );
+        assert_eq!(
+            std::fs::read(&source).expect("read source"),
+            b"source-bytes",
+            "a failed install must not consume the source"
+        );
+    }
+
+    /// End-to-end: an injected mid-copy failure during install must leave the
+    /// quarantined generation recoverable — the transaction must neither
+    /// discard it via the exists() heuristic nor strand credentials, and a
+    /// subsequent rollback must restore the original auth.json.
+    #[test]
+    #[serial]
+    fn mid_copy_install_failure_preserves_quarantined_credentials() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let auth_dir = crate::codex_config::get_codex_config_dir();
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        let original_auth = json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER });
+        write_json_file(&auth_path, &original_auth).expect("seed takeover auth");
+
+        let snapshot = CodexAuthFileSnapshot::capture().expect("capture auth");
+        let mut transaction = CodexAuthFileTransaction::begin(&snapshot).expect("claim auth");
+
+        MID_COPY_FAILURE_INJECTION.with(|cell| arm_injection(cell, Some(3)));
+        let error = transaction
+            .install(Some(br#"{"OPENAI_API_KEY":"replacement"}"#.to_vec()))
+            .expect_err("injected mid-copy failure must surface");
+        assert!(error.contains("安装 Codex auth 失败"));
+
+        // The live path is vacant again ⇒ no discard_quarantined fired.
+        assert!(!auth_path.exists(), "partial install debris must be gone");
+        let leftover: Vec<std::path::PathBuf> = std::fs::read_dir(&auth_dir)
+            .expect("list codex dir")
+            .map(|entry| entry.expect("read entry").path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".auth.json.cc-switch-"))
+            })
+            .collect();
+        assert_eq!(
+            leftover.len(),
+            1,
+            "the quarantined generation must survive the failed install"
+        );
+
+        transaction
+            .rollback()
+            .expect("rollback must restore the quarantined generation");
+        let restored: Value = read_json_file(&auth_path).expect("read restored auth");
+        assert_eq!(
+            restored.get("OPENAI_API_KEY").and_then(Value::as_str),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+    }
+
+    /// The classifier must recognize both a synthesized `Unsupported` and the
+    /// raw Win32 `ERROR_NOT_SUPPORTED` (os error 50) that WSL UNC actually
+    /// returns for hard-link creation; unrelated failures stay hard errors.
+    #[test]
+    fn hard_link_unsupported_covers_kind_and_raw_win32_code() {
+        let synthesized = std::io::Error::from(std::io::ErrorKind::Unsupported);
+        assert!(CodexAuthFileTransaction::hard_link_unsupported(
+            &synthesized
+        ));
+
+        let wsl_unc = std::io::Error::from_raw_os_error(50);
+        assert!(CodexAuthFileTransaction::hard_link_unsupported(&wsl_unc));
+
+        assert!(!CodexAuthFileTransaction::hard_link_unsupported(
+            &std::io::Error::from(std::io::ErrorKind::PermissionDenied)
+        ));
+        assert!(!CodexAuthFileTransaction::hard_link_unsupported(
+            &std::io::Error::other("generic failure")
+        ));
+    }
+
+    /// Clear-or-arm helper keeping the one-shot injection readable in tests.
+    fn arm_injection(
+        cell: &std::cell::Cell<Option<MidCopyFailureInjection>>,
+        fail_after_bytes: Option<u64>,
+    ) {
+        cell.set(Some(MidCopyFailureInjection { fail_after_bytes }));
+    }
+
+    /// Regression for #6679: WSL UNC paths (`\\wsl.localhost\...`) reject
+    /// hard-link creation with os error 50, which used to fail the install
+    /// step and — worse — the rollback step, leaving the original auth.json
+    /// stranded in its quarantine file after a failed switch. The protocol
+    /// installs through hard_link where available and falls back to
+    /// create_new + copy on filesystems without link support (both creation
+    /// and rename work there). This test guards the full lifecycle on a
+    /// regular filesystem; the copy-fallback mechanics are covered by the
+    /// injected mid-copy tests above, and the Windows + WSL2 CI job runs this
+    /// same lifecycle against a real `\\wsl.localhost` home.
+    #[test]
+    #[serial]
+    fn codex_auth_transaction_lifecycle_works_without_hard_link_support() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let auth_dir = crate::codex_config::get_codex_config_dir();
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        let original_auth = json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER });
+        write_json_file(&auth_path, &original_auth).expect("seed takeover auth");
+
+        let transaction_leftovers = || -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(&auth_dir)
+                .expect("list codex dir")
+                .map(|entry| entry.expect("read entry").path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with(".auth.json.cc-switch-"))
+                })
+                .collect()
+        };
+
+        // Phase 1: replace the takeover auth and commit.
+        let snapshot = CodexAuthFileSnapshot::capture().expect("capture auth");
+        let mut transaction = CodexAuthFileTransaction::begin(&snapshot).expect("claim auth");
+        transaction
+            .install(Some(br#"{"OPENAI_API_KEY":"new-key"}"#.to_vec()))
+            .expect("install replacement auth");
+        transaction.commit().expect("commit install");
+        let installed: Value = read_json_file(&auth_path).expect("read installed auth");
+        assert_eq!(
+            installed.get("OPENAI_API_KEY").and_then(Value::as_str),
+            Some("new-key")
+        );
+        assert!(
+            transaction_leftovers().is_empty(),
+            "commit must not leak transaction files"
+        );
+
+        // Phase 2: roll a second generation back and get the first one back.
+        let snapshot = CodexAuthFileSnapshot::capture().expect("re-capture auth");
+        let mut transaction = CodexAuthFileTransaction::begin(&snapshot).expect("re-claim auth");
+        transaction
+            .install(Some(br#"{"OPENAI_API_KEY":"second-key"}"#.to_vec()))
+            .expect("install second generation");
+        transaction
+            .rollback()
+            .expect("rollback must restore the previous generation");
+        let restored: Value = read_json_file(&auth_path).expect("read rolled-back auth");
+        assert_eq!(
+            restored, installed,
+            "rollback must restore the pre-install generation"
+        );
+        assert!(
+            transaction_leftovers().is_empty(),
+            "rollback must not leak transaction files"
+        );
+    }
+
+    /// #6679 contract against a real WSL2 UNC home: the auth transaction must
+    /// complete its full lifecycle (claim, install, commit, re-claim,
+    /// rollback) on `\\wsl.localhost` paths, where hard-link creation can be
+    /// rejected with os error 50 while file creation and rename are supported.
+    /// The Windows + WSL2 CI job points CC_SWITCH_TEST_HOME at a WSL UNC home
+    /// and runs this test explicitly; ignored elsewhere.
+    #[cfg(windows)]
+    #[test]
+    #[serial]
+    #[ignore = "requires CC_SWITCH_TEST_HOME/CC_SWITCH_WSL_TEST_DIR on a WSL2 UNC home"]
+    fn codex_auth_transaction_runs_on_wsl_unc_home() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("CC_SWITCH_WSL_TEST_DIR").expect("CC_SWITCH_WSL_TEST_DIR must be set"),
+        );
+        let home = crate::config::get_home_dir();
+        let home_unc = home.to_string_lossy().replace('\\', "/");
+        assert!(
+            home_unc.starts_with("//wsl.localhost/") || home_unc.starts_with("//wsl$/"),
+            "expected CC_SWITCH_TEST_HOME to be a WSL UNC path, got {home_unc}"
+        );
+        assert!(
+            home.starts_with(&root),
+            "expected home under {}, got {home_unc}",
+            root.display()
+        );
+
+        crate::settings::reload_settings().expect("reload settings for WSL home");
+        let auth_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&auth_dir).expect("make codex dir on WSL UNC");
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        let original_auth = json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER });
+        write_json_file(&auth_path, &original_auth).expect("seed takeover auth on WSL UNC");
+
+        // Phase 1: replace the takeover auth and commit.
+        let snapshot = CodexAuthFileSnapshot::capture().expect("capture auth");
+        let mut transaction =
+            CodexAuthFileTransaction::begin(&snapshot).expect("claim auth on WSL UNC");
+        transaction
+            .install(Some(br#"{"OPENAI_API_KEY":"new-key"}"#.to_vec()))
+            .expect("install replacement auth on WSL UNC");
+        transaction.commit().expect("commit install on WSL UNC");
+        let installed: Value = read_json_file(&auth_path).expect("read installed auth");
+        assert_eq!(
+            installed.get("OPENAI_API_KEY").and_then(Value::as_str),
+            Some("new-key")
+        );
+
+        // Phase 2: roll a second generation back and get the first one back.
+        let snapshot = CodexAuthFileSnapshot::capture().expect("re-capture auth");
+        let mut transaction =
+            CodexAuthFileTransaction::begin(&snapshot).expect("re-claim auth on WSL UNC");
+        transaction
+            .install(Some(br#"{"OPENAI_API_KEY":"second-key"}"#.to_vec()))
+            .expect("install second generation on WSL UNC");
+        transaction
+            .rollback()
+            .expect("rollback must restore the previous generation on WSL UNC");
+        let restored: Value = read_json_file(&auth_path).expect("read rolled-back auth");
+        assert_eq!(
+            restored, installed,
+            "rollback must restore the pre-install generation"
+        );
+
+        // Leave the shared CI home as we found it.
+        let _ = std::fs::remove_dir_all(&auth_dir);
     }
 
     #[test]
