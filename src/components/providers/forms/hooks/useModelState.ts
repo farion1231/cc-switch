@@ -3,6 +3,12 @@ import { useState, useCallback, useEffect, useRef } from "react";
 interface UseModelStateProps {
   settingsConfig: string;
   onConfigChange: (config: string) => void;
+  /**
+   * 现读当前配置。latestConfigRef 只在渲染期从 settingsConfig 快照赋值，而写
+   * settingsConfig 不触发重渲染，所以别处（JSON 编辑器、通用配置合并）的改动
+   * 不会进入那个 ref。改模型时若基于它重建整份 JSON 会把那些改动覆盖回去。
+   */
+  getSettingsConfig?: () => string;
 }
 
 export type ClaudeModelEnvField =
@@ -122,6 +128,7 @@ function parseModelsFromConfig(settingsConfig: string) {
 export function useModelState({
   settingsConfig,
   onConfigChange,
+  getSettingsConfig,
 }: UseModelStateProps) {
   const initial = useState(() => parseModelsFromConfig(settingsConfig))[0];
   const [claudeModel, setClaudeModel] = useState(initial.model);
@@ -198,9 +205,8 @@ export function useModelState({
       if (field === "CLAUDE_CODE_SUBAGENT_MODEL") setSubagentModel(value);
 
       try {
-        const currentConfig = latestConfigRef.current
-          ? JSON.parse(latestConfigRef.current)
-          : { env: {} };
+        const currentRaw = getSettingsConfig?.() ?? latestConfigRef.current;
+        const currentConfig = currentRaw ? JSON.parse(currentRaw) : { env: {} };
         if (!currentConfig.env) currentConfig.env = {};
         const env = currentConfig.env as Record<string, unknown>;
 
@@ -221,7 +227,7 @@ export function useModelState({
         console.error("Failed to update model config:", err);
       }
     },
-    [onConfigChange],
+    [getSettingsConfig, onConfigChange],
   );
 
   return {
