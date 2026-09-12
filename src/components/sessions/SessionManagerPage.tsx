@@ -1486,6 +1486,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           <h2 className="text-base font-semibold truncate">
                             {formatSessionTitle(selectedSession)}
                           </h2>
+                          {selectedSession.profileName && (
+                            <Badge
+                              variant="outline"
+                              className="max-w-[180px] truncate font-normal"
+                              title={selectedSession.profileConfigDir}
+                            >
+                              {selectedSession.profileName}
+                            </Badge>
+                          )}
                         </div>
 
                         {/* 元信息 */}

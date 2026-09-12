@@ -1243,10 +1243,13 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
     }
 }
 
-/// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
+/// 构建隔离 Claude 命令行：只为该进程设置持久托管配置目录。
 #[cfg_attr(windows, allow(dead_code))]
-fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
-    let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
+fn build_provider_command_line(shell: &str, config_dir: &str, cwd: Option<&Path>) -> String {
+    let claude_command = format!(
+        "CLAUDE_CONFIG_DIR={} claude",
+        shell_single_quote(config_dir)
+    );
     let command = cwd
         .map(|dir| {
             format!(
@@ -3736,10 +3739,7 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
     }
 }
 
-/// 打开指定提供商的终端
-///
-/// 根据提供商配置的环境变量启动一个带有该提供商特定设置的终端
-/// 无需检查是否为当前激活的提供商，任何提供商都可以打开终端
+/// 以持久托管 `CLAUDE_CONFIG_DIR` 打开指定 Claude 供应商的隔离终端。
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn open_provider_terminal(
@@ -3749,75 +3749,21 @@ pub async fn open_provider_terminal(
     cwd: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    if app_type != AppType::Claude {
+        return Err("隔离终端启动仅支持 Claude 供应商".to_string());
+    }
     let launch_cwd = resolve_launch_cwd(cwd)?;
-
-    // 获取提供商配置
-    let providers = ProviderService::list(state.inner(), app_type.clone())
-        .map_err(|e| format!("获取提供商列表失败: {e}"))?;
-
+    let providers = ProviderService::list(state.inner(), AppType::Claude)
+        .map_err(|e| format!("获取供应商列表失败: {e}"))?;
     let provider = providers
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
+    let config_dir = crate::claude_launcher_profile::sync_profile(state.inner(), provider)
+        .map_err(|e| format!("同步 Claude 隔离配置失败: {e}"))?;
 
-    // 从提供商配置中提取环境变量
-    let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
-
-    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+    launch_terminal_with_profile(&config_dir, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
-
     Ok(true)
-}
-
-/// 从提供商配置中提取环境变量
-fn extract_env_vars_from_config(
-    config: &serde_json::Value,
-    app_type: &AppType,
-) -> Vec<(String, String)> {
-    let mut env_vars = Vec::new();
-
-    let Some(obj) = config.as_object() else {
-        return env_vars;
-    };
-
-    // 处理 env 字段（Claude/Gemini 通用）
-    if let Some(env) = obj.get("env").and_then(|v| v.as_object()) {
-        for (key, value) in env {
-            if let Some(str_val) = value.as_str() {
-                env_vars.push((key.clone(), str_val.to_string()));
-            }
-        }
-
-        // 处理 base_url: 根据应用类型添加对应的环境变量
-        let base_url_key = match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => Some("ANTHROPIC_BASE_URL"),
-            AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
-            _ => None,
-        };
-
-        if let Some(key) = base_url_key {
-            if let Some(url_str) = env.get(key).and_then(|v| v.as_str()) {
-                env_vars.push((key.to_string(), url_str.to_string()));
-            }
-        }
-    }
-
-    // Codex 使用 auth 字段转换为 OPENAI_API_KEY
-    if *app_type == AppType::Codex {
-        if let Some(auth) = obj.get("auth").and_then(|v| v.as_str()) {
-            env_vars.push(("OPENAI_API_KEY".to_string(), auth.to_string()));
-        }
-    }
-
-    // Gemini 使用 api_key 字段转换为 GEMINI_API_KEY
-    if *app_type == AppType::Gemini {
-        if let Some(api_key) = obj.get("api_key").and_then(|v| v.as_str()) {
-            env_vars.push(("GEMINI_API_KEY".to_string(), api_key.to_string()));
-        }
-    }
-
-    env_vars
 }
 
 fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
@@ -3845,38 +3791,76 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     Ok(Some(resolved))
 }
 
-/// 创建临时配置文件并启动 claude 终端
-/// 使用 --settings 参数传入提供商特定的 API 配置
-fn launch_terminal_with_env(
-    env_vars: Vec<(String, String)>,
-    provider_id: &str,
+#[cfg_attr(windows, allow(dead_code))]
+fn build_posix_provider_script(
+    shell: &str,
+    config_dir: &Path,
     cwd: Option<&Path>,
-) -> Result<(), String> {
-    let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
+    script_file: &Path,
+) -> String {
+    let config_dir = config_dir.to_string_lossy();
+    let cleanup = format!(
+        "rm -f -- {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    );
+    let cleanup_trap = shell_single_quote(&cleanup);
+    let provider_command = build_provider_command_line(shell, &config_dir, cwd);
+    let final_cd_command = build_final_shell_cd_command(shell, cwd);
+    let exec_line = build_exec_line(shell, cwd);
+    format!(
+        "#!/usr/bin/env sh\n\
+         trap {cleanup_trap} EXIT\n\
+         printf '%s\\n' 'Using isolated Claude config directory:' {config_dir_label}\n\
+         {provider_command}\n\
+         {cleanup}\n\
+         trap - EXIT\n\
+         {final_cd_command}\
+         {exec_line}\n",
+        config_dir_label = shell_single_quote(&config_dir),
+    )
+}
 
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_provider_batch_str(config_dir: &str, cwd: Option<&str>) -> String {
+    let config_dir = escape_windows_batch_value(config_dir);
+    let cwd_command = cwd.map(build_windows_cwd_command_str).unwrap_or_default();
+    format!(
+        "@echo off\r\n\
+         setlocal\r\n\
+         set \"CLAUDE_CONFIG_DIR={config_dir}\"\r\n\
+         {cwd_command}\
+         echo Using isolated Claude config directory:\r\n\
+         echo %CLAUDE_CONFIG_DIR%\r\n\
+         claude\r\n\
+         del \"%~f0\" >nul 2>&1\r\n"
+    )
+}
 
+fn launcher_script_path(extension: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "cc_switch_launcher_{}_{}.{}",
+        std::process::id(),
+        uuid::Uuid::new_v4(),
+        extension
+    ))
+}
+
+fn launch_terminal_with_profile(config_dir: &Path, cwd: Option<&Path>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        launch_macos_terminal(config_dir, cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        launch_linux_terminal(config_dir, cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        launch_windows_terminal(config_dir, cwd)?;
         Ok(())
     }
 
@@ -3884,69 +3868,21 @@ fn launch_terminal_with_env(
     Err("不支持的操作系统".to_string())
 }
 
-/// 写入 claude 配置文件
-fn write_claude_config(
-    config_file: &std::path::Path,
-    env_vars: &[(String, String)],
-) -> Result<(), String> {
-    let mut config_obj = serde_json::Map::new();
-    let mut env_obj = serde_json::Map::new();
-
-    for (key, value) in env_vars {
-        env_obj.insert(key.clone(), serde_json::Value::String(value.clone()));
-    }
-
-    config_obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
-
-    let config_json =
-        serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
-
-    std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
-}
-
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(config_dir: &Path, cwd: Option<&Path>) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
-
     let shell = get_user_shell();
-    let exec_line = build_exec_line(&shell, cwd);
-    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
-
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    // Write the shell script to a temp file
-    // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
-    );
+    let script_file = launcher_script_path("sh");
+    let script_content = build_posix_provider_script(&shell, config_dir, cwd, &script_file);
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    // Make script executable
     std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
-    // Try the preferred terminal first, fall back to Terminal.app if it fails
-    // Note: Kitty doesn't need the -e flag, others do
     let result = match terminal {
         "iterm2" => launch_macos_iterm2(&script_file),
         "warp" => launch_macos_warp(&script_file),
@@ -3959,16 +3895,19 @@ echo "{config_path}"
         _ => launch_macos_terminal_app(&script_file),
     };
 
-    // If preferred terminal fails and it's not the default, try Terminal.app as fallback
-    if result.is_err() && terminal != "terminal" {
+    let result = if result.is_err() && terminal != "terminal" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
             terminal,
             result.as_ref().err()
         );
-        return launch_macos_terminal_app(&script_file);
+        launch_macos_terminal_app(&script_file)
+    } else {
+        result
+    };
+    if result.is_err() {
+        let _ = std::fs::remove_file(&script_file);
     }
-
     result
 }
 
@@ -4298,17 +4237,12 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(config_dir: &Path, cwd: Option<&Path>) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
     let preferred = crate::settings::get_preferred_terminal();
-
     let shell = get_user_shell();
-    let exec_line = build_exec_line(&shell, cwd);
-    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
-
-    // Default terminal list with their arguments
     let default_terminals = [
         ("gnome-terminal", vec!["--"]),
         ("konsole", vec!["-e"]),
@@ -4319,31 +4253,10 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
         ("kitty", vec!["-e"]),
         ("ghostty", vec!["-e"]),
     ];
-
-    // Create temp script file
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
-    );
+    let script_file = launcher_script_path("sh");
+    let script_content = build_posix_provider_script(&shell, config_dir, cwd, &script_file);
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
     std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
@@ -4398,7 +4311,6 @@ echo "{config_path}"
 
     // Clean up on failure
     let _ = std::fs::remove_file(&script_file);
-    let _ = std::fs::remove_file(config_file);
     Err(last_error)
 }
 
@@ -4415,58 +4327,41 @@ fn which_command(cmd: &str) -> bool {
 
 /// Windows: 根据用户首选终端启动
 #[cfg(target_os = "windows")]
-fn launch_windows_terminal(
-    temp_dir: &std::path::Path,
-    config_file: &std::path::Path,
-    cwd: Option<&Path>,
-) -> Result<(), String> {
+fn launch_windows_terminal(config_dir: &Path, cwd: Option<&Path>) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
-
-    let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
-    let cwd_command = build_windows_cwd_command(cwd);
-
-    let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
-        cwd_command = cwd_command,
+    let bat_file = launcher_script_path("bat");
+    let content = build_windows_provider_batch_str(
+        &config_dir.to_string_lossy(),
+        cwd.map(|path| path.to_string_lossy()).as_deref(),
     );
-
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let bat_path = bat_file.to_string_lossy();
-    let ps_cmd = format!("& '{}'", bat_path);
-
-    // Try the preferred terminal first
+    let ps_path = bat_path.replace('\'', "''");
+    let ps_cmd = format!("& '{ps_path}'");
     let result = match terminal {
         "powershell" => run_windows_start_command(
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
         ),
         "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
-        _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
+        _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
     };
 
-    // If preferred terminal fails and it's not the default, try cmd as fallback
-    if result.is_err() && terminal != "cmd" {
+    let result = if result.is_err() && terminal != "cmd" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 cmd: {:?}",
             terminal,
             result.as_ref().err()
         );
-        return run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+        run_windows_start_command(&["cmd", "/K", &bat_path], "cmd")
+    } else {
+        result
+    };
+    if result.is_err() {
+        let _ = std::fs::remove_file(&bat_file);
     }
-
     result
 }
 
@@ -4490,12 +4385,6 @@ fn build_windows_cwd_command_str(path: &str) -> String {
     } else {
         format!("cd /d \"{escaped}\" || exit /b 1\r\n")
     }
-}
-
-#[cfg(target_os = "windows")]
-fn build_windows_cwd_command(cwd: Option<&Path>) -> String {
-    cwd.map(|dir| build_windows_cwd_command_str(&dir.to_string_lossy()))
-        .unwrap_or_default()
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -4847,27 +4736,55 @@ mod tests {
     }
 
     #[test]
-    fn test_build_provider_command_line_uses_user_shell_environment() {
+    fn test_build_provider_command_line_uses_isolated_config_dir() {
         assert_eq!(
-            build_provider_command_line("/bin/zsh", "/tmp/claude config.json", None),
-            "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
+            build_provider_command_line("/bin/zsh", "/tmp/claude profile", None),
+            r#"'/bin/zsh' -lic 'CLAUDE_CONFIG_DIR='"'"'/tmp/claude profile'"'"' claude'"#
         );
         assert_eq!(
             build_provider_command_line(
                 "/bin/bash",
-                "/tmp/claude config.json",
+                "/tmp/claude profile",
                 Some(Path::new("/tmp/project"))
             ),
-            r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+            r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && CLAUDE_CONFIG_DIR='"'"'/tmp/claude profile'"'"' claude'"#
         );
         assert_eq!(
             build_provider_command_line(
                 "/bin/sh",
-                "/tmp/claude config.json",
+                "/tmp/claude profile",
                 Some(Path::new("/tmp/project O'Brien"))
             ),
-            r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+            r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && CLAUDE_CONFIG_DIR='"'"'/tmp/claude profile'"'"' claude'"#
         );
+    }
+
+    #[test]
+    fn posix_launcher_script_contains_only_profile_path_and_self_cleanup() {
+        let script = build_posix_provider_script(
+            "/bin/bash",
+            Path::new("/tmp/managed profile"),
+            Some(Path::new("/tmp/project")),
+            Path::new("/tmp/launcher.sh"),
+        );
+        assert!(script.contains("CLAUDE_CONFIG_DIR="));
+        assert!(script.contains("/tmp/managed profile"));
+        assert!(script.contains("rm -f --"));
+        assert!(script.contains("/tmp/launcher.sh"));
+        assert!(!script.contains("--settings"));
+        assert!(!script.contains("ANTHROPIC_AUTH_TOKEN"));
+        assert!(!script.contains("rm -f -- '/tmp/managed profile'"));
+    }
+
+    #[test]
+    fn windows_launcher_batch_sets_profile_dir_and_deletes_only_itself() {
+        let batch = build_windows_provider_batch_str(r"C:\Profiles\A&B", Some(r"C:\work\repo"));
+        assert!(batch.contains(r#"set "CLAUDE_CONFIG_DIR=C:\Profiles\A^&B""#));
+        assert!(batch.contains("claude\r\n"));
+        assert!(batch.contains("del \"%~f0\" >nul 2>&1"));
+        assert!(!batch.contains("--settings"));
+        assert!(!batch.contains("ANTHROPIC_AUTH_TOKEN"));
+        assert!(!batch.contains(r#"del "C:\Profiles"#));
     }
 
     #[test]

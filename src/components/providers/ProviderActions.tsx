@@ -275,6 +275,12 @@ export function ProviderActions({
       : isReadOnly
         ? readOnlyHint
         : t("common.delete");
+  const terminalActionLabel =
+    appId === "claude"
+      ? t("claudeRouter.launchIsolated", {
+          defaultValue: "Launch Claude (Isolated)",
+        })
+      : t("provider.openTerminal", "打开终端");
 
   return (
     <div className="flex items-center gap-1.5">
@@ -449,7 +455,8 @@ export function ProviderActions({
             size="icon"
             variant="ghost"
             onClick={onOpenTerminal}
-            title={t("provider.openTerminal", "打开终端")}
+            aria-label={terminalActionLabel}
+            title={terminalActionLabel}
             className={cn(
               iconButtonClass,
               "hover:text-emerald-600 dark:hover:text-emerald-400",

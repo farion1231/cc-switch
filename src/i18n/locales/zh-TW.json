@@ -3240,6 +3240,48 @@
     "suggestedDefaults": "套用建議預設設定",
     "suggestedDefaultsHint": "使用此預設推薦的預設模型設定"
   },
+  "claudeRouter": {
+    "launchIsolated": "啟動 Claude（隔離）",
+    "providerBadge": "路由已啟用 · {{count}} 個模型",
+    "form": {
+      "enabled": "啟用於路由",
+      "description": "透過 Claude Code 閘道公開所選模型，不變更目前供應商。",
+      "officialUnsupported": "官方供應商不能啟用於路由。",
+      "models": "閘道模型",
+      "modelsHint": "別名會產生穩定的公開模型 ID；上游模型名稱仍可自由編輯。",
+      "addModel": "新增模型",
+      "empty": "尚未設定閘道模型。",
+      "alias": "別名 {{position}}",
+      "displayName": "顯示名稱 {{position}}",
+      "upstreamModel": "上游模型 {{position}}",
+      "moveUp": "上移模型 {{position}}",
+      "moveDown": "下移模型 {{position}}",
+      "remove": "移除模型 {{position}}"
+    },
+    "validation": {
+      "modelsRequired": "啟用路由前至少新增一個模型。",
+      "fieldsRequired": "每個路由模型都必須填寫別名、顯示名稱和上游模型。",
+      "duplicateAlias": "路由模型別名不能重複。"
+    },
+    "panel": {
+      "title": "Claude Code 閘道",
+      "status": "{{status}} · 已公開 {{count}} 個路由模型",
+      "setup": "設定"
+    },
+    "setup": {
+      "title": "設定 Claude Code 閘道",
+      "description": "在 Claude Code 模型選擇器中公開已啟用路由的供應商，不變更目前供應商。",
+      "baseUrl": "閘道基礎 URL",
+      "exposedModels": "公開模型",
+      "modelCount": "已公開 {{count}} 個模型",
+      "settingsTitle": "VS Code settings.json 合併片段",
+      "mergeWarning": "如果 claudeCode.environmentVariables 已存在，請將這些項目合併到現有陣列中，不要取代整個陣列。",
+      "reloadHint": "建立新的 Claude 工作階段；如果模型仍被快取，再執行 Developer: Reload Window。",
+      "copy": "複製設定",
+      "copySuccess": "已複製 Claude Code 設定。",
+      "copyFailed": "複製 Claude Code 設定失敗。"
+    }
+  },
   "subscription": {
     "title": "訂閱額度",
     "fiveHour": "5 小時",

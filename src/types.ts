@@ -171,6 +171,17 @@ export interface LocalProxyRequestOverrides {
   body?: Record<string, unknown>;
 }
 
+export interface ClaudeRouterModel {
+  alias: string;
+  upstreamModel: string;
+  displayName: string;
+}
+
+export interface ClaudeRouterConfig {
+  enabled: boolean;
+  models: ClaudeRouterModel[];
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -181,6 +192,8 @@ export interface ProviderMeta {
   claudeDesktopMode?: "direct" | "proxy";
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
   claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
+  // Claude model-routed gateway exposure (independent of active/failover state)
+  claudeRouter?: ClaudeRouterConfig;
   // 用量查询脚本配置
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点
@@ -478,6 +491,8 @@ export interface SessionMeta {
   createdAt?: number;
   lastActiveAt?: number;
   sourcePath?: string;
+  profileName?: string;
+  profileConfigDir?: string;
   resumeCommand?: string;
 }
 

@@ -143,6 +143,8 @@ fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMet
         created_at: started_at,
         last_active_at: ended_at.or(started_at),
         source_path: Some(source_path),
+        profile_name: None,
+        profile_config_dir: None,
         resume_command: None,
     })
 }
@@ -424,6 +426,8 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
         created_at: first_ts,
         last_active_at: last_ts.or(first_ts),
         source_path: Some(source_path),
+        profile_name: None,
+        profile_config_dir: None,
         resume_command: None,
     })
 }

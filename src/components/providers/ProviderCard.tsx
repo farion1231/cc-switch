@@ -365,6 +365,10 @@ export function ProviderCard({
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
   const hasStateHighlight = shouldUseGreen || shouldUseBlue;
+  const isClaudeRouterEnabled =
+    appId === "claude" && provider.meta?.claudeRouter?.enabled === true;
+  const claudeRouterModelCount =
+    provider.meta?.claudeRouter?.models.length ?? 0;
 
   return (
     <div
@@ -444,6 +448,16 @@ export function ProviderCard({
                 <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
                   Slim
                 </span>
+              )}
+
+              {isClaudeRouterEnabled && (
+                <ProviderStatusBadge
+                  tone="success"
+                  label={t("claudeRouter.providerBadge", {
+                    count: claudeRouterModelCount,
+                    defaultValue: "Router enabled · {{count}} models",
+                  })}
+                />
               )}
 
               {appId === "claude-desktop" &&

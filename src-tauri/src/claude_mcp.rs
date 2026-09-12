@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{atomic_write, get_claude_mcp_path};
+use crate::config::{atomic_write, atomic_write_private, get_claude_mcp_path};
 use crate::error::AppError;
 
 /// 需要在 Windows 上用 cmd /c 包装的命令
@@ -118,6 +118,14 @@ fn write_json_value(path: &Path, value: &Value) -> Result<(), AppError> {
         serde_json::to_string_pretty(value).map_err(|e| AppError::JsonSerialize { source: e })?;
     atomic_write(path, json.as_bytes())
 }
+fn write_json_value_private(path: &Path, value: &Value) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    let json =
+        serde_json::to_string_pretty(value).map_err(|e| AppError::JsonSerialize { source: e })?;
+    atomic_write_private(path, json.as_bytes())
+}
 
 pub fn get_mcp_status() -> Result<McpStatus, AppError> {
     let path = user_config_path();
@@ -145,19 +153,17 @@ pub fn read_mcp_json() -> Result<Option<String>, AppError> {
     Ok(Some(content))
 }
 
-/// 在 ~/.claude.json 根对象写入 hasCompletedOnboarding=true（用于跳过 Claude Code 初次安装确认）
-/// 仅增量写入该字段，其他字段保持不变
+/// 在用户级 Claude JSON 根对象写入 hasCompletedOnboarding=true。
 pub fn set_has_completed_onboarding() -> Result<bool, AppError> {
-    let path = user_config_path();
-    let mut root = if path.exists() {
-        read_json_value(&path)?
-    } else {
-        serde_json::json!({})
-    };
+    set_has_completed_onboarding_at(&user_config_path())
+}
 
+/// 在指定 Claude JSON 根对象写入 hasCompletedOnboarding=true，保留其他根字段。
+pub(crate) fn set_has_completed_onboarding_at(path: &Path) -> Result<bool, AppError> {
+    let mut root = read_json_value(path)?;
     let obj = root
         .as_object_mut()
-        .ok_or_else(|| AppError::Config("~/.claude.json 根必须是对象".into()))?;
+        .ok_or_else(|| AppError::Config(format!("{} 根必须是对象", path.to_string_lossy())))?;
 
     let already = obj
         .get("hasCompletedOnboarding")
@@ -168,7 +174,7 @@ pub fn set_has_completed_onboarding() -> Result<bool, AppError> {
     }
 
     obj.insert("hasCompletedOnboarding".into(), Value::Bool(true));
-    write_json_value(&path, &root)?;
+    write_json_value_private(path, &root)?;
     Ok(true)
 }
 
@@ -340,26 +346,29 @@ pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>
     Ok(servers)
 }
 
-/// 将给定的启用 MCP 服务器映射写入到用户级 ~/.claude.json 的 mcpServers 字段
-/// 仅覆盖 mcpServers，其他字段保持不变
+/// 将给定的启用 MCP 服务器映射写入用户级 ~/.claude.json。
 pub fn set_mcp_servers_map(
     servers: &std::collections::HashMap<String, Value>,
 ) -> Result<(), AppError> {
-    let path = user_config_path();
-    let mut root = if path.exists() {
-        read_json_value(&path)?
-    } else {
-        serde_json::json!({})
-    };
+    set_mcp_servers_map_at(&user_config_path(), servers)
+}
 
-    // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
-    // 检测目标路径是否为 WSL，若是则跳过 cmd /c 包装
-    let is_wsl_target = is_wsl_path(&path);
+/// 将给定 MCP 服务器映射写入指定 Claude JSON 的 mcpServers 字段。
+///
+/// 保留其他根字段，移除 UI 辅助字段，并在 Windows 非 WSL 路径上保留
+/// 既有的 `cmd /c` 包装行为。该文件可能包含凭据，因此 Unix 上原子写为 0600。
+pub(crate) fn set_mcp_servers_map_at(
+    path: &Path,
+    servers: &std::collections::HashMap<String, Value>,
+) -> Result<(), AppError> {
+    let mut root = read_json_value(path)?;
+
+    let is_wsl_target = is_wsl_path(path);
     if is_wsl_target {
         log::info!("检测到 WSL 路径，跳过 cmd /c 包装: {}", path.display());
     }
     let mut out: Map<String, Value> = Map::new();
-    for (id, spec) in servers.iter() {
+    for (id, spec) in servers {
         let mut obj = if let Some(map) = spec.as_object() {
             map.clone()
         } else {
@@ -375,32 +384,30 @@ pub fn set_mcp_servers_map(
             obj = server_obj;
         }
 
-        obj.remove("enabled");
-        obj.remove("source");
-        obj.remove("id");
-        obj.remove("name");
-        obj.remove("description");
-        obj.remove("tags");
-        obj.remove("homepage");
-        obj.remove("docs");
+        for field in [
+            "enabled",
+            "source",
+            "id",
+            "name",
+            "description",
+            "tags",
+            "homepage",
+            "docs",
+        ] {
+            obj.remove(field);
+        }
 
-        // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式（WSL 路径除外）
         if !is_wsl_target {
             wrap_command_for_windows(&mut obj);
         }
-
         out.insert(id.clone(), Value::Object(obj));
     }
 
-    {
-        let obj = root
-            .as_object_mut()
-            .ok_or_else(|| AppError::Config("~/.claude.json 根必须是对象".into()))?;
-        obj.insert("mcpServers".into(), Value::Object(out));
-    }
-
-    write_json_value(&path, &root)?;
-    Ok(())
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config(format!("{} 根必须是对象", path.to_string_lossy())))?;
+    obj.insert("mcpServers".into(), Value::Object(out));
+    write_json_value_private(path, &root)
 }
 
 #[cfg(test)]
@@ -596,6 +603,51 @@ mod tests {
             assert!(!is_wsl_path(Path::new(r"\\server\share\path")));
             assert!(!is_wsl_path(Path::new(r"\\localhost\c$\Users")));
             assert!(!is_wsl_path(Path::new(r"\\192.168.1.1\share")));
+        }
+    }
+    #[test]
+    fn path_targeted_projection_preserves_root_and_sets_private_mode() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("profile").join(".claude.json");
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create profile dir");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "customRoot": {"keep": true},
+                "hasCompletedOnboarding": false,
+                "mcpServers": {"stale": {"command": "stale"}}
+            }))
+            .unwrap(),
+        )
+        .expect("seed profile MCP");
+
+        let servers = std::collections::HashMap::from([(
+            "projected".to_string(),
+            json!({
+                "server": {"command": "custom-mcp", "args": ["--serve"]},
+                "enabled": true,
+                "description": "UI-only"
+            }),
+        )]);
+        set_mcp_servers_map_at(&path, &servers).expect("project MCP servers");
+        set_has_completed_onboarding_at(&path).expect("set onboarding flag");
+
+        let root: Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).expect("parse projected MCP");
+        assert_eq!(root["customRoot"], json!({"keep": true}));
+        assert_eq!(root["hasCompletedOnboarding"], true);
+        assert_eq!(
+            root["mcpServers"],
+            json!({"projected": {"command": "custom-mcp", "args": ["--serve"]}})
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
     }
 }

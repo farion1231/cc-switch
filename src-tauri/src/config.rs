@@ -38,8 +38,31 @@ pub fn get_claude_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_claude_override_dir() {
         return custom;
     }
+    if let Some(env_dir) = claude_config_dir_from_env() {
+        return env_dir;
+    }
 
     get_home_dir().join(".claude")
+}
+
+/// 读取 `CLAUDE_CONFIG_DIR` 环境变量
+///
+/// 仅接受非空的绝对路径；相对路径或空白值会被忽略并回退到默认目录。
+/// 与 Claude Code 官方行为一致：该变量用于并排隔离多套账号/配置。
+fn claude_config_dir_from_env() -> Option<PathBuf> {
+    let raw = std::env::var("CLAUDE_CONFIG_DIR").ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(trimmed);
+    if !path.is_absolute() {
+        log::warn!("忽略非绝对路径的 CLAUDE_CONFIG_DIR: {trimmed}");
+        return None;
+    }
+
+    Some(path)
 }
 
 /// 默认 Claude MCP 配置文件路径 (~/.claude.json)
@@ -179,6 +202,12 @@ pub fn get_claude_mcp_path() -> PathBuf {
             return path;
         }
         return derive_mcp_path_from_override(&custom_dir);
+    }
+    if let Some(env_dir) = claude_config_dir_from_env() {
+        if let Some(path) = default_mcp_path_for_config_dir(&env_dir) {
+            return path;
+        }
+        return derive_mcp_path_from_override(&env_dir);
     }
     get_default_claude_mcp_path()
 }
@@ -750,6 +779,175 @@ mod tests {
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
         );
+    }
+    mod claude_config_dir {
+        use super::*;
+        use serial_test::serial;
+        use std::ffi::OsString;
+
+        /// 隔离 CLAUDE_CONFIG_DIR / CC_SWITCH_TEST_HOME 与全局设置存储，
+        /// 测试结束后恢复原值。
+        struct EnvGuard {
+            _home: tempfile::TempDir,
+            prev_config_dir: Option<OsString>,
+            prev_test_home: Option<OsString>,
+            prev_settings: crate::settings::AppSettings,
+        }
+
+        impl EnvGuard {
+            fn new() -> Self {
+                let guard = Self {
+                    _home: tempfile::tempdir().expect("temp home"),
+                    prev_config_dir: std::env::var_os("CLAUDE_CONFIG_DIR"),
+                    prev_test_home: std::env::var_os("CC_SWITCH_TEST_HOME"),
+                    prev_settings: crate::settings::get_settings(),
+                };
+                std::env::set_var("CC_SWITCH_TEST_HOME", guard._home.path());
+                guard.clear_gui_override();
+                guard
+            }
+
+            fn home(&self) -> PathBuf {
+                self._home.path().to_path_buf()
+            }
+
+            fn set_env(&self, value: &str) {
+                std::env::set_var("CLAUDE_CONFIG_DIR", value);
+            }
+
+            fn clear_env(&self) {
+                std::env::remove_var("CLAUDE_CONFIG_DIR");
+            }
+
+            fn clear_gui_override(&self) {
+                let mut settings = crate::settings::get_settings();
+                settings.claude_config_dir = None;
+                crate::settings::update_settings(settings).expect("clear gui override");
+            }
+
+            fn set_gui_override(&self, dir: &Path) {
+                let mut settings = crate::settings::get_settings();
+                settings.claude_config_dir = Some(dir.to_string_lossy().to_string());
+                crate::settings::update_settings(settings).expect("set gui override");
+            }
+        }
+
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                crate::settings::update_settings(self.prev_settings.clone())
+                    .expect("restore settings");
+                match &self.prev_config_dir {
+                    Some(value) => std::env::set_var("CLAUDE_CONFIG_DIR", value),
+                    None => std::env::remove_var("CLAUDE_CONFIG_DIR"),
+                }
+                match &self.prev_test_home {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn gui_override_takes_precedence_over_env() {
+            let guard = EnvGuard::new();
+            let override_dir = guard.home().join("gui-override");
+            guard.set_gui_override(&override_dir);
+            guard.set_env("/tmp/cc-switch-env-profile");
+
+            assert_eq!(get_claude_config_dir(), override_dir);
+            assert_eq!(
+                get_claude_mcp_path(),
+                override_dir.join(".claude.json"),
+                "MCP 路径必须与所选配置目录一起移动"
+            );
+        }
+
+        #[test]
+        #[serial]
+        fn absolute_env_used_when_no_gui_override() {
+            let guard = EnvGuard::new();
+            let env_dir = guard.home().join("env-profile");
+            guard.set_env(env_dir.to_str().unwrap());
+
+            assert_eq!(get_claude_config_dir(), env_dir);
+            assert_eq!(get_claude_mcp_path(), env_dir.join(".claude.json"));
+        }
+
+        #[test]
+        #[serial]
+        fn relative_env_is_rejected() {
+            let guard = EnvGuard::new();
+            guard.set_env("relative/claude-config");
+
+            assert_eq!(get_claude_config_dir(), guard.home().join(".claude"));
+            assert_eq!(get_claude_mcp_path(), guard.home().join(".claude.json"));
+        }
+
+        #[test]
+        #[serial]
+        fn blank_env_is_rejected() {
+            let guard = EnvGuard::new();
+            guard.set_env("   ");
+
+            assert_eq!(get_claude_config_dir(), guard.home().join(".claude"));
+            assert_eq!(get_claude_mcp_path(), guard.home().join(".claude.json"));
+        }
+
+        #[test]
+        #[serial]
+        fn unset_env_uses_default_dir_and_sibling_mcp() {
+            let guard = EnvGuard::new();
+            guard.clear_env();
+
+            assert_eq!(get_claude_config_dir(), guard.home().join(".claude"));
+            assert_eq!(get_claude_mcp_path(), guard.home().join(".claude.json"));
+        }
+
+        #[test]
+        #[serial]
+        fn env_pointing_at_default_dir_keeps_sibling_mcp() {
+            let guard = EnvGuard::new();
+            let default_dir = guard.home().join(".claude");
+            guard.set_env(default_dir.to_str().unwrap());
+
+            assert_eq!(get_claude_config_dir(), default_dir);
+            assert_eq!(
+                get_claude_mcp_path(),
+                guard.home().join(".claude.json"),
+                "指向默认目录时 MCP 文件仍是同级 ~/.claude.json，而非嵌套"
+            );
+        }
+
+        #[cfg(windows)]
+        #[test]
+        #[serial]
+        fn wsl_default_env_dir_keeps_sibling_mcp() {
+            let guard = EnvGuard::new();
+            guard.set_env(r"\\wsl$\Ubuntu\home\travis\.claude");
+
+            assert_eq!(
+                get_claude_config_dir(),
+                PathBuf::from(r"\\wsl$\Ubuntu\home\travis\.claude")
+            );
+            assert_eq!(
+                get_claude_mcp_path(),
+                PathBuf::from(r"\\wsl$\Ubuntu\home\travis\.claude.json")
+            );
+        }
+
+        #[cfg(windows)]
+        #[test]
+        #[serial]
+        fn wsl_custom_env_dir_uses_nested_mcp() {
+            let guard = EnvGuard::new();
+            guard.set_env(r"\\wsl$\Ubuntu\opt\claude-profile");
+
+            assert_eq!(
+                get_claude_mcp_path(),
+                PathBuf::from(r"\\wsl$\Ubuntu\opt\claude-profile\.claude.json")
+            );
+        }
     }
 }
 

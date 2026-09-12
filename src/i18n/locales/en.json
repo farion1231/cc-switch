@@ -3239,6 +3239,48 @@
     "suggestedDefaults": "Apply Suggested Defaults",
     "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
   },
+  "claudeRouter": {
+    "launchIsolated": "Launch Claude (Isolated)",
+    "providerBadge": "Router enabled · {{count}} models",
+    "form": {
+      "enabled": "Enabled for Router",
+      "description": "Expose selected models through the Claude Code gateway without changing the active provider.",
+      "officialUnsupported": "Official providers cannot be enabled for the router.",
+      "models": "Gateway models",
+      "modelsHint": "Aliases become stable public model IDs; upstream model names remain editable.",
+      "addModel": "Add model",
+      "empty": "No gateway models configured.",
+      "alias": "Alias {{position}}",
+      "displayName": "Display Name {{position}}",
+      "upstreamModel": "Upstream Model {{position}}",
+      "moveUp": "Move model {{position}} up",
+      "moveDown": "Move model {{position}} down",
+      "remove": "Remove model {{position}}"
+    },
+    "validation": {
+      "modelsRequired": "Add at least one model before enabling the router.",
+      "fieldsRequired": "Every router model requires an alias, display name, and upstream model.",
+      "duplicateAlias": "Router model aliases must be unique."
+    },
+    "panel": {
+      "title": "Claude Code Gateway",
+      "status": "{{status}} · {{count}} router models exposed",
+      "setup": "Setup"
+    },
+    "setup": {
+      "title": "Claude Code Gateway setup",
+      "description": "Expose router-enabled providers in the Claude Code model picker without changing the active provider.",
+      "baseUrl": "Gateway base URL",
+      "exposedModels": "Exposed models",
+      "modelCount": "{{count}} models exposed",
+      "settingsTitle": "VS Code settings.json merge snippet",
+      "mergeWarning": "If claudeCode.environmentVariables already exists, merge these entries into the existing array; do not replace it.",
+      "reloadHint": "Start a new Claude session. If models remain cached, run Developer: Reload Window.",
+      "copy": "Copy settings",
+      "copySuccess": "Claude Code settings copied.",
+      "copyFailed": "Failed to copy Claude Code settings."
+    }
+  },
   "subscription": {
     "title": "Subscription Quota",
     "fiveHour": "5-Hour",

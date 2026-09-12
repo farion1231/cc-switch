@@ -48,10 +48,12 @@ import {
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { ClaudeRouterModelsField } from "./ClaudeRouterModelsField";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
   ClaudeApiKeyField,
+  ClaudeRouterConfig,
 } from "@/types";
 import type { ManagedAuthProvider } from "@/lib/api";
 import {
@@ -136,6 +138,8 @@ interface ClaudeFormFieldsProps {
   defaultFableModelName: string;
   subagentModel: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
+  claudeRouter: ClaudeRouterConfig;
+  onClaudeRouterChange: (value: ClaudeRouterConfig) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -212,6 +216,8 @@ export function ClaudeFormFields({
   defaultFableModelName,
   subagentModel,
   onModelChange,
+  claudeRouter,
+  onClaudeRouterChange,
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -457,6 +463,16 @@ export function ClaudeFormFields({
       : isXaiOauthPreset
         ? handleFetchXaiOauthModels
         : handleFetchModels;
+  const routerFetchedModels: FetchedModel[] = isCopilotPreset
+    ? copilotModels.map((model) => ({
+        id: model.id,
+        ownedBy: model.vendor || null,
+      }))
+    : isCodexOauthPreset
+      ? codexOauthModels
+      : isXaiOauthPreset
+        ? xaiOauthModels
+        : fetchedModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
@@ -780,6 +796,15 @@ export function ClaudeFormFields({
           onCustomEndpointsChange={onCustomEndpointsChange}
         />
       )}
+
+      <ClaudeRouterModelsField
+        value={claudeRouter}
+        onChange={onClaudeRouterChange}
+        fetchedModels={routerFetchedModels}
+        isLoading={modelFetchLoading}
+        onFetch={handleModelFetchClick}
+        disableEnable={category === "official"}
+      />
 
       {shouldShowModelSelector && (
         <Collapsible
