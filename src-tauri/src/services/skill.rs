@@ -81,6 +81,9 @@ pub struct DiscoverableSkill {
     pub name: String,
     /// 技能描述
     pub description: String,
+    /// Agent Skills 标准的环境兼容性/运行要求说明
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compatibility: Option<String>,
     /// 目录名称 (安装路径的最后一段)
     pub directory: String,
     /// GitHub README URL
@@ -331,6 +334,7 @@ const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
 pub struct SkillMetadata {
     pub name: Option<String>,
     pub description: Option<String>,
+    pub compatibility: Option<String>,
 }
 
 /// 导入已有 Skill 时，前端显式提交的启用应用选择
@@ -2704,6 +2708,7 @@ impl SkillService {
             key: format!("{}/{}:{}", repo.owner, repo.name, directory),
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
+            compatibility: meta.compatibility,
             directory: directory.to_string(),
             readme_url: Self::build_skill_doc_url(&repo.owner, &repo.name, &repo.branch, doc_path),
             repo_owner: repo.owner.clone(),
@@ -2727,6 +2732,7 @@ impl SkillService {
             return Ok(SkillMetadata {
                 name: None,
                 description: None,
+                compatibility: None,
             });
         }
 
@@ -2734,6 +2740,7 @@ impl SkillService {
         let meta: SkillMetadata = serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
             name: None,
             description: None,
+            compatibility: None,
         });
 
         Ok(meta)
@@ -4226,6 +4233,25 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn parse_skill_metadata_preserves_standard_compatibility() {
+        let temp = tempdir().expect("tempdir");
+        let skill_md = temp.path().join("SKILL.md");
+        fs::write(
+            &skill_md,
+            "---\nname: browser-check\ndescription: Checks web pages\ncompatibility: Requires agent-browser and network access\n---\n",
+        )
+        .expect("write SKILL.md");
+
+        let metadata =
+            SkillService::parse_skill_metadata_static(&skill_md).expect("parse metadata");
+
+        assert_eq!(
+            metadata.compatibility.as_deref(),
+            Some("Requires agent-browser and network access")
+        );
+    }
 
     #[test]
     fn skill_state_lock_allows_snapshots_but_excludes_writers() {

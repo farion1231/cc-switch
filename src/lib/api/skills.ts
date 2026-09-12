@@ -60,6 +60,7 @@ export interface DiscoverableSkill {
   key: string;
   name: string;
   description: string;
+  compatibility?: string;
   directory: string;
   readmeUrl?: string;
   repoOwner: string;
