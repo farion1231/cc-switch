@@ -1285,6 +1285,8 @@
     "customUserAgentHint": "ローカルルーティング/プロキシ引き継ぎが有効な場合にのみ適用され、プロバイダー API へ転送するリクエストの User-Agent を置き換えます。",
     "customUserAgentInvalid": "User-Agent に制御文字（改行など）を含めることはできません。含まれている場合は無視されます。",
     "customUserAgentPresets": "プリセット",
+    "stripClaudeCodeFingerprint": "Claude Code フィンガープリントヘッダーの除去",
+    "stripClaudeCodeFingerprintHint": "デフォルトは無効。有効にした場合、API フォーマット変換パス（OpenAI Chat / Responses / Gemini）でのみ動作し、転送前に x-app、x-stainless-*、x-claude-code-* などのクライアントフィンガープリントヘッダーを除去します。ネイティブ Anthropic パススルーには影響しません。",
     "localProxyRequestOverrides": "ローカルプロキシのリクエスト上書き",
     "localProxyRequestOverridesHint": "ローカルルーティング/プロキシ引き継ぎ後にのみ有効で、変換後の上流リクエストへ適用されます。",
     "localProxyRequestOverridesInvalid": "ローカルプロキシのリクエスト上書き形式エラー: {{error}}",
