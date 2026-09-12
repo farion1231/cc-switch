@@ -1634,6 +1634,18 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Claude Desktop：对原生 Anthropic 格式的请求体注入 cache_control 断点。
+        // Bedrock 路径已在上方 provider_body 阶段处理，此处覆盖非 Bedrock 的上游
+        // （直连 anthropic.com / 第三方中转），保证 proxy 模式下也能开启 Prompt Caching。
+        // openai_chat / openai_responses / gemini_native 路径由 transform 层自行处理，不在此注入。
+        if matches!(app_type, AppType::ClaudeDesktop)
+            && self.optimizer_config.enabled
+            && self.optimizer_config.cache_injection
+            && super::providers::get_claude_api_format(provider) == "anthropic"
+        {
+            super::cache_injector::inject(&mut request_body, &self.optimizer_config);
+        }
+
         // Native Responses passthrough to a strict third-party gateway (xAI).
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
