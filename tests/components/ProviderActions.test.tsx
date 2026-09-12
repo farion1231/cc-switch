@@ -66,6 +66,43 @@ describe("ProviderActions Pi provider switching", () => {
     expect(screen.queryByTitle("provider.duplicate")).not.toBeInTheDocument();
   });
 
+  it("blocks activation of Hermes providers managed by the providers dict", async () => {
+    const user = userEvent.setup();
+    const onSwitch = vi.fn();
+    const onSetAsDefault = vi.fn();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+
+    render(
+      <ProviderActions
+        appId="hermes"
+        isCurrent={false}
+        isInConfig
+        isReadOnly
+        onSwitch={onSwitch}
+        onEdit={onEdit}
+        onDuplicate={vi.fn()}
+        onDelete={onDelete}
+        onSetAsDefault={onSetAsDefault}
+      />,
+    );
+
+    const activateButton = screen.getByRole("button", { name: "启用" });
+    expect(activateButton).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "已在用" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "common.edit" })).toBeDisabled();
+
+    await user.click(activateButton);
+    await user.click(screen.getByRole("button", { name: "common.edit" }));
+
+    expect(onSwitch).not.toHaveBeenCalled();
+    expect(onSetAsDefault).not.toHaveBeenCalled();
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
   it("enables a provider that is not in Pi", async () => {
     const user = userEvent.setup();
     const { onSwitch } = renderPiActions({});
