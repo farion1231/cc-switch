@@ -23,6 +23,7 @@ pub mod session_usage_gemini;
 pub mod session_usage_grokbuild;
 pub mod session_usage_opencode;
 pub mod session_usage_pi;
+pub mod session_usage_zcode;
 pub mod skill;
 pub mod speedtest;
 pub mod sql_helpers;

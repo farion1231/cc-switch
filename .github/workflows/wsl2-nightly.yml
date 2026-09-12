@@ -60,15 +60,25 @@ jobs:
 
       - name: Compile backend tests with native temp
         # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
-        run: cargo test --tests --manifest-path src-tauri/Cargo.toml --no-run
+        shell: pwsh
+        run: |
+          $env:TEMP = [System.IO.Path]::GetTempPath()
+          $env:TMP = [System.IO.Path]::GetTempPath()
+          & cargo test --tests --manifest-path src-tauri/Cargo.toml --no-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
         run: |
+          # Switch TEMP to WSL path only for test EXECUTION (binary runs, no linking).
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = cargo test --tests --manifest-path src-tauri/Cargo.toml -- --ignored --list
+          $testBinary = (Get-ChildItem "src-tauri/target/debug/deps" -Filter "cc_switch_lib-*.exe" |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+
+          $testList = & $testBinary --ignored --list
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -76,7 +86,7 @@ jobs:
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
-          cargo test --tests --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
+          & $testBinary $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -86,4 +96,28 @@ jobs:
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          cargo test --tests --manifest-path src-tauri/Cargo.toml -- --test-threads=1
+
+          # Build the list of test binaries: lib test + one per integration test file.
+          $testBinaries = @()
+          $libBin = Get-ChildItem "src-tauri/target/debug/deps" -Filter "cc_switch_lib-*.exe" |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($libBin) { $testBinaries += $libBin.FullName }
+
+          $integrationTests = Get-ChildItem "src-tauri/tests" -Filter "*.rs"
+          foreach ($t in $integrationTests) {
+            $name = $t.BaseName
+            $bins = Get-ChildItem "src-tauri/target/debug/deps" -Filter "${name}-*.exe"
+            if ($bins) { $testBinaries += ($bins | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName }
+          }
+
+          if ($testBinaries.Count -eq 0) {
+            throw "No test binaries found"
+          }
+
+          foreach ($bin in $testBinaries) {
+            Write-Host "Running: $bin"
+            & $bin --test-threads=1
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }

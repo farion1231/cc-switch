@@ -19,6 +19,7 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   openclaw: 8,
   hermes: 8,
   pi: 8,
+  zcode: 8,
 };
 
 interface TestResult {
