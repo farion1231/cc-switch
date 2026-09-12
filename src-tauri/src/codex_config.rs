@@ -3953,6 +3953,30 @@ fn plan_codex_live_write(
     })
 }
 
+/// The category a Codex live write must be planned against.
+///
+/// `provider.category` alone under-reports official-ness. The rest of the
+/// switch path — including its own post-switch `auth.json` cleanup in
+/// `services::provider` — asks `is_codex_official_provider`, which also
+/// recognises the fixed official row and any provider bound to a managed
+/// `codex_oauth` account, whatever their stored category says. The plan only
+/// saw the string, so such a card was planned as a **third-party** switch:
+/// `write_full_auth` stayed false, so its own ChatGPT login never reached
+/// `auth.json`, and `remove_auth_file` became `!preserve_official_login` —
+/// true by default — so the live login was deleted instead. The user was
+/// signed out by switching to their own official card.
+///
+/// One managed-account path (`services::proxy`) already hardcoded
+/// `Some("official")` to sidestep exactly this. Naming the rule here is what
+/// stops the next caller from having to rediscover it, and keeps the
+/// preflight and the write judging the same provider the same way.
+pub fn codex_live_write_category(provider: &crate::provider::Provider) -> Option<&str> {
+    if crate::proxy::providers::is_codex_official_provider(provider) {
+        return Some("official");
+    }
+    provider.category.as_deref()
+}
+
 /// Validate a Codex live write without touching the filesystem. Callers use
 /// this to fail a provider switch BEFORE committing `current`: a write-layer
 /// refusal after `current` moved would let the next switch backfill the old
@@ -5919,6 +5943,123 @@ base_url = "https://bedrock.example/v1"
         );
     }
 
+    /// A managed-OAuth official card whose stored `category` is not the literal
+    /// "official" must still be planned as an official write.
+    ///
+    /// `is_codex_official_provider` — the predicate the switch path uses for its
+    /// own post-switch auth cleanup — returns true for it. The plan used to read
+    /// only the category string, so the same card was planned third-party: its
+    /// ChatGPT login was never written, and with preservation off (the default)
+    /// the live login was deleted. Switching to your own official card signed
+    /// you out.
+    #[test]
+    fn a_managed_oauth_card_is_official_even_when_its_category_is_not() {
+        let mut provider = crate::provider::Provider {
+            id: "managed-official-account".to_string(),
+            name: "ChatGPT".to_string(),
+            settings_config: json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": null,
+                    "tokens": { "refresh_token": "live-oauth-token" }
+                },
+                "config": ""
+            }),
+            website_url: None,
+            // Not the literal "official" — this is the whole point.
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        // Precondition: the rest of the switch path already calls this official.
+        assert!(
+            crate::proxy::providers::is_codex_official_provider(&provider),
+            "precondition: a managed codex_oauth card is official to the predicate the switch path already uses"
+        );
+        let auth = provider.settings_config["auth"].clone();
+        // Preservation OFF is the DEFAULT, which is what makes this bite.
+        let plan =
+            plan_codex_live_write(codex_live_write_category(&provider), &auth, Some(""), false)
+                .expect("official plan");
+
+        // The harm is asserted before the mechanism, so a regression reports what
+        // breaks for the user rather than which string a helper returned.
+        assert!(
+            !plan.remove_auth_file,
+            "planning an official card as third-party deletes the ChatGPT login it switches TO"
+        );
+        assert!(
+            plan.write_full_auth,
+            "an official card carrying login material must write auth.json, or that login never reaches disk"
+        );
+        assert_eq!(
+            codex_live_write_category(&provider),
+            Some("official"),
+            "the live write must be planned against the same official-ness"
+        );
+    }
+
+    /// The guard must not swallow genuine third-party cards.
+    #[test]
+    fn a_third_party_card_keeps_its_own_category() {
+        let provider = crate::provider::Provider {
+            id: "deepseek".to_string(),
+            name: "DeepSeek".to_string(),
+            settings_config: json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": ""
+            }),
+            website_url: None,
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        assert!(!crate::proxy::providers::is_codex_official_provider(
+            &provider
+        ));
+        assert_eq!(codex_live_write_category(&provider), Some("codex"));
+
+        let auth = provider.settings_config["auth"].clone();
+        // A real table to carry the bearer token: an empty config with a key is
+        // refused outright, which would pass this test for the wrong reason.
+        let config = "model_provider = \"relay\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n";
+        let plan = plan_codex_live_write(
+            codex_live_write_category(&provider),
+            &auth,
+            Some(config),
+            false,
+        )
+        .expect("third-party plan");
+        assert!(
+            plan.remove_auth_file,
+            "a real third-party switch with preservation off still deletes auth.json"
+        );
+        assert!(
+            !plan.write_full_auth,
+            "third-party switches are config-only"
+        );
+    }
     #[test]
     fn requires_openai_auth_stamp_only_touches_tables_with_a_request_auth_short_circuit() {
         // Keyless header-auth card: no env_key / bearer short-circuit, so

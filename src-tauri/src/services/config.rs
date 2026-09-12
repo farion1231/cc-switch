@@ -169,7 +169,7 @@ impl ConfigService {
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             &provider.settings_config,
-            provider.category.as_deref(),
+            crate::codex_config::codex_live_write_category(provider),
             auth,
             cfg_text,
             profile,

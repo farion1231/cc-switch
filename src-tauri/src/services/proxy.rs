@@ -3109,7 +3109,7 @@ impl ProxyService {
 
                 crate::codex_config::write_codex_provider_live_with_catalog(
                     effective_settings,
-                    effective_provider.category.as_deref(),
+                    crate::codex_config::codex_live_write_category(&effective_provider),
                     auth,
                     config_str,
                     profile,
@@ -3594,7 +3594,7 @@ impl ProxyService {
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             config,
-            provider.category.as_deref(),
+            crate::codex_config::codex_live_write_category(provider),
             auth,
             config_str,
             profile,

@@ -738,7 +738,11 @@ pub(crate) fn preflight_codex_live_write_for_state(
         .get("auth")
         .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
     let config_str = obj.get("config").and_then(|v| v.as_str());
-    crate::codex_config::preflight_codex_live_write(effective.category.as_deref(), auth, config_str)
+    crate::codex_config::preflight_codex_live_write(
+        crate::codex_config::codex_live_write_category(&effective),
+        auth,
+        config_str,
+    )
 }
 
 pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
@@ -1306,7 +1310,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &provider.settings_config,
-                provider.category.as_deref(),
+                crate::codex_config::codex_live_write_category(provider),
                 auth,
                 config_str,
                 profile,
