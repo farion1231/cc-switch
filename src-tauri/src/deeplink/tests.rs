@@ -120,7 +120,8 @@ fn test_parse_grokbuild_provider() {
         model["base_url"].as_str(),
         Some("https://api.example.com/v1")
     );
-    assert_eq!(model["name"].as_str(), Some("Grok Relay"));
+    assert_eq!(model["name"].as_str(), Some("grok-4.5"));
+    assert_eq!(model["description"].as_str(), Some("grok-4.5"));
     assert_eq!(model["api_key"].as_str(), Some("secret"));
     assert_eq!(model["api_backend"].as_str(), Some("responses"));
     assert_eq!(model["context_window"].as_integer(), Some(500_000));
