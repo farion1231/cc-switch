@@ -426,7 +426,7 @@ export function ProviderCard({
             <div className="flex flex-wrap items-center gap-2 min-h-7">
               <h3
                 className={cn(
-                  "text-base font-semibold leading-none",
+                  "text-base font-semibold leading-tight",
                   codexOfficialIdentity && "min-w-0 flex-1 truncate",
                 )}
                 title={codexOfficialIdentity ? provider.name : undefined}
