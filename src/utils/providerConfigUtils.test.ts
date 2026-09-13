@@ -233,6 +233,59 @@ describe("common config array merging", () => {
     expect(hasCommonConfigSnippet(removed, commonSnippet)).toBe(false);
   });
 
+  it.each([{}, { permissions: { deny: ["WebSearch"] } }])(
+    "detects merged duplicate snippet entries with provider config %j",
+    (config) => {
+      const snippet = JSON.stringify({
+        permissions: { deny: ["WebSearch", "WebSearch"] },
+      });
+      const merged = updateCommonConfigSnippet(
+        JSON.stringify(config),
+        snippet,
+        true,
+      ).updatedConfig;
+
+      expect(JSON.parse(merged).permissions.deny).toEqual(["WebSearch"]);
+      expect(hasCommonConfigSnippet(merged, snippet)).toBe(true);
+      expect(
+        updateCommonConfigSnippet(merged, snippet, true).updatedConfig,
+      ).toBe(merged);
+    },
+  );
+
+  it("removes only one copy per distinct snippet entry", () => {
+    const config = JSON.stringify({
+      permissions: { deny: ["WebSearch", "WebSearch"] },
+    });
+    const removed = updateCommonConfigSnippet(
+      config,
+      config,
+      false,
+    ).updatedConfig;
+
+    expect(JSON.parse(removed).permissions.deny).toEqual(["WebSearch"]);
+  });
+
+  it("normalizes duplicate objects and nested arrays through a toggle roundtrip", () => {
+    const snippet = JSON.stringify({
+      hooks: [
+        { matcher: "Read", commands: ["check", "check"] },
+        { commands: ["check"], matcher: "Read" },
+      ],
+    });
+    const merged = updateCommonConfigSnippet("{}", snippet, true).updatedConfig;
+
+    expect(JSON.parse(merged).hooks).toEqual([
+      { matcher: "Read", commands: ["check"] },
+    ]);
+    expect(hasCommonConfigSnippet(merged, snippet)).toBe(true);
+    expect(
+      JSON.parse(
+        updateCommonConfigSnippet(merged, snippet, false).updatedConfig,
+      ),
+    ).toEqual({});
+  });
+
   it("does not reuse one target item for multiple snippet entries", () => {
     const config = JSON.stringify({ hooks: [{ a: 1, b: 2 }] });
     const snippet = JSON.stringify({ hooks: [{ a: 1 }, { a: 1, b: 2 }] });

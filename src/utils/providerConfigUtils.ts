@@ -26,7 +26,7 @@ const isPlainObject = (value: unknown): value is Record<string, any> => {
 const FORBIDDEN_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /**
- * 递归剥掉禁键，得到"实际会被写进配置的那份片段"。
+ * 递归剥掉禁键并去重数组，得到"实际会被写进配置的那份片段"。
  *
  * 写入和读取侧都使用：数组元素会被整体插入，必须在进入遍历函数前净化；读取侧
  * 也要比对同一份净化结果，避免开关状态与实际写入内容不一致。
@@ -39,7 +39,15 @@ const FORBIDDEN_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
  * 让读取侧先净化，比对的就是写入侧真正会产生的那份内容，两边不再各说各话。
  */
 const sanitizeSnippet = (value: any): any => {
-  if (Array.isArray(value)) return value.map(sanitizeSnippet);
+  if (Array.isArray(value)) {
+    const items = value.map(sanitizeSnippet);
+    return items.filter(
+      (item, index) =>
+        items.findIndex(
+          (other) => isSubset(other, item) && isSubset(item, other),
+        ) === index,
+    );
+  }
   if (!isPlainObject(value)) return value;
 
   const cleaned: Record<string, any> = {};

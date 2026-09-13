@@ -244,15 +244,24 @@ fn json_array_contains_subset(target_arr: &[Value], source_arr: &[Value]) -> boo
     }
 
     let mut matched_source_by_target = vec![None; target_arr.len()];
-    source_arr.iter().enumerate().all(|(source_index, _)| {
-        try_match(
-            target_arr,
-            source_arr,
-            source_index,
-            &mut vec![false; target_arr.len()],
-            &mut matched_source_by_target,
-        )
-    })
+    source_arr
+        .iter()
+        .enumerate()
+        .all(|(source_index, source_item)| {
+            if source_arr[..source_index]
+                .iter()
+                .any(|item| json_arrays_equal(item, source_item))
+            {
+                return true;
+            }
+            try_match(
+                target_arr,
+                source_arr,
+                source_index,
+                &mut vec![false; target_arr.len()],
+                &mut matched_source_by_target,
+            )
+        })
 }
 
 fn json_arrays_equal(a: &Value, b: &Value) -> bool {
@@ -260,13 +269,45 @@ fn json_arrays_equal(a: &Value, b: &Value) -> bool {
 }
 
 fn json_remove_array_items(target_arr: &mut Vec<Value>, source_arr: &[Value]) {
-    for source_item in source_arr {
+    for (source_index, source_item) in source_arr.iter().enumerate() {
+        if source_arr[..source_index]
+            .iter()
+            .any(|item| json_arrays_equal(item, source_item))
+        {
+            continue;
+        }
         if let Some(index) = target_arr
             .iter()
             .position(|target_item| json_arrays_equal(target_item, source_item))
         {
             target_arr.remove(index);
         }
+    }
+}
+
+// Normalize only the snippet so every merge path injects at most one copy,
+// including new objects, type replacements, and objects inside arrays.
+fn json_normalize_snippet(value: Value) -> Value {
+    match value {
+        Value::Array(items) => {
+            let mut unique = Vec::new();
+            for item in items.into_iter().map(json_normalize_snippet) {
+                if !unique
+                    .iter()
+                    .any(|existing| json_arrays_equal(existing, &item))
+                {
+                    unique.push(item);
+                }
+            }
+            Value::Array(unique)
+        }
+        Value::Object(items) => Value::Object(
+            items
+                .into_iter()
+                .map(|(key, value)| (key, json_normalize_snippet(value)))
+                .collect(),
+        ),
+        value => value,
     }
 }
 
@@ -767,6 +808,7 @@ fn apply_common_config_to_settings(
     match app_type {
         AppType::Claude => {
             let source = serde_json::from_str::<Value>(trimmed)
+                .map(json_normalize_snippet)
                 .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
             let mut result = settings.clone();
             json_deep_merge(&mut result, &source);
@@ -796,6 +838,7 @@ fn apply_common_config_to_settings(
         }
         AppType::Gemini => {
             let source = serde_json::from_str::<Value>(trimmed)
+                .map(json_normalize_snippet)
                 .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
             let mut result = settings.clone();
             if let Some(env) = result.get_mut("env") {
@@ -2953,6 +2996,84 @@ base_url = "https://a.example/v1"
         let stripped =
             remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn claude_common_config_duplicate_snippet_arrays_roundtrip() {
+        let snippet = r#"{"permissions":{"deny":["WebSearch","WebSearch"]}}"#;
+        for settings in [
+            json!({}),
+            json!({"permissions": {}}),
+            json!({"permissions": {"deny": []}}),
+            json!({"permissions": {"deny": ["WebSearch"]}}),
+            json!({"permissions": {"deny": ["WebSearch", "WebSearch"]}}),
+            json!({"permissions": {"deny": "original"}}),
+        ] {
+            let applied =
+                apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+            let expected = settings["permissions"]["deny"]
+                .as_array()
+                .filter(|items| !items.is_empty())
+                .cloned()
+                .unwrap_or_else(|| vec![json!("WebSearch")]);
+            assert_eq!(applied["permissions"]["deny"], json!(expected));
+            assert!(settings_contain_common_config(
+                &AppType::Claude,
+                &applied,
+                snippet
+            ));
+            assert_eq!(
+                apply_common_config_to_settings(&AppType::Claude, &applied, snippet).unwrap(),
+                applied
+            );
+            let backfilled = remove_common_config_from_live_settings(
+                &AppType::Claude,
+                &applied,
+                snippet,
+                &settings,
+            )
+            .unwrap();
+            assert_eq!(backfilled, settings);
+        }
+    }
+
+    #[test]
+    fn json_duplicate_snippet_removal_consumes_only_one_copy() {
+        let settings = json!({"permissions": {"deny": ["WebSearch", "WebSearch"]}});
+        let removed =
+            remove_common_config_from_settings(&AppType::Claude, &settings, &settings.to_string())
+                .unwrap();
+        assert_eq!(removed, json!({"permissions": {"deny": ["WebSearch"]}}));
+    }
+
+    #[test]
+    fn json_duplicate_snippet_objects_and_nested_arrays_roundtrip() {
+        let snippet = r#"{"hooks":[
+            {"matcher":"Read","commands":["check","check"]},
+            {"commands":["check"],"matcher":"Read"}
+        ]}"#;
+        for app_type in [AppType::Claude, AppType::Gemini] {
+            let applied = apply_common_config_to_settings(&app_type, &json!({}), snippet).unwrap();
+            let config = if matches!(app_type, AppType::Gemini) {
+                &applied["env"]
+            } else {
+                &applied
+            };
+            assert_eq!(
+                config["hooks"],
+                json!([{"matcher":"Read","commands":["check"]}])
+            );
+            assert!(settings_contain_common_config(&app_type, &applied, snippet));
+            let removed = remove_common_config_from_settings(&app_type, &applied, snippet).unwrap();
+            assert_eq!(
+                removed,
+                if matches!(app_type, AppType::Gemini) {
+                    json!({"env":{}})
+                } else {
+                    json!({})
+                }
+            );
+        }
     }
 
     #[test]
