@@ -1156,6 +1156,7 @@
     "messageCopied": "已複製訊息內容",
     "conversationHistory": "對話紀錄",
     "expandContent": "展開完整內容",
+    "lineCount": "{{lines}} 行",
     "collapseContent": "收起"
   },
   "console": {

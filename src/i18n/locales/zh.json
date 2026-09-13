@@ -1155,6 +1155,7 @@
     "messageCopied": "已复制消息内容",
     "conversationHistory": "对话记录",
     "expandContent": "展开完整内容",
+    "lineCount": "{{lines}} 行",
     "collapseContent": "收起"
   },
   "console": {

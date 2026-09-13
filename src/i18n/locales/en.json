@@ -1155,6 +1155,7 @@
     "messageCopied": "Message copied",
     "conversationHistory": "Conversation History",
     "expandContent": "Expand full content",
+    "lineCount": "{{lines}} lines",
     "collapseContent": "Collapse"
   },
   "console": {

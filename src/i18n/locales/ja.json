@@ -1155,6 +1155,7 @@
     "messageCopied": "メッセージがコピーされました",
     "conversationHistory": "会話履歴",
     "expandContent": "全文を表示",
+    "lineCount": "{{lines}} 行",
     "collapseContent": "折りたたむ"
   },
   "console": {
