@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, should_skip_session_insert, DedupKey,
+    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -788,9 +788,35 @@ pub(crate) fn update_sync_state_on_conn(
     Ok(())
 }
 
-/// 插入单条会话日志到 proxy_request_logs，返回是否成功插入 (true=新插入, false=已存在)。
+/// 写入单条会话日志到 proxy_request_logs，返回数据是否发生变化。
+///
+/// Claude Code 会把同一个流式响应按 content block 追加为多条同 `message.id`
+/// 的 JSONL 记录。OpenAI Responses 的缓存用量只在末尾事件里可用，因此末尾
+/// 记录可能落在下一次增量同步中。这里允许更完整的末尾 usage 更新之前导入的
+/// message_start 快照，避免后者永久显示为 cache miss。
 ///
 /// 调用方持有连接锁（通常在事务内）。
+fn existing_log_data_source(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+) -> Result<Option<String>, AppError> {
+    let result = conn
+        .prepare_cached(
+            "SELECT COALESCE(data_source, 'proxy')
+             FROM proxy_request_logs
+             WHERE request_id = ?1",
+        )
+        .and_then(|mut stmt| stmt.query_row(rusqlite::params![request_id], |row| row.get(0)));
+
+    match result {
+        Ok(data_source) => Ok(Some(data_source)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(AppError::Database(format!(
+            "查询会话日志 request_id 失败: {error}"
+        ))),
+    }
+}
+
 fn insert_session_log_entry_on_conn(
     conn: &rusqlite::Connection,
     request_id: &str,
@@ -820,8 +846,14 @@ fn insert_session_log_entry_on_conn(
         cache_creation_tokens: msg.cache_creation_tokens,
         created_at,
     };
-    if should_skip_session_insert(conn, request_id, &dedup_key)? {
-        return Ok(false);
+    match existing_log_data_source(conn, request_id)? {
+        // 同一流式响应的末尾事件可以补全已经导入的 message_start 快照。
+        // 先升级再由读路径按完整 token 指纹过滤代理重复行，避免保留旧快照双算。
+        Some(data_source) if data_source == "session_log" => {}
+        // request_id 已由代理或其他来源占用时，绝不能通过会话导入覆盖它。
+        Some(_) => return Ok(false),
+        None if has_matching_proxy_usage_log(conn, &dedup_key)? => return Ok(false),
+        None => {}
     }
 
     // 计算费用
@@ -857,15 +889,32 @@ fn insert_session_log_entry_on_conn(
         ),
     };
 
-    let inserted_rows = conn
+    let changed_rows = conn
         .execute(
-            "INSERT OR IGNORE INTO proxy_request_logs (
+            "INSERT INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+        ON CONFLICT(request_id) DO UPDATE SET
+            input_tokens = excluded.input_tokens,
+            output_tokens = excluded.output_tokens,
+            cache_read_tokens = excluded.cache_read_tokens,
+            cache_creation_tokens = excluded.cache_creation_tokens,
+            input_cost_usd = excluded.input_cost_usd,
+            output_cost_usd = excluded.output_cost_usd,
+            cache_read_cost_usd = excluded.cache_read_cost_usd,
+            cache_creation_cost_usd = excluded.cache_creation_cost_usd,
+            total_cost_usd = excluded.total_cost_usd
+        WHERE COALESCE(proxy_request_logs.data_source, 'proxy') = 'session_log'
+          AND (
+              (?25 = 1 AND excluded.input_tokens <> proxy_request_logs.input_tokens)
+              OR excluded.output_tokens > proxy_request_logs.output_tokens
+              OR excluded.cache_read_tokens > proxy_request_logs.cache_read_tokens
+              OR excluded.cache_creation_tokens > proxy_request_logs.cache_creation_tokens
+          )",
             rusqlite::params![
                 request_id,
                 "_session",         // provider_id: 标记为会话来源
@@ -891,11 +940,12 @@ fn insert_session_log_entry_on_conn(
                 "1.0",              // cost_multiplier
                 created_at,
                 "session_log",      // data_source
+                msg.stop_reason.is_some() as i64, // 仅终态事件可做 input-only 补全
             ],
         )
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
 
-    Ok(inserted_rows > 0)
+    Ok(changed_rows > 0)
 }
 
 /// 从 model_pricing 表查找模型定价（支持模糊匹配）
@@ -1093,6 +1143,257 @@ mod tests {
             row.get(0)
         })?;
         assert_eq!(count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_late_final_usage_upgrades_stream_start_snapshot() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let request_id = "session:resp_late_usage";
+        let preliminary = ParsedAssistantUsage {
+            message_id: "resp_late_usage".to_string(),
+            model: "gpt-5.6-sol".to_string(),
+            input_tokens: 353_777,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            stop_reason: None,
+            timestamp: Some("2026-08-30T10:06:35Z".to_string()),
+            session_id: Some("session-1".to_string()),
+        };
+        let final_usage = ParsedAssistantUsage {
+            message_id: "resp_late_usage".to_string(),
+            model: "gpt-5.6-sol".to_string(),
+            input_tokens: 825,
+            output_tokens: 285,
+            cache_read_tokens: 364_032,
+            cache_creation_tokens: 0,
+            stop_reason: Some("tool_use".to_string()),
+            timestamp: Some("2026-08-30T10:06:40Z".to_string()),
+            session_id: Some("session-1".to_string()),
+        };
+
+        let conn = lock_conn!(db.conn);
+        assert!(insert_session_log_entry_on_conn(
+            &conn,
+            request_id,
+            &preliminary
+        )?);
+        assert!(insert_session_log_entry_on_conn(
+            &conn,
+            request_id,
+            &final_usage
+        )?);
+
+        let values: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), input_tokens, output_tokens, cache_read_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            rusqlite::params![request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(values, (1, 825, 285, 364_032));
+
+        // A stale or duplicated start snapshot must never overwrite the final usage.
+        assert!(!insert_session_log_entry_on_conn(
+            &conn,
+            request_id,
+            &preliminary
+        )?);
+        let values_after_stale: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, output_tokens, cache_read_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            rusqlite::params![request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(values_after_stale, (825, 285, 364_032));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_late_final_usage_upgrades_before_proxy_dedup() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let request_id = "session:resp_mixed_sources";
+        let preliminary = ParsedAssistantUsage {
+            message_id: "resp_mixed_sources".to_string(),
+            model: "gpt-5.6-sol".to_string(),
+            input_tokens: 100,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            stop_reason: None,
+            timestamp: Some("1970-01-01T00:16:40Z".to_string()),
+            session_id: Some("session-1".to_string()),
+        };
+        let final_usage = ParsedAssistantUsage {
+            message_id: "resp_mixed_sources".to_string(),
+            model: "gpt-5.6-sol".to_string(),
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 90,
+            cache_creation_tokens: 0,
+            stop_reason: Some("end_turn".to_string()),
+            timestamp: Some("1970-01-01T00:16:45Z".to_string()),
+            session_id: Some("session-1".to_string()),
+        };
+
+        let conn = lock_conn!(db.conn);
+        assert!(insert_session_log_entry_on_conn(
+            &conn,
+            request_id,
+            &preliminary
+        )?);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, latency_ms, status_code, created_at, data_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                "proxy-final-usage",
+                "openai-compatible",
+                "claude",
+                "gpt-5.6-sol",
+                "gpt-5.6-sol",
+                10,
+                20,
+                90,
+                0,
+                "0.10",
+                100,
+                200,
+                1005,
+                "proxy"
+            ],
+        )?;
+
+        assert!(insert_session_log_entry_on_conn(
+            &conn,
+            request_id,
+            &final_usage
+        )?);
+        let values: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, output_tokens, cache_read_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            rusqlite::params![request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(values, (10, 20, 90));
+
+        let effective_filter = effective_usage_log_filter("l");
+        let effective_count: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM proxy_request_logs l WHERE {effective_filter}"),
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(effective_count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_terminal_input_only_correction_updates_in_both_directions() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let request_id = "session:input_only";
+        let mut usage = ParsedAssistantUsage {
+            message_id: "input_only".to_string(),
+            model: "gpt-5.6-sol".to_string(),
+            input_tokens: 15,
+            output_tokens: 20,
+            cache_read_tokens: 30,
+            cache_creation_tokens: 0,
+            stop_reason: None,
+            timestamp: Some("2026-08-30T10:06:35Z".to_string()),
+            session_id: Some("session-1".to_string()),
+        };
+
+        let conn = lock_conn!(db.conn);
+        assert!(insert_session_log_entry_on_conn(&conn, request_id, &usage)?);
+        // Terminal usage may split or otherwise correct an inflated preliminary input downward.
+        usage.input_tokens = 10;
+        usage.stop_reason = Some("end_turn".to_string());
+        assert!(insert_session_log_entry_on_conn(&conn, request_id, &usage)?);
+
+        let input_tokens: i64 = conn.query_row(
+            "SELECT input_tokens FROM proxy_request_logs WHERE request_id = ?1",
+            rusqlite::params![request_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(input_tokens, 10);
+
+        // A later terminal correction in the other direction must also be persisted.
+        usage.input_tokens = 20;
+        assert!(insert_session_log_entry_on_conn(&conn, request_id, &usage)?);
+        let increased_input_tokens: i64 = conn.query_row(
+            "SELECT input_tokens FROM proxy_request_logs WHERE request_id = ?1",
+            rusqlite::params![request_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(increased_input_tokens, 20);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_upsert_never_overwrites_proxy_request_id_collision() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let request_id = "shared-request-id";
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, latency_ms, status_code, created_at, data_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                request_id,
+                "openai-compatible",
+                "claude",
+                "gpt-5.6-sol",
+                "gpt-5.6-sol",
+                1,
+                2,
+                3,
+                4,
+                "0.10",
+                100,
+                200,
+                1000,
+                "proxy"
+            ],
+        )?;
+        let usage = ParsedAssistantUsage {
+            message_id: request_id.to_string(),
+            model: "gpt-5.6-sol".to_string(),
+            input_tokens: 100,
+            output_tokens: 200,
+            cache_read_tokens: 300,
+            cache_creation_tokens: 400,
+            stop_reason: Some("end_turn".to_string()),
+            timestamp: Some("1970-01-01T00:16:40Z".to_string()),
+            session_id: Some("session-1".to_string()),
+        };
+
+        assert!(!insert_session_log_entry_on_conn(
+            &conn, request_id, &usage
+        )?);
+        let values: (String, i64, i64, i64, i64) = conn.query_row(
+            "SELECT data_source, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            rusqlite::params![request_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(values, ("proxy".to_string(), 1, 2, 3, 4));
 
         Ok(())
     }
