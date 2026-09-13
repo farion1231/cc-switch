@@ -197,7 +197,8 @@ export function AddProviderDialog({
         (appId === "opencode" ||
           appId === "openclaw" ||
           appId === "hermes" ||
-          appId === "pi") &&
+          appId === "pi" ||
+          appId === "deepseek-harness") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

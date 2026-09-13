@@ -794,7 +794,9 @@
     "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "piConfigDir": "Pi 配置目录",
+    "dshConfigDir": "DSH 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
+    "dshConfigDirDescription": "覆盖 DSH 配置目录（settings.yaml、凭据与 profiles）。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -803,6 +805,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
+    "browsePlaceholderDsh": "例如：/home/<你的用户名>/.dsh",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -914,7 +917,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "deepseek-harness": "DeepSeek Harness"
   },
   "pi": {
     "empty": {
@@ -1056,6 +1060,48 @@
       "deleteTemplateTitle": "删除 /{{slug}}？",
       "deleteTemplateMessage": "此操作会永久删除 prompts/{{slug}}.md。"
     }
+  },
+  "dsh": {
+    "provider": {
+      "enabled": "已在 DSH 中启用",
+      "removed": "已从 DSH 移除",
+      "noModels": "该供应商没有配置模型",
+      "defaultSet": "已设为 DSH 默认模型",
+      "defaultFailed": "设置 DSH 默认模型失败",
+      "selectDefaultModel": "选择默认模型"
+    }
+  },
+  "deepseekHarness": {
+    "providerKey": "Provider Key",
+    "providerKeyRequired": "请填写 Provider Key",
+    "providerKeyDuplicate": "该 Provider Key 已存在",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyInvalid": "标识格式无效，只能使用小写字母、数字和连字符",
+    "providerKeyOfficialHint": "官方 DeepSeek 路由使用固定的 deepseek-official 标识。",
+    "officialApiKeyPlaceholder": "输入 DeepSeek API Key（将写入 ~/.dsh/.credentials.yaml）",
+    "officialDuplicate": "官方 DeepSeek 路由已存在，无法重复添加",
+    "officialNotCopyable": "官方 DeepSeek 路由不可复制",
+    "providerKeyLockedHint": "该供应商已存在于 DSH 配置中，标识不可修改。",
+    "providerKeyHint": "只能使用小写字母、数字和连字符。",
+    "modelsRequired": "请至少添加一个模型",
+    "credentialRef": "凭据引用",
+    "credentialRefHint": "用于在 DSH 凭据中保存 API Key 的大写标识符。",
+    "credentialRefInvalid": "Credential Ref 必须为大写标识符，只能使用字母、数字和下划线（例如 CUSTOM_DSH_API_KEY）。",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "API 端点的基础地址。",
+    "apiFormat": "API 格式",
+    "api_openai_completions": "OpenAI Chat Completions",
+    "api_openai_responses": "OpenAI Responses",
+    "api_anthropic_messages": "Anthropic Messages",
+    "modelCatalog": "模型目录",
+    "modelId": "模型 ID",
+    "modelName": "显示名称",
+    "contextWindow": "上下文窗口",
+    "addModel": "添加",
+    "noModels": "暂无模型，点击“添加”新增。",
+    "defaultModel": "默认模型",
+    "defaultModelHint": "DSH 默认使用的模型。",
+    "defaultModelBackgroundHint": "该供应商不是 DSH 当前使用的路由，默认模型修改不会生效。"
   },
   "appSwitcher": {
     "more": "更多应用"

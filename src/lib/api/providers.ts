@@ -95,6 +95,10 @@ export const providersApi = {
     return await invoke("import_default_config", { app: appId });
   },
 
+  async importDeepSeekHarnessFromLive(): Promise<number> {
+    return await invoke("import_deepseek_harness_providers_from_live");
+  },
+
   async importClaudeDesktopFromClaude(): Promise<number> {
     return await invoke("import_claude_desktop_providers_from_claude");
   },

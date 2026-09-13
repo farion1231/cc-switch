@@ -222,6 +222,18 @@ impl Provider {
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 str_at(settings.get("apiKey")),
             ),
+            // DeepSeek Harness keeps the official settings and credential surfaces separate.
+            AppType::DeepSeekHarness => (
+                {
+                    let base_url = str_at(settings.get("baseURL"));
+                    if base_url.is_empty() {
+                        str_at(settings.get("baseUrl"))
+                    } else {
+                        base_url
+                    }
+                },
+                str_at(settings.get("apiKey")),
+            ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode => {
                 let options = settings.get("options");
@@ -558,6 +570,9 @@ pub struct ProviderMeta {
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
     pub provider_type: Option<String>,
+    /// Active model for a mirrored DeepSeek Harness native provider.
+    #[serde(rename = "dshCurrentModel", skip_serializing_if = "Option::is_none")]
+    pub dsh_current_model: Option<String>,
     /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
@@ -1570,6 +1585,21 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-openclaw".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_deepseek_harness_base_url() {
+        let p = provider_with(json!({
+            "baseURL": "https://api.deepseek.com/v1",
+            "apiKey": "sk-dsh",
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::DeepSeekHarness),
+            (
+                "https://api.deepseek.com/v1".to_string(),
+                "sk-dsh".to_string()
             )
         );
     }

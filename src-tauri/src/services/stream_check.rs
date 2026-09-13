@@ -182,6 +182,7 @@ impl StreamCheckService {
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
+            AppType::DeepSeekHarness => Self::extract_dsh_base_url(provider),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
@@ -327,6 +328,20 @@ impl StreamCheckService {
                     "Hermes 供应商缺少 base_url",
                     "Hermes provider is missing `base_url`",
                 )
+            })
+    }
+
+    /// DeepSeek Harness: `{ baseURL, apiKey, ... }`（DSH 原生 schema，camelCase）
+    fn extract_dsh_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("baseURL")
+            .or_else(|| provider.settings_config.get("baseUrl"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::Message("DeepSeek Harness provider has no baseURL".to_string())
             })
     }
 
@@ -506,6 +521,25 @@ mod tests {
             StreamCheckService::extract_openclaw_base_url(&p2).unwrap(),
             "https://api.deepseek.com/v1"
         );
+    }
+
+    #[test]
+    fn test_resolve_base_url_deepseek_harness_from_settings_config() {
+        let p = make_provider(serde_json::json!({
+            "baseURL": "https://api.example.com/v1"
+        }));
+        let url = StreamCheckService::resolve_base_url(&AppType::DeepSeekHarness, &p)
+            .expect("dsh base url");
+        assert_eq!(url, "https://api.example.com/v1");
+    }
+
+    #[test]
+    fn test_resolve_base_url_deepseek_harness_without_base_url_errors() {
+        let p = make_provider(serde_json::json!({}));
+        assert!(StreamCheckService::resolve_base_url(&AppType::DeepSeekHarness, &p).is_err());
+
+        let blank = make_provider(serde_json::json!({ "baseURL": "   " }));
+        assert!(StreamCheckService::resolve_base_url(&AppType::DeepSeekHarness, &blank).is_err());
     }
 
     #[test]

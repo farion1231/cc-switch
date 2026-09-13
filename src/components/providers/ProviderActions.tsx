@@ -278,7 +278,9 @@ export function ProviderActions({
 
   return (
     <div className="flex items-center gap-1.5">
-      {(appId === "openclaw" || appId === "hermes") &&
+      {(appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "deepseek-harness") &&
         isInConfig &&
         onSetAsDefault &&
         (() => {
@@ -298,7 +300,7 @@ export function ProviderActions({
           );
 
           if (
-            appId === "openclaw" &&
+            (appId === "openclaw" || appId === "deepseek-harness") &&
             !isDefaultModel &&
             defaultModelOptions.length > 1
           ) {
@@ -320,9 +322,13 @@ export function ProviderActions({
                   className="max-h-72 min-w-64 overflow-y-auto"
                 >
                   <DropdownMenuLabel>
-                    {t("openclaw.selectDefaultModel", {
-                      defaultValue: "选择默认模型",
-                    })}
+                    {appId === "deepseek-harness"
+                      ? t("dsh.provider.selectDefaultModel", {
+                          defaultValue: "选择默认模型",
+                        })
+                      : t("openclaw.selectDefaultModel", {
+                          defaultValue: "选择默认模型",
+                        })}
                   </DropdownMenuLabel>
                   {defaultModelOptions.map((model) => (
                     <DropdownMenuItem
@@ -458,6 +464,22 @@ export function ProviderActions({
             <Terminal className="h-4 w-4" />
           </Button>
         )}
+
+        {appId === "deepseek-harness" &&
+          isInConfig &&
+          !isCurrent &&
+          !isReadOnly &&
+          onRemoveFromConfig && (
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={onRemoveFromConfig}
+              title={t("provider.removeFromConfig", { defaultValue: "移除" })}
+              className={iconButtonClass}
+            >
+              <Minus className="h-4 w-4" />
+            </Button>
+          )}
 
         <Button
           size="icon"

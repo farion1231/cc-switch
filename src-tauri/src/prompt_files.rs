@@ -27,6 +27,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
+        AppType::DeepSeekHarness => crate::deepseek_harness_config::get_dsh_home(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -36,7 +37,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
-        AppType::Pi => "AGENTS.md",
+        AppType::Pi | AppType::DeepSeekHarness => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

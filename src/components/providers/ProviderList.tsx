@@ -48,6 +48,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
+import { useDshCurrentState } from "@/lib/query/dsh";
 import { isProxyAppId } from "@/config/appConfig";
 
 interface ProviderListProps {
@@ -118,7 +119,12 @@ export function ProviderList({
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
+  // DSH: 查询原生配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: dshCurrentState } = useDshCurrentState(
+    appId === "deepseek-harness",
+  );
+
+  // 判断供应商是否已添加到配置（原生成员状态应用：OpenCode/OpenClaw/Hermes/DeepSeek Harness）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId === "opencode") {
@@ -130,9 +136,12 @@ export function ProviderList({
       if (appId === "hermes") {
         return hermesLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "deepseek-harness") {
+        return dshCurrentState?.providerIds.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
+    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, dshCurrentState],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -248,6 +257,10 @@ export function ProviderList({
       }
       if (appId === "claude-desktop") {
         const count = await providersApi.importClaudeDesktopFromClaude();
+        return count > 0;
+      }
+      if (appId === "deepseek-harness") {
+        const count = await providersApi.importDeepSeekHarnessFromLive();
         return count > 0;
       }
       return providersApi.importDefault(appId);
@@ -494,7 +507,9 @@ export function ProviderList({
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
+                    : appId === "deepseek-harness"
+                      ? dshCurrentState?.currentProviderId === provider.id
+                      : isProviderDefaultModel(provider.id)
                 }
                 isRemovalProtected={
                   appId === "pi"
@@ -503,7 +518,9 @@ export function ProviderList({
                       ? isHermesCurrent
                       : appId === "openclaw"
                         ? isProviderDefaultModel(provider.id)
-                        : false
+                        : // deepseek-harness deletion is protected via
+                          // canDelete=!isCurrent, not this membership-only prop.
+                          false
                 }
                 isStateChangeProtected={
                   appId === "pi" && !isPiAuthoritativeStateReady

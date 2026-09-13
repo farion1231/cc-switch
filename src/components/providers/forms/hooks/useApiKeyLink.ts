@@ -6,6 +6,7 @@ import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
 import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
+import type { DeepSeekHarnessProviderPreset } from "@/config/deepseekHarnessProviderPresets";
 
 type PresetEntry = {
   id: string;
@@ -14,7 +15,8 @@ type PresetEntry = {
     | CodexProviderPreset
     | GeminiProviderPreset
     | OpenCodeProviderPreset
-    | ClaudeDesktopProviderPreset;
+    | ClaudeDesktopProviderPreset
+    | DeepSeekHarnessProviderPreset;
 };
 
 interface UseApiKeyLinkProps {
@@ -37,13 +39,23 @@ export function useApiKeyLink({
 }: UseApiKeyLinkProps) {
   // 判断是否显示 API Key 获取链接
   const shouldShowApiKeyLink = useMemo(() => {
+    // DSH has no OAuth surface — even its official route is a plain API key,
+    // so the official category must not hide the link there.
+    if (appId === "deepseek-harness") {
+      return (
+        category === "official" ||
+        category === "cn_official" ||
+        category === "aggregator" ||
+        category === "third_party"
+      );
+    }
     return (
       category !== "official" &&
       (category === "cn_official" ||
         category === "aggregator" ||
         category === "third_party")
     );
-  }, [category]);
+  }, [appId, category]);
 
   // 获取当前预设条目
   const currentPresetEntry = useMemo(() => {
@@ -57,11 +69,13 @@ export function useApiKeyLink({
   const getWebsiteUrl = useMemo(() => {
     if (currentPresetEntry) {
       const preset = currentPresetEntry.preset;
-      // 对于 cn_official、aggregator、third_party，优先使用 apiKeyUrl（可能包含推广参数）
+      // 对于 cn_official、aggregator、third_party，优先使用 apiKeyUrl（可能包含推广参数）；
+      // official 仅 DSH 官方会显示链接，其 apiKeyUrl 指向官方取键页
       if (
         preset.category === "cn_official" ||
         preset.category === "aggregator" ||
-        preset.category === "third_party"
+        preset.category === "third_party" ||
+        preset.category === "official"
       ) {
         return preset.apiKeyUrl || preset.websiteUrl || "";
       }
@@ -87,7 +101,8 @@ export function useApiKeyLink({
       appId === "gemini" ||
       appId === "opencode" ||
       appId === "openclaw" ||
-      appId === "hermes"
+      appId === "hermes" ||
+      appId === "deepseek-harness"
         ? shouldShowApiKeyLink
         : false,
     websiteUrl: getWebsiteUrl,
