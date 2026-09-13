@@ -2274,22 +2274,37 @@ fn codex_model_catalog_from_specs(
     json!({ "models": entries })
 }
 
+#[cfg(test)]
 fn codex_model_catalog_from_settings(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Option<Value>, AppError> {
+    codex_model_catalog_from_settings_with_provider_config(settings, config_text, profile, None)
+}
+
+fn codex_model_catalog_from_settings_with_provider_config(
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+    provider_config_text: Option<&str>,
+) -> Result<Option<Value>, AppError> {
     let specs = codex_catalog_model_specs(settings);
     if specs.is_empty() {
         return Ok(None);
     }
+    // Route takeover rewrites config_text to the local proxy URL. Vendor
+    // detection must use the provider's original config when callers have it.
+    let vendor_config_text = provider_config_text
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or(config_text);
 
     // Vendors that publish an OFFICIAL Codex models.json for their native
     // `/responses` gateway get it mirrored verbatim instead of the neutral
     // template: its freeform apply_patch, vendor harness base_instructions and
     // reasoning levels are load-bearing (the harness tells the model to use
     // apply_patch, so catalog and harness must stay consistent).
-    if let Some(vendor_models) = codex_official_vendor_catalog_models(config_text, profile) {
+    if let Some(vendor_models) = codex_official_vendor_catalog_models(vendor_config_text, profile) {
         let entries: Vec<Value> = specs
             .iter()
             .enumerate()
@@ -2401,9 +2416,28 @@ pub fn prepare_codex_config_text_with_model_catalog(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<String, AppError> {
+    prepare_codex_config_text_with_model_catalog_with_provider_config(
+        settings,
+        config_text,
+        profile,
+        None,
+    )
+}
+
+fn prepare_codex_config_text_with_model_catalog_with_provider_config(
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+    provider_config_text: Option<&str>,
+) -> Result<String, AppError> {
     let catalog_path = get_codex_model_catalog_path();
 
-    if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
+    if let Some(catalog) = codex_model_catalog_from_settings_with_provider_config(
+        settings,
+        config_text,
+        profile,
+        provider_config_text,
+    )? {
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         // Disable web_search only for native gateways on the reject blacklist
         // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
@@ -2680,9 +2714,15 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
+    provider_config_text: Option<&str>,
 ) -> Result<String, AppError> {
     if settings.get("modelCatalog").is_some() {
-        prepare_codex_config_text_with_model_catalog(settings, config_text, profile)
+        prepare_codex_config_text_with_model_catalog_with_provider_config(
+            settings,
+            config_text,
+            profile,
+            provider_config_text,
+        )
     } else {
         Ok(config_text.to_string())
     }
@@ -7409,6 +7449,40 @@ wire_api = "responses"
         assert_eq!(
             pro.get("display_name").and_then(|v| v.as_str()),
             Some("DeepSeek-V4-Pro")
+        );
+    }
+
+    #[test]
+    fn vendor_catalog_uses_provider_config_behind_local_proxy() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash" }
+                ]
+            }
+        });
+        let local_proxy_config = r#"model = "deepseek-v4-flash"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "deepseek"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+"#;
+
+        let catalog = codex_model_catalog_from_settings_with_provider_config(
+            &settings,
+            local_proxy_config,
+            CodexCatalogToolProfile::NativeResponses,
+            Some(DEEPSEEK_NATIVE_CONFIG),
+        )
+        .expect("catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        assert_eq!(
+            catalog["models"][0]["apply_patch_tool_type"].as_str(),
+            Some("freeform"),
+            "local routing must not hide the provider's official DeepSeek catalog"
         );
     }
 
