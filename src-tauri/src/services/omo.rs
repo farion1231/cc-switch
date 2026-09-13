@@ -764,10 +764,10 @@ impl OmoService {
     /// unified config in the *WSL* home, so derive that home and probe it
     /// first — otherwise detection never sees it and silently falls back to
     /// the legacy per-plugin file that OMO >= 4.19.3 no longer reads (#7363).
-    fn unified_home_candidates(home_dir: &Path, opencode_dir: &Path) -> Vec<PathBuf> {
+    fn unified_home_candidates(home_dir: &Path, _opencode_dir: &Path) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
         #[cfg(windows)]
-        if let Some(wsl_home) = derive_wsl_home_dir(opencode_dir) {
+        if let Some(wsl_home) = derive_wsl_home_dir(_opencode_dir) {
             if wsl_home != home_dir {
                 candidates.push(wsl_home);
             }
