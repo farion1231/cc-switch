@@ -9,6 +9,8 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 
 const authState = vi.hoisted(() => ({
   codexReauthRequired: false,
+  copilotAuthenticated: false,
+  copilotAccounts: [] as Array<{ id: string; login: string }>,
 }));
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
@@ -20,6 +22,25 @@ vi.mock("sonner", () => ({
     success: vi.fn(),
   },
 }));
+
+// CopilotAuthSection imports the hook via its direct module path, which the
+// barrel mock above does not intercept. Override the same four fields there.
+vi.mock("@/components/providers/forms/hooks/useCopilotAuth", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/components/providers/forms/hooks/useCopilotAuth")
+    >();
+  return {
+    ...actual,
+    useCopilotAuth: (...args: Parameters<typeof actual.useCopilotAuth>) => ({
+      ...actual.useCopilotAuth(...args),
+      isAuthenticated: authState.copilotAuthenticated,
+      isStatusSuccess: true,
+      isStatusError: false,
+      accounts: authState.copilotAccounts,
+    }),
+  };
+});
 
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: ({
@@ -89,10 +110,10 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   return {
     ...actual,
     useCopilotAuth: () => ({
-      isAuthenticated: false,
+      isAuthenticated: authState.copilotAuthenticated,
       isStatusSuccess: true,
       isStatusError: false,
-      accounts: [],
+      accounts: authState.copilotAccounts,
     }),
     useCodexOauth: () => ({
       isAuthenticated: true,
@@ -193,6 +214,8 @@ function renderClaudeCodexForm(onSubmit: (values: ProviderFormValues) => void) {
 describe("ProviderForm Codex Official managed account", () => {
   beforeEach(() => {
     authState.codexReauthRequired = false;
+    authState.copilotAuthenticated = false;
+    authState.copilotAccounts = [];
     toastMocks.error.mockReset();
   });
 
@@ -517,5 +540,48 @@ describe("ProviderForm Codex Official managed account", () => {
       ),
     );
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("saves a GitHub Copilot provider with an empty API key without the soft-validation prompt", async () => {
+    // Copilot auth is fully managed by CopilotAuthManager: the stored auth.json
+    // carries a placeholder, so an empty API key must not trigger the
+    // "非官方供应商请填写 API Key" soft issue.
+    authState.copilotAuthenticated = true;
+    authState.copilotAccounts = [{ id: "acct-copilot", login: "octocat" }];
+    const onSubmit = vi.fn();
+    const queryClient = createTestQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderForm
+          appId="codex"
+          submitLabel="save-provider"
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+          initialData={{
+            name: "GitHub Copilot",
+            category: "third_party",
+            settingsConfig: {
+              auth: {},
+              config: `model = "gpt-5"
+[model_providers.github_copilot]
+name = "GitHub Copilot"
+base_url = "https://api.githubcopilot.com"`,
+            },
+            meta: { providerType: "github_copilot" },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+
+    // The soft-validation dialog must stay closed for a managed Copilot
+    // provider. Guard against silent blockers first: if a toast fired or the
+    // dialog opened, the failure has a different root than the fix targets.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(toastMocks.error).not.toHaveBeenCalled();
+    expect(screen.queryByText("配置存在以下问题")).not.toBeInTheDocument();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
   });
 });

@@ -44,12 +44,17 @@ import EndpointSpeedTest from "./EndpointSpeedTest";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { CopilotAuthSection } from "./CopilotAuthSection";
 import {
   fetchModelsForConfig,
   fetchXaiOauthModels,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+} from "@/lib/api/copilot";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
@@ -76,6 +81,11 @@ interface CodexFormFieldsProps {
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
+  // GitHub Copilot 托管预设：隐藏 API Key，挂账号选择区块（与 Claude 表单共用账号）
+  isCopilotPreset?: boolean;
+  isCopilotAuthenticated?: boolean;
+  selectedGitHubAccountId?: string | null;
+  onGitHubAccountSelect?: (accountId: string | null) => void;
   // API Key
   codexApiKey: string;
   onApiKeyChange: (key: string) => void;
@@ -371,6 +381,10 @@ export function CodexFormFields({
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
+  isCopilotPreset,
+  isCopilotAuthenticated,
+  selectedGitHubAccountId,
+  onGitHubAccountSelect,
   codexApiKey,
   onApiKeyChange,
   category,
@@ -445,6 +459,9 @@ export function CodexFormFields({
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
+    isCopilotPreset,
+    isCopilotAuthenticated,
+    selectedGitHubAccountId,
   ]);
   // 思考能力随 Chat 格式显示（仅 Chat Completions 转换路径用得上）；模型映射常驻
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
@@ -550,6 +567,50 @@ export function CodexFormFields({
   );
 
   const handleFetchModels = useCallback(() => {
+    // GitHub Copilot 托管预设：不走 base_url + key 的 /models 探测，
+    // 直接用托管账号 token 拉取（与 Claude 表单同一后端命令）
+    if (isCopilotPreset) {
+      if (!isCopilotAuthenticated) {
+        toast.error(
+          t("copilot.loginRequired", {
+            defaultValue: "请先登录 GitHub Copilot",
+          }),
+        );
+        return;
+      }
+      const seq = ++fetchModelsSeqRef.current;
+      setIsFetchingModels(true);
+      // 未显式选择账号时用默认账号（与 forwarder 的 token 解析行为一致）
+      const fetchPromise = selectedGitHubAccountId
+        ? copilotGetModelsForAccount(selectedGitHubAccountId)
+        : copilotGetModels();
+      fetchPromise
+        .then((models) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          // 复用可搜索下拉：Copilot 模型映射为 FetchedModel（vendor 作为归属）
+          setFetchedModels(
+            models.map((m) => ({
+              id: m.id,
+              ownedBy: m.vendor || null,
+            })),
+          );
+          if (models.length === 0) {
+            toast.info(t("providerForm.fetchModelsEmpty"));
+          } else {
+            toast.success(
+              t("providerForm.fetchModelsSuccess", { count: models.length }),
+            );
+          }
+        })
+        .catch((err) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          console.warn("[Copilot] Failed to fetch models:", err);
+          showFetchModelsError(err, t);
+        })
+        .finally(() => setIsFetchingModels(false));
+      return;
+    }
+
     // xAI OAuth 托管预设：不走 base_url + key 的 /models 探测，
     // 直接用托管账号 token 拉取（与 Claude 表单同一后端命令）
     if (isXaiOauthPreset) {
@@ -625,6 +686,9 @@ export function CodexFormFields({
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
+    isCopilotPreset,
+    isCopilotAuthenticated,
+    selectedGitHubAccountId,
     t,
   ]);
 
@@ -752,8 +816,22 @@ export function CodexFormFields({
         />
       )}
 
+      {/* GitHub Copilot OAuth 认证（托管账号，与 Claude 表单共用） */}
+      {isCopilotPreset && (
+        <CopilotAuthSection
+          mode="select"
+          selectedAccountId={selectedGitHubAccountId}
+          onAccountSelect={onGitHubAccountSelect}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("github_copilot")
+              : undefined
+          }
+        />
+      )}
+
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isCodexOauthPreset && !isXaiOauthPreset && (
+      {!isCodexOauthPreset && !isXaiOauthPreset && !isCopilotPreset && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"
@@ -784,7 +862,7 @@ export function CodexFormFields({
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.codexApiEndpointPlaceholder")}
           hint={t("providerForm.codexApiHint")}
-          showFullUrlToggle
+          showFullUrlToggle={!isCopilotPreset}
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
           onManageClick={() => onEndpointModalToggle(true)}

@@ -1024,6 +1024,16 @@ impl ProviderAdapter for CodexAdapter {
             ));
         }
 
+        // GitHub Copilot (OAuth + Copilot Token): placeholder credentials only;
+        // the real token is resolved per-request by the forwarder via
+        // CopilotAuthManager (same managed routing as the Claude adapter).
+        if provider.is_github_copilot() {
+            return Some(AuthInfo::new(
+                "copilot_placeholder".to_string(),
+                AuthStrategy::GitHubCopilot,
+            ));
+        }
+
         // Anthropic upstream: the auth field is chosen by the user in the UI (meta.apiKeyField).
         //   ANTHROPIC_API_KEY    → x-api-key (AuthStrategy::Anthropic)
         //   ANTHROPIC_AUTH_TOKEN → Authorization: Bearer (default, AuthStrategy::Bearer)
@@ -1094,6 +1104,63 @@ impl ProviderAdapter for CodexAdapter {
                 http::HeaderName::from_static("x-api-key"),
                 auth_header_value(&auth.api_key)?,
             )]);
+        }
+        if auth.strategy == AuthStrategy::GitHubCopilot {
+            // Same Copilot fingerprint header set as the Claude adapter; the
+            // bearer token is the per-request Copilot token injected by the
+            // forwarder via CopilotAuthManager.
+            let request_id = uuid::Uuid::new_v4().to_string();
+            return Ok(vec![
+                (
+                    http::HeaderName::from_static("authorization"),
+                    auth_header_value(&bearer)?,
+                ),
+                (
+                    http::HeaderName::from_static("editor-version"),
+                    http::HeaderValue::from_static(super::copilot_auth::COPILOT_EDITOR_VERSION),
+                ),
+                (
+                    http::HeaderName::from_static("editor-plugin-version"),
+                    http::HeaderValue::from_static(super::copilot_auth::COPILOT_PLUGIN_VERSION),
+                ),
+                (
+                    http::HeaderName::from_static("copilot-integration-id"),
+                    http::HeaderValue::from_static(super::copilot_auth::COPILOT_INTEGRATION_ID),
+                ),
+                (
+                    http::HeaderName::from_static("user-agent"),
+                    http::HeaderValue::from_static(super::copilot_auth::COPILOT_USER_AGENT),
+                ),
+                (
+                    http::HeaderName::from_static("x-github-api-version"),
+                    http::HeaderValue::from_static(super::copilot_auth::COPILOT_API_VERSION),
+                ),
+                (
+                    http::HeaderName::from_static("openai-intent"),
+                    http::HeaderValue::from_static("conversation-agent"),
+                ),
+                (
+                    http::HeaderName::from_static("x-initiator"),
+                    http::HeaderValue::from_static("user"),
+                ),
+                (
+                    http::HeaderName::from_static("x-interaction-type"),
+                    http::HeaderValue::from_static("conversation-agent"),
+                ),
+                // x-interaction-id 由 forwarder 按需注入（仅在有 session 时）
+                (
+                    http::HeaderName::from_static("x-vscode-user-agent-library-version"),
+                    http::HeaderValue::from_static("electron-fetch"),
+                ),
+                (
+                    http::HeaderName::from_static("x-request-id"),
+                    auth_header_value(&request_id)?,
+                ),
+                (
+                    http::HeaderName::from_static("x-agent-task-id"),
+                    auth_header_value(&request_id)?,
+                ),
+            ]);
         }
         Ok(vec![(
             http::HeaderName::from_static("authorization"),
@@ -2242,6 +2309,43 @@ wire_api = "responses"
             .expect("managed auth placeholder");
         assert_eq!(auth.api_key, "xai_oauth_placeholder");
         assert_eq!(auth.strategy, AuthStrategy::XaiOAuth);
+    }
+
+    #[test]
+    fn codex_github_copilot_pins_placeholder_and_fingerprint_headers() {
+        // GitHub Copilot under Codex mirrors the Claude-side managed routing:
+        // credentials are a placeholder (the real token is injected per request
+        // by the forwarder via CopilotAuthManager) and the Copilot fingerprint
+        // headers must ride along regardless of which app owns the request.
+        let adapter = CodexAdapter::new();
+        let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            ..Default::default()
+        });
+
+        let auth = adapter
+            .extract_auth(&provider)
+            .expect("managed auth placeholder");
+        assert_eq!(auth.api_key, "copilot_placeholder");
+        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
+
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        let names: Vec<String> = headers
+            .iter()
+            .map(|(name, _)| name.as_str().to_string())
+            .collect();
+        for expected in [
+            "authorization",
+            "editor-version",
+            "editor-plugin-version",
+            "copilot-integration-id",
+            "user-agent",
+            "x-github-api-version",
+        ] {
+            assert!(names.contains(&expected.to_string()), "missing {expected}");
+        }
     }
 
     #[test]
