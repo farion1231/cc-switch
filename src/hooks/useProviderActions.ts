@@ -161,8 +161,77 @@ export function useProviderActions(
           trayError,
         );
       }
+
+      // OpenClaw: sync agents.defaults.models with the provider's current
+      // model list — merge entries for current models, drop stale ones that
+      // no longer exist in this provider's config.
+      if (activeApp === "openclaw") {
+        try {
+          const config = provider.settingsConfig as OpenClawProviderConfig;
+          const providerKey = provider.id;
+          const stalePrefixes = [`${providerKey}/`];
+          if (originalId && originalId !== providerKey) {
+            stalePrefixes.push(`${originalId}/`);
+          }
+
+          // Only sync when this provider actually lives in the config,
+          // mirroring the backend's database-only behavior: writing catalog
+          // entries for a provider absent from models.providers would create
+          // selectable refs that cannot resolve.
+          await queryClient.invalidateQueries({
+            queryKey: openclawKeys.liveProviderIds,
+          });
+          const liveProviderIds = await queryClient.ensureQueryData({
+            queryKey: openclawKeys.liveProviderIds,
+            queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+          });
+          if (!liveProviderIds.includes(providerKey)) {
+            return;
+          }
+
+          // Preserve an unset global allowlist: seeding a new catalog from
+          // only this provider's models would hide every other live
+          // provider's models from /model.
+          const existingCatalog = await openclawApi.getModelCatalog();
+          if (!existingCatalog) {
+            return;
+          }
+          const modelIds = new Set(
+            (config.models ?? [])
+              .map((m) => m.id?.trim())
+              .filter((id): id is string => Boolean(id)),
+          );
+
+          const nextCatalog: Record<string, { alias?: string }> = {};
+          // Keep other providers' entries; drop stale refs under this key.
+          for (const [ref, entry] of Object.entries(existingCatalog)) {
+            const isStale =
+              stalePrefixes.some((prefix) => ref.startsWith(prefix)) &&
+              !modelIds.has(ref.slice(ref.indexOf("/") + 1));
+            if (!isStale) nextCatalog[ref] = entry;
+          }
+          // Re-add current models.
+          for (const m of config.models ?? []) {
+            const id = m.id?.trim();
+            if (!id) continue;
+            const alias = m.alias?.trim() || m.name?.trim();
+            nextCatalog[`${providerKey}/${id}`] = alias ? { alias } : {};
+          }
+
+          // Skip the write when nothing changed.
+          if (JSON.stringify(existingCatalog) !== JSON.stringify(nextCatalog)) {
+            await openclawApi.setModelCatalog(nextCatalog);
+            await queryClient.invalidateQueries({
+              queryKey: openclawKeys.health,
+            });
+          }
+        } catch (error) {
+          // Log warning but don't block main flow - provider is already saved
+          console.warn("[OpenClaw] Failed to sync model catalog:", error);
+        }
+      }
     },
-    [updateProviderMutation],
+    [updateProviderMutation, activeApp, queryClient],
   );
 
   // 切换供应商

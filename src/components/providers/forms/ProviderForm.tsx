@@ -47,7 +47,7 @@ import {
 } from "@/config/opencodeProviderPresets";
 import {
   openclawProviderPresets,
-  rebaseOpenClawSuggestedDefaults,
+  buildOpenClawSuggestedDefaultsFromForm,
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
@@ -1623,13 +1623,16 @@ function ProviderFormFull({
       if (activePreset.isPartner) {
         payload.isPartner = activePreset.isPartner;
       }
-      // OpenClaw: align preset model refs with the actual submitted provider key.
+      // OpenClaw: build suggested defaults from the form's final model list
+      // so agents.defaults.models matches what the user actually configured,
+      // with preset model refs aligned to the submitted provider key.
       if (activePreset.suggestedDefaults) {
         payload.suggestedDefaults =
           appId === "openclaw" && payload.providerKey
-            ? rebaseOpenClawSuggestedDefaults(
+            ? buildOpenClawSuggestedDefaultsFromForm(
                 activePreset.suggestedDefaults,
                 payload.providerKey,
+                openclawForm.openclawModels,
               )
             : activePreset.suggestedDefaults;
       }

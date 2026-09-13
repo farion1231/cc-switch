@@ -6,6 +6,7 @@ import type {
   ProviderCategory,
   OpenClawProviderConfig,
   OpenClawDefaultModel,
+  OpenClawModel,
 } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 
@@ -80,6 +81,46 @@ export function rebaseOpenClawSuggestedDefaults(
           ]),
         )
       : undefined,
+  };
+}
+
+/**
+ * Build suggested defaults from the provider form's final model list, so that
+ * `agents.defaults.models` reflects what the user actually configured instead
+ * of the preset's built-in defaults. Default model refs are kept only when
+ * they still point at a model present in the final list.
+ */
+export function buildOpenClawSuggestedDefaultsFromForm(
+  defaults: OpenClawSuggestedDefaults,
+  providerKey: string,
+  models: OpenClawModel[],
+): OpenClawSuggestedDefaults {
+  const rebased = rebaseOpenClawSuggestedDefaults(defaults, providerKey);
+
+  const catalog: Record<string, { alias?: string }> = {};
+  for (const model of models) {
+    const id = model.id?.trim();
+    if (!id) continue;
+    const alias = model.alias?.trim() || model.name?.trim();
+    catalog[`${providerKey}/${id}`] = alias ? { alias } : {};
+  }
+
+  const validRefs = new Set(Object.keys(catalog));
+  const orderedRefs = rebased.model
+    ? [rebased.model.primary, ...(rebased.model.fallbacks ?? [])].filter(
+        (ref) => validRefs.has(ref),
+      )
+    : [];
+
+  return {
+    model:
+      orderedRefs.length > 0
+        ? {
+            primary: orderedRefs[0],
+            fallbacks: orderedRefs.slice(1),
+          }
+        : undefined,
+    modelCatalog: catalog,
   };
 }
 
