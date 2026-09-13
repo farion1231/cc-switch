@@ -1,16 +1,19 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
+import { subscriptionApi } from "@/lib/api/subscription";
+import type { CodexQuotaActivationPolicy } from "@/types/subscription";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useTauriEvent } from "@/hooks/useTauriEvent";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
@@ -205,6 +208,19 @@ const NATIVE_USAGE_TEMPLATES = new Set<string>([
   TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION,
 ]);
 
+const maskActivationAccountId = (accountId: string): string => {
+  if (accountId.length <= 8) return "****";
+  return `${accountId.slice(0, 4)}…${accountId.slice(-4)}`;
+};
+
+const formatActivationTimestamp = (timestamp: number): string => {
+  if (!Number.isFinite(timestamp)) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+};
+
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   provider,
   appId,
@@ -374,6 +390,60 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   });
 
   const [testing, setTesting] = useState(false);
+  const [activationPolicy, setActivationPolicy] =
+    useState<CodexQuotaActivationPolicy | null>(null);
+  const [activationPolicyLoading, setActivationPolicyLoading] = useState(false);
+  const [activationEnabled, setActivationEnabled] = useState(false);
+  const [activationDirty, setActivationDirty] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !isBoundCodexOfficial || appId !== "codex") {
+      setActivationPolicy(null);
+      setActivationEnabled(false);
+      setActivationDirty(false);
+      return;
+    }
+    let cancelled = false;
+    setActivationPolicy(null);
+    setActivationEnabled(false);
+    setActivationDirty(false);
+    setActivationPolicyLoading(true);
+    subscriptionApi
+      .getCodexQuotaActivationPolicy(provider.id)
+      .then((policy) => {
+        if (cancelled) return;
+        setActivationPolicy(policy);
+        setActivationEnabled(policy?.enabled ?? false);
+        setActivationDirty(false);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("Failed to load Codex quota activation policy", error);
+          setActivationPolicy(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setActivationPolicyLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appId, isBoundCodexOfficial, isOpen, provider.id]);
+
+  useTauriEvent<{ status: string }>(
+    "codex-quota-activation-updated",
+    async () => {
+      if (!isOpen || !isBoundCodexOfficial) return;
+      try {
+        const policy = await subscriptionApi.getCodexQuotaActivationPolicy(
+          provider.id,
+        );
+        setActivationPolicy(policy);
+      } catch (error) {
+        console.warn("Failed to refresh Codex quota activation status", error);
+      }
+    },
+  );
 
   // {{apiKey}}/{{baseUrl}} 实际注入值，镜像后端 resolve_script_credentials 的
   // 优先级：脚本配置中的显式非空值优先（旧配置可能携带），否则回退供应商凭据。
@@ -496,7 +566,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     setScript({ ...script, enabled: true });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // 专用模板不需要脚本验证
     if (!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "")) {
       if (script.enabled && !script.code.trim()) {
@@ -521,6 +591,31 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "official_subscription"
         | undefined,
     };
+    const activationCanEdit = activationPolicy?.canEdit ?? true;
+    const mustDisablePersistedActivation =
+      isBoundCodexOfficial &&
+      !quotaActivationUsable &&
+      Boolean(activationPolicy?.enabled && activationCanEdit);
+    if (
+      isBoundCodexOfficial &&
+      activationCanEdit &&
+      (activationDirty || mustDisablePersistedActivation)
+    ) {
+      try {
+        const policy = await subscriptionApi.setCodexQuotaActivationPolicy(
+          provider.id,
+          quotaActivationUsable && activationEnabled,
+        );
+        setActivationPolicy(policy);
+        setActivationDirty(false);
+      } catch (error) {
+        toast.error(
+          `${t("usageScript.quotaActivationSaveFailed")}: ${extractErrorMessage(error)}`,
+          { duration: 5000 },
+        );
+        return;
+      }
+    }
     onSave(scriptWithTemplate);
     onClose();
   };
@@ -530,7 +625,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     try {
       // 官方订阅额度模板使用 CLI/OAuth 凭据和官方 API
       if (selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
-        const { subscriptionApi } = await import("@/lib/api/subscription");
         const accountId = isBoundCodexOfficial
           ? (resolveManagedAccountId(
               provider.meta,
@@ -567,7 +661,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
         const baseUrl = providerCredentials.baseUrl ?? "";
         const apiKey = providerCredentials.apiKey ?? "";
-        const { subscriptionApi } = await import("@/lib/api/subscription");
         const result = await subscriptionApi.getBalance(baseUrl, apiKey);
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
@@ -606,7 +699,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const apiKey = isZenMux
           ? (script.apiKey ?? "")
           : (providerCredentials.apiKey ?? "");
-        const { subscriptionApi } = await import("@/lib/api/subscription");
         const quota = await subscriptionApi.getCodingPlanQuota(
           baseUrl,
           apiKey,
@@ -845,6 +937,101 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
+
+  const currentAutoQueryInterval =
+    script.autoQueryInterval ?? script.autoIntervalMinutes ?? 5;
+  const quotaActivationUsable =
+    isBoundCodexOfficial &&
+    selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION &&
+    script.enabled &&
+    currentAutoQueryInterval > 0;
+  const activationStatus =
+    activationPolicy?.lastStatus ?? activationPolicy?.latestAttempt?.status;
+  const activationWindow =
+    activationPolicy?.lastWindowType ??
+    activationPolicy?.latestAttempt?.windowType ??
+    "";
+  const activationModel =
+    activationPolicy?.lastModel ??
+    (activationPolicy?.lastStatus
+      ? null
+      : activationPolicy?.latestAttempt?.model);
+  const activationTimestamp = activationPolicy?.lastStatus
+    ? null
+    : (activationPolicy?.lastAttemptAt ??
+      activationPolicy?.latestAttempt?.endedAt ??
+      activationPolicy?.latestAttempt?.startedAt);
+
+  const quotaActivationPanel =
+    isBoundCodexOfficial &&
+    selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION ? (
+      <div className="mt-4 border-t border-white/10 pt-4 space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="usage-quota-activation">
+              {t("usageScript.quotaActivation")}
+            </Label>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {t("usageScript.quotaActivationHint")}
+            </p>
+            {!quotaActivationUsable && (
+              <p className="text-xs text-amber-400">
+                {t("usageScript.quotaActivationDisabledHint")}
+              </p>
+            )}
+            {activationPolicy && !activationPolicy.canEdit && (
+              <p className="text-xs text-amber-400">
+                {t("usageScript.quotaActivationOwner", {
+                  provider:
+                    activationPolicy.ownerProviderName ||
+                    activationPolicy.ownerProviderId,
+                })}
+              </p>
+            )}
+          </div>
+          <Switch
+            id="usage-quota-activation"
+            checked={activationEnabled}
+            disabled={
+              activationPolicyLoading ||
+              !quotaActivationUsable ||
+              (activationPolicy != null && !activationPolicy.canEdit)
+            }
+            onCheckedChange={(checked) => {
+              setActivationEnabled(checked);
+              setActivationDirty(true);
+            }}
+            aria-label={t("usageScript.quotaActivation")}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("usageScript.quotaActivationManualTestWarning")}
+        </p>
+        {activationStatus && (
+          <>
+            <p className="text-xs text-muted-foreground">
+              {activationStatus === "model_unresolved"
+                ? t("usageScript.quotaActivationModelUnresolved")
+                : t("usageScript.quotaActivationLastStatus", {
+                    status: activationStatus,
+                    window: activationWindow,
+                  })}
+            </p>
+            {activationPolicy && (
+              <p className="text-xs text-muted-foreground">
+                {t("usageScript.quotaActivationLastDetails", {
+                  account: maskActivationAccountId(activationPolicy.accountId),
+                  model: activationModel || "—",
+                  time: activationTimestamp
+                    ? formatActivationTimestamp(activationTimestamp)
+                    : "—",
+                })}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    ) : null;
 
   const footer = (
     <>
@@ -1549,6 +1736,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 />
               </div>
             </div>
+
+            {quotaActivationPanel}
           </div>
 
           {/* 提取器代码 - 专用模板不需要 */}
@@ -1638,6 +1827,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           )}
         </div>
       )}
+
+      {!script.enabled && quotaActivationPanel}
 
       <ConfirmDialog
         isOpen={showUsageConfirm}

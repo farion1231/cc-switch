@@ -7,7 +7,9 @@
 
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::services::model_fetch::FetchedModel;
-use crate::services::subscription::{query_codex_quota, CredentialStatus, SubscriptionQuota};
+use crate::services::subscription::{
+    query_codex_quota_with_observation, CodexQuotaQueryResult, CredentialStatus, SubscriptionQuota,
+};
 use std::sync::Arc;
 use tauri::State;
 
@@ -31,11 +33,25 @@ pub async fn get_codex_oauth_quota(
     account_id: Option<String>,
     state: State<'_, CodexOAuthState>,
 ) -> Result<SubscriptionQuota, String> {
-    let manager = &state.0;
+    fetch_codex_oauth_quota(&app, app_state.inner(), &state.0, account_id).await
+}
 
+/// Shared managed-account quota path used by the Tauri command and provider
+/// usage queries. The coordinator receives only this fresh response, never a
+/// React Query keep-last-good snapshot.
+pub(crate) async fn fetch_codex_oauth_quota(
+    app: &tauri::AppHandle,
+    app_state: &crate::store::AppState,
+    manager: &CodexOAuthManager,
+    account_id: Option<String>,
+) -> Result<SubscriptionQuota, String> {
     // 解析最终使用的账号 ID：显式 > 默认账号 > 无账号 (not_found)
-    let resolved = match account_id {
-        Some(id) => Some(id.trim().to_string()),
+    let resolved = match account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => Some(id.to_string()),
         None => manager.default_account_id().await,
     };
     let Some(id) = resolved else {
@@ -46,26 +62,42 @@ pub async fn get_codex_oauth_quota(
     // Cache by the resolved account, even if the default/binding changes while
     // the request is in flight. Transport errors retain the last good snapshot;
     // authentication/HTTP failures replace it so the tray hides invalid quotas.
-    if let Ok(quota) = &result {
-        app_state.usage_cache.put_codex_oauth(id, quota.clone());
-        crate::tray::schedule_tray_refresh(&app);
+    if let Ok(query) = &result {
+        app_state
+            .usage_cache
+            .put_codex_oauth(id.clone(), query.quota.clone());
+        if query.quota.success {
+            if let Some(observation) = query.observation.as_ref() {
+                if let Err(error) = app_state
+                    .codex_quota_activation
+                    .observe(app.clone(), &id, observation)
+                    .await
+                {
+                    log::warn!("Codex quota activation evaluation failed: {error}");
+                }
+            }
+        }
+        crate::tray::schedule_tray_refresh(app);
     }
-    result
+    result.map(|query| query.quota)
 }
 
 async fn query_codex_oauth_quota_for(
     manager: &CodexOAuthManager,
     id: &str,
-) -> Result<SubscriptionQuota, String> {
+) -> Result<CodexQuotaQueryResult, String> {
     // 获取（必要时自动刷新）access_token
     let token = match manager.get_valid_token_for_account(id).await {
         Ok(t) => t,
         Err(e) => {
-            return Ok(SubscriptionQuota::error(
-                "codex_oauth",
-                CredentialStatus::Expired,
-                format!("Codex OAuth token unavailable: {e}"),
-            ));
+            return Ok(CodexQuotaQueryResult {
+                quota: SubscriptionQuota::error(
+                    "codex_oauth",
+                    CredentialStatus::Expired,
+                    format!("Codex OAuth token unavailable: {e}"),
+                ),
+                observation: None,
+            });
         }
     };
     let chatgpt_account_id = manager
@@ -74,7 +106,7 @@ async fn query_codex_oauth_quota_for(
         .map_err(|e| e.to_string())?;
 
     // 瞬时传输失败以 Err 传播（前端 reject → retry + 保留上次成功值）。
-    query_codex_quota(
+    query_codex_quota_with_observation(
         &token,
         Some(&chatgpt_account_id),
         "codex_oauth",
