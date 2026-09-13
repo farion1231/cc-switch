@@ -217,7 +217,7 @@ export function ModelsDevPickerDialog({
                   value={providerFilter}
                   onValueChange={setProviderFilter}
                 >
-                  <SelectTrigger className="w-44 shrink-0">
+                  <SelectTrigger className="w-48 shrink-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="z-[120] max-h-[min(24rem,var(--radix-select-content-available-height))]">
