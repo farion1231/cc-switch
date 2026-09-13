@@ -264,6 +264,37 @@ describe("SessionManagerPage", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
   });
 
+  it("refreshes body hits with unchanged metadata and highlights a trimmed query", async () => {
+    const search = vi.spyOn(sessionsApi, "search").mockResolvedValue([]);
+    const { client } = renderPage();
+    await screen.findByText("Alpha Session");
+    const originalData = client.getQueryData(["sessions"]);
+
+    openSearch();
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: " buried " },
+    });
+    await waitFor(() => expect(search).toHaveBeenCalledWith("buried", "codex"));
+
+    search.mockResolvedValue([
+      {
+        providerId: "codex",
+        sessionId: "codex-session-2",
+        sourcePath: "/mock/codex/session-2.jsonl",
+        snippets: [{ messageIndex: 0, role: "user", text: "A buried." }],
+      },
+    ]);
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["sessions"] });
+    });
+
+    const snippet = await screen.findByRole("button", { name: /A buried\s*\./ });
+    expect(snippet.querySelector("mark")).toHaveTextContent("buried");
+    expect(client.getQueryData(["sessions"])).toBe(originalData);
+    expect(search).toHaveBeenCalledTimes(2);
+    search.mockRestore();
+  });
+
   it("removes a deleted session from filtered search results", async () => {
     renderPage();
 

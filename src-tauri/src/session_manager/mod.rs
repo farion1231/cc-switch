@@ -1,10 +1,13 @@
 pub mod providers;
+pub mod search;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode, pi};
+
+pub use search::{search_sessions, SessionSearchHit};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
