@@ -603,9 +603,36 @@ async fn query_provider_usage_inner(
             resolve_coding_plan_credentials(&app_type, provider, usage_script);
 
         // 火山方舟用账号 AK/SK 签名查询用量（存于 usage_script，与推理 api_key 分离）；
-        // 其他供应商为 None，service 层沿用 api_key。
-        let access_key_id = usage_script.and_then(|s| s.access_key_id.clone());
-        let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
+        // 其他供应商为 None，service 层沿用 api_key。Agent Plan / Coding Plan 是同一
+        // 账号的两个条目：当前条目未配置完整 AK/SK 时，自动复用其他条目已配置的凭据。
+        let is_volcengine = {
+            let base_lc = base_url.to_lowercase();
+            base_lc.contains("volces.com/api/plan") || base_lc.contains("volces.com/api/coding")
+        };
+        let (access_key_id, secret_access_key) = if is_volcengine {
+            match crate::services::coding_plan::resolve_volcengine_aksk(
+                &state.db,
+                usage_script.and_then(|s| s.aksk_account_id.as_deref()),
+                usage_script.and_then(|s| s.access_key_id.as_deref()),
+                usage_script.and_then(|s| s.secret_access_key.as_deref()),
+                provider.and_then(|p| Some(p.name.as_str())),
+            ) {
+                Ok(cred) => (Some(cred.ak), Some(cred.sk)),
+                // 确定性失败（未配置/账号池空）：写失败快照并在卡片上展示引导
+                Err(msg) => {
+                    return Ok(crate::provider::UsageResult {
+                        success: false,
+                        data: None,
+                        error: Some(msg),
+                    });
+                }
+            }
+        } else {
+            (
+                usage_script.and_then(|s| s.access_key_id.clone()),
+                usage_script.and_then(|s| s.secret_access_key.clone()),
+            )
+        };
         // 智谱团队版：显式 provider 标识 + 组织/项目 ID（与个人版智谱 base_url 相同，
         // 靠 coding_plan_provider == "zhipu_team" 在 service 层路由）。
         let coding_plan_provider = usage_script.and_then(|s| s.coding_plan_provider.clone());
@@ -1189,6 +1216,7 @@ mod native_query_credentials_tests {
             secret_access_key: None,
             team_organization_id: None,
             team_project_id: None,
+            aksk_account_id: None,
         }
     }
 

@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
-import { usageApi, settingsApi, type AppId } from "@/lib/api";
+import { subscriptionApi, usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -22,6 +22,13 @@ import * as parserBabel from "prettier/parser-babel";
 import * as pluginEstree from "prettier/plugins/estree";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
@@ -471,6 +478,135 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     },
   );
 
+  const [volcengineAccounts, setVolcengineAccounts] = useState<{ id: string; label: string }[]>([]);
+  const [akSkStatus, setAkSkStatus] = useState<
+    Awaited<ReturnType<typeof subscriptionApi.getVolcengineAkSkStatus>>
+  | null>(null);
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [editingAccount, setEditingAccount] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [newAccount, setNewAccount] = useState({ label: "", ak: "", sk: "" });
+  const [renaming, setRenaming] = useState(false);
+  const [renameLabel, setRenameLabel] = useState("");
+  const isVolcengineEntry =
+    selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+    script.codingPlanProvider === "volcengine";
+
+  // 火山账号池：拉取账号列表与当前条目生效凭据状态
+  useEffect(() => {
+    if (!isVolcengineEntry) {
+      setVolcengineAccounts([]);
+      setAkSkStatus(null);
+      setAddingAccount(false);
+      setEditingAccount(false);
+      setEditingAccountId(null);
+      return;
+    }
+    let cancelled = false;
+    subscriptionApi
+      .listVolcengineAccounts()
+      .then(async (list) => {
+        if (cancelled) return;
+        setVolcengineAccounts(list);
+        // 空池直接展开新增表单，避免受控 Select 已选中哨兵值后无法触发 onChange。
+        if (list.length === 0) setAddingAccount(true);
+        setAkSkStatus(null);
+        // 状态查询可能把旧版内联凭据迁移入池，因此必须在列表之后读取。
+        try {
+          const status = await subscriptionApi.getVolcengineAkSkStatus(
+            appId,
+            provider.id,
+          );
+          if (!cancelled) setAkSkStatus(status);
+        } catch {
+          if (!cancelled) setAkSkStatus(null);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isVolcengineEntry, appId, provider.id]);
+
+  const refreshVolcengineAccountsAndStatus = async () => {
+    try {
+      const list = await subscriptionApi.listVolcengineAccounts();
+      setVolcengineAccounts(list);
+      setAddingAccount(list.length === 0);
+      if (!editingAccountId || !list.some((a) => a.id === editingAccountId)) {
+        setEditingAccount(false);
+        setEditingAccountId(null);
+      }
+      setAkSkStatus(await subscriptionApi.getVolcengineAkSkStatus(appId, provider.id));
+    } catch {
+      // 状态拉取失败静默忽略（保持上次值）
+    }
+  };
+
+  const volcengineAkSkStatusText = () => {
+    if (!akSkStatus) return "";
+    const cred = `AK ${akSkStatus.akMasked ?? ""} / SK ${akSkStatus.skMasked ?? ""}`;
+    if (akSkStatus.kind === "referenced")
+      return `${t("usageScript.akSkStatusReferenced", { name: akSkStatus.accountLabel ?? "" })}：${cred}`;
+    if (akSkStatus.kind === "default")
+      return `${t("usageScript.akSkStatusDefault", { name: akSkStatus.accountLabel ?? "" })}：${cred}`;
+    if (akSkStatus.kind === "legacy")
+      return `${t("usageScript.akSkStatusLegacy")}：${cred}`;
+    if (akSkStatus.kind === "migrated")
+      return `${t("usageScript.akSkStatusMigrated", { name: akSkStatus.accountLabel ?? "" })}：${cred}`;
+    return t("usageScript.akSkStatusNone");
+  };
+
+  const selectedVolcengineAccountId =
+    script.akskAccountId && volcengineAccounts.some((a) => a.id === script.akskAccountId)
+      ? script.akskAccountId
+      : (volcengineAccounts[0]?.id ?? "");
+  const selectedVolcengineAccountLabel =
+    volcengineAccounts.find((a) => a.id === selectedVolcengineAccountId)?.label ?? "";
+
+  const handleSaveVolcengineAccount = async () => {
+    try {
+      const saved = await subscriptionApi.saveVolcengineAccount({
+        // 更新指定池账号；新增时不传 id。
+        id: editingAccount ? (editingAccountId ?? undefined) : undefined,
+        accessKeyId: newAccount.ak,
+        secretAccessKey: newAccount.sk,
+        label: editingAccount ? undefined : (newAccount.label || undefined),
+      });
+      setAddingAccount(false);
+      setEditingAccount(false);
+      setEditingAccountId(null);
+      setNewAccount({ label: "", ak: "", sk: "" });
+      setScript({ ...script, akskAccountId: saved.id });
+      await refreshVolcengineAccountsAndStatus();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const handleDeleteVolcengineAccount = async () => {
+    if (!selectedVolcengineAccountId) return;
+    if (!window.confirm(t("usageScript.volcengineDeleteConfirm", { name: selectedVolcengineAccountLabel }))) return;
+    try {
+      await subscriptionApi.deleteVolcengineAccount(selectedVolcengineAccountId);
+      setScript({ ...script, akskAccountId: undefined });
+      await refreshVolcengineAccountsAndStatus();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const handleRenameVolcengineAccount = async () => {
+    if (!selectedVolcengineAccountId || !renameLabel.trim()) return;
+    try {
+      await subscriptionApi.renameVolcengineAccount(selectedVolcengineAccountId, renameLabel.trim());
+      setRenaming(false);
+      await refreshVolcengineAccountsAndStatus();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAccessToken, setShowAccessToken] = useState(false);
 
@@ -615,6 +751,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           isZhipuTeam ? script.codingPlanProvider : undefined,
           isZhipuTeam ? script.teamOrganizationId : undefined,
           isZhipuTeam ? script.teamProjectId : undefined,
+          isVolcengine ? script.akskAccountId : undefined,
+          provider.name,
         );
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
@@ -813,6 +951,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             ? script.teamOrganizationId
             : undefined,
           teamProjectId: isZhipuTeam ? script.teamProjectId : undefined,
+          akskAccountId: isVolcengine ? script.akskAccountId : undefined,
           codingPlanProvider: provider,
         });
       } else if (presetName === TEMPLATE_TYPES.BALANCE) {
@@ -1411,6 +1550,146 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       </div>
                     </div>
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="usage-volcengine-account">
+                      {t("usageScript.volcengineUseAccount")}
+                    </Label>
+                    <Select
+                      value={selectedVolcengineAccountId || "__add__"}
+                      onValueChange={(value) => {
+                        if (value === "__add__") {
+                          setEditingAccount(false);
+                          setEditingAccountId(null);
+                          setAddingAccount(true);
+                          return;
+                        }
+                        setAddingAccount(false);
+                        setEditingAccount(false);
+                        setEditingAccountId(null);
+                        setScript({ ...script, akskAccountId: value });
+                      }}
+                    >
+                      <SelectTrigger id="usage-volcengine-account" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {volcengineAccounts.map((acc) => (
+                          <SelectItem key={acc.id} value={acc.id}>
+                            {acc.label}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="__add__">
+                          {t("usageScript.volcengineAddAccountOption")}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {akSkStatus && (
+                      <p
+                        className={cn(
+                          "text-xs",
+                          akSkStatus.configured ? "text-green-500" : "text-amber-500",
+                        )}
+                      >
+                        {volcengineAkSkStatusText()}
+                      </p>
+                    )}
+                  </div>
+
+                  {(addingAccount || editingAccount) && (
+                    <div className="space-y-2 rounded-md border border-white/10 p-3">
+                      {!editingAccount && (
+                        <Input
+                          placeholder={t("usageScript.volcengineAccountNamePlaceholder")}
+                          value={newAccount.label}
+                          onChange={(e) => setNewAccount({ ...newAccount, label: e.target.value })}
+                        />
+                      )}
+                      <Input
+                        placeholder={editingAccount ? t("usageScript.volcengineAccessKeyIdPlaceholder") : "AccessKey ID"}
+                        value={newAccount.ak}
+                        onChange={(e) => setNewAccount({ ...newAccount, ak: e.target.value })}
+                        autoComplete="off"
+                      />
+                      <Input
+                        type="password"
+                        placeholder={editingAccount ? t("usageScript.volcengineSecretAccessKeyPlaceholder") : "Secret Access Key"}
+                        value={newAccount.sk}
+                        onChange={(e) => setNewAccount({ ...newAccount, sk: e.target.value })}
+                        autoComplete="off"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          disabled={!newAccount.ak || !newAccount.sk}
+                          onClick={handleSaveVolcengineAccount}
+                        >
+                          {t("usageScript.volcengineAccountSave")}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setAddingAccount(false);
+                            setEditingAccount(false);
+                            setEditingAccountId(null);
+                            setNewAccount({ label: "", ak: "", sk: "" });
+                          }}
+                        >
+                          {t("usageScript.volcengineAccountCancel")}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!addingAccount && !editingAccount && selectedVolcengineAccountId && (
+                    renaming ? (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={renameLabel}
+                          onChange={(e) => setRenameLabel(e.target.value)}
+                          className="h-8"
+                        />
+                        <Button size="sm" onClick={handleRenameVolcengineAccount}>
+                          {t("usageScript.volcengineAccountSave")}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setRenaming(false)}>
+                          {t("usageScript.volcengineAccountCancel")}
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-3 text-xs text-muted-foreground">
+                        <button
+                          type="button"
+                          className="underline-offset-2 hover:underline hover:text-foreground"
+                          onClick={() => {
+                            setRenaming(true);
+                            setRenameLabel(selectedVolcengineAccountLabel);
+                          }}
+                        >
+                          {t("usageScript.volcengineRename")}
+                        </button>
+                        <button
+                          type="button"
+                          className="underline-offset-2 hover:underline hover:text-foreground"
+                          onClick={() => {
+                            setRenaming(false);
+                            setNewAccount({ label: "", ak: "", sk: "" });
+                            setEditingAccount(true);
+                            setEditingAccountId(selectedVolcengineAccountId);
+                          }}
+                        >
+                          {t("usageScript.volcengineEditCredentials")}
+                        </button>
+                        <button
+                          type="button"
+                          className="hover:text-red-500 underline-offset-2 hover:underline"
+                          onClick={handleDeleteVolcengineAccount}
+                        >
+                          {t("usageScript.volcengineDeleteAccount")}
+                        </button>
+                      </div>
+                    )
+                  )}
                 </div>
               )}
 

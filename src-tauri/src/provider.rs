@@ -315,6 +315,10 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "teamProjectId")]
     pub team_project_id: Option<String>,
+    /// 火山账号池：本条目使用的账号 id（缺省用默认账号）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "akskAccountId")]
+    pub aksk_account_id: Option<String>,
 }
 
 /// 用量数据
