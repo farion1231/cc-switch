@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
     "effortMax": "Max Effort Thinking",
-    "disableAutoUpgrade": "Disable Auto-Upgrade"
+    "disableAutoUpgrade": "Disable Auto-Upgrade",
+    "disableArtifact": "Disable Artifact Tool"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -1290,6 +1291,7 @@
       "ucloudCoding": "Compshare Coding Plan",
       "shengsuanyun": "Shengsuanyun",
       "qiniu": "Qiniu",
+      "doubaoseed": "Volcengine Doubao",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
@@ -3287,6 +3289,7 @@
     "title": "Subscription Quota",
     "fiveHour": "5-Hour",
     "sevenDay": "7-Day",
+    "sevenDayFable": "Fable",
     "sevenDayOpus": "7-Day (Opus)",
     "sevenDaySonnet": "7-Day (Sonnet)",
     "thirtyDay": "30-Day",

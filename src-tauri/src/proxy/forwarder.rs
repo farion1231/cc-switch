@@ -1501,6 +1501,13 @@ impl RequestForwarder {
             } else {
                 append_query_to_full_url(&base_url, passthrough_query.as_deref())
             }
+        } else if let Some(endpoint) = codex_standalone_endpoint
+            .filter(|endpoint| endpoint.base_url_is_source_endpoint(&base_url))
+        {
+            // Same tolerance as `codex_chat_base_is_full_endpoint` below: a base URL
+            // pasted as a complete endpoint with the full-URL switch off would
+            // otherwise become `.../chat/completions/images/generations`.
+            rewrite_codex_standalone_full_url(&base_url, passthrough_query.as_deref(), endpoint)?
         } else if codex_chat_base_is_full_endpoint || codex_anthropic_base_is_full_endpoint {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
         } else {
@@ -3374,10 +3381,21 @@ impl CodexStandaloneEndpoint {
     }
 
     fn source_suffix(self, parsed_path: &str) -> Option<&'static str> {
+        // Match the case-insensitive pasted-endpoint check. Only normalize for
+        // matching; the rewrite keeps the original URL prefix and query intact.
+        let parsed_path = parsed_path.to_ascii_lowercase();
         self.source_suffixes()
             .iter()
             .copied()
             .find(|suffix| parsed_path.ends_with(suffix))
+    }
+
+    /// Whether a base URL (full-URL switch off) already ends in one of this
+    /// endpoint's source suffixes, i.e. was pasted as a complete endpoint URL.
+    fn base_url_is_source_endpoint(self, base_url: &str) -> bool {
+        self.source_suffixes()
+            .iter()
+            .any(|suffix| base_url_is_full_endpoint(base_url, suffix))
     }
 }
 
@@ -4829,6 +4847,10 @@ mod tests {
     fn alpha_search_rewrites_known_full_responses_urls() {
         let cases = [
             (
+                "https://relay.example/Gateway/%2F/v1/Responses/Compact/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/%2F/v1/alpha/search?api-version=CaseValue&client_version=0.144.6",
+            ),
+            (
                 "https://relay.example/v1/responses",
                 "https://relay.example/v1/alpha/search?client_version=0.144.6",
             ),
@@ -4858,6 +4880,10 @@ mod tests {
     #[test]
     fn images_generations_rewrites_known_full_codex_urls() {
         let cases = [
+            (
+                "https://relay.example/Gateway/v1/Images/Edits/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/v1/images/generations?api-version=CaseValue&client_version=0.145.0",
+            ),
             (
                 "https://relay.example/v1/responses",
                 "https://relay.example/v1/images/generations?client_version=0.145.0",
@@ -4939,6 +4965,10 @@ mod tests {
     #[test]
     fn images_edits_rewrites_known_full_codex_urls() {
         let cases = [
+            (
+                "https://relay.example/Gateway/v1/Chat/Completions/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/v1/images/edits?api-version=CaseValue&client_version=0.145.0",
+            ),
             (
                 "https://relay.example/v1/responses",
                 "https://relay.example/v1/images/edits?client_version=0.145.0",
@@ -5318,7 +5348,7 @@ mod tests {
     fn prevention_replaces_when_all_switches_on_and_model_in_heuristic_list() {
         let fwd = forwarder_with_rectifier(RectifierConfig::default());
         let provider = provider_with_settings(json!({}));
-        let mut body = body_with_image("deepseek-v4-pro");
+        let mut body = body_with_image("qwen3-coder-plus");
 
         let replaced = fwd.apply_media_prevention(&mut body, &provider);
 
@@ -5334,7 +5364,7 @@ mod tests {
             ..RectifierConfig::default()
         });
         let provider = provider_with_settings(json!({}));
-        let mut body = body_with_image("deepseek-v4-pro");
+        let mut body = body_with_image("qwen3-coder-plus");
 
         let replaced = fwd.apply_media_prevention(&mut body, &provider);
 
@@ -5349,7 +5379,7 @@ mod tests {
             ..RectifierConfig::default()
         });
         let provider = provider_with_settings(json!({}));
-        let mut body = body_with_image("deepseek-v4-pro");
+        let mut body = body_with_image("qwen3-coder-plus");
 
         assert_eq!(fwd.apply_media_prevention(&mut body, &provider), 0);
         assert_eq!(body["messages"][0]["content"][0]["type"], "image");
@@ -5365,7 +5395,7 @@ mod tests {
 
         // (a) 名单内模型、无显式声明 → 不再预替换
         let bare_provider = provider_with_settings(json!({}));
-        let mut list_body = body_with_image("deepseek-v4-pro");
+        let mut list_body = body_with_image("qwen3-coder-plus");
         assert_eq!(
             fwd.apply_media_prevention(&mut list_body, &bare_provider),
             0,

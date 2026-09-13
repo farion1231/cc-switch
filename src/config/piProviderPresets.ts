@@ -72,6 +72,13 @@ const XIAOMI_THINKING_COMPAT = {
   thinkingFormat: "deepseek",
 } as const;
 
+// DashScope's /compatible-mode/v1 returns reasoning in Qwen's own envelope and
+// rejects the `developer` role, so neither OpenAI nor DeepSeek thinking applies.
+const QWEN_THINKING_COMPAT = {
+  thinkingFormat: "qwen",
+  supportsDeveloperRole: false,
+} as const;
+
 const KIMI_K3_COMPAT = {
   supportsStore: false,
   supportsDeveloperRole: false,
@@ -406,11 +413,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "APIKEY.FUN",
     providerKey: "cc-switch-apikey-fun",
-    websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    websiteUrl: "https://apikey.fan",
+    apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
     settingsConfig: {
       name: "APIKEY.FUN",
-      baseUrl: "https://api.apikey.fun",
+      baseUrl: "https://api.apikey.fan",
       api: "anthropic-messages",
       apiKey: "",
       models: [
@@ -605,14 +612,15 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#3370FF",
   },
   {
-    name: "DouBaoSeed",
+    name: "Volcengine Doubao",
+    nameKey: "providerForm.presets.doubaoseed",
     providerKey: "cc-switch-dou-bao-seed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
-      name: "DouBaoSeed",
+      name: "Volcengine Doubao",
       baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
       api: "openai-completions",
       apiKey: "",
@@ -1014,45 +1022,87 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#0F62FE",
   },
   {
-    name: "Bailian",
-    providerKey: "cc-switch-bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
-    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    name: "千问AI平台",
+    providerKey: "cc-switch-qianwenai",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
-      name: "Bailian",
+      name: "千问AI平台",
       baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("qwen/qwen3-coder-plus", {
-          id: "qwen3-coder-plus",
-        }),
+        {
+          ...piModel("qwen/qwen3.8-max", {
+            id: "qwen3.8-max",
+          }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    providerKey: "cc-switch-qianwenai-token-plan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    settingsConfig: {
+      name: "千问AI平台 Token Plan",
+      baseUrl:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "qianwenai",
     iconColor: "#624AFF",
   },
   // ===== QwenCloud（DashScope 国际站）=====
-  // 按量付费走 OpenAI 兼容层，Coding / Token Plan 走官方 Anthropic 地址
-  // （与 Pi 其余 anthropic-messages 预设一致，地址不带 /v1）。
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // 按量付费与 Token Plan 都走 OpenAI 兼容层（/compatible-mode/v1）。
   {
     name: "QwenCloud",
     providerKey: "cc-switch-qwencloud",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       name: "QwenCloud",
       baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
-        piModel("qwen/qwen3.7-plus", { id: "qwen3.7-plus" }),
+        {
+          ...piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
@@ -1074,27 +1124,38 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {
     name: "QwenCloud Token Plan",
     providerKey: "cc-switch-qwencloud-token-plan",
-    websiteUrl: "https://www.qwencloud.com",
-    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       name: "QwenCloud Token Plan",
       baseUrl:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
-      api: "anthropic-messages",
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
-        piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+        {
+          ...piModel("qwen/qwen3.8-max", { id: "qwen3.8-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.8-flash", { id: "qwen3.8-flash" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
+        {
+          ...piModel("qwen/qwen3.7-max", { id: "qwen3.7-max" }),
+          compat: { ...QWEN_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
-    icon: "qwen",
+    icon: "qwencloud",
     iconColor: "#6336E7",
   },
   {

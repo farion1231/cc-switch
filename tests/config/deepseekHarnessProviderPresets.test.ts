@@ -57,7 +57,9 @@ describe("DeepSeek Harness provider presets", () => {
       "Zhipu GLM",
       "OpenRouter",
       "MiniMax",
-      "Bailian",
+      // Upstream v3.20.3 rebranded Bailian to 千问AI平台; the DSH catalog
+      // derives the new name automatically.
+      "千问AI平台",
     ]) {
       expect(names).toContain(expected);
     }

@@ -95,8 +95,8 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://apikey.fun/register?aff=CCSwitch"><img src="assets/partners/logos/apikey_banner.png" alt="APIKEY.FUN" width="150"></a></td>
-<td>Danke an APIKEY.FUN für die Unterstützung dieses Projekts! APIKEY.FUN ist eine professionelle KI-Relay-Plattform auf Enterprise-Niveau, die Unternehmen und einzelnen Entwicklern stabilen, effizienten und kostengünstigen Zugriff auf KI-Modell-APIs bietet. Die Plattform unterstützt beliebte Mainstream-Modelle wie Claude, OpenAI und Gemini, mit Preisen ab 7 % der offiziellen Tarife. Wer sich über den <a href="https://apikey.fun/register?aff=CCSwitch">exklusiven Link</a> dieses Projekts registriert, kann ein exklusives Angebot von bis zu <strong>dauerhaft 5 % Rabatt auf Aufladungen</strong> erhalten.</td>
+<td width="180"><a href="https://apikey.fan/register?aff=CCSwitch"><img src="assets/partners/logos/apikey_banner.png" alt="APIKEY.FUN" width="150"></a></td>
+<td>Danke an APIKEY.FUN für die Unterstützung dieses Projekts! APIKEY.FUN ist eine professionelle KI-Relay-Plattform auf Enterprise-Niveau, die Unternehmen und einzelnen Entwicklern stabilen, effizienten und kostengünstigen Zugriff auf KI-Modell-APIs bietet. Die Plattform unterstützt beliebte Mainstream-Modelle wie Claude, OpenAI und Gemini, mit Preisen ab 7 % der offiziellen Tarife. Wer sich über den <a href="https://apikey.fan/register?aff=CCSwitch">exklusiven Link</a> dieses Projekts registriert, kann ein exklusives Angebot von bis zu <strong>dauerhaft 5 % Rabatt auf Aufladungen</strong> erhalten.</td>
 </tr>
 
 <tr>
