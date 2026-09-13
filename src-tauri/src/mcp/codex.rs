@@ -890,8 +890,7 @@ mod tests {
 
     #[test]
     fn infer_type_defaults_to_stdio_without_url() {
-        let entry: toml::value::Table =
-            toml::from_str(r#"command = "npx""#).expect("parse");
+        let entry: toml::value::Table = toml::from_str(r#"command = "npx""#).expect("parse");
         assert_eq!(infer_codex_mcp_type(&entry), "stdio");
     }
 
@@ -948,10 +947,7 @@ mod tests {
             Some("stdio"),
             "explicit stdio with command must stay stdio"
         );
-        assert_eq!(
-            table.get("command").and_then(|i| i.as_str()),
-            Some("npx")
-        );
+        assert_eq!(table.get("command").and_then(|i| i.as_str()), Some("npx"));
     }
 
     #[test]
