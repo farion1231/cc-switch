@@ -1033,10 +1033,15 @@ pub fn write_codex_live_atomic(
         None
     };
 
-    // 准备写入内容
-    let cfg_text = match config_text_opt {
+    // 准备写入内容，同时 merge live config 中非 CC-Switch 管理的 sections
+    let raw_cfg_text = match config_text_opt {
         Some(s) => s.to_string(),
         None => String::new(),
+    };
+    let cfg_text = if raw_cfg_text.trim().is_empty() {
+        raw_cfg_text
+    } else {
+        merge_live_non_managed_provider_sections(&raw_cfg_text)?
     };
     if !cfg_text.trim().is_empty() {
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
@@ -1103,6 +1108,77 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
     !id.is_empty() && !CODEX_RESERVED_MODEL_PROVIDER_IDS.contains(&id)
 }
 
+/// Merge non-CC-Switch-managed `[model_providers.*]` sections from the live
+/// config.toml into the config text about to be written.
+///
+/// CC Switch only stores its own active provider in the database. When it
+/// writes config.toml, any `[model_providers.*]` sections that were
+/// manually added by the user (legacy aliases, third-party providers, etc.)
+/// are silently dropped because they never existed in the DB-stored config.
+///
+/// This function reads the current live config.toml, identifies sections
+/// that are NOT present in the new config (i.e., not managed by CC Switch),
+/// and merges them back in. This preserves user-added provider aliases that
+/// old Codex threads may reference.
+pub fn merge_live_non_managed_provider_sections(new_config: &str) -> Result<String, AppError> {
+    if new_config.trim().is_empty() {
+        return Ok(new_config.to_string());
+    }
+
+    let live_path = get_codex_config_path();
+    if !live_path.exists() {
+        return Ok(new_config.to_string());
+    }
+
+    let live_text = fs::read_to_string(&live_path).unwrap_or_default();
+    if live_text.trim().is_empty() {
+        return Ok(new_config.to_string());
+    }
+
+    let live_doc = live_text.parse::<DocumentMut>().unwrap_or_default();
+    let mut new_doc = new_config.parse::<DocumentMut>().unwrap_or_default();
+
+    let live_providers = match live_doc.get("model_providers") {
+        Some(item) => item.as_table_like(),
+        None => None,
+    };
+    let live_providers = match live_providers {
+        Some(t) => t,
+        None => return Ok(new_config.to_string()),
+    };
+
+    for (id, live_section) in live_providers.iter() {
+        // id is &str from toml_edit table iteration — no .as_str() needed.
+        // Skip if the new config already has this section (CC Switch manages it).
+        if let Some(new_providers) = new_doc
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+        {
+            if new_providers.contains_key(id) {
+                continue;
+            }
+        }
+
+        // This section exists in live but not in the new config — preserve it.
+        // Ensure `name` is always present (Codex requires it).
+        let mut patched_section = live_section.clone();
+        if let Some(table) = patched_section.as_table_like_mut() {
+            if !table.contains_key("name") {
+                table.insert("name", toml_edit::Item::Value(toml_edit::Value::from(id)));
+            }
+        }
+
+        if let Some(new_providers) = new_doc
+            .get_mut("model_providers")
+            .and_then(|item| item.as_table_like_mut())
+        {
+            new_providers.insert(id, patched_section);
+        }
+    }
+
+    Ok(new_doc.to_string())
+}
+
 /// Write only Codex `config.toml` for provider switching.
 ///
 /// Codex login state lives in `auth.json`; provider routing, endpoint, model,
@@ -1110,9 +1186,17 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
 /// should not overwrite the user's ChatGPT login cache.
 pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
     let config_path = get_codex_config_path();
-    let cfg_text = match config_text_opt {
+    let raw_cfg_text = match config_text_opt {
         Some(config_text) => config_text.to_string(),
         None => String::new(),
+    };
+
+    // Merge live config 中非 CC-Switch 管理的 [model_providers.*] sections，
+    // 防止用户手写的 legacy aliases（如 [model_providers.proxy]）被覆盖丢失。
+    let cfg_text = if raw_cfg_text.trim().is_empty() {
+        raw_cfg_text
+    } else {
+        merge_live_non_managed_provider_sections(&raw_cfg_text)?
     };
 
     if !cfg_text.trim().is_empty() {
