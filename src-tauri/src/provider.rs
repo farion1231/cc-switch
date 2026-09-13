@@ -642,6 +642,29 @@ pub struct UniversalProviderApps {
     pub gemini: bool,
 }
 
+/// CC Switch 代理内部路由表中的一条上游目标
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamRoute {
+    pub id: String,
+    pub name: String,
+    /// 协议类型：anthropic | openai | gemini
+    #[serde(default)]
+    pub protocol: String,
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    #[serde(rename = "apiKey")]
+    pub api_key: String,
+    /// 上游支持的模型名称列表（从上游获取后选择启用）
+    #[serde(default)]
+    #[serde(rename = "modelNames")]
+    pub model_names: Vec<String>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// 路由优先级（数字越大越优先；未配置默认 0，同优先级随机）
+    #[serde(default)]
+    pub priority: u32,
+}
+
 /// Claude 模型配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClaudeModelConfig {
@@ -739,6 +762,17 @@ pub struct UniversalProvider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "sortIndex")]
     pub sort_index: Option<usize>,
+    /// 是否启用路由（默认启用）
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// CC Switch 代理专用：内部路由表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "routes")]
+    pub routes: Vec<UpstreamRoute>,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 impl UniversalProvider {
@@ -765,6 +799,20 @@ impl UniversalProvider {
             meta: None,
             created_at: Some(chrono::Utc::now().timestamp_millis()),
             sort_index: None,
+            enabled: true,
+            routes: vec![],
+        }
+    }
+
+    /// 生成派生 provider 的 meta：cc_switch 类型强制标记 providerType，
+    /// 供前端识别"本地代理 + 路由"供应商（必须接管才能工作）。
+    fn derived_meta(&self) -> Option<ProviderMeta> {
+        if self.provider_type == "cc_switch" {
+            let mut meta = self.meta.clone().unwrap_or_default();
+            meta.provider_type = Some("cc_switch".to_string());
+            Some(meta)
+        } else {
+            self.meta.clone()
         }
     }
 
@@ -808,7 +856,7 @@ impl UniversalProvider {
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -873,7 +921,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -908,7 +956,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,

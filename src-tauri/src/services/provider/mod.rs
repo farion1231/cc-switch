@@ -7076,6 +7076,161 @@ impl ProviderService {
         }
     }
 
+    /// 仅将统一供应商的 API 地址和认证信息更新到已存在的子供应商。
+    ///
+    /// 与完整同步不同，此操作不会创建或删除子供应商，也不会覆盖模型、路由
+    /// 或其它应用专属配置。
+    pub fn sync_universal_api_config_to_apps(state: &AppState, id: &str) -> Result<bool, AppError> {
+        let provider = state
+            .db
+            .get_universal_provider(id)?
+            .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
+
+        let mut live_failures = Vec::new();
+
+        if provider.apps.claude {
+            let child_id = format!("universal-claude-{id}");
+            if let Some(mut child) = state.db.get_provider_by_id(&child_id, "claude")? {
+                let env = child
+                    .settings_config
+                    .as_object_mut()
+                    .map(|root| {
+                        root.entry("env")
+                            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                    })
+                    .and_then(Value::as_object_mut);
+                if let Some(env) = env {
+                    env.insert(
+                        "ANTHROPIC_BASE_URL".to_string(),
+                        Value::String(provider.base_url.clone()),
+                    );
+                    env.insert(
+                        "ANTHROPIC_AUTH_TOKEN".to_string(),
+                        Value::String(provider.api_key.clone()),
+                    );
+                    if env.contains_key("ANTHROPIC_API_KEY") {
+                        env.insert(
+                            "ANTHROPIC_API_KEY".to_string(),
+                            Value::String(provider.api_key.clone()),
+                        );
+                    }
+                }
+                state.db.save_provider("claude", &child)?;
+                Self::project_universal_child_to_live(
+                    state,
+                    AppType::Claude,
+                    &child_id,
+                    &mut live_failures,
+                );
+            }
+        }
+
+        if provider.apps.codex {
+            let child_id = format!("universal-codex-{id}");
+            if let Some(mut child) = state.db.get_provider_by_id(&child_id, "codex")? {
+                if let Some(auth) = child
+                    .settings_config
+                    .as_object_mut()
+                    .map(|root| {
+                        root.entry("auth")
+                            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                    })
+                    .and_then(Value::as_object_mut)
+                {
+                    auth.insert(
+                        "OPENAI_API_KEY".to_string(),
+                        Value::String(provider.api_key.clone()),
+                    );
+                }
+
+                let config = child
+                    .settings_config
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let mut doc = config.parse::<toml_edit::DocumentMut>().map_err(|e| {
+                    AppError::Message(format!("Codex config TOML parse error: {e}"))
+                })?;
+                let base_url = provider.base_url.trim_end_matches('/');
+                let origin_only = match base_url.split_once("://") {
+                    Some((_scheme, rest)) => !rest.contains('/'),
+                    None => !base_url.contains('/'),
+                };
+                let codex_base_url = if base_url.ends_with("/v1") || !origin_only {
+                    base_url.to_string()
+                } else {
+                    format!("{base_url}/v1")
+                };
+                let providers = doc
+                    .get_mut("model_providers")
+                    .and_then(|item| item.as_table_like_mut());
+                let custom = providers
+                    .and_then(|table| table.get_mut("custom"))
+                    .and_then(|item| item.as_table_like_mut());
+                if let Some(custom) = custom {
+                    custom.insert("base_url", toml_edit::value(codex_base_url));
+                } else if doc.get("base_url").is_some() {
+                    doc["base_url"] = toml_edit::value(codex_base_url);
+                } else {
+                    return Err(AppError::Message(
+                        "Codex 子供应商配置中缺少 model_providers.custom.base_url".to_string(),
+                    ));
+                }
+                if let Some(root) = child.settings_config.as_object_mut() {
+                    root.insert("config".to_string(), Value::String(doc.to_string()));
+                }
+                state.db.save_provider("codex", &child)?;
+                Self::project_universal_child_to_live(
+                    state,
+                    AppType::Codex,
+                    &child_id,
+                    &mut live_failures,
+                );
+            }
+        }
+
+        if provider.apps.gemini {
+            let child_id = format!("universal-gemini-{id}");
+            if let Some(mut child) = state.db.get_provider_by_id(&child_id, "gemini")? {
+                if let Some(env) = child
+                    .settings_config
+                    .as_object_mut()
+                    .map(|root| {
+                        root.entry("env")
+                            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                    })
+                    .and_then(Value::as_object_mut)
+                {
+                    env.insert(
+                        "GOOGLE_GEMINI_BASE_URL".to_string(),
+                        Value::String(provider.base_url.clone()),
+                    );
+                    env.insert(
+                        "GEMINI_API_KEY".to_string(),
+                        Value::String(provider.api_key.clone()),
+                    );
+                }
+                state.db.save_provider("gemini", &child)?;
+                Self::project_universal_child_to_live(
+                    state,
+                    AppType::Gemini,
+                    &child_id,
+                    &mut live_failures,
+                );
+            }
+        }
+
+        if live_failures.is_empty() {
+            Ok(true)
+        } else {
+            Err(AppError::Message(format!(
+                "统一供应商 API 配置已保存到数据库，但以下应用的配置文件未能写入：{}",
+                live_failures.join("、")
+            )))
+        }
+    }
+
     /// 递归合并 JSON：base 为底，patch 覆盖同名字段
     fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
         use serde_json::Value;

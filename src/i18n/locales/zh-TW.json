@@ -1711,6 +1711,7 @@
     "responseModel": "回傳模型",
     "noData": "暫無資料",
     "unknownProvider": "未知供應商",
+    "routeBadge": "路由",
     "stream": "串流",
     "nonStream": "非串流",
     "source": "來源",
@@ -3047,6 +3048,9 @@
     "saveAndSync": "儲存並同步",
     "savedAndSynced": "已儲存並同步至所有應用程式",
     "saveAndSyncError": "儲存並同步失敗",
+    "updateApiConfig": "更新 API 設定",
+    "apiConfigUpdated": "API 設定已更新至各應用程式",
+    "apiConfigUpdateError": "更新 API 設定失敗",
     "configJsonPreview": "設定 JSON 預覽",
     "configJsonPreviewHint": "以下是將要同步至各應用程式的設定內容（僅覆寫顯示的欄位，保留其他自訂設定）"
   },

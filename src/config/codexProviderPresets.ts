@@ -2903,4 +2903,18 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "SenseNova",
+    websiteUrl: "https://platform.sensenova.cn",
+    apiKeyUrl: "https://platform.sensenova.cn",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "sensenova",
+      "https://token.sensenova.cn/v1",
+      "sensenova-6.7-flash-lite",
+    ),
+    category: "cn_official",
+    icon: "sensenova",
+    iconColor: "#1177E4",
+  },
 ];

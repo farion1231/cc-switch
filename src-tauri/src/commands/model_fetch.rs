@@ -117,6 +117,15 @@ pub async fn fetch_models_for_config(
     .await
 }
 
+#[tauri::command(rename_all = "camelCase")]
+pub async fn fetch_upstream_models(
+    protocol: String,
+    base_url: String,
+    api_key: String,
+) -> Result<Vec<String>, String> {
+    model_fetch::fetch_upstream_route_models(&protocol, &base_url, &api_key).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_opencode_models, OpenCodeModelRef};

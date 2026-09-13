@@ -88,6 +88,34 @@ const reconcileCodexLiveAuth = (
   };
 };
 
+function restoreProviderCredentials(
+  appId: AppId,
+  liveSettings: Record<string, unknown>,
+  storedSettings: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = { ...liveSettings };
+  if (appId === "codex") {
+    // Live Codex auth belongs to the currently active provider. The stored
+    // key is used only when no live snapshot exists (handled by the caller).
+    return result;
+  }
+  const storedEnv = asRecord(storedSettings.env);
+  if (!storedEnv) return result;
+  const liveEnv = { ...(asRecord(result.env) ?? {}) };
+  for (const key of [
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+  ]) {
+    delete liveEnv[key];
+    if (Object.prototype.hasOwnProperty.call(storedEnv, key))
+      liveEnv[key] = storedEnv[key];
+  }
+  result.env = liveEnv;
+  return result;
+}
+
 export function EditProviderDialog({
   open,
   provider,
@@ -249,6 +277,10 @@ export function EditProviderDialog({
             provider?.category,
           )
         : (liveSettings ?? storedSettings ?? {});
+    const credentialsRestored =
+      liveSettings && storedSettings
+        ? restoreProviderCredentials(appId, base, storedSettings)
+        : base;
 
     // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
     // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
@@ -264,11 +296,11 @@ export function EditProviderDialog({
       const dbCatalog = (provider.settingsConfig as Record<string, unknown>)
         .modelCatalog;
       if (dbCatalog !== undefined) {
-        return { ...base, modelCatalog: dbCatalog };
+        return { ...credentialsRestored, modelCatalog: dbCatalog };
       }
     }
 
-    return base;
+    return credentialsRestored;
   }, [liveSettings, provider?.settingsConfig, provider?.category, appId]); // 只依赖表单初始化所需字段，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单

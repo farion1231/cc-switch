@@ -73,6 +73,7 @@ interface CodexFormFieldsProps {
   providerId?: string;
   // xAI OAuth 托管预设（Grok 订阅）：隐藏 API Key / 端点输入，挂账号选择区块
   isXaiOauthPreset?: boolean;
+  isCcSwitch?: boolean;
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
@@ -368,6 +369,7 @@ export function CodexFormFields({
   appId = "codex",
   providerId,
   isXaiOauthPreset,
+  isCcSwitch = false,
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
@@ -753,7 +755,7 @@ export function CodexFormFields({
       )}
 
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isCodexOauthPreset && !isXaiOauthPreset && (
+      {!isCodexOauthPreset && !isXaiOauthPreset && !isCcSwitch && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"

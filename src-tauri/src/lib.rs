@@ -59,7 +59,11 @@ pub use mcp::{
     sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
-pub use provider::{Provider, ProviderMeta};
+pub use provider::{
+    ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, Provider, ProviderMeta,
+    UniversalProvider, UniversalProviderApps, UniversalProviderModels,
+};
+pub use proxy::model_router::ModelRouter;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::reapply_current_codex_official_live,
@@ -1481,6 +1485,7 @@ pub fn run() {
             // model list fetch (OpenAI-compatible /v1/models)
             commands::fetch_models_for_config,
             commands::get_opencode_models,
+            commands::fetch_upstream_models,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,
@@ -1629,6 +1634,7 @@ pub fn run() {
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
+            commands::sync_universal_provider_api_config,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
