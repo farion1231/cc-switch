@@ -49,6 +49,11 @@ use super::types::{MaskRuleKind, OutboundMaskConfig};
 /// 为 `CONNSTR`（7），留足余量取 48。超过这个长度的 `{{` 开头一定不是占位符，
 /// 必须放行，否则用户文本里一个字面 `{{` 会把流永久卡住。
 const MAX_PLACEHOLDER_LEN: usize = 48;
+/// 自定义标签的上限，避免用户配置制造无界的占位符和流式回退缓冲。
+///
+/// 48 - (`{{` + `_` + 3 位盐 + 3 位序号 + `}}`) = 37。序号超过 999 时，
+/// `MaskSession` 会按实际长度动态扩大流式回退窗口。
+const MAX_CUSTOM_LABEL_LEN: usize = MAX_PLACEHOLDER_LEN - 11;
 
 /// 不参与脱敏的结构性字段。
 ///
@@ -230,6 +235,12 @@ fn compile_rules(config: &OutboundMaskConfig) -> Result<Vec<CompiledRule>, Strin
             MaskRuleKind::Literal => Regex::new(&regex::escape(&rule.pattern))
                 .map_err(|e| format!("自定义规则 #{} 构造失败: {e}", idx + 1))?,
         };
+        if regex.is_match("") {
+            return Err(format!(
+                "自定义规则 #{} 不能匹配空字符串，否则会生成无内容占位符",
+                idx + 1
+            ));
+        }
         out.push(CompiledRule {
             id: format!("custom_{}", idx + 1),
             label,
@@ -243,7 +254,8 @@ fn compile_rules(config: &OutboundMaskConfig) -> Result<Vec<CompiledRule>, Strin
 /// 把用户填的类型名规整成合法的占位符前缀。
 ///
 /// 占位符格式依赖 `[A-Z][A-Z0-9]*_`，所以非法字符必须剔除；空值回退到
-/// `CUSTOM{n}`，保证任何输入都能产出可还原的占位符。
+/// `CUSTOM{n}`，保证任何输入都能产出可还原的占位符。自定义标签截断到固定上限，
+/// 防止流式还原因用户输入的超长标签无限扩大回退缓冲。
 fn sanitize_label(raw: &str, idx: usize) -> String {
     let cleaned: String = raw
         .chars()
@@ -253,7 +265,7 @@ fn sanitize_label(raw: &str, idx: usize) -> String {
     if cleaned.is_empty() || !cleaned.starts_with(|c: char| c.is_ascii_alphabetic()) {
         format!("CUSTOM{}", idx + 1)
     } else {
-        cleaned
+        cleaned.chars().take(MAX_CUSTOM_LABEL_LEN).collect()
     }
 }
 
@@ -296,6 +308,18 @@ impl MaskSession {
             .lock()
             .map(|g| g.reverse.is_empty())
             .unwrap_or(true)
+    }
+    /// 当前映射中最长占位符的长度。
+    ///
+    /// 自定义标签和序号可能让占位符超过固定的快速路径上限；流式还原需要知道
+    /// 活跃映射的真实长度，才能在 chunk 边界保留完整的未闭合占位符。
+    fn max_placeholder_len(&self) -> usize {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|g| g.reverse.keys().map(String::len).max())
+            .unwrap_or(MAX_PLACEHOLDER_LEN)
+            .max(MAX_PLACEHOLDER_LEN)
     }
 
     /// 取得某个原文对应的占位符，不存在则分配一个。
@@ -466,6 +490,10 @@ fn mask_text(
     let mut spans: Vec<Span> = Vec::new();
     for (rule_idx, rule) in rules.iter().enumerate() {
         for m in rule.regex.find_iter(text) {
+            // 防御未来内置规则或编译器行为变化；空区间不能遮住任何内容。
+            if m.start() == m.end() {
+                continue;
+            }
             spans.push(Span {
                 start: m.start(),
                 end: m.end(),
@@ -477,22 +505,25 @@ fn mask_text(
         return None;
     }
 
-    // 长匹配优先；同长则规则表靠前的优先。排序后线性扫描剔除重叠。
+    // 长匹配优先；同长则规则表靠前的优先。先按优先级选出不重叠区间，
+    // 再按文本位置排序用于替换。
     spans.sort_by(|a, b| {
-        a.start
-            .cmp(&b.start)
-            .then((b.end - b.start).cmp(&(a.end - a.start)))
+        (b.end - b.start)
+            .cmp(&(a.end - a.start))
             .then(a.rule_idx.cmp(&b.rule_idx))
+            .then(a.start.cmp(&b.start))
     });
 
     let mut kept: Vec<&Span> = Vec::new();
-    let mut cursor = 0usize;
     for span in &spans {
-        if span.start >= cursor {
+        if !kept
+            .iter()
+            .any(|kept| span.start < kept.end && kept.start < span.end)
+        {
             kept.push(span);
-            cursor = span.end;
         }
     }
+    kept.sort_by_key(|span| span.start);
 
     // 从右往左替换，避免前面的替换移动后面区间的下标。
     let mut out = text.to_string();
@@ -526,7 +557,7 @@ impl StreamRestorer {
     pub fn push(&mut self, chunk: &str, session: &MaskSession) -> String {
         self.pending.push_str(chunk);
         let restored = session.restore_stream_text(&self.pending);
-        match holdback_index(&restored) {
+        match holdback_index(&restored, session.max_placeholder_len()) {
             Some(idx) => {
                 let out = restored[..idx].to_string();
                 self.pending = restored[idx..].to_string();
@@ -555,11 +586,12 @@ impl StreamRestorer {
 /// 找出需要扣下的起点：末尾那个尚未闭合、且仍可能长成占位符的 `{{`。
 ///
 /// 返回 `None` 表示整段都能放行。
-fn holdback_index(s: &str) -> Option<usize> {
+fn holdback_index(s: &str, max_placeholder_len: usize) -> Option<usize> {
     if let Some(idx) = s.rfind("{{") {
         // 尾部超长的 `{{` 一定不是占位符（用户文本里的字面量），必须放行，
-        // 否则流会被永久卡住。
-        if !s[idx..].contains("}}") && s.len() - idx <= MAX_PLACEHOLDER_LEN {
+        // 否则用户文本会被无界地扣在缓冲里。已知映射则使用其实际长度，覆盖
+        // 超过固定快速路径上限的自定义标签/序号。
+        if !s[idx..].contains("}}") && s.len() - idx <= max_placeholder_len {
             return Some(idx);
         }
     }
@@ -708,6 +740,30 @@ mod tests {
     }
 
     #[test]
+    fn longer_overlapping_custom_match_beats_earlier_builtin() {
+        let s = session();
+        let mut config = cfg();
+        // 文本里内置私网 IP 规则先命中（0..12），自定义规则从 4 开始但更长（17 字符）。
+        // 优先级按匹配长度决定，与匹配在文本中的先后无关；若按起始位置排序，
+        // 先入场的短内置匹配会把自定义长匹配切碎。
+        config.custom_rules.push(MaskCustomRule {
+            enabled: true,
+            kind: MaskRuleKind::Literal,
+            label: "ENDPOINT".into(),
+            pattern: "168.1.50:8080/api".into(),
+        });
+        let mut body = json!({"c": "192.168.1.50:8080/api"});
+        let stats = mask_request_body(&mut body, &config, &s).unwrap();
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.per_rule.get("custom_1"), Some(&1));
+        assert_eq!(
+            stats.per_rule.get("private_ip"),
+            None,
+            "更长且重叠的自定义规则必须胜出"
+        );
+    }
+
+    #[test]
     fn phone_not_matched_inside_longer_digits() {
         let s = session();
         let mut body = json!({"c": "订单号 13800138000123456"});
@@ -754,6 +810,31 @@ mod tests {
         let mut body = json!({"c": "x"});
         // 必须报错而不是静默跳过，否则用户以为规则生效了其实在裸奔
         assert!(mask_request_body(&mut body, &config, &s).is_err());
+    }
+
+    #[test]
+    fn empty_matching_custom_regex_is_rejected() {
+        let s = session();
+        let mut config = cfg();
+        // `^` 在任意位置都能空匹配；若放行，mask_text 会在每个位置插入无内容占位符，
+        // 把整段文本切成碎片。必须在派发前就拒绝，而不是靠下游兜底。
+        config.custom_rules.push(MaskCustomRule {
+            enabled: true,
+            kind: MaskRuleKind::Regex,
+            label: "EMPTY".into(),
+            pattern: "^".into(),
+        });
+
+        assert!(
+            validate_config(&config).is_err(),
+            "保存配置时就必须拒绝匹配空串的正则"
+        );
+
+        let mut body = json!({"c": "hello"});
+        let result = mask_request_body(&mut body, &config, &s);
+        assert!(result.is_err(), "派发时也必须拒绝匹配空串的正则");
+        // 拒绝 = 请求体保持原样，绝不留下空内容占位符
+        assert!(!body["c"].as_str().unwrap().contains("{{"));
     }
 
     #[test]
@@ -826,6 +907,39 @@ mod tests {
         }
         out.push_str(&r.flush(&s));
         assert_eq!(out, "xa@b.comy");
+    }
+
+    #[test]
+    fn long_custom_label_is_bounded_and_restores_across_chunks() {
+        let s = session();
+        let mut config = cfg();
+        config.custom_rules.push(MaskCustomRule {
+            enabled: true,
+            kind: MaskRuleKind::Literal,
+            label: "L".repeat(80),
+            pattern: "TOPSECRETVALUE".into(),
+        });
+        let mut body = json!({"c": "TOPSECRETVALUE"});
+        mask_request_body(&mut body, &config, &s).unwrap();
+        let masked = body["c"].as_str().unwrap().to_string();
+
+        // 用户配置的长标签必须被夹到固定上限：占位符不能撑大流式回退缓冲。
+        assert!(masked.starts_with("{{") && masked.ends_with("}}"));
+        assert!(
+            masked.len() <= MAX_PLACEHOLDER_LEN,
+            "超长标签不应产生超过 {MAX_PLACEHOLDER_LEN} 的占位符: {masked}"
+        );
+
+        // 逐字符喂入 = 最坏情况的 chunk 切分。未截断的长占位符会在固定回退上限处
+        // 被提前放行，还原随之失败（原文缺失、占位符碎片泄漏）。
+        let full = format!("x{masked}y");
+        let mut r = StreamRestorer::new();
+        let mut out = String::new();
+        for ch in full.chars() {
+            out.push_str(&r.push(&ch.to_string(), &s));
+        }
+        out.push_str(&r.flush(&s));
+        assert_eq!(out, "xTOPSECRETVALUEy");
     }
 
     #[test]

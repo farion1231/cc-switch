@@ -148,6 +148,33 @@ pub fn is_sse_response(response: &ProxyResponse) -> bool {
     response.is_sse()
 }
 
+/// 准备流式响应的脱敏还原路径。
+///
+/// 压缩 SSE 必须保持原始字节，不能经过 UTF-8 拼接后再转回字节；这种情况下
+/// 放弃本次还原并透传压缩流。未压缩且启用还原时，实体长度/编码头必须移除，
+/// 因为还原会改变响应体长度。
+pub(crate) fn prepare_streaming_mask(
+    headers: &mut HeaderMap,
+    tag: &str,
+    mask_session: Option<Arc<MaskSession>>,
+) -> Option<Arc<MaskSession>> {
+    if let Some(encoding) = get_content_encoding(headers) {
+        log::warn!(
+            "[{tag}] 流式响应含 content-encoding={encoding}，SSE 解析可能失败。\
+             上游在 accept-encoding 透传后压缩了 SSE 流。"
+        );
+        if mask_session.is_some() {
+            log::warn!("[{tag}] 压缩 SSE 无法安全执行占位符还原，保持原始压缩字节透传");
+            return None;
+        }
+    }
+
+    if mask_session.is_some() {
+        strip_entity_headers_for_rebuilt_body(headers);
+    }
+    mask_session
+}
+
 /// 处理流式响应
 pub async fn handle_streaming(
     response: ProxyResponse,
@@ -163,16 +190,9 @@ pub async fn handle_streaming(
         status.as_u16(),
         format_headers(response.headers())
     );
-    // 检查流式响应是否被压缩（SSE 通常不压缩，如果压缩则 SSE 解析会失败）
-    if let Some(encoding) = get_content_encoding(response.headers()) {
-        log::warn!(
-            "[{}] 流式响应含 content-encoding={encoding}，SSE 解析可能失败。\
-             上游在 accept-encoding 透传后压缩了 SSE 流。",
-            ctx.tag
-        );
-    }
 
     let mut response_headers = response.headers().clone();
+    let mask_session = prepare_streaming_mask(&mut response_headers, ctx.tag, ctx.mask_restorer());
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     let mut builder = axum::response::Response::builder().status(status);
@@ -198,7 +218,7 @@ pub async fn handle_streaming(
         usage_collector,
         timeout_config,
         connection_guard,
-        ctx.mask_restorer(),
+        mask_session,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -951,6 +971,88 @@ mod tests {
         (session, placeholder)
     }
 
+    /// 一个「开关打开且确实打过码」的映射表，等价于 `RequestContext::mask_restorer()` 的 `Some`。
+    fn active_mask_session() -> Arc<MaskSession> {
+        let (session, _) = masked_session_with("13800138000");
+        Arc::new(session)
+    }
+
+    #[tokio::test]
+    async fn compressed_active_masking_stream_keeps_bytes_untouched() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-encoding", "gzip".parse().unwrap());
+        headers.insert("content-length", "9".parse().unwrap());
+
+        let restorer = prepare_streaming_mask(&mut headers, "test", Some(active_mask_session()));
+
+        // 压缩字节不是 UTF-8，占位符还原必须走文本拼接，因此只能放弃还原。
+        assert!(restorer.is_none(), "压缩 SSE 存在活跃映射时必须放弃还原");
+        // 不还原意味着字节原样透传，实体头也就不能动。
+        assert_eq!(
+            headers.get("content-encoding"),
+            Some(&axum::http::HeaderValue::from_static("gzip"))
+        );
+        assert_eq!(
+            headers.get("content-length"),
+            Some(&axum::http::HeaderValue::from_static("9"))
+        );
+
+        // 组合验证：放弃还原后，压缩字节（含非 UTF-8 高位）逐字节透传。
+        let payload: Vec<u8> = vec![0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 0x7f, 0x80, 0x00];
+        let stream = futures::stream::iter(vec![
+            Ok::<Bytes, std::io::Error>(Bytes::from(payload[..4].to_vec())),
+            Ok(Bytes::from(payload[4..].to_vec())),
+        ]);
+        let chunks: Vec<Result<Bytes, std::io::Error>> = create_logged_passthrough_stream(
+            stream,
+            "test",
+            None,
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+            restorer,
+        )
+        .collect()
+        .await;
+        let out: Vec<u8> = chunks
+            .into_iter()
+            .map(|chunk| chunk.expect("passthrough stream"))
+            .flatten()
+            .collect();
+        assert_eq!(out, payload, "放弃还原后压缩字节必须逐字节透传");
+    }
+
+    #[test]
+    fn uncompressed_active_mask_stream_drops_content_length() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "123".parse().unwrap());
+
+        let restorer = prepare_streaming_mask(&mut headers, "test", Some(active_mask_session()));
+
+        assert!(restorer.is_some(), "未压缩且映射活跃时必须启用还原");
+        assert!(
+            !headers.contains_key("content-length"),
+            "还原会改变响应体长度，Content-Length 必须移除"
+        );
+    }
+
+    #[test]
+    fn streaming_mask_leaves_headers_untouched_without_active_session() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "123".parse().unwrap());
+
+        // 没打过码的请求不启用还原，实体头也不该被动。
+        let restorer = prepare_streaming_mask(&mut headers, "test", None);
+
+        assert!(restorer.is_none());
+        assert_eq!(
+            headers.get("content-length"),
+            Some(&axum::http::HeaderValue::from_static("123"))
+        );
+    }
+
     #[test]
     fn non_streaming_restore_returns_none_without_placeholders() {
         let (session, _) = masked_session_with("13800138000");
@@ -1217,7 +1319,6 @@ mod tests {
             ..ProviderMeta::default()
         };
         insert_provider(&db, "provider-1", app_type, meta)?;
-
         let state = build_state(db.clone());
         let usage = TokenUsage {
             input_tokens: 1_000_000,
