@@ -2805,12 +2805,24 @@ impl RequestForwarder {
             //   415 Unsupported Media Type                    ← Content-Type 错误
             //   501 Not Implemented                           ← 上游协议确实不支持
             //
+            // 例外：400/422 若错误体明确写模型已下线/不存在，失败在供应商侧
+            // （failover 映射目标已死），换一家可能成功，应参与熔断与故障转移
+            // （issue #6821）。
+            //
             // 其他 4xx（401/403/404/408/409/429/451 等）和全部 5xx 都保留
             // Retryable —— 换一家 provider 可能持有不同的 key、配额、地域或模型映射。
-            ProxyError::UpstreamError { status, .. } => match *status {
-                400 | 405 | 406 | 413 | 414 | 415 | 422 | 501 => ErrorCategory::NonRetryable,
-                _ => ErrorCategory::Retryable,
-            },
+            ProxyError::UpstreamError { status, .. } => {
+                if is_upstream_model_unavailable(error) {
+                    ErrorCategory::Retryable
+                } else {
+                    match *status {
+                        400 | 405 | 406 | 413 | 414 | 415 | 422 | 501 => {
+                            ErrorCategory::NonRetryable
+                        }
+                        _ => ErrorCategory::Retryable,
+                    }
+                }
+            }
             // Provider 级配置/转换问题：换一个 Provider 可能就能成功
             ProxyError::ConfigError(_) => ErrorCategory::Retryable,
             ProxyError::TransformError(_) => ErrorCategory::Retryable,
@@ -4646,6 +4658,37 @@ mod tests {
     }
 
     #[test]
+    fn upstream_400_model_unavailable_is_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(None);
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"type":"server_error","message":"Error from provider (Console): Upstream request failed: Model is unavailable."}}"#
+                    .to_string(),
+            ),
+        };
+        assert_eq!(
+            forwarder.categorize_proxy_error(&error, &provider),
+            ErrorCategory::Retryable
+        );
+    }
+
+    #[test]
+    fn generic_upstream_400_stays_non_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(None);
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(r#"{"error":{"message":"invalid json schema"}}"#.to_string()),
+        };
+        assert_eq!(
+            forwarder.categorize_proxy_error(&error, &provider),
+            ErrorCategory::NonRetryable
+        );
+    }
+
+    #[test]
     fn official_codex_failures_are_not_retryable() {
         let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
         let mut provider = test_provider_with_type(None);
@@ -4665,6 +4708,10 @@ mod tests {
             ProxyError::UpstreamError {
                 status: 429,
                 body: None,
+            },
+            ProxyError::UpstreamError {
+                status: 400,
+                body: Some(r#"{"error":{"message":"Model is unavailable."}}"#.to_string()),
             },
             ProxyError::Timeout("timeout".to_string()),
         ] {
