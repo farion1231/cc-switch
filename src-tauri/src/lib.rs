@@ -1526,6 +1526,12 @@ pub fn run() {
             commands::restore_env_backup,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
+            commands::get_skill_groups,
+            commands::create_skill_group,
+            commands::update_skill_group,
+            commands::delete_skill_group,
+            commands::replace_skill_group_members,
+            commands::move_skills_to_group,
             commands::get_skill_backups,
             commands::delete_skill_backup,
             commands::install_skill_unified,
