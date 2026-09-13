@@ -94,12 +94,100 @@ pub struct CircuitBreaker {
 
 /// 熔断器放行结果
 ///
-/// `used_half_open_permit` 表示本次放行是否占用了 HalfOpen 探测名额。
-/// 调用方应在请求结束后把该值传回 `record_success` / `record_failure` 用于正确释放名额。
-#[derive(Debug, Clone, Copy)]
-pub struct AllowResult {
+/// `permit` 在 HalfOpen 探测成功占用时返回 `Some(HalfOpenPermitGuard)`，
+/// 调用方应在请求结束时让 guard Drop 自动释放 permit（或显式 `disarm()` 让
+/// Drop 变 no-op，再调用 `record_success()` / `record_failure()`）。
+///
+/// **重要**：调用方必须把 `permit` 绑定到一个跨过请求生命周期的局部变量，
+/// 让 RAII guard 在 HTTP 请求真正发出去期间一直存活。
+/// 若在表达式结束时立即 drop（例如 `let (allowed, _) = probe;`），guard 会立刻
+/// 释放 permit，导致 `max_half_open_requests=1` 限流失效——这是已知的 P0 bug 写法。
+#[derive(Debug)]
+pub struct AllowRequestResult {
     pub allowed: bool,
-    pub used_half_open_permit: bool,
+    pub permit: Option<HalfOpenPermitGuard>,
+}
+
+/// RAII guard：占用一个 HalfOpen 探测名额，Drop 时自动释放。
+///
+/// 调用方应通过 [`HalfOpenPermitGuard::disarm`] 显式标记"已自行处理"，让 Drop
+/// 变成 no-op（避免与后续的 `record_success` / `record_failure` 双重释放）。
+///
+/// Drop 兜底释放是必要的：future 被 cancel、panic unwinding、调用方忘记 disarm
+/// 等场景下，Drop 是 permit 不会泄漏的最后一道安全网。
+pub struct HalfOpenPermitGuard {
+    counter: Arc<AtomicU32>,
+    armed: bool,
+}
+
+impl std::fmt::Debug for HalfOpenPermitGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HalfOpenPermitGuard")
+            .field("armed", &self.armed)
+            .finish()
+    }
+}
+
+impl HalfOpenPermitGuard {
+    fn new(counter: Arc<AtomicU32>) -> Self {
+        Self {
+            counter,
+            armed: true,
+        }
+    }
+
+    /// 显式标记"已自行处理"，立即释放 permit 并让 Drop 变 no-op。
+    ///
+    /// 用于调用方在 forward() 完成后手动调用 `record_success` / `record_failure`
+    /// 的场景——`record_*` 不会再释放 permit，所以 disarm 必须做这一步。
+    /// disarm 后 Drop 变 no-op，避免与 disarm 双重释放。
+    pub fn disarm(mut self) {
+        if self.armed {
+            self.armed = false;
+            // 释放 permit（与 Drop 兜底等价；Drop 见 armed=false 会跳过）
+            let mut current = self.counter.load(Ordering::SeqCst);
+            loop {
+                if current == 0 {
+                    return;
+                }
+                match self.counter.compare_exchange(
+                    current,
+                    current - 1,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => return,
+                    Err(actual) => current = actual,
+                }
+            }
+        }
+    }
+}
+
+impl Drop for HalfOpenPermitGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            // RAII 兜底：future cancel / panic / 调用方漏 disarm 时，Drop 自动释放。
+            // 走 trace 级别避免污染生产日志（happy path 不走这里）。
+            log::trace!("HalfOpenPermitGuard::drop 释放 permit (RAII 兜底)");
+            // 与 release_half_open_permit 等价的递减
+            let mut current = self.counter.load(Ordering::SeqCst);
+            loop {
+                if current == 0 {
+                    return;
+                }
+                match self.counter.compare_exchange(
+                    current,
+                    current - 1,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => return,
+                    Err(actual) => current = actual,
+                }
+            }
+        }
+    }
 }
 
 impl CircuitBreaker {
@@ -140,6 +228,14 @@ impl CircuitBreaker {
                 if let Some(opened_at) = *self.last_opened_at.read().await {
                     if opened_at.elapsed().as_secs() >= config.timeout_seconds {
                         drop(config); // 释放读锁再转换状态
+
+                        // 【根因修复】permit-first check（与 allow_request 同样的修复）：
+                        // counter > 0 说明还有 in-flight probe 在飞，此时不能 reset counter
+                        // 否则会导致 max_half_open_requests 限流被打破。
+                        if self.half_open_requests.load(Ordering::SeqCst) > 0 {
+                            return false;
+                        }
+
                         log::info!(
                             "[{}] 熔断器 Open → HalfOpen (超时恢复)",
                             log_cb::OPEN_TO_HALF_OPEN
@@ -154,13 +250,13 @@ impl CircuitBreaker {
     }
 
     /// 检查是否允许请求通过
-    pub async fn allow_request(&self) -> AllowResult {
+    pub async fn allow_request(&self) -> AllowRequestResult {
         let state = *self.state.read().await;
 
         match state {
-            CircuitState::Closed => AllowResult {
+            CircuitState::Closed => AllowRequestResult {
                 allowed: true,
-                used_half_open_permit: false,
+                permit: None,
             },
             CircuitState::Open => {
                 let config = self.config.read().await;
@@ -168,6 +264,31 @@ impl CircuitBreaker {
                 if let Some(opened_at) = *self.last_opened_at.read().await {
                     if opened_at.elapsed().as_secs() >= config.timeout_seconds {
                         drop(config); // 释放读锁再转换状态
+
+                        // 【根因修复】permit-first check：转换之前先确认没有 in-flight probe。
+                        // 半开探测的核心不变量是 max_half_open_requests=1，这个不变量
+                        // 必须由 permit 本身保证，而不是由 state 转换保证。
+                        //
+                        // 错误做法：直接 transition_to_half_open() 把 counter reset 到 0
+                        // → 新 probe 进来 fetch_add 拿到 permit（counter=1）→ 上一代
+                        // probe 的 guard drop 紧接着 decrement 1 → 新 probe 的 slot 被
+                        // 错误释放 → 第三个 probe 又能进来 → max=1 限流被打破。
+                        //
+                        // 正确顺序：counter > 0 → 还有 in-flight probe，不转换；
+                        //           counter = 0 → 才允许转换。
+                        if self.half_open_requests.load(Ordering::SeqCst) > 0 {
+                            log::debug!(
+                                "[{}] 熔断器拒绝请求: 上一代 HalfOpen probe 尚未释放 (counter={}), \
+                                 等待其结束后再触发 Open → HalfOpen",
+                                log_cb::OPEN_TO_HALF_OPEN,
+                                self.half_open_requests.load(Ordering::SeqCst)
+                            );
+                            return AllowRequestResult {
+                                allowed: false,
+                                permit: None,
+                            };
+                        }
+
                         log::info!(
                             "[{}] 熔断器 Open → HalfOpen (超时恢复)",
                             log_cb::OPEN_TO_HALF_OPEN
@@ -177,22 +298,22 @@ impl CircuitBreaker {
                         // 转换后按当前状态决定是否需要获取 HalfOpen 探测名额
                         let current_state = *self.state.read().await;
                         return match current_state {
-                            CircuitState::Closed => AllowResult {
+                            CircuitState::Closed => AllowRequestResult {
                                 allowed: true,
-                                used_half_open_permit: false,
+                                permit: None,
                             },
                             CircuitState::HalfOpen => self.allow_half_open_probe(),
-                            CircuitState::Open => AllowResult {
+                            CircuitState::Open => AllowRequestResult {
                                 allowed: false,
-                                used_half_open_permit: false,
+                                permit: None,
                             },
                         };
                     }
                 }
 
-                AllowResult {
+                AllowRequestResult {
                     allowed: false,
-                    used_half_open_permit: false,
+                    permit: None,
                 }
             }
             CircuitState::HalfOpen => self.allow_half_open_probe(),
@@ -200,13 +321,15 @@ impl CircuitBreaker {
     }
 
     /// 记录成功
-    pub async fn record_success(&self, used_half_open_permit: bool) {
+    ///
+    /// `permit` 在请求结束后必须由调用方显式 `disarm()`（已通过 guard Drop
+    /// 释放）或让 guard Drop 自动释放（未 disarm 场景的 RAII 兜底）。
+    /// 此方法不再接受 `used_half_open_permit: bool`——permit 状态由 guard 自身表达。
+    pub async fn record_success(&self) {
         let state = *self.state.read().await;
         let config = self.config.read().await;
 
-        if used_half_open_permit {
-            self.release_half_open_permit();
-        }
+        // permit 由 RAII guard Drop 自动释放，调用方应在调用 record_* 前 disarm。
 
         // 重置失败计数
         self.consecutive_failures.store(0, Ordering::SeqCst);
@@ -227,13 +350,14 @@ impl CircuitBreaker {
     }
 
     /// 记录失败
-    pub async fn record_failure(&self, used_half_open_permit: bool) {
+    ///
+    /// `permit` 由 RAII guard Drop 自动释放——调用方应在调用 record_* 前 disarm，
+    /// 让 Drop 变 no-op。
+    pub async fn record_failure(&self) {
         let state = *self.state.read().await;
         let config = self.config.read().await;
 
-        if used_half_open_permit {
-            self.release_half_open_permit();
-        }
+        // permit 由 RAII guard Drop 自动释放。
 
         // 更新计数器
         let failures = self.consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
@@ -312,22 +436,22 @@ impl CircuitBreaker {
         self.transition_to_closed().await;
     }
 
-    fn allow_half_open_probe(&self) -> AllowResult {
+    fn allow_half_open_probe(&self) -> AllowRequestResult {
         // 半开状态限流：只允许有限请求通过进行探测
         let max_half_open_requests = 1u32;
         let current = self.half_open_requests.fetch_add(1, Ordering::SeqCst);
 
         if current < max_half_open_requests {
-            AllowResult {
+            AllowRequestResult {
                 allowed: true,
-                used_half_open_permit: true,
+                permit: Some(HalfOpenPermitGuard::new(self.half_open_requests.clone())),
             }
         } else {
             // 超过限额，回退计数，拒绝请求
             self.half_open_requests.fetch_sub(1, Ordering::SeqCst);
-            AllowResult {
+            AllowRequestResult {
                 allowed: false,
-                used_half_open_permit: false,
+                permit: None,
             }
         }
     }
@@ -385,6 +509,12 @@ impl CircuitBreaker {
         self.total_requests.store(0, Ordering::SeqCst);
         self.failed_requests.store(0, Ordering::SeqCst);
     }
+
+    /// 测试专用：直接读取 half_open_requests 计数（不经过 guard）
+    #[cfg(test)]
+    pub fn get_half_open_requests_for_test(&self) -> u32 {
+        self.half_open_requests.load(Ordering::SeqCst)
+    }
 }
 
 /// 熔断器统计信息
@@ -416,7 +546,7 @@ mod tests {
 
         // 记录 3 次失败
         for _ in 0..3 {
-            breaker.record_failure(false).await;
+            breaker.record_failure().await;
         }
 
         // 应该转换到打开状态
@@ -434,8 +564,8 @@ mod tests {
         let breaker = CircuitBreaker::new(config);
 
         // 打开熔断器
-        breaker.record_failure(false).await;
-        breaker.record_failure(false).await;
+        breaker.record_failure().await;
+        breaker.record_failure().await;
         assert_eq!(breaker.get_state().await, CircuitState::Open);
 
         // 手动转换到半开状态
@@ -443,8 +573,8 @@ mod tests {
         assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
 
         // 记录 2 次成功
-        breaker.record_success(false).await;
-        breaker.record_success(false).await;
+        breaker.record_success().await;
+        breaker.record_success().await;
 
         // 应该转换到关闭状态
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
@@ -462,7 +592,7 @@ mod tests {
         breaker.transition_to_open().await;
         let first = breaker.allow_request().await;
         assert!(first.allowed);
-        assert!(first.used_half_open_permit);
+        assert!(first.permit.is_some());
         assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
 
         // 模拟并发下的“重复 HalfOpen 转换调用”，不应重置 in-flight 计数
@@ -471,7 +601,7 @@ mod tests {
         // 由于名额仍被占用，第二次请求应被拒绝
         let second = breaker.allow_request().await;
         assert!(!second.allowed);
-        assert!(!second.used_half_open_permit);
+        assert!(second.permit.is_none());
     }
 
     #[tokio::test]
@@ -483,13 +613,111 @@ mod tests {
         let breaker = CircuitBreaker::new(config);
 
         // 打开熔断器
-        breaker.record_failure(false).await;
-        breaker.record_failure(false).await;
+        breaker.record_failure().await;
+        breaker.record_failure().await;
         assert_eq!(breaker.get_state().await, CircuitState::Open);
 
         // 重置
         breaker.reset().await;
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
         assert!(breaker.allow_request().await.allowed);
+    }
+
+    /// P2 review race 场景（permit-first 修复）：
+    /// Probe A 失败 → state=Open，但 counter 仍=1（guard 还没释放）
+    /// 此时另一并发请求调用 allow_request（timeout 已过）：
+    /// 旧实现：transition_to_half_open() 把 counter reset 0 → 新 probe 拿到 permit
+    ///         → 老 guard drop 紧接着 decrement 1 → 限流被打破
+    /// 新实现：检查 counter > 0 → 直接返回 denied，不转换，不 reset
+    #[tokio::test]
+    async fn test_open_to_halfopen_blocked_when_inflight_permit_exists() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        // 1. 进入 Open，再让 allow_request 触发 Open→HalfOpen，拿第一个 permit
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        assert!(first.allowed);
+        assert!(first.permit.is_some());
+        let guard = first.permit.expect("must have guard");
+        assert_eq!(breaker.get_half_open_requests_for_test(), 1);
+
+        // 2. Probe A 失败 → state=Open（counter 仍=1，guard 持有中）
+        // 这里用 transition_to_open 模拟 record_failure 的状态转换效果
+        breaker.transition_to_open().await;
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+        assert_eq!(
+            breaker.get_half_open_requests_for_test(),
+            1,
+            "counter 必须仍=1（guard 未释放）"
+        );
+
+        // 3. 并发请求：state=Open, timeout=0 已过，按旧实现会 reset counter
+        // 按新实现应该检查 counter>0 → 直接 denied
+        let second = breaker.allow_request().await;
+        assert!(
+            !second.allowed,
+            "counter>0 时不允许转换，第二个请求必须被拒绝"
+        );
+        assert!(second.permit.is_none());
+        assert_eq!(
+            breaker.get_state().await,
+            CircuitState::Open,
+            "state 必须仍是 Open，不能 reset counter 也不能 transition"
+        );
+        assert_eq!(
+            breaker.get_half_open_requests_for_test(),
+            1,
+            "counter 必须保持为1，绝对不能被 reset"
+        );
+
+        // 4. 验证 guard 还在 armed 状态，可以正确释放
+        drop(guard);
+        assert_eq!(
+            breaker.get_half_open_requests_for_test(),
+            0,
+            "guard drop 后 counter 必须归零"
+        );
+
+        // 5. guard 释放后，并发请求才能成功 transition
+        let third = breaker.allow_request().await;
+        assert!(third.allowed, "counter=0 后下一个请求必须能进入 HalfOpen");
+        assert!(third.permit.is_some());
+        assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
+    }
+
+    /// 配合 is_available 的同样场景：counter > 0 时也不应 transition
+    #[tokio::test]
+    async fn test_is_available_blocked_when_inflight_permit_exists() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        let guard = first.permit.expect("must have guard");
+
+        // 模拟 record_failure 路径
+        breaker.transition_to_open().await;
+        assert_eq!(breaker.get_half_open_requests_for_test(), 1);
+
+        // is_available 在 counter>0 时应返回 false（与 allow_request 一致）
+        assert!(
+            !breaker.is_available().await,
+            "counter>0 时 is_available 必须返回 false，阻止 transition"
+        );
+        assert_eq!(
+            breaker.get_half_open_requests_for_test(),
+            1,
+            "counter 必须保持"
+        );
+
+        drop(guard);
+        assert!(breaker.is_available().await);
     }
 }
