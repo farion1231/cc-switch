@@ -903,26 +903,22 @@ pub(crate) async fn query_codex_quota(
     tool_label: &str,
     expired_message: &str,
 ) -> Result<SubscriptionQuota, String> {
-    Ok(query_codex_quota_with_observation(
-        access_token,
-        account_id,
-        tool_label,
-        expired_message,
-        false,
+    Ok(
+        query_codex_quota_with_observation(access_token, account_id, tool_label, expired_message)
+            .await?
+            .quota,
     )
-    .await?
-    .quota)
 }
 
 /// Same endpoint as [`query_codex_quota`], retaining the fresh raw bucket data.
-/// `activation_suppressed` is used for the post-activation readback so that a readback
-/// can never recursively schedule another activation.
+/// Post-activation readback calls this function directly and does not re-enter
+/// the activation coordinator, so the wire request remains identical to a
+/// normal quota query.
 pub(crate) async fn query_codex_quota_with_observation(
     access_token: &str,
     account_id: Option<&str>,
     tool_label: &str,
     expired_message: &str,
-    activation_suppressed: bool,
 ) -> Result<CodexQuotaQueryResult, String> {
     let client = crate::proxy::http_client::get();
 
@@ -935,10 +931,6 @@ pub(crate) async fn query_codex_quota_with_observation(
     if let Some(id) = account_id {
         req = req.header("ChatGPT-Account-Id", id);
     }
-    if activation_suppressed {
-        req = req.query(&[("activation_suppressed", "true")]);
-    }
-
     let resp = match req.timeout(std::time::Duration::from_secs(15)).send().await {
         Ok(r) => r,
         Err(e) => return Err(format!("Network error: {e}")),

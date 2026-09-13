@@ -1902,6 +1902,7 @@
     "quotaActivationOwner": "此账号由 {{provider}} 管理，请在该供应商中修改设置。",
     "quotaActivationManualTestWarning": "注意：手动测试用量查询也可能触发一次请求，请确认后再测试。",
     "quotaActivationLastStatus": "最近激活：{{status}}（{{window}}）",
+    "quotaActivationLastDetails": "账号 {{account}} · 模型 {{model}} · 时间 {{time}}",
     "quotaActivationModelUnresolved": "未配置明确的激活模型，未发送请求。",
     "quotaActivationSaveFailed": "保存额度激活设置失败",
     "resetDate": "重置日期",

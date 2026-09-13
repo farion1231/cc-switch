@@ -273,7 +273,7 @@ impl CodexQuotaActivationCoordinator {
                 Err(error) => ActivationRunResult {
                     status: "unknown",
                     exit_code: result.exit_code,
-                    error: Some(sanitize_error(&error, &[account_id.clone()])),
+                    error: Some(sanitize_error(&error, std::slice::from_ref(&account_id))),
                     actual_model: result.actual_model,
                 },
             };
@@ -338,7 +338,6 @@ impl CodexQuotaActivationCoordinator {
             Some(&workspace),
             "codex_oauth",
             "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",
-            true,
         )
         .await?;
         if readback.quota.success {
@@ -496,14 +495,15 @@ fn is_newly_available_window(policy: &CodexQuotaActivationPolicy, target: &Targe
             return false;
         }
 
-        // A policy can be enabled after the current window has already reset.
-        // Treat that as startup catch-up, but do not consume a still-future
-        // window merely because its first observation happens to be empty.
-        // `updated_at` is milliseconds; reset generations are seconds.
+        // Only a generation that started at or after opt-in is eligible. This
+        // catches resets that happened while the app was offline, while
+        // avoiding an unsolicited request for an already-running window that
+        // predates the policy. `updated_at` is milliseconds; reset generations
+        // are seconds.
         if policy.updated_at > 0 {
             let policy_updated_seconds = policy.updated_at / 1000;
             let generation_started_at = target.reset_at.saturating_sub(target.window_seconds);
-            return generation_started_at <= policy_updated_seconds;
+            return generation_started_at >= policy_updated_seconds;
         }
 
         // Legacy rows/tests without an enable timestamp retain the conservative
@@ -517,11 +517,7 @@ fn is_newly_available_window(policy: &CodexQuotaActivationPolicy, target: &Targe
     }
     match policy.last_observed_reset_at {
         Some(previous_reset_at) if target.reset_at > previous_reset_at => true,
-        Some(previous_reset_at) if target.reset_at == previous_reset_at => policy
-            .last_observed_reset_after_seconds
-            .is_some_and(|previous_after| {
-                target.reset_after_seconds > previous_after + RESET_TOLERANCE_SECONDS
-            }),
+        Some(previous_reset_at) if target.reset_at == previous_reset_at => false,
         Some(_) => false,
         None => false,
     }
@@ -880,17 +876,60 @@ mod tests {
         };
         assert!(is_newly_available_window(&enabled_policy, &target));
 
+        let reset_after_opt_in = TargetWindow {
+            reset_at: now + SEVEN_DAYS_SECONDS + 3600,
+            reset_after_seconds: SEVEN_DAYS_SECONDS + 3600,
+            ..target.clone()
+        };
+        assert!(is_newly_available_window(
+            &enabled_policy,
+            &reset_after_opt_in
+        ));
+
         let mut future_window_policy = policy(None, None);
         future_window_policy.updated_at = (now - 60) * 1000;
         let future_window = TargetWindow {
-            reset_at: now + SEVEN_DAYS_SECONDS,
-            reset_after_seconds: SEVEN_DAYS_SECONDS,
+            reset_at: now + SEVEN_DAYS_SECONDS - 120,
+            reset_after_seconds: SEVEN_DAYS_SECONDS - 120,
             ..target
         };
         assert!(!is_newly_available_window(
             &future_window_policy,
             &future_window
         ));
+
+        let mut active_window_policy = policy(None, None);
+        active_window_policy.updated_at = (now - 60) * 1000;
+        let active_window = TargetWindow {
+            reset_at: now + SEVEN_DAYS_SECONDS - 3600,
+            reset_after_seconds: SEVEN_DAYS_SECONDS - 3600,
+            ..future_window.clone()
+        };
+        assert!(!is_newly_available_window(
+            &active_window_policy,
+            &active_window
+        ));
+    }
+
+    #[test]
+    fn same_reset_generation_never_activates_on_countdown_increase() {
+        let now = 1_000_000;
+        let fresh = TargetWindow {
+            limit_id: "five_hour".into(),
+            window_type: "five_hour",
+            window_seconds: FIVE_HOURS_SECONDS,
+            used_percent: 0.0,
+            reset_at: now + FIVE_HOURS_SECONDS,
+            reset_after_seconds: FIVE_HOURS_SECONDS,
+        };
+        let mut previous = policy(Some(fresh.reset_at), Some(600));
+        previous.last_observed_limit_id = Some("five_hour".into());
+        previous.last_observed_window_seconds = Some(FIVE_HOURS_SECONDS);
+        let later_countdown = TargetWindow {
+            reset_after_seconds: 1200,
+            ..fresh
+        };
+        assert!(!is_newly_available_window(&previous, &later_countdown));
     }
 
     #[test]

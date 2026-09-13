@@ -1902,6 +1902,7 @@
     "quotaActivationOwner": "このアカウントは {{provider}} が管理しています。そこで設定を変更してください。",
     "quotaActivationManualTestWarning": "注意：手動テストに成功した利用状況照会でも、このリクエストが発生する場合があります。準備ができてからテストしてください。",
     "quotaActivationLastStatus": "直近のアクティベーション: {{status}}（{{window}}）",
+    "quotaActivationLastDetails": "アカウント {{account}} · モデル {{model}} · 時刻 {{time}}",
     "quotaActivationModelUnresolved": "明示的なアクティベーションモデルが未設定のため、リクエストは送信されませんでした。",
     "quotaActivationSaveFailed": "クォータ自動消費設定の保存に失敗しました",
     "resetDate": "リセット日",

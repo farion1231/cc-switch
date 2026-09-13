@@ -208,6 +208,19 @@ const NATIVE_USAGE_TEMPLATES = new Set<string>([
   TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION,
 ]);
 
+const maskActivationAccountId = (accountId: string): string => {
+  if (accountId.length <= 8) return "****";
+  return `${accountId.slice(0, 4)}…${accountId.slice(-4)}`;
+};
+
+const formatActivationTimestamp = (timestamp: number): string => {
+  if (!Number.isFinite(timestamp)) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+};
+
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   provider,
   appId,
@@ -578,12 +591,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "official_subscription"
         | undefined,
     };
+    const activationCanEdit = activationPolicy?.canEdit ?? true;
     const mustDisablePersistedActivation =
       isBoundCodexOfficial &&
       !quotaActivationUsable &&
-      Boolean(activationPolicy?.enabled);
+      Boolean(activationPolicy?.enabled && activationCanEdit);
     if (
       isBoundCodexOfficial &&
+      activationCanEdit &&
       (activationDirty || mustDisablePersistedActivation)
     ) {
       try {
@@ -926,7 +941,27 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const currentAutoQueryInterval =
     script.autoQueryInterval ?? script.autoIntervalMinutes ?? 5;
   const quotaActivationUsable =
-    isBoundCodexOfficial && script.enabled && currentAutoQueryInterval > 0;
+    isBoundCodexOfficial &&
+    selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION &&
+    script.enabled &&
+    currentAutoQueryInterval > 0;
+  const activationStatus =
+    activationPolicy?.lastStatus ?? activationPolicy?.latestAttempt?.status;
+  const activationWindow =
+    activationPolicy?.lastWindowType ??
+    activationPolicy?.latestAttempt?.windowType ??
+    "";
+  const activationModel =
+    activationPolicy?.lastModel ??
+    (activationPolicy?.lastStatus
+      ? null
+      : activationPolicy?.latestAttempt?.model);
+  const activationTimestamp =
+    activationPolicy?.lastAttemptAt ??
+    (activationPolicy?.lastStatus
+      ? null
+      : (activationPolicy?.latestAttempt?.endedAt ??
+        activationPolicy?.latestAttempt?.startedAt));
 
   const quotaActivationPanel =
     isBoundCodexOfficial &&
@@ -973,21 +1008,28 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         <p className="text-xs text-muted-foreground">
           {t("usageScript.quotaActivationManualTestWarning")}
         </p>
-        {(activationPolicy?.latestAttempt || activationPolicy?.lastStatus) && (
-          <p className="text-xs text-muted-foreground">
-            {(activationPolicy.latestAttempt?.status || activationPolicy.lastStatus) ===
-            "model_unresolved"
-              ? t("usageScript.quotaActivationModelUnresolved")
-              : t("usageScript.quotaActivationLastStatus", {
-                  status:
-                    activationPolicy.latestAttempt?.status ||
-                    activationPolicy.lastStatus,
-                  window:
-                    activationPolicy.latestAttempt?.windowType ||
-                    activationPolicy.lastWindowType ||
-                    "",
+        {activationStatus && (
+          <>
+            <p className="text-xs text-muted-foreground">
+              {activationStatus === "model_unresolved"
+                ? t("usageScript.quotaActivationModelUnresolved")
+                : t("usageScript.quotaActivationLastStatus", {
+                    status: activationStatus,
+                    window: activationWindow,
+                  })}
+            </p>
+            {activationPolicy && (
+              <p className="text-xs text-muted-foreground">
+                {t("usageScript.quotaActivationLastDetails", {
+                  account: maskActivationAccountId(activationPolicy.accountId),
+                  model: activationModel || "—",
+                  time: activationTimestamp
+                    ? formatActivationTimestamp(activationTimestamp)
+                    : "—",
                 })}
-          </p>
+              </p>
+            )}
+          </>
         )}
       </div>
     ) : null;

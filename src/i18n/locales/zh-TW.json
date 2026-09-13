@@ -1903,6 +1903,7 @@
     "quotaActivationOwner": "此帳號由 {{provider}} 管理，請在該供應商中修改設定。",
     "quotaActivationManualTestWarning": "注意：手動測試用量查詢也可能觸發一次請求，請確認後再測試。",
     "quotaActivationLastStatus": "最近啟用：{{status}}（{{window}}）",
+    "quotaActivationLastDetails": "帳號 {{account}} · 模型 {{model}} · 時間 {{time}}",
     "quotaActivationModelUnresolved": "未設定明確的啟用模型，未發送請求。",
     "quotaActivationSaveFailed": "儲存額度啟用設定失敗",
     "resetDate": "重設日期",

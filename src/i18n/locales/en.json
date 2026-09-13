@@ -1902,6 +1902,7 @@
     "quotaActivationOwner": "This account is managed by {{provider}}. Change the setting there.",
     "quotaActivationManualTestWarning": "Warning: a successful manual usage test may also trigger this request. Test only when you are ready.",
     "quotaActivationLastStatus": "Last activation: {{status}} ({{window}})",
+    "quotaActivationLastDetails": "Account {{account}} · model {{model}} · time {{time}}",
     "quotaActivationModelUnresolved": "No explicit activation model is configured; no request was sent.",
     "quotaActivationSaveFailed": "Failed to save quota activation setting",
     "resetDate": "Reset date",

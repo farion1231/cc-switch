@@ -129,6 +129,7 @@ impl Database {
             .ok_or_else(|| AppError::Database("activation policy disappeared after write".into()))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn claim_codex_quota_activation(
         &self,
         account_id: &str,
@@ -162,6 +163,7 @@ impl Database {
         Ok(changed == 1)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_codex_quota_activation_attempt(
         &self,
         account_id: &str,
@@ -194,6 +196,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_codex_quota_activation_summary(
         &self,
         account_id: &str,
