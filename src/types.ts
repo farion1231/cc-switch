@@ -401,6 +401,10 @@ export interface Settings {
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "zh-TW" | "ja";
 
+  // OpenCode「自动填充模型能力」生成的 variants 档位键名风格：
+  // plain（纯名称，默认）或 numbered（01-low 式数字前缀，对配置 A-Z 重排免疫）
+  modelsDevVariantsStyle?: "plain" | "numbered";
+
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
 
@@ -614,6 +618,7 @@ export interface OpenCodeModel {
   name: string;
   limit?: {
     context?: number;
+    input?: number;
     output?: number;
   };
   options?: Record<string, unknown>; // 模型级别额外选项（provider 路由等）

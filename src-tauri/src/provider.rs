@@ -1008,6 +1008,10 @@ pub struct OpenCodeModelLimit {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<u64>,
 
+    /// 输入 token 限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+
     /// 输出 token 限制
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<u64>,
@@ -1399,6 +1403,30 @@ mod tests {
         assert!(config.options.api_key.is_none());
         assert!(config.options.headers.is_none());
         assert!(config.options.extra.is_empty());
+    }
+
+    #[test]
+    fn opencode_model_limit_preserves_input_tokens() {
+        let config: OpenCodeProviderConfig = serde_json::from_value(json!({
+            "npm": "@ai-sdk/openai",
+            "models": {
+                "gpt-5.6-sol": {
+                    "name": "GPT-5.6 Sol",
+                    "limit": {
+                        "context": 1_050_000,
+                        "input": 922_000,
+                        "output": 128_000
+                    }
+                }
+            }
+        }))
+        .expect("deserialize OpenCode provider config");
+
+        let value = serde_json::to_value(config).expect("serialize OpenCode provider config");
+        assert_eq!(
+            value["models"]["gpt-5.6-sol"]["limit"]["input"],
+            json!(922_000)
+        );
     }
 
     #[test]

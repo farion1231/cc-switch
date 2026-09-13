@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
@@ -11,14 +12,50 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { toast } from "sonner";
-import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
+import {
+  Download,
+  Plus,
+  Trash2,
+  Check,
+  ChevronRight,
+  Loader2,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { ApiKeySection, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import {
+  fetchModelsDevPricing,
+  MODELS_DEV_QUERY_KEY,
+  MODELS_DEV_STALE_TIME_MS,
+} from "@/lib/modelsDevPricing";
+import {
+  ALL_EFFORT_LEVELS,
+  applyModelsDevCapabilities,
+  buildVariantForEffort,
+  findModelsDevEntry,
+  nextNumberedKey,
+  type ModelsDevVariantsStyle,
+} from "@/lib/opencodeModelCapabilities";
+import { useSaveSettingsMutation, useSettingsQuery } from "@/lib/query";
 import { opencodeNpmPackages } from "@/config/opencodeProviderPresets";
 import { cn } from "@/lib/utils";
 import {
@@ -153,11 +190,281 @@ function ModelOptionKeyInput({
   );
 }
 
+/** opencode 模型的图片输入能力 = modalities.input 数组中包含 "image"。 */
+function supportsImageInput(model: OpenCodeModel): boolean {
+  const modalities = model.modalities as { input?: unknown } | undefined;
+  return (
+    Array.isArray(modalities?.input) &&
+    (modalities.input as unknown[]).includes("image")
+  );
+}
+
+/** 从档位参数体中提取人类可读的强度摘要（reasoningEffort / thinkingLevel / budget 等）。 */
+function variantSummary(value: Record<string, unknown>): string | null {
+  if (!value || typeof value !== "object") return null;
+  if (value.disabled === true) return "disabled";
+  const effort =
+    value.reasoningEffort ?? value.effort ?? value.reasoning_effort;
+  if (typeof effort === "string") return effort;
+  const thinkingConfig = value.thinkingConfig as
+    | { thinkingLevel?: unknown; thinkingBudget?: unknown }
+    | undefined;
+  if (typeof thinkingConfig?.thinkingLevel === "string") {
+    return thinkingConfig.thinkingLevel;
+  }
+  if (typeof thinkingConfig?.thinkingBudget === "number") {
+    return String(thinkingConfig.thinkingBudget);
+  }
+  const reasoningConfig = value.reasoningConfig as
+    | { maxReasoningEffort?: unknown; budgetTokens?: unknown }
+    | undefined;
+  if (typeof reasoningConfig?.maxReasoningEffort === "string") {
+    return String(reasoningConfig.maxReasoningEffort);
+  }
+  if (typeof reasoningConfig?.budgetTokens === "number") {
+    return String(reasoningConfig.budgetTokens);
+  }
+  const thinking = value.thinking as { budgetTokens?: unknown } | undefined;
+  if (typeof thinking?.budgetTokens === "number") {
+    return String(thinking.budgetTokens);
+  }
+  return null;
+}
+
+/** 单枚档位胶囊：点击弹出 Popover 编辑参数体 JSON，X 移除档位。 */
+function VariantEditorPopover({
+  variantKey,
+  value,
+  onSave,
+  onRemove,
+}: {
+  variantKey: string;
+  value: Record<string, unknown>;
+  onSave: (key: string, value: Record<string, unknown>) => void;
+  onRemove: (key: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(() => JSON.stringify(value, null, 2));
+
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const parsedDraft: unknown = JSON.parse(draft);
+    if (
+      parsedDraft &&
+      typeof parsedDraft === "object" &&
+      !Array.isArray(parsedDraft)
+    ) {
+      parsed = parsedDraft as Record<string, unknown>;
+    }
+  } catch {
+    parsed = null;
+  }
+
+  const summary = variantSummary(value);
+
+  return (
+    <div className="flex items-center gap-0.5">
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (next) setDraft(JSON.stringify(value, null, 2));
+        }}
+      >
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex h-6 max-w-56 items-center gap-1.5 rounded-full border border-border bg-transparent px-2.5 text-xs transition-colors hover:bg-accent"
+          >
+            <span className="font-medium">{variantKey}</span>
+            {summary && (
+              <span className="truncate text-muted-foreground">{summary}</span>
+            )}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-80 space-y-2">
+          <p className="text-xs font-medium">{variantKey}</p>
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={6}
+            className="min-h-24 font-mono text-xs"
+            spellCheck={false}
+          />
+          {!parsed && (
+            <p className="text-xs text-destructive">
+              {t("opencode.thinkingLevelJsonInvalid", {
+                defaultValue: "Payload must be a valid JSON object",
+              })}
+            </p>
+          )}
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 gap-1"
+              disabled={!parsed}
+              onClick={() => {
+                if (!parsed) return;
+                onSave(variantKey, parsed);
+                setOpen(false);
+              }}
+            >
+              <Check className="h-3.5 w-3.5" />
+              {t("common.save", { defaultValue: "保存" })}
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+      <button
+        type="button"
+        onClick={() => onRemove(variantKey)}
+        aria-label={t("opencode.removeThinkingLevel", {
+          defaultValue: "Remove level {{key}}",
+          key: variantKey,
+        })}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+/** 思考档位编辑区：variants 档位胶囊列表 + 添加档位下拉（按 SDK 自动生成参数体）。 */
+function ThinkingLevelsEditor({
+  modelId,
+  npm,
+  outputLimit,
+  variants,
+  onChange,
+  style,
+}: {
+  modelId: string;
+  npm: string;
+  outputLimit?: number;
+  variants: Record<string, Record<string, unknown>>;
+  onChange: (
+    variants: Record<string, Record<string, unknown>> | undefined,
+  ) => void;
+  style: ModelsDevVariantsStyle;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+
+  const entries = Object.entries(variants);
+  const existingEfforts = new Set(
+    entries.map(([vKey]) => /^(\d{1,2})-(.+)$/.exec(vKey)?.[2] ?? vKey),
+  );
+  // 全量档位供手动添加，隐藏已有档位（含 numbered 键解析出的 effort 名）
+  const availableEfforts = ALL_EFFORT_LEVELS.filter(
+    (effort) => !existingEfforts.has(effort),
+  );
+
+  const handleAddVariant = (effort: string) => {
+    const payload = buildVariantForEffort(npm, modelId, effort, outputLimit);
+    if (!payload) return;
+    const nextKey =
+      style === "numbered" ? nextNumberedKey(variants, effort) : effort;
+    onChange({ ...variants, [nextKey]: payload });
+  };
+
+  const handleSaveVariant = (
+    variantKey: string,
+    value: Record<string, unknown>,
+  ) => {
+    onChange({ ...variants, [variantKey]: value });
+  };
+
+  const handleRemoveVariant = (variantKey: string) => {
+    const next = { ...variants };
+    delete next[variantKey];
+    onChange(Object.keys(next).length > 0 ? next : undefined);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setExpanded((prev) => !prev)}
+          className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 transition-transform",
+              expanded && "rotate-90",
+            )}
+          />
+          {t("opencode.thinkingLevels", { defaultValue: "Thinking levels" })}
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2"
+            >
+              <Plus className="h-3 w-3" />
+              {t("opencode.addThinkingLevel", { defaultValue: "Add level" })}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            side="left"
+            className="max-h-64 overflow-y-auto z-[200]"
+          >
+            {availableEfforts.length > 0 ? (
+              availableEfforts.map((effort) => (
+                <DropdownMenuItem
+                  key={effort}
+                  onSelect={() => handleAddVariant(effort)}
+                >
+                  {effort}
+                </DropdownMenuItem>
+              ))
+            ) : (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                {t("opencode.noAvailableEfforts", {
+                  defaultValue: "No levels available for this SDK",
+                })}
+              </p>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {expanded && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {entries.length > 0 ? (
+            entries.map(([vKey, vValue]) => (
+              <VariantEditorPopover
+                key={vKey}
+                variantKey={vKey}
+                value={vValue}
+                onSave={handleSaveVariant}
+                onRemove={handleRemoveVariant}
+              />
+            ))
+          ) : (
+            <p className="text-xs text-muted-foreground py-1">
+              {t("opencode.noThinkingLevels", {
+                defaultValue:
+                  "No thinking levels yet. Add one or use auto-fill",
+              })}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface OpenCodeFormFieldsProps {
   // NPM Package
   npm: string;
   onNpmChange: (value: string) => void;
-
   // API Key
   apiKey: string;
   onApiKeyChange: (value: string) => void;
@@ -208,6 +515,106 @@ export function OpenCodeFormFields({
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
+  const { refetch: refetchModelsDevCatalog } = useQuery({
+    queryKey: MODELS_DEV_QUERY_KEY,
+    queryFn: fetchModelsDevPricing,
+    enabled: false,
+    staleTime: MODELS_DEV_STALE_TIME_MS,
+    retry: 1,
+  });
+  const [isFetchingCapabilities, setIsFetchingCapabilities] = useState(false);
+
+  const { data: settingsData } = useSettingsQuery();
+  const saveSettingsMutation = useSaveSettingsMutation();
+  const variantsStyle: ModelsDevVariantsStyle =
+    settingsData?.modelsDevVariantsStyle === "numbered" ? "numbered" : "plain";
+
+  // 从 models.dev 拉取官方模型能力（limit/cost/modalities/variants）批量填充全部模型行
+  const handleFillFromModelsDev = useCallback(
+    async (styleOverride?: ModelsDevVariantsStyle) => {
+      if (Object.keys(models).length === 0) {
+        toast.info(t("opencode.fillCapabilitiesNoModels"));
+        return;
+      }
+      const style = styleOverride ?? variantsStyle;
+      setIsFetchingCapabilities(true);
+      try {
+        const { data: catalog } = await refetchModelsDevCatalog();
+        if (!catalog) throw new Error("models.dev catalog unavailable");
+        const nextModels: Record<string, OpenCodeModel> = {};
+        const missing: string[] = [];
+        const details: string[] = [];
+        let filled = 0;
+        for (const [key, model] of Object.entries(models)) {
+          const hit = findModelsDevEntry(catalog, key);
+          if (!hit) {
+            missing.push(key);
+            nextModels[key] = model;
+            continue;
+          }
+          const { model: merged, summary } = applyModelsDevCapabilities(
+            model,
+            npm,
+            key,
+            hit.entry,
+            { style },
+          );
+          nextModels[key] = merged;
+          filled += 1;
+          details.push(
+            `${key} ← ${hit.providerId}` +
+              (summary.contextLimit ? ` · ctx ${summary.contextLimit}` : "") +
+              (summary.efforts.length
+                ? ` · ${summary.efforts.join("/")}`
+                : "") +
+              (summary.suppressed.length
+                ? ` · disabled: ${summary.suppressed.join("/")}`
+                : ""),
+          );
+        }
+        onModelsChange(nextModels);
+        if (filled === 0) {
+          toast.warning(t("opencode.fillCapabilitiesNone"), {
+            description: missing.join(", "),
+          });
+        } else if (missing.length > 0) {
+          toast.warning(
+            t("opencode.fillCapabilitiesPartial", {
+              count: filled,
+              missing: missing.join(", "),
+            }),
+          );
+        } else {
+          toast.success(
+            t("opencode.fillCapabilitiesSuccess", { count: filled }),
+            {
+              description: details.join("\n"),
+            },
+          );
+        }
+      } catch (err) {
+        console.warn("[ModelsDevCapabilities] Failed:", err);
+        toast.error(t("opencode.fillCapabilitiesFailed"));
+      } finally {
+        setIsFetchingCapabilities(false);
+      }
+    },
+    [models, npm, onModelsChange, refetchModelsDevCatalog, t, variantsStyle],
+  );
+
+  // 切换思考档位名称偏好：仅保存设置（settings 持久化），填充按钮按当前偏好执行
+  const handleVariantsStyleChange = useCallback(
+    (style: ModelsDevVariantsStyle) => {
+      if (!settingsData) return;
+      void saveSettingsMutation
+        .mutateAsync({ ...settingsData, modelsDevVariantsStyle: style })
+        .catch((err) =>
+          console.warn("[ModelsDevCapabilities] Failed to save style:", err),
+        );
+    },
+    [settingsData, saveSettingsMutation],
+  );
+
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
       showFetchModelsError(null, t, {
@@ -237,6 +644,9 @@ export function OpenCodeFormFields({
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
+
+  // 模型属性（extra fields）KV 列表默认收起，点箭头展开
+  const [extraFieldsExpanded, setExtraFieldsExpanded] = useState(false);
 
   // Toggle model expand state
   const toggleModelExpand = (key: string) => {
@@ -299,6 +709,55 @@ export function OpenCodeFormFields({
       ...models,
       [key]: { ...models[key], name },
     });
+  };
+
+  // Toggle "supports extended thinking" (model.reasoning)
+  const handleModelReasoningChange = (modelKey: string, checked: boolean) => {
+    onModelsChange({
+      ...models,
+      [modelKey]: { ...models[modelKey], reasoning: checked },
+    });
+  };
+
+  // Toggle image input: add/remove "image" in model.modalities.input
+  const handleModelImageInputChange = (modelKey: string, checked: boolean) => {
+    const model = models[modelKey];
+    const current = (
+      model.modalities && typeof model.modalities === "object"
+        ? model.modalities
+        : {}
+    ) as Record<string, unknown>;
+    const currentInput = Array.isArray(current.input)
+      ? (current.input as unknown[]).filter(
+          (item): item is string => typeof item === "string",
+        )
+      : ["text"];
+    const nextInput = checked
+      ? currentInput.includes("image")
+        ? currentInput
+        : [...currentInput, "image"]
+      : currentInput.filter((item) => item !== "image");
+    onModelsChange({
+      ...models,
+      [modelKey]: {
+        ...model,
+        modalities: { ...current, input: nextInput },
+      },
+    });
+  };
+
+  // Update thinking-level variants of a model
+  const handleModelVariantsChange = (
+    modelKey: string,
+    nextVariants: Record<string, Record<string, unknown>> | undefined,
+  ) => {
+    const nextModel = { ...models[modelKey] };
+    if (nextVariants) {
+      nextModel.variants = nextVariants;
+    } else {
+      delete nextModel.variants;
+    }
+    onModelsChange({ ...models, [modelKey]: nextModel });
   };
 
   const handleModelLimitChange = (
@@ -676,6 +1135,65 @@ export function OpenCodeFormFields({
           </div>
         </div>
 
+        {/* 思考档位名称偏好 + 自动填充模型能力：仅在已有模型时显示 */}
+        {Object.keys(models).length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <FormLabel
+                htmlFor="opencode-fill-style"
+                className="text-xs text-muted-foreground"
+              >
+                {t("opencode.thinkingLevelNameStyleLabel", {
+                  defaultValue: "Thinking level name style",
+                })}
+              </FormLabel>
+              <Select
+                value={variantsStyle}
+                onValueChange={(value) =>
+                  handleVariantsStyleChange(value as ModelsDevVariantsStyle)
+                }
+                disabled={!settingsData}
+              >
+                <SelectTrigger
+                  id="opencode-fill-style"
+                  className="h-7 w-44 text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="z-[200]">
+                  <SelectItem value="plain">
+                    {t("opencode.fillStylePlain", {
+                      defaultValue: "Plain names",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="numbered">
+                    {t("opencode.fillStyleNumbered", {
+                      defaultValue: "Numbered prefixes",
+                    })}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => handleFillFromModelsDev()}
+              disabled={isFetchingCapabilities}
+              className="h-7 gap-1.5 whitespace-nowrap"
+            >
+              {isFetchingCapabilities ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5 shrink-0" />
+              )}
+              {t("opencode.autoFillCapabilities", {
+                defaultValue: "Auto-fill capabilities",
+              })}
+            </Button>
+          </div>
+        )}
+
         {Object.keys(models).length === 0 ? (
           <p className="text-sm text-muted-foreground py-2">
             {t("opencode.noModels", {
@@ -752,6 +1270,44 @@ export function OpenCodeFormFields({
                 {/* Expanded model details */}
                 {expandedModels.has(key) && (
                   <div className="ml-9 pl-4 border-l-2 border-muted space-y-3">
+                    {/* Capability switches (model.reasoning / model.modalities.input) */}
+                    <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
+                      <div className="flex items-center gap-2.5">
+                        <Switch
+                          id={`opencode-model-reasoning-${key}`}
+                          checked={model.reasoning === true}
+                          onCheckedChange={(checked) =>
+                            handleModelReasoningChange(key, checked)
+                          }
+                        />
+                        <label
+                          htmlFor={`opencode-model-reasoning-${key}`}
+                          className="cursor-pointer text-sm"
+                        >
+                          {t("opencode.supportsReasoning", {
+                            defaultValue: "Supports extended thinking",
+                          })}
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <Switch
+                          id={`opencode-model-image-${key}`}
+                          checked={supportsImageInput(model)}
+                          onCheckedChange={(checked) =>
+                            handleModelImageInputChange(key, checked)
+                          }
+                        />
+                        <label
+                          htmlFor={`opencode-model-image-${key}`}
+                          className="cursor-pointer text-sm"
+                        >
+                          {t("opencode.supportsImageInput", {
+                            defaultValue: "Supports image input",
+                          })}
+                        </label>
+                      </div>
+                    </div>
+
                     {/* Token limits (model.limit) */}
                     <div className="space-y-2">
                       <span className="text-xs font-medium text-muted-foreground">
@@ -813,83 +1369,125 @@ export function OpenCodeFormFields({
                       </div>
                     </div>
 
-                    {/* Model Properties (extra fields like variants, cost) */}
+                    {/* Thinking levels (model.variants), below Token Limits */}
+                    {model.reasoning === true && (
+                      <ThinkingLevelsEditor
+                        modelId={key}
+                        npm={npm}
+                        outputLimit={
+                          typeof model.limit?.output === "number"
+                            ? model.limit.output
+                            : undefined
+                        }
+                        variants={
+                          (model.variants ?? {}) as Record<
+                            string,
+                            Record<string, unknown>
+                          >
+                        }
+                        onChange={(nextVariants) =>
+                          handleModelVariantsChange(key, nextVariants)
+                        }
+                        style={variantsStyle}
+                      />
+                    )}
+
+                    {/* Model Properties (extra fields like cost), collapsed by default */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExtraFieldsExpanded((prev) => !prev)
+                          }
+                          className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <ChevronRight
+                            className={cn(
+                              "h-3.5 w-3.5 transition-transform",
+                              extraFieldsExpanded && "rotate-90",
+                            )}
+                          />
                           {t("opencode.modelExtraFields", {
                             defaultValue: "模型属性",
                           })}
-                        </span>
+                        </button>
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleAddModelExtraField(key)}
+                          onClick={() => {
+                            setExtraFieldsExpanded(true);
+                            handleAddModelExtraField(key);
+                          }}
                           className="h-6 px-2 gap-1"
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
                       </div>
-                      {Object.keys(getModelExtraFields(model)).length === 0 ? (
-                        <p className="text-xs text-muted-foreground py-1">
-                          {t("opencode.noModelExtraFields", {
-                            defaultValue:
-                              "模型属性 (variants, cost 等)，点击 + 添加",
-                          })}
-                        </p>
-                      ) : (
-                        Object.entries(getModelExtraFields(model)).map(
-                          ([fKey, fValue]) => (
-                            <div key={fKey} className="flex items-center gap-2">
-                              <ModelOptionKeyInput
-                                optionKey={fKey}
-                                onChange={(newKey) =>
-                                  handleModelExtraFieldKeyChange(
-                                    key,
-                                    fKey,
-                                    newKey,
-                                  )
-                                }
-                                placeholder={t(
-                                  "opencode.modelExtraFieldKeyPlaceholder",
-                                  {
-                                    defaultValue: "variants",
-                                  },
-                                )}
-                              />
-                              <ImeSafeInput
-                                value={fValue}
-                                onValueChange={(value) =>
-                                  handleModelExtraFieldValueChange(
-                                    key,
-                                    fKey,
-                                    value,
-                                  )
-                                }
-                                placeholder={t(
-                                  "opencode.modelOptionValuePlaceholder",
-                                  {
-                                    defaultValue: '{"order": ["baseten"]}',
-                                  },
-                                )}
-                                className="flex-1"
-                              />
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() =>
-                                  handleRemoveModelExtraField(key, fKey)
-                                }
-                                className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                      {extraFieldsExpanded &&
+                        (Object.keys(getModelExtraFields(model)).length ===
+                        0 ? (
+                          <p className="text-xs text-muted-foreground py-1">
+                            {t("opencode.noModelExtraFields", {
+                              defaultValue: "模型属性 (cost 等)，点击 + 添加",
+                            })}
+                          </p>
+                        ) : (
+                          Object.entries(getModelExtraFields(model)).map(
+                            ([fKey, fValue]) => (
+                              <div
+                                key={fKey}
+                                className="flex items-center gap-2"
                               >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ),
-                        )
-                      )}
+                                <ModelOptionKeyInput
+                                  optionKey={fKey}
+                                  onChange={(newKey) =>
+                                    handleModelExtraFieldKeyChange(
+                                      key,
+                                      fKey,
+                                      newKey,
+                                    )
+                                  }
+                                  placeholder={t(
+                                    "opencode.modelExtraFieldKeyPlaceholder",
+                                    {
+                                      defaultValue: "cost",
+                                    },
+                                  )}
+                                />
+                                <ImeSafeInput
+                                  value={fValue}
+                                  onValueChange={(value) =>
+                                    handleModelExtraFieldValueChange(
+                                      key,
+                                      fKey,
+                                      value,
+                                    )
+                                  }
+                                  placeholder={t(
+                                    "opencode.modelOptionValuePlaceholder",
+                                    {
+                                      defaultValue: '{"order": ["baseten"]}',
+                                    },
+                                  )}
+                                  className="flex-1"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() =>
+                                    handleRemoveModelExtraField(key, fKey)
+                                  }
+                                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ),
+                          )
+                        ))}
                     </div>
 
                     {/* SDK Options (model.options) */}
