@@ -1589,6 +1589,7 @@ pub fn run() {
             commands::set_auto_failover_enabled,
             // Usage statistics
             commands::get_usage_summary,
+            commands::get_codex_background_usage,
             commands::get_usage_summary_by_app,
             commands::get_usage_trends,
             commands::get_provider_stats,

@@ -1876,7 +1876,21 @@
       "syncNow": "立即同步"
     },
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
-    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
+    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)",
+    "background": {
+      "title": "Codex Desktop 后台用量",
+      "description": "本机 macOS 后台生成事件，未计入上方总计：无法判定与代理请求的重叠。输入已包含缓存 token。费用按当前配置的标准价格估算，不代表订阅扣费。日志保留期限及其他设备会限制覆盖范围。",
+      "model": "模型",
+      "feature": "功能",
+      "status": "状态",
+      "generations": "生成次数",
+      "input": "输入",
+      "cached": "缓存输入",
+      "output": "输出",
+      "cost": "估算美元",
+      "unknown": "未知价格",
+      "error": "无法加载 Codex 后台用量。"
+    }
   },
   "usageScript": {
     "title": "配置用量查询",

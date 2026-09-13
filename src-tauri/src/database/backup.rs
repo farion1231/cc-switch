@@ -91,6 +91,8 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "codex_background_usage",
+    "codex_background_files",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +104,8 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "codex_background_usage",
+    "codex_background_files",
 ];
 
 /// A database backup entry for the UI
@@ -2147,6 +2151,70 @@ mod tests {
             cursor,
             ("/local/sessions/manual-backup.jsonl".into(), 11, 22, 33,)
         );
+        Ok(())
+    }
+
+    fn seed_background_fixture(db: &Database, key: &str) -> Result<(), AppError> {
+        let conn = crate::database::lock_conn!(db.conn);
+        conn.execute("INSERT INTO codex_background_usage VALUES (?1, 100, 'test-model', 'thread_title', 'success', 100, 80, 10)", [key])?;
+        conn.execute(
+            "INSERT INTO codex_background_files VALUES (?1, 200, 'modified')",
+            [key],
+        )?;
+        Ok(())
+    }
+
+    fn assert_background_fixture(db: &Database, key: &str) -> Result<(), AppError> {
+        let conn = crate::database::lock_conn!(db.conn);
+        let rows: (i64, String, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), event_key, input_tokens, cached_input_tokens, output_tokens FROM codex_background_usage",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        assert_eq!(rows, (1, key.into(), 100, 80, 10));
+        let files: (i64, String, i64, String) = conn.query_row(
+            "SELECT COUNT(*), path, size, modified FROM codex_background_files",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        assert_eq!(files, (1, key.into(), 200, "modified".into()));
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn background_ledger_stays_local_during_sync_and_survives_older_snapshots(
+    ) -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let local = Database::memory()?;
+        let remote = Database::memory()?;
+        seed_background_fixture(&local, "/local/private-background.log")?;
+        seed_background_fixture(&remote, "/remote/private-background.log")?;
+        let sync_sql = remote.export_sql_string_for_sync()?;
+        assert!(!sync_sql.contains("/remote/private-background.log"));
+        local.import_sql_string_for_sync(&sync_sql)?;
+        assert_background_fixture(&local, "/local/private-background.log")?;
+        // Even a payload produced by the first draft (containing remote rows)
+        // must not replace this device's ledger or scan metadata.
+        local.import_sql_string_for_sync(&remote.export_sql_string()?)?;
+        assert_background_fixture(&local, "/local/private-background.log")?;
+        {
+            let conn = crate::database::lock_conn!(remote.conn);
+            conn.execute_batch("DROP TABLE codex_background_usage; DROP TABLE codex_background_files; PRAGMA user_version=18;")?;
+        }
+        local.import_sql_string_for_sync(&remote.export_sql_string_for_sync()?)?;
+        assert_background_fixture(&local, "/local/private-background.log")?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn full_backup_still_restores_background_ledger() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        seed_background_fixture(&source, "/local/full-backup.log")?;
+        let target = Database::memory()?;
+        target.import_sql_string(&source.export_sql_string()?)?;
+        assert_background_fixture(&target, "/local/full-backup.log")?;
         Ok(())
     }
 

@@ -12,6 +12,8 @@ import { UsageDashboard } from "@/components/usage/UsageDashboard";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
+const useBackgroundMock = vi.hoisted(() => vi.fn());
+const backgroundCardMock = vi.hoisted(() => vi.fn());
 const usageHeroMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
@@ -41,10 +43,18 @@ vi.mock("@/lib/query/usage", async () => {
     );
   return {
     ...actual,
+    useCodexBackgroundUsage: (...args: unknown[]) => useBackgroundMock(...args),
     useProviderStats: (...args: unknown[]) => useProviderStatsMock(...args),
     useModelStats: (...args: unknown[]) => useModelStatsMock(...args),
   };
 });
+
+vi.mock("@/components/usage/CodexBackgroundUsage", () => ({
+  CodexBackgroundUsage: (props: unknown) => {
+    backgroundCardMock(props);
+    return <div data-testid="codex-background-usage" />;
+  },
+}));
 
 vi.mock("@/components/usage/UsageHero", () => ({
   UsageHero: (props: unknown) => {
@@ -80,7 +90,16 @@ vi.mock("@/components/usage/UsageDateRangePicker", () => ({
 vi.mock("@/components/ui/select", () => ({
   Select: ({ value, onValueChange, children }: any) => (
     <div data-testid={`select-${value}`}>
-      {children}
+      <div
+        onClick={(event) => {
+          const value = (event.target as HTMLElement)
+            .closest("[data-option-value]")
+            ?.getAttribute("data-option-value");
+          if (value) onValueChange?.(value);
+        }}
+      >
+        {children}
+      </div>
       <button type="button" onClick={() => onValueChange?.("5000")}>
         choose-5000
       </button>
@@ -93,7 +112,11 @@ vi.mock("@/components/ui/select", () => ({
   ),
   SelectValue: () => null,
   SelectContent: ({ children }: any) => <div>{children}</div>,
-  SelectItem: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+  SelectItem: ({ children, value, ...props }: any) => (
+    <div data-option-value={value} {...props}>
+      {children}
+    </div>
+  ),
 }));
 
 const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
@@ -114,6 +137,9 @@ describe("UsageDashboard", () => {
     useProviderStatsMock.mockReset();
     useModelStatsMock.mockReset();
     usageHeroMock.mockReset();
+    useBackgroundMock.mockReset();
+    backgroundCardMock.mockReset();
+    useBackgroundMock.mockReturnValue({ data: [] });
     useProviderStatsMock.mockReturnValue({ data: [] });
     useModelStatsMock.mockReturnValue({ data: [] });
   });
@@ -178,5 +204,44 @@ describe("UsageDashboard", () => {
     await waitFor(() =>
       expect(screen.getByTestId("select-30000")).toBeInTheDocument(),
     );
+  });
+  it("selects background-only models and keeps the option pool unfiltered", () => {
+    useBackgroundMock.mockReturnValue({
+      data: [{ model: "background-only" }, { model: "shared" }],
+    });
+    useModelStatsMock.mockReturnValue({ data: [{ model: "shared" }] });
+    renderDashboard({ refreshIntervalMs: 5000 });
+    expect(screen.getAllByText("shared")).toHaveLength(1);
+    fireEvent.click(screen.getByText("background-only"));
+    expect(backgroundCardMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ model: "background-only" }),
+    );
+    expect(useBackgroundMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      undefined,
+      5000,
+      true,
+    );
+  });
+
+  it("excludes cached background options for other apps and provider filters", () => {
+    useBackgroundMock.mockReturnValue({ data: [{ model: "background-only" }] });
+    useProviderStatsMock.mockReturnValue({
+      data: [{ providerName: "test-provider" }],
+    });
+    renderDashboard();
+    fireEvent.click(screen.getByText("test-provider"));
+    expect(screen.queryByText("background-only")).not.toBeInTheDocument();
+    expect(useBackgroundMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      undefined,
+      30000,
+      false,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "usage.appFilter.pi" }));
+    expect(screen.queryByText("background-only")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("codex-background-usage"),
+    ).not.toBeInTheDocument();
   });
 });

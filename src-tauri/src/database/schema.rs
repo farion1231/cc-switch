@@ -22,6 +22,7 @@ impl Database {
 
     /// 在指定连接上创建表（供迁移和测试使用）
     pub(crate) fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+        crate::services::codex_background_usage::create_tables(conn)?;
         // 1. Providers 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS providers (
@@ -548,6 +549,10 @@ impl Database {
                         log::info!("迁移数据库从 v17 到 v18（会话日志字节游标列）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        crate::services::codex_background_usage::create_tables(conn)?;
+                        Self::set_user_version(conn, 19)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3753,6 +3758,23 @@ mod tests {
              VALUES ('pi_session', 'request', 'semantic', 1)",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_adds_separate_background_ledger() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE existing_data (value TEXT); INSERT INTO existing_data VALUES ('keep');",
+        )?;
+        Database::set_user_version(&conn, 18)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "codex_background_usage")?);
+        assert!(Database::table_exists(&conn, "codex_background_files")?);
+        let value: String =
+            conn.query_row("SELECT value FROM existing_data", [], |row| row.get(0))?;
+        assert_eq!(value, "keep");
         Ok(())
     }
 

@@ -1877,7 +1877,21 @@
       "syncNow": "立即同步"
     },
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
-    "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)"
+    "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)",
+    "background": {
+      "title": "Codex Desktop 背景用量",
+      "description": "本機 macOS 背景生成事件，未計入上方總計：無法判定與代理請求的重疊。輸入已包含快取 token。費用按目前設定的標準價格估算，不代表訂閱扣費。日誌保留期限及其他裝置會限制涵蓋範圍。",
+      "model": "模型",
+      "feature": "功能",
+      "status": "狀態",
+      "generations": "生成次數",
+      "input": "輸入",
+      "cached": "快取輸入",
+      "output": "輸出",
+      "cost": "估算美元",
+      "unknown": "未知價格",
+      "error": "無法載入 Codex 背景用量。"
+    }
   },
   "usageScript": {
     "title": "設定用量查詢",

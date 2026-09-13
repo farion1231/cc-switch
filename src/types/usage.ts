@@ -318,3 +318,14 @@ export interface StatsFilters {
   providerId?: string;
   appType?: string;
 }
+
+export interface CodexBackgroundUsage {
+  model: string;
+  feature: string;
+  status: string;
+  generations: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: string | null;
+}
