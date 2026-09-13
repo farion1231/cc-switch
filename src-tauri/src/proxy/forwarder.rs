@@ -10,6 +10,7 @@ use super::{
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
+    outbound_mask::{mask_request_body, MaskSession},
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
@@ -19,7 +20,10 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{
+        CopilotOptimizerConfig, MaskOnError, OptimizerConfig, OutboundMaskConfig, ProxyStatus,
+        RectifierConfig,
+    },
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
@@ -178,6 +182,10 @@ pub struct RequestForwarder {
     optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 出站可逆脱敏配置
+    outbound_mask_config: OutboundMaskConfig,
+    /// 占位符映射表，与 RequestContext / response_processor 共享
+    mask_session: Arc<MaskSession>,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
@@ -236,6 +244,38 @@ impl RequestForwarder {
             && super::media_sanitizer::is_unsupported_image_error(error)
     }
 
+    /// 出站可逆脱敏：把敏感值换成带类型的占位符，映射写入 `self.mask_session`，
+    /// 响应侧据此还原。
+    ///
+    /// 关闭时零开销直接返回。自定义规则非法时按 `on_error` 决定放行还是阻断——
+    /// 选了 `BlockRequest` 的用户宁可请求失败也不接受原文出网，这里必须 fail-closed。
+    fn apply_outbound_mask(&self, body: &mut Value, tag: &str) -> Result<(), ProxyError> {
+        if !self.outbound_mask_config.enabled {
+            return Ok(());
+        }
+        match mask_request_body(body, &self.outbound_mask_config, &self.mask_session) {
+            Ok(stats) => {
+                if stats.total > 0 {
+                    // 只记统计，绝不记原值
+                    log::debug!("[{tag}] [MASK] {}", stats.summary());
+                }
+                Ok(())
+            }
+            Err(e) => match self.outbound_mask_config.on_error {
+                MaskOnError::WarnAndBypass => {
+                    log::warn!("[{tag}] [MASK] 规则不可用，本次请求未脱敏: {e}");
+                    Ok(())
+                }
+                MaskOnError::BlockRequest => {
+                    log::error!("[{tag}] [MASK] 规则不可用，按配置阻断请求: {e}");
+                    Err(ProxyError::InvalidRequest(format!(
+                        "出站脱敏规则不可用: {e}"
+                    )))
+                }
+            },
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
@@ -255,6 +295,8 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        outbound_mask_config: OutboundMaskConfig,
+        mask_session: Arc<MaskSession>,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -273,6 +315,8 @@ impl RequestForwarder {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            outbound_mask_config,
+            mask_session,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
@@ -1706,6 +1750,9 @@ impl RequestForwarder {
         {
             outbound_model = Some(m.to_string());
         }
+        // 出站可逆脱敏：body 定稿后、发送前的最后一步，确保上面所有改写都已完成，
+        // 不会有哪条路径绕过打码把原文送出去。
+        self.apply_outbound_mask(&mut filtered_body, adapter.name())?;
         log_prompt_cache_trace(
             app_type,
             provider,
@@ -3889,6 +3936,8 @@ mod tests {
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
+            outbound_mask_config: OutboundMaskConfig::default(),
+            mask_session: Arc::new(MaskSession::new("test")),
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
