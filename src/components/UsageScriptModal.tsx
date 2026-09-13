@@ -956,12 +956,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     (activationPolicy?.lastStatus
       ? null
       : activationPolicy?.latestAttempt?.model);
-  const activationTimestamp =
-    activationPolicy?.lastAttemptAt ??
-    (activationPolicy?.lastStatus
-      ? null
-      : (activationPolicy?.latestAttempt?.endedAt ??
-        activationPolicy?.latestAttempt?.startedAt));
+  const activationTimestamp = activationPolicy?.lastStatus
+    ? null
+    : (activationPolicy?.lastAttemptAt ??
+      activationPolicy?.latestAttempt?.endedAt ??
+      activationPolicy?.latestAttempt?.startedAt);
 
   const quotaActivationPanel =
     isBoundCodexOfficial &&
