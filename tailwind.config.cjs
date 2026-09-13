@@ -38,6 +38,13 @@ module.exports = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        heatmap: {
+          0: "hsl(var(--heatmap-0))",
+          1: "hsl(var(--heatmap-1))",
+          2: "hsl(var(--heatmap-2))",
+          3: "hsl(var(--heatmap-3))",
+          4: "hsl(var(--heatmap-4))",
+        },
         blue: {
           400: "#409CFF",
           500: "#0A84FF",
