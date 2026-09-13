@@ -2902,4 +2902,38 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "Command Code",
+    websiteUrl: "https://commandcode.ai",
+    apiKeyUrl: "https://commandcode.ai/settings/keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "command_code",
+      "https://api.commandcode.ai/provider/v1",
+      "deepseek/deepseek-v4.1-flash",
+    ),
+    endpointCandidates: ["https://api.commandcode.ai/provider/v1"],
+    apiFormat: "openai_chat",
+    // Claude models are only available on /provider/v1/messages. Keep the
+    // Codex Chat catalog limited to models accepted by /chat/completions.
+    modelCatalog: modelCatalog([
+      {
+        model: "deepseek/deepseek-v4.1-flash",
+        displayName: "DeepSeek V4.1 Flash",
+        contextWindow: 1000000,
+      },
+      {
+        model: "z-ai/glm-5.3-flash",
+        displayName: "GLM-5.3 Flash",
+        contextWindow: 1048576,
+      },
+      {
+        model: "Qwen/Qwen3.8-Flash",
+        displayName: "Qwen 3.8 Flash",
+        contextWindow: 1000000,
+      },
+    ]),
+    category: "third_party",
+    icon: "commandcode",
+  },
 ];

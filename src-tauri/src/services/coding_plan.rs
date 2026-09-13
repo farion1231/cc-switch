@@ -1,6 +1,6 @@
 //! Token Plan / 编程套餐额度查询服务
 //!
-//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go
+//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code
 //! 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
@@ -25,6 +25,8 @@ enum CodingPlanProvider {
     /// `https://opencode.ai/zen/go`（claude/claude-desktop 直连 /messages）
     /// 与 `https://opencode.ai/zen/go/v1`（codex/opencode/pi 走 Chat）。
     OpencodeGo,
+    /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
+    CommandCode,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -45,6 +47,8 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 同时覆盖 /zen/go 与 /zen/go/v1 两档 base；Zen 按量版（/zen/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
         Some(CodingPlanProvider::OpencodeGo)
+    } else if url.contains("api.commandcode.ai/provider") {
+        Some(CodingPlanProvider::CommandCode)
     } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
         // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
         // 入口；DouBaoSeed 按量付费走 /api/v3 与 /api/compatible，没有套餐
@@ -827,6 +831,288 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
     })
 }
 
+// ── Command Code ─────────────────────────────────────────────
+
+/// Command Code 的 `/alpha` 控制面接口固定在根域名；推理数据面才使用
+/// `/provider` / `/provider/v1`。不要复用 provider 的 base_url。
+const COMMAND_CODE_API_BASE: &str = "https://api.commandcode.ai";
+
+enum CommandCodeFetch {
+    Body(serde_json::Value),
+    AuthExpired,
+    Error(String),
+}
+
+fn command_code_url(base_url: &str, path: &str, params: &[(&str, &str)]) -> Result<String, String> {
+    let mut url = url::Url::parse(&format!("{}{}", base_url.trim_end_matches('/'), path))
+        .map_err(|e| format!("Invalid Command Code endpoint: {e}"))?;
+    if !params.is_empty() {
+        let mut query = url.query_pairs_mut();
+        for (key, value) in params {
+            query.append_pair(key, value);
+        }
+    }
+    Ok(url.into())
+}
+
+/// `/alpha` 是官方 CLI 使用的私有路由，未公开文档化；保持宽松解析。
+async fn fetch_command_code_json(
+    client: &reqwest::Client,
+    base_url: &str,
+    path: &str,
+    params: &[(&str, &str)],
+    api_key: &str,
+) -> Result<CommandCodeFetch, String> {
+    let url = command_code_url(base_url, path, params)?;
+    let response = client
+        .get(url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(CommandCodeFetch::AuthExpired);
+    }
+
+    let raw = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {e}"))?;
+    if !status.is_success() {
+        let body = String::from_utf8_lossy(&raw);
+        return Ok(CommandCodeFetch::Error(format!(
+            "API error (HTTP {status}): {body}"
+        )));
+    }
+
+    match serde_json::from_slice(&raw) {
+        Ok(body) => Ok(CommandCodeFetch::Body(body)),
+        Err(e) => Ok(CommandCodeFetch::Error(format!(
+            "Failed to parse response: {e}"
+        ))),
+    }
+}
+
+fn command_code_auth_error() -> SubscriptionQuota {
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Expired,
+        credential_message: Some("Invalid API key".to_string()),
+        success: false,
+        tiers: vec![],
+        extra_usage: None,
+        error: Some("Authentication failed (HTTP 401 Unauthorized)".to_string()),
+        queried_at: Some(now_millis()),
+    }
+}
+
+fn command_code_window_tier(window: Option<&serde_json::Value>, name: &str) -> Option<QuotaTier> {
+    let window = window?;
+    let used = window.get("used").and_then(parse_f64)?;
+    let cap = window.get("cap").and_then(parse_f64)?;
+    if cap <= 0.0 {
+        return None;
+    }
+    Some(QuotaTier {
+        name: name.to_string(),
+        utilization: used / cap * 100.0,
+        resets_at: window.get("resetAt").and_then(extract_reset_time),
+        used_value_usd: None,
+        max_value_usd: None,
+    })
+}
+
+fn parse_command_code_quota(
+    credits_response: &serde_json::Value,
+    subscription_response: Option<&serde_json::Value>,
+    summary_response: &serde_json::Value,
+) -> SubscriptionQuota {
+    let Some(credit_root) = credits_response.get("credits") else {
+        return make_error("Missing 'credits' field in response".to_string());
+    };
+    let credit_values = credit_root;
+
+    // Command Code 的 monthly tier 是套餐级月度额度；purchased/free credits
+    // 只参与月度百分比计算，不参与 5h/weekly rolling window。与 OpenCode Go
+    // 一致，frontend 只展示三类窗口的百分比和重置倒计时。
+    let monthly_remaining = credit_values
+        .get("monthlyCredits")
+        .and_then(parse_f64)
+        .unwrap_or(0.0)
+        .max(0.0);
+    let purchased_remaining = credit_values
+        .get("purchasedCredits")
+        .and_then(parse_f64)
+        .unwrap_or(0.0)
+        .max(0.0);
+    let free_remaining = credit_values
+        .get("freeCredits")
+        .and_then(parse_f64)
+        .unwrap_or(0.0)
+        .max(0.0);
+    let total_remaining = monthly_remaining + purchased_remaining + free_remaining;
+    let Some(total_spent) = summary_response.get("totalCost").and_then(parse_f64) else {
+        return make_error("Missing 'totalCost' field in response".to_string());
+    };
+    let total_spent = total_spent.max(0.0);
+    let total_pool = total_spent + total_remaining;
+
+    let subscription = subscription_response.and_then(|body| body.get("data"));
+    let period_end = subscription
+        .and_then(|data| data.get("currentPeriodEnd"))
+        .and_then(extract_reset_time);
+    let plan_id = subscription
+        .and_then(|data| data.get("planId"))
+        .and_then(|value| value.as_str())
+        .or_else(|| credit_root.get("planId").and_then(|value| value.as_str()))
+        .map(str::to_string);
+
+    let mut tiers = Vec::new();
+    // 实际 credits 响应把 windowLimits 放在 credits 同级；保留嵌套位置兼容
+    // 已出现过的响应变体。
+    if let Some(window_limits) = credits_response
+        .get("windowLimits")
+        .or_else(|| credit_root.get("windowLimits"))
+    {
+        if window_limits
+            .get("limited")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            if let Some(tier) =
+                command_code_window_tier(window_limits.get("fiveHour"), TIER_FIVE_HOUR)
+            {
+                tiers.push(tier);
+            }
+            if let Some(tier) =
+                command_code_window_tier(window_limits.get("weekly"), TIER_WEEKLY_LIMIT)
+            {
+                tiers.push(tier);
+            }
+        }
+    }
+
+    tiers.push(QuotaTier {
+        name: TIER_MONTHLY.to_string(),
+        utilization: if total_pool > 0.0 {
+            total_spent / total_pool * 100.0
+        } else {
+            0.0
+        },
+        resets_at: period_end,
+        used_value_usd: None,
+        max_value_usd: None,
+    });
+
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: plan_id,
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    }
+}
+
+async fn query_command_code_at(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::get();
+
+    let whoami = match fetch_command_code_json(
+        &client,
+        base_url,
+        "/alpha/whoami",
+        &[("limits", "1")],
+        api_key,
+    )
+    .await?
+    {
+        CommandCodeFetch::Body(body) => body,
+        CommandCodeFetch::AuthExpired => return Ok(command_code_auth_error()),
+        CommandCodeFetch::Error(error) => return Ok(make_error(error)),
+    };
+
+    let org_id = whoami
+        .get("org")
+        .and_then(|org| org.get("id"))
+        .and_then(|id| id.as_str())
+        .map(str::to_string);
+    let org_params: Vec<(&str, &str)> = org_id
+        .as_deref()
+        .map(|id| vec![("orgId", id)])
+        .unwrap_or_default();
+
+    let credits = match fetch_command_code_json(
+        &client,
+        base_url,
+        "/alpha/billing/credits",
+        &org_params,
+        api_key,
+    )
+    .await?
+    {
+        CommandCodeFetch::Body(body) => body,
+        CommandCodeFetch::AuthExpired => return Ok(command_code_auth_error()),
+        CommandCodeFetch::Error(error) => return Ok(make_error(error)),
+    };
+
+    let subscription = match fetch_command_code_json(
+        &client,
+        base_url,
+        "/alpha/billing/subscriptions",
+        &org_params,
+        api_key,
+    )
+    .await?
+    {
+        CommandCodeFetch::Body(body) => Some(body),
+        CommandCodeFetch::AuthExpired => return Ok(command_code_auth_error()),
+        CommandCodeFetch::Error(error) => return Ok(make_error(error)),
+    };
+
+    let period_start = subscription
+        .as_ref()
+        .and_then(|body| body.get("data"))
+        .and_then(|data| data.get("currentPeriodStart"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let mut summary_params: Vec<(&str, &str)> = Vec::new();
+    if let Some(period_start) = period_start.as_deref() {
+        summary_params.push(("since", period_start));
+    }
+    if let Some(org_id) = org_id.as_deref() {
+        summary_params.push(("orgId", org_id));
+    }
+    let summary = match fetch_command_code_json(
+        &client,
+        base_url,
+        "/alpha/usage/summary",
+        &summary_params,
+        api_key,
+    )
+    .await?
+    {
+        CommandCodeFetch::Body(body) => body,
+        CommandCodeFetch::AuthExpired => return Ok(command_code_auth_error()),
+        CommandCodeFetch::Error(error) => return Ok(make_error(error)),
+    };
+
+    Ok(parse_command_code_quota(
+        &credits,
+        subscription.as_ref(),
+        &summary,
+    ))
+}
+
+async fn query_command_code(api_key: &str) -> Result<SubscriptionQuota, String> {
+    query_command_code_at(COMMAND_CODE_API_BASE, api_key).await
+}
+
 // ── 火山方舟 Agent Plan / Coding Plan ───────────────────────
 //
 // 与 Kimi/MiniMax（数据面 Bearer 余额接口）不同，火山用量接口是**控制面
@@ -1461,6 +1747,7 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
         CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
+        CodingPlanProvider::CommandCode => query_command_code(api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
@@ -1471,13 +1758,414 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers,
-        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_zhipu_team_at,
-        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
-        volcengine_response_error, volcengine_sign, zhipu_quota_base, CodingPlanProvider,
-        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
+        parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
+        query_command_code_at, query_zhipu_team_at, volcengine_canonical_query,
+        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
+        volcengine_sign, zhipu_quota_base, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR,
+        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
+
+    #[test]
+    fn command_code_detects_both_provider_base_variants() {
+        assert!(matches!(
+            detect_provider("https://api.commandcode.ai/provider"),
+            Some(CodingPlanProvider::CommandCode)
+        ));
+        assert!(matches!(
+            detect_provider("https://api.commandcode.ai/provider/v1"),
+            Some(CodingPlanProvider::CommandCode)
+        ));
+        assert!(detect_provider("https://commandcode.ai/provider").is_none());
+    }
+
+    #[test]
+    fn command_code_maps_balance_and_window_limits() {
+        let credits = json!({
+            "credits": {
+                "planId": "provider",
+                "monthlyCredits": 12.5,
+                "purchasedCredits": 3.0,
+                "freeCredits": 0.5,
+                "windowLimits": {
+                    "limited": true,
+                    "fiveHour": {
+                        "used": 4.0,
+                        "cap": 14.0,
+                        "resetAt": "2026-09-12T18:00:00.000Z"
+                    },
+                    "weekly": {
+                        "used": 12.0,
+                        "cap": 40.0,
+                        "resetAt": "2026-09-16T00:00:00.000Z"
+                    }
+                }
+            }
+        });
+        let subscription = json!({
+            "data": {
+                "planId": "goat",
+                "status": "active",
+                "currentPeriodStart": "2026-09-01T00:00:00.000Z",
+                "currentPeriodEnd": "2026-10-01T00:00:00.000Z"
+            }
+        });
+        let summary = json!({ "totalCost": 7.0 });
+
+        let quota = parse_command_code_quota(&credits, Some(&subscription), &summary);
+
+        assert!(quota.success);
+        assert!(matches!(quota.credential_status, CredentialStatus::Valid));
+        assert_eq!(quota.credential_message.as_deref(), Some("goat"));
+        assert_eq!(quota.tiers.len(), 3);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert!((quota.tiers[0].utilization - (4.0 / 14.0 * 100.0)).abs() < 1e-9);
+        assert_eq!(
+            quota.tiers[0].resets_at.as_deref(),
+            Some("2026-09-12T18:00:00.000Z")
+        );
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((quota.tiers[1].utilization - 30.0).abs() < 1e-9);
+        assert_eq!(quota.tiers[2].name, TIER_MONTHLY);
+        assert!((quota.tiers[2].utilization - (7.0 / 23.0 * 100.0)).abs() < 1e-9);
+        assert_eq!(quota.tiers[2].used_value_usd, None);
+        assert_eq!(quota.tiers[2].max_value_usd, None);
+        assert_eq!(
+            quota.tiers[2].resets_at.as_deref(),
+            Some("2026-10-01T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn command_code_parses_real_goat_subscription_shape() {
+        let credits = json!({
+            "credits": {
+                "belowThreshold": false,
+                "creditThreshold": 0,
+                "monthlyCredits": 70,
+                "purchasedCredits": 0,
+                "freeCredits": 0
+            },
+            "windowLimits": {
+                "limited": true,
+                "exceeded": null,
+                "fiveHour": {
+                    "used": 0,
+                    "cap": 14,
+                    "exceeded": false,
+                    "resetAt": 0
+                },
+                "weekly": {
+                    "used": 0,
+                    "cap": 35,
+                    "exceeded": false,
+                    "resetAt": 0
+                }
+            }
+        });
+        let subscription = json!({
+            "success": true,
+            "data": {
+                "status": "active",
+                "currentPeriodStart": "2026-09-13T01:01:27.000Z",
+                "currentPeriodEnd": "2026-10-13T01:01:27.000Z",
+                "planId": "individual-goat"
+            }
+        });
+        let summary = json!({
+            "totalCost": 0,
+            "periodBasis": "billing-period"
+        });
+
+        let quota = parse_command_code_quota(&credits, Some(&subscription), &summary);
+
+        assert!(quota.success);
+        assert!(matches!(quota.credential_status, CredentialStatus::Valid));
+        assert_eq!(quota.credential_message.as_deref(), Some("individual-goat"));
+        assert_eq!(quota.tiers.len(), 3);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert!((quota.tiers[0].utilization - 0.0).abs() < 1e-9);
+        assert!(quota.tiers[0].resets_at.is_none());
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((quota.tiers[1].utilization - 0.0).abs() < 1e-9);
+        assert!(quota.tiers[1].resets_at.is_none());
+        assert_eq!(quota.tiers[2].name, TIER_MONTHLY);
+        assert!((quota.tiers[2].utilization - 0.0).abs() < 1e-9);
+        assert_eq!(quota.tiers[2].used_value_usd, None);
+        assert_eq!(quota.tiers[2].max_value_usd, None);
+        assert_eq!(
+            quota.tiers[2].resets_at.as_deref(),
+            Some("2026-10-13T01:01:27.000Z")
+        );
+    }
+
+    #[test]
+    fn command_code_pay_as_you_go_has_balance_without_subscription() {
+        let credits = json!({
+            "credits": {
+                "planId": "provider",
+                "monthlyCredits": 0,
+                "purchasedCredits": 18.25,
+                "freeCredits": 0,
+                "windowLimits": { "limited": false }
+            }
+        });
+
+        let quota = parse_command_code_quota(
+            &credits,
+            None,
+            &json!({
+                "totalCost": 0
+            }),
+        );
+
+        assert!(quota.success);
+        assert_eq!(quota.credential_message.as_deref(), Some("provider"));
+        assert_eq!(quota.tiers.len(), 1);
+        assert_eq!(quota.tiers[0].name, TIER_MONTHLY);
+        assert_eq!(quota.tiers[0].used_value_usd, None);
+        assert_eq!(quota.tiers[0].max_value_usd, None);
+        assert!(quota.tiers[0].resets_at.is_none());
+    }
+
+    #[test]
+    fn command_code_skips_malformed_windows() {
+        let credits = json!({
+            "credits": {
+                "monthlyCredits": 1,
+                "purchasedCredits": 0,
+                "freeCredits": 0,
+                "windowLimits": {
+                    "limited": true,
+                    "fiveHour": { "used": 1, "cap": 0 },
+                    "weekly": { "used": 1, "cap": 10, "resetAt": "2026-09-16T00:00:00Z" }
+                }
+            }
+        });
+
+        let quota = parse_command_code_quota(
+            &credits,
+            None,
+            &json!({
+                "totalCost": 1
+            }),
+        );
+
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].name, TIER_MONTHLY);
+    }
+
+    #[test]
+    fn command_code_missing_credits_is_deterministic_error() {
+        let quota = parse_command_code_quota(&json!({}), None, &json!({}));
+        assert!(!quota.success);
+        assert!(quota
+            .error
+            .expect("error")
+            .contains("Missing 'credits' field"));
+    }
+
+    #[test]
+    fn command_code_missing_total_cost_is_deterministic_error() {
+        let quota = parse_command_code_quota(&json!({ "credits": {} }), None, &json!({}));
+
+        assert!(!quota.success);
+        assert!(quota
+            .error
+            .expect("error")
+            .contains("Missing 'totalCost' field"));
+    }
+
+    #[tokio::test]
+    async fn command_code_401_maps_to_expired_credentials() {
+        ensure_no_proxy_for_loopback();
+        let (base_url, handle) = spawn_once_server(Some(http_response("401 Unauthorized", "{}")));
+
+        let quota = query_command_code_at(&base_url, "k")
+            .await
+            .expect("auth failure must be deterministic");
+
+        assert!(!quota.success);
+        assert!(matches!(quota.credential_status, CredentialStatus::Expired));
+        assert!(quota
+            .error
+            .expect("error")
+            .contains("Authentication failed (HTTP 401"));
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn command_code_403_is_reported_with_body() {
+        ensure_no_proxy_for_loopback();
+        let (base_url, handle) = spawn_once_server(Some(http_response(
+            "403 Forbidden",
+            r#"{"error":{"code":"upgrade_required"}}"#,
+        )));
+
+        let quota = query_command_code_at(&base_url, "k")
+            .await
+            .expect("403 must be deterministic");
+
+        assert!(!quota.success);
+        assert!(quota.error.expect("error").contains("HTTP 403"));
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn command_code_429_is_reported_as_deterministic_error() {
+        ensure_no_proxy_for_loopback();
+        let (base_url, handle) =
+            spawn_once_server(Some(http_response("429 Too Many Requests", "slow down")));
+
+        let quota = query_command_code_at(&base_url, "k")
+            .await
+            .expect("non-2xx must remain a deterministic result");
+
+        assert!(!quota.success);
+        assert!(quota.error.expect("error").contains("HTTP 429"));
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn command_code_invalid_json_is_deterministic_parse_error() {
+        ensure_no_proxy_for_loopback();
+        let (base_url, handle) = spawn_once_server(Some(http_response("200 OK", "not-json")));
+
+        let quota = query_command_code_at(&base_url, "k")
+            .await
+            .expect("invalid JSON must be deterministic");
+
+        assert!(!quota.success);
+        assert!(quota
+            .error
+            .expect("error")
+            .contains("Failed to parse response"));
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn command_code_subscription_transient_is_err() {
+        ensure_no_proxy_for_loopback();
+        let responses = vec![
+            Some(http_response(
+                "200 OK",
+                r#"{"success":true,"user":{"id":"u-1"},"org":{"id":"org-1"}}"#,
+            )),
+            Some(http_response(
+                "200 OK",
+                r#"{"credits":{"monthlyCredits":70,"purchasedCredits":0,"freeCredits":0},"windowLimits":{"limited":true,"fiveHour":{"used":0,"cap":14},"weekly":{"used":0,"cap":35}}}"#,
+            )),
+            None,
+        ];
+        let (base_url, _, handle) = spawn_sequence_server(responses);
+
+        query_command_code_at(&base_url, "k")
+            .await
+            .expect_err("subscription 传输失败必须返回 Err，不能降级成无订阅");
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn command_code_summary_transient_is_err() {
+        ensure_no_proxy_for_loopback();
+        let responses = vec![
+            Some(http_response(
+                "200 OK",
+                r#"{"success":true,"user":{"id":"u-1"},"org":{"id":"org-1"}}"#,
+            )),
+            Some(http_response(
+                "200 OK",
+                r#"{"credits":{"monthlyCredits":70,"purchasedCredits":0,"freeCredits":0},"windowLimits":{"limited":true,"fiveHour":{"used":0,"cap":14},"weekly":{"used":0,"cap":35}}}"#,
+            )),
+            Some(http_response(
+                "200 OK",
+                r#"{"success":true,"data":{"status":"active","currentPeriodStart":"2026-09-13T01:01:27.000Z","currentPeriodEnd":"2026-10-13T01:01:27.000Z","planId":"individual-goat"}}"#,
+            )),
+            None,
+        ];
+        let (base_url, _, handle) = spawn_sequence_server(responses);
+
+        query_command_code_at(&base_url, "k")
+            .await
+            .expect_err("summary 传输失败必须返回 Err，不能把已用量降级成 0");
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn command_code_summary_http_error_is_deterministic() {
+        ensure_no_proxy_for_loopback();
+        let responses = vec![
+            Some(http_response(
+                "200 OK",
+                r#"{"success":true,"user":{"id":"u-1"},"org":{"id":"org-1"}}"#,
+            )),
+            Some(http_response(
+                "200 OK",
+                r#"{"credits":{"monthlyCredits":70,"purchasedCredits":0,"freeCredits":0},"windowLimits":{"limited":true,"fiveHour":{"used":0,"cap":14},"weekly":{"used":0,"cap":35}}}"#,
+            )),
+            Some(http_response(
+                "200 OK",
+                r#"{"success":true,"data":{"status":"active","currentPeriodStart":"2026-09-13T01:01:27.000Z","currentPeriodEnd":"2026-10-13T01:01:27.000Z","planId":"individual-goat"}}"#,
+            )),
+            Some(http_response("500 Internal Server Error", "{}")),
+        ];
+        let (base_url, _, handle) = spawn_sequence_server(responses);
+
+        let quota = query_command_code_at(&base_url, "k")
+            .await
+            .expect("summary 非 2xx 必须是确定性结果");
+        assert!(!quota.success);
+        assert!(quota.error.expect("error").contains("HTTP 500"));
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn command_code_queries_all_four_alpha_endpoints_in_order() {
+        ensure_no_proxy_for_loopback();
+        let responses = vec![
+            Some(http_response(
+                "200 OK",
+                r#"{"success":true,"user":{"id":"u-1"},"org":{"id":"org-1"}}"#,
+            )),
+            Some(http_response(
+                "200 OK",
+                r#"{"credits":{"belowThreshold":false,"creditThreshold":0,"monthlyCredits":70,"purchasedCredits":0,"freeCredits":0},"windowLimits":{"limited":true,"exceeded":null,"fiveHour":{"used":0,"cap":14,"exceeded":false,"resetAt":0},"weekly":{"used":0,"cap":35,"exceeded":false,"resetAt":0}}}"#,
+            )),
+            Some(http_response(
+                "200 OK",
+                r#"{"success":true,"data":{"status":"active","currentPeriodStart":"2026-09-13T01:01:27.000Z","currentPeriodEnd":"2026-10-13T01:01:27.000Z","planId":"individual-goat"}}"#,
+            )),
+            Some(http_response(
+                "200 OK",
+                r#"{"totalCost":0,"periodBasis":"billing-period"}"#,
+            )),
+        ];
+        let (base_url, captured_paths, handle) = spawn_sequence_server(responses);
+
+        let quota = query_command_code_at(&base_url, "k")
+            .await
+            .expect("完整链路必须返回成功");
+
+        let paths = captured_paths.lock().unwrap().clone();
+        assert_eq!(
+            paths,
+            vec![
+                "/alpha/whoami?limits=1",
+                "/alpha/billing/credits?orgId=org-1",
+                "/alpha/billing/subscriptions?orgId=org-1",
+                "/alpha/usage/summary?since=2026-09-13T01%3A01%3A27.000Z&orgId=org-1"
+            ]
+        );
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 3);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[2].name, TIER_MONTHLY);
+        handle.join().expect("server thread");
+    }
 
     #[test]
     fn opencode_go_detects_both_base_variants_but_not_zen() {
@@ -2174,7 +2862,6 @@ mod tests {
     // 三个服务的语义回归锚。
 
     use super::get_coding_plan_quota;
-    use crate::services::subscription::CredentialStatus;
     use std::io::{Read, Write};
 
     /// 测试进程内可能有其他用例临时 set_var HTTP_PROXY（http_client 的
@@ -2210,6 +2897,41 @@ mod tests {
             "HTTP/1.1 {status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
             body.len()
         )
+    }
+
+    /// 起一个本地 HTTP server，按顺序返回 responses，并记录每次请求的 path。
+    fn spawn_sequence_server(
+        responses: Vec<Option<String>>,
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let captured_paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let captured_paths_clone = captured_paths.clone();
+        let handle = std::thread::spawn(move || {
+            for response in responses {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 2048];
+                    let _ = stream.read(&mut buf);
+                    let text = String::from_utf8_lossy(&buf).to_string();
+                    let path = text
+                        .lines()
+                        .next()
+                        .and_then(|line| line.split_whitespace().nth(1))
+                        .map(|path| path.to_string())
+                        .unwrap_or_default();
+                    captured_paths_clone.lock().unwrap().push(path);
+                    if let Some(response) = response {
+                        let _ = stream.write_all(response.as_bytes());
+                        let _ = stream.flush();
+                    }
+                }
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), captured_paths, handle)
     }
 
     #[tokio::test]
