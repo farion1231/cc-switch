@@ -10,6 +10,7 @@
     "beforeBuildCommand": "pnpm run build:renderer"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",

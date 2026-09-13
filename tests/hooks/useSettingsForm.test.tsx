@@ -7,6 +7,9 @@ const useSettingsQueryMock = vi.fn();
 
 vi.mock("@/lib/query", () => ({
   useSettingsQuery: (...args: unknown[]) => useSettingsQueryMock(...args),
+  queryClient: {
+    invalidateQueries: vi.fn(),
+  },
 }));
 
 let changeLanguageSpy: ReturnType<typeof vi.spyOn<any, any>>;
