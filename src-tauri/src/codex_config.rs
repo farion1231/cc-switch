@@ -5605,25 +5605,32 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn temporary_takeover_route_keeps_selector_with_opaque_or_symlink_profile_entries() {
-        use std::os::unix::ffi::OsStringExt;
+    fn temporary_takeover_route_keeps_selector_with_broken_symlink_profile_entry() {
         use std::os::unix::fs::symlink;
 
         let live = temporary_takeover_test_config();
-        for broken_symlink in [true, false] {
-            let config_dir = tempfile::TempDir::new().unwrap();
-            if broken_symlink {
-                symlink(
-                    config_dir.path().join("missing"),
-                    config_dir.path().join("work.config.toml"),
-                )
-                .unwrap();
-            } else {
-                let name = OsString::from_vec(b"opaque\xff".to_vec());
-                fs::write(config_dir.path().join(name), "fixture").unwrap();
-            }
-            assert_temporary_takeover_cleanup_keeps_selector(&live, config_dir.path());
-        }
+        let config_dir = tempfile::TempDir::new().unwrap();
+        symlink(
+            config_dir.path().join("missing"),
+            config_dir.path().join("work.config.toml"),
+        )
+        .unwrap();
+        assert_temporary_takeover_cleanup_keeps_selector(&live, config_dir.path());
+    }
+
+    // macOS filesystems can reject non-UTF-8 filenames with EILSEQ. Exercise
+    // actual non-Unicode directory entries on Linux, independently of symlinks.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn temporary_takeover_route_keeps_selector_with_non_unicode_profile_entry() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let live = temporary_takeover_test_config();
+        let config_dir = tempfile::TempDir::new().unwrap();
+        let name = OsString::from_vec(b"opaque\xff".to_vec());
+        assert!(name.to_str().is_none());
+        fs::write(config_dir.path().join(name), "fixture").unwrap();
+        assert_temporary_takeover_cleanup_keeps_selector(&live, config_dir.path());
     }
 
     #[test]
