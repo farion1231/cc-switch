@@ -412,7 +412,19 @@
         "mediaFallback": "非対応画像フォールバック",
         "mediaFallbackDescription": "プロバイダーが画像入力に対応していない場合（テキストのみの能力が宣言されている、または上流が画像非対応エラーを返した場合）、画像ブロックを [Unsupported Image] マーカーに自動置換し、会話を中断させません",
         "mediaHeuristic": "テキスト専用モデルの事前判定",
-        "mediaHeuristicDescription": "送信前に、内蔵の確認済みテキスト専用モデル登録に基づいて画像を除去します。オフにしても無効になるのはプロキシの登録ベース事前処理だけで、宣言済みテキスト専用モデルの処理と上流エラー時のフォールバックは残り、Codex モデルカタログの能力宣言は変わりません"
+        "mediaHeuristicDescription": "送信前に、内蔵の確認済みテキスト専用モデル登録に基づいて画像を除去します。オフにしても無効になるのはプロキシの登録ベース事前処理だけで、宣言済みテキスト専用モデルの処理と上流エラー時のフォールバックは残り、Codex モデルカタログの能力宣言は変わりません",
+        "steerUserRole": "Steer メッセージ",
+        "steerUserRoleDescription": "タスクの実行中にユーザーがメッセージを追加した場合、対応する system メッセージを内容と位置を保ったまま user に変換します。",
+        "responseSystemGroup": "Response system 変換",
+        "responseSystemDescription": "Claude Code のリクエストを Chat Completions 経由で転送する際、下の設定に従って会話中に挿入された system メッセージを user に変換し、キャッシュミスを減らします。",
+        "tokenReminderUserRole": "トークン予算のリマインダー",
+        "tokenReminderUserRoleDescription": "Claude Code が残りトークン数のリマインダーを挿入した場合、そのロールを system から user に変更します。",
+        "todoReminderUserRole": "Todo リマインダー",
+        "todoReminderUserRoleDescription": "Claude Code が TodoWrite のリマインダーを挿入した場合、そのロールを system から user に変更します。",
+        "taskNotificationUserRole": "バックグラウンドタスク通知",
+        "taskNotificationUserRoleDescription": "バックグラウンドタスクの状態通知が届いた場合、ロールを system から user に変更し、ユーザー入力ではないという注意書きを保持します。",
+        "allSystemUserRole": "すべて変換",
+        "allSystemUserRoleDescription": "有効にすると、最初のユーザーメッセージ以降のすべての system メッセージを種類に関係なく user に変換します。上の4項目の設定は保持され、無効にすると再び適用されます。後続のシステム指示も user の優先度になります。"
       },
       "optimizer": {
         "title": "Bedrock リクエストオプティマイザー",

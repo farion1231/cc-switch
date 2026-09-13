@@ -1428,6 +1428,17 @@ impl RequestForwarder {
         };
         if adapter.name() == "Claude" {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
+                if matches!(app_type, AppType::Claude) {
+                    let converted =
+                        super::response_system_rectifier::rectify_response_system_messages(
+                            &mut mapped_body,
+                            &self.rectifier_config,
+                            api_format,
+                        );
+                    if converted > 0 {
+                        log::debug!("[ResponseSystemRectifier] Converted {converted} conversation system message(s) to user for Chat Completions");
+                    }
+                }
                 super::providers::normalize_anthropic_messages_for_provider(
                     &mut mapped_body,
                     provider,
