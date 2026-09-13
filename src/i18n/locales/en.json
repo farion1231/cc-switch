@@ -484,6 +484,8 @@
       "safetyBackupId": "Safety Backup ID",
       "intervalLabel": "Auto-backup Interval",
       "retainLabel": "Backup Retention",
+      "maxTotalLabel": "Backup Size Cap",
+      "maxTotalUnlimited": "Unlimited",
       "intervalDisabled": "Disabled",
       "intervalHours": "{{hours}} hours",
       "intervalDays": "{{days}} days",

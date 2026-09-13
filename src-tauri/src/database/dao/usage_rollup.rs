@@ -8,6 +8,15 @@ use crate::services::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH}
 use crate::services::usage_stats::effective_usage_log_filter;
 use chrono::{Duration, Local, TimeZone};
 
+/// Upper bound for the `session_usage_dedup` ledger.
+///
+/// The ledger prevents re-counting session events whose detail rows were
+/// already rolled up; it has no timestamp column and is never pruned by
+/// design, so without a cap it grows forever (#6706). `rowid` order is
+/// insertion order, so the cap evicts the oldest entries — exactly the ones
+/// least likely to be re-scanned.
+pub(crate) const SESSION_USAGE_DEDUP_MAX_ROWS: u64 = 1_000_000;
+
 /// Compute the rollup/prune cutoff aligned to a local-day boundary.
 ///
 /// Anything strictly older than the returned timestamp will be aggregated into
@@ -56,6 +65,21 @@ fn compute_local_midnight_cutoff(
 }
 
 impl Database {
+    /// Trim `session_usage_dedup` to the newest `max_rows` entries
+    /// (`rowid` order is insertion order).
+    pub fn cap_session_usage_dedup(&self, max_rows: u64) -> Result<u64, AppError> {
+        let conn = lock_conn!(self.conn);
+        let deleted = conn
+            .execute(
+                "DELETE FROM session_usage_dedup WHERE rowid IN (
+                    SELECT rowid FROM session_usage_dedup ORDER BY rowid DESC LIMIT -1 OFFSET ?1
+                )",
+                [max_rows],
+            )
+            .map_err(|e| AppError::Database(format!("清理会话用量去重账本失败: {e}")))?;
+        Ok(deleted as u64)
+    }
+
     /// Aggregate proxy_request_logs older than `retain_days` into usage_daily_rollups,
     /// then delete the aggregated detail rows.
     /// Returns the number of deleted detail rows.
@@ -568,6 +592,40 @@ mod tests {
         )?;
         assert_eq!(count, 13, "10 existing + 3 new");
         assert_eq!(input, 1300, "1000 existing + 300 new");
+        Ok(())
+    }
+
+    #[test]
+    fn cap_session_usage_dedup_keeps_newest_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            for i in 0..5 {
+                conn.execute(
+                    "INSERT INTO session_usage_dedup
+                        (data_source, request_id, semantic_id, has_entry_id)
+                     VALUES ('pi_session', ?1, ?1, 1)",
+                    [format!("req-{i}")],
+                )?;
+            }
+        }
+
+        let deleted = db.cap_session_usage_dedup(3)?;
+        assert_eq!(deleted, 2);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let mut stmt = conn.prepare("SELECT request_id FROM session_usage_dedup ORDER BY rowid")?;
+        let kept: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            kept,
+            vec![
+                "req-2".to_string(),
+                "req-3".to_string(),
+                "req-4".to_string()
+            ]
+        );
         Ok(())
     }
 }

@@ -484,6 +484,8 @@
       "safetyBackupId": "安全バックアップID",
       "intervalLabel": "自動バックアップ間隔",
       "retainLabel": "バックアップ保持数",
+      "maxTotalLabel": "バックアップ合計サイズ上限",
+      "maxTotalUnlimited": "無制限",
       "intervalDisabled": "無効",
       "intervalHours": "{{hours}} 時間",
       "intervalDays": "{{days}} 日",

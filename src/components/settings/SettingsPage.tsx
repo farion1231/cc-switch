@@ -422,6 +422,7 @@ export function SettingsPage({
                           <BackupListSection
                             backupIntervalHours={settings.backupIntervalHours}
                             backupRetainCount={settings.backupRetainCount}
+                            backupMaxTotalMb={settings.backupMaxTotalMb}
                             onSettingsChange={(updates) =>
                               handleAutoSave(updates)
                             }

@@ -35,6 +35,9 @@ pub(crate) mod tool_media;
 pub(crate) mod types;
 pub mod usage;
 
+#[cfg(test)]
+mod tests_issue_6895;
+
 // 公开导出给外部使用（commands, services等模块需要）
 #[allow(unused_imports)]
 pub use circuit_breaker::{
