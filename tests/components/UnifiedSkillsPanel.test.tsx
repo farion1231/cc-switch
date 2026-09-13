@@ -228,6 +228,40 @@ describe("UnifiedSkillsPanel", () => {
     });
   });
 
+  it("toggles import selection from the card without interactive child bubbling", async () => {
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    const user = userEvent.setup();
+
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openImport();
+    });
+
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Shared Skill",
+    });
+    const card = checkbox.parentElement!;
+    const importButton = screen.getByText("skills.importSelected");
+
+    await user.click(card);
+    expect(importButton).toBeDisabled();
+
+    await user.click(card);
+    expect(importButton).toBeEnabled();
+
+    await user.click(checkbox);
+    expect(importButton).toBeDisabled();
+
+    await user.click(within(card).getAllByRole("button")[0]);
+    expect(importButton).toBeDisabled();
+  });
   it("passes only the installed Skill ID to uninstall", async () => {
     installedSkillsMock = [
       makeInstalledSkill({
