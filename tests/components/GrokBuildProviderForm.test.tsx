@@ -107,7 +107,7 @@ describe("GrokBuildProviderForm", () => {
     expect(screen.getByText("上游格式")).toBeInTheDocument();
   });
 
-  it("keeps the Grok client on Responses when the upstream uses Chat", async () => {
+  it("keeps the stored api_backend when the upstream uses Chat", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     const configToml = `[models]
@@ -144,9 +144,95 @@ context_window = 500000
     const config = parseToml(settings.config) as any;
     expect(submitted.meta.apiFormat).toBe("openai_chat");
     const selected = config.model[config.models.default];
-    expect(selected.api_backend).toBe("responses");
+    // 上游协议选择走 meta.apiFormat + 代理转换；表单不得改写 TOML 里存下的 api_backend
+    expect(selected.api_backend).toBe("chat_completions");
     expect(selected.model).toBe("grok-4.5");
     expect(selected.base_url).toBe("https://relay.example.com/v1");
+  });
+
+  it("preserves a non-default api_backend when editing an existing provider", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const configToml = `[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://relay.example.com/v1"
+name = "Messages Relay"
+api_key = "secret-key"
+api_backend = "messages"
+context_window = 500000
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="messages-relay"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Messages Relay",
+          category: "custom",
+          settingsConfig: { config: configToml },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    const settings = JSON.parse(submitted.settingsConfig);
+    expect(settings.config).toContain('api_backend = "messages"');
+    const config = parseToml(settings.config) as any;
+    expect(config.model[config.models.default].api_backend).toBe("messages");
+  });
+
+  it("keeps an api_backend typed into the raw TOML editor", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const initialToml = `[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://relay.example.com/v1"
+name = "Raw Edit Relay"
+api_key = "secret-key"
+api_backend = "responses"
+context_window = 500000
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="raw-edit-relay"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Raw Edit Relay",
+          category: "custom",
+          settingsConfig: { config: initialToml },
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("raw-config"), {
+      target: {
+        value: initialToml.replace(
+          'api_backend = "responses"',
+          'api_backend = "chat_completions"',
+        ),
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    const settings = JSON.parse(submitted.settingsConfig);
+    const config = parseToml(settings.config) as any;
+    expect(config.model[config.models.default].api_backend).toBe(
+      "chat_completions",
+    );
   });
 
   it("renders localized validation feedback for malformed TOML", async () => {
@@ -216,6 +302,118 @@ context_window = 250000
     expect(onSubmit.mock.calls[0][0].meta.custom_endpoints).toBeUndefined();
   });
 
+  // 手建/导入的无 meta 供应商，保存后不得写入默认格式 —— 代理转换判定会因
+  // meta 优先而跳过 TOML api_backend 探测（review P2）
+  it("leaves meta.apiFormat absent when the provider had none and the format was not touched", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>('input[name="name"]')!,
+      { target: { value: "Meta-less Relay" } },
+    );
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>("#codexBaseUrl")!,
+      { target: { value: "https://relay.example.com/v1" } },
+    );
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "secret-key" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].meta.apiFormat).toBeUndefined();
+  });
+
+  it("writes meta.apiFormat once the upstream format selector is touched", async () => {
+    // jsdom 未实现 scrollIntoView，Radix Select 打开时对选中项调用会抛错
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>('input[name="name"]')!,
+      { target: { value: "Touched Relay" } },
+    );
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>("#codexBaseUrl")!,
+      { target: { value: "https://relay.example.com/v1" } },
+    );
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "secret-key" },
+    });
+    await user.click(document.querySelector("#codex-upstream-format")!);
+    await user.click(
+      await screen.findByRole("option", { name: /Chat Completions/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].meta.apiFormat).toBe("openai_chat");
+  });
+
+  // 创建流程：先改 raw 里的 api_backend（此时 api_key 未填，配置语义不完整），
+  // 再补 API Key —— 回读不得被语义校验拦下，否则结构化同步会把旧值写回去（review P3）
+  it("keeps an api_backend typed into raw TOML even while other fields are still incomplete", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    const rawTextarea = screen.getByLabelText(
+      "raw-config",
+    ) as HTMLTextAreaElement;
+    expect(rawTextarea.value).toContain('api_backend = "responses"');
+    fireEvent.change(rawTextarea, {
+      target: {
+        value: rawTextarea.value.replace(
+          'api_backend = "responses"',
+          'api_backend = "chat_completions"',
+        ),
+      },
+    });
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>('input[name="name"]')!,
+      { target: { value: "Raw-first Relay" } },
+    );
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>("#codexBaseUrl")!,
+      { target: { value: "https://relay.example.com/v1" } },
+    );
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "secret-key" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const settings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    const config = parseToml(settings.config) as any;
+    expect(config.model[config.models.default].api_backend).toBe(
+      "chat_completions",
+    );
+  });
   // #6427 复用 Codex 表单时把 Codex 专属文案原样带进了 Grok Build 表单。
   // 按 appId 分流后，Grok 表单不得再出现 Codex 字样或不适用条款（模型映射）。
   it("uses Grok-specific copy for the model field and collapsed advanced section", async () => {
