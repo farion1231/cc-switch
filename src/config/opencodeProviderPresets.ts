@@ -2520,6 +2520,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Token Market",
+    websiteUrl: "https://www.tokensmarket.ai",
+    apiKeyUrl: "https://www.tokensmarket.ai/console",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Token Market",
+      options: {
+        baseURL: "https://api.tokensmarket.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "gpt-5.6-luna": { name: "GPT-5.6 Luna" },
+        "gemini-3.5-flash": { name: "Gemini 3.5 Flash" },
+      },
+    },
+    category: "aggregator",
+    icon: "tokenmarket",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

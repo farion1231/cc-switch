@@ -754,6 +754,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ppio", "派欧云"],
     defaultColor: "#2874FF",
   },
+  tokenmarket: {
+    name: "tokenmarket",
+    displayName: "Token Market",
+    category: "ai-provider",
+    keywords: [
+      "tokenmarket",
+      "token market",
+      "aggregator",
+      "gateway",
+      "openai",
+      "anthropic",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "currentColor",
+  },
   jiekou: {
     name: "jiekou",
     displayName: "JieKou AI",
