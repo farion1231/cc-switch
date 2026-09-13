@@ -531,7 +531,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::Cursor => false,
     }
 }
 
@@ -606,7 +607,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::Cursor => Ok(settings.clone()),
     }
 }
 
@@ -666,7 +668,8 @@ fn apply_common_config_to_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::Cursor => Ok(settings.clone()),
     }
 }
 
@@ -1435,6 +1438,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Pi providers use the Pi provider service".to_string(),
             ));
         }
+        AppType::Cursor => {
+            return Err(AppError::InvalidInput(
+                "Cursor providers are configured in the Cursor app".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1818,6 +1826,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
+        AppType::Cursor => Err(AppError::InvalidInput(
+            "Cursor providers are configured in the Cursor app".to_string(),
+        )),
     }
 }
 
@@ -1930,6 +1941,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
         }
+        // Cursor has no provider concept in CC Switch; API providers are configured in Cursor itself
+        AppType::Cursor => return Ok(false),
     };
 
     let mut provider = Provider::with_id(

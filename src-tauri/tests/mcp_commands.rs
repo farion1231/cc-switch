@@ -405,6 +405,7 @@ command = "echo"
             apps: McpApps {
                 claude: false,
                 codex: true,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -549,7 +550,8 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
             }),
             apps: McpApps {
                 claude: false,
-                codex: false, // 初始未启用
+                codex: false,
+                cursor: false, // 初始未启用
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -616,6 +618,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
             apps: McpApps {
                 claude: false,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -662,6 +665,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
             apps: McpApps {
                 claude: true,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -697,6 +701,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
             apps: McpApps {
                 claude: false,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -831,6 +836,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
             apps: McpApps {
                 claude: false,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -887,6 +893,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
             apps: McpApps {
                 claude: false,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -943,6 +950,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
             apps: McpApps {
                 claude: true,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -1000,6 +1008,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
             apps: McpApps {
                 claude: true,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -1080,6 +1089,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
             apps: McpApps {
                 claude: true,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -1220,6 +1230,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
             apps: McpApps {
                 claude: false,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
@@ -1243,6 +1254,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
             apps: McpApps {
                 claude: true,
                 codex: false,
+                cursor: false,
                 gemini: false,
                 grokbuild: false,
                 opencode: false,
