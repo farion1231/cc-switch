@@ -95,16 +95,8 @@ function restoreProviderCredentials(
 ): Record<string, unknown> {
   const result = { ...liveSettings };
   if (appId === "codex") {
-    const storedAuth = asRecord(storedSettings.auth);
-    if (
-      storedAuth &&
-      Object.prototype.hasOwnProperty.call(storedAuth, "OPENAI_API_KEY")
-    ) {
-      result.auth = {
-        ...(asRecord(result.auth) ?? {}),
-        OPENAI_API_KEY: storedAuth.OPENAI_API_KEY,
-      };
-    }
+    // Live Codex auth belongs to the currently active provider. The stored
+    // key is used only when no live snapshot exists (handled by the caller).
     return result;
   }
   const storedEnv = asRecord(storedSettings.env);
