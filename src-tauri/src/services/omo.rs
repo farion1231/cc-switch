@@ -765,15 +765,15 @@ impl OmoService {
     /// first — otherwise detection never sees it and silently falls back to
     /// the legacy per-plugin file that OMO >= 4.19.3 no longer reads (#7363).
     fn unified_home_candidates(home_dir: &Path, _opencode_dir: &Path) -> Vec<PathBuf> {
-        let mut candidates = Vec::new();
         #[cfg(windows)]
-        if let Some(wsl_home) = derive_wsl_home_dir(_opencode_dir) {
-            if wsl_home != home_dir {
-                candidates.push(wsl_home);
-            }
-        }
-        candidates.push(home_dir.to_path_buf());
-        candidates
+        let wsl_home = derive_wsl_home_dir(_opencode_dir).filter(|wsl_home| wsl_home != home_dir);
+        #[cfg(not(windows))]
+        let wsl_home: Option<PathBuf> = None;
+
+        wsl_home
+            .into_iter()
+            .chain(std::iter::once(home_dir.to_path_buf()))
+            .collect()
     }
 
     fn find_config_location(
