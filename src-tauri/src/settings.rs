@@ -338,6 +338,37 @@ pub struct CodexOfficialHistoryUnifyMigration {
     pub codex_config_dir: Option<String>,
 }
 
+pub const DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES: u32 = 5;
+pub const MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES: u32 = 0;
+pub const MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES: u32 = 24 * 60;
+
+/// 自动轻量模式的独立配置。
+///
+/// 通过 `flatten` 保持设置文件和前端 API 的两个顶层字段不变。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoLightweightSettings {
+    #[serde(default, rename = "autoLightweightEnabled")]
+    pub enabled: bool,
+    #[serde(
+        default = "default_auto_lightweight_after_minutes",
+        rename = "autoLightweightAfterMinutes"
+    )]
+    pub after_minutes: u32,
+}
+
+fn default_auto_lightweight_after_minutes() -> u32 {
+    DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES
+}
+
+impl Default for AutoLightweightSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            after_minutes: DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES,
+        }
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -350,6 +381,9 @@ pub struct AppSettings {
     pub show_in_tray: bool,
     #[serde(default = "default_minimize_to_tray_on_close")]
     pub minimize_to_tray_on_close: bool,
+    /// 主窗口隐藏到托盘后自动进入轻量模式的开关和等待分钟数。
+    #[serde(flatten)]
+    pub auto_lightweight: AutoLightweightSettings,
     #[serde(default)]
     pub use_app_window_controls: bool,
     /// 是否启用 Claude 插件联动
@@ -522,6 +556,7 @@ impl Default for AppSettings {
         Self {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
+            auto_lightweight: AutoLightweightSettings::default(),
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
@@ -582,6 +617,13 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
+        // 后端始终兜底约束手工编辑或旧客户端传入的值。0 表示窗口成功
+        // 隐藏后立即进入轻量模式；异常大值则限制为最长 24 小时。
+        self.auto_lightweight.after_minutes = self.auto_lightweight.after_minutes.clamp(
+            MIN_AUTO_LIGHTWEIGHT_AFTER_MINUTES,
+            MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES,
+        );
+
         self.claude_config_dir = self
             .claude_config_dir
             .as_ref()
@@ -1188,6 +1230,53 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn auto_lightweight_defaults_and_round_trips_flat_fields() {
+        let settings: AppSettings = serde_json::from_str("{}").expect("legacy settings");
+
+        assert_eq!(
+            settings.auto_lightweight,
+            AutoLightweightSettings::default()
+        );
+        assert_eq!(
+            settings.auto_lightweight.after_minutes,
+            DEFAULT_AUTO_LIGHTWEIGHT_AFTER_MINUTES
+        );
+
+        let settings: AppSettings = serde_json::from_str(
+            r#"{"autoLightweightEnabled":false,"autoLightweightAfterMinutes":23}"#,
+        )
+        .expect("new auto lightweight settings");
+
+        assert_eq!(
+            settings.auto_lightweight,
+            AutoLightweightSettings {
+                enabled: false,
+                after_minutes: 23,
+            }
+        );
+
+        let serialized = serde_json::to_value(settings).expect("serialize settings");
+        assert_eq!(serialized["autoLightweightEnabled"], false);
+        assert_eq!(serialized["autoLightweightAfterMinutes"], 23);
+        assert!(serialized.get("autoLightweight").is_none());
+    }
+
+    #[test]
+    fn auto_lightweight_minutes_are_normalized_to_a_safe_range() {
+        for (input, expected) in [(0, 0), (10_000, MAX_AUTO_LIGHTWEIGHT_AFTER_MINUTES)] {
+            let mut settings = AppSettings {
+                auto_lightweight: AutoLightweightSettings {
+                    enabled: true,
+                    after_minutes: input,
+                },
+                ..AppSettings::default()
+            };
+            settings.normalize_paths();
+            assert_eq!(settings.auto_lightweight.after_minutes, expected);
+        }
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {
