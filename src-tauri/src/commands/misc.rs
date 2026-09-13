@@ -4738,6 +4738,42 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
 }
 
+/// 读取当前系统的深浅色模式（Linux 上通过 XDG Desktop Portal 读取）
+#[tauri::command]
+pub async fn get_system_theme() -> Result<Option<&'static str>, String> {
+    const DETECT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
+    let detect = tauri::async_runtime::spawn_blocking(detect_system_theme_blocking);
+    match tokio::time::timeout(DETECT_TIMEOUT, detect).await {
+        Ok(Ok(mode)) => Ok(mode),
+        Ok(Err(e)) => {
+            log::debug!("System theme detect task failed: {e}");
+            Ok(None)
+        }
+        Err(_) => {
+            log::debug!("System theme detect timed out; falling back to matchMedia");
+            Ok(None)
+        }
+    }
+}
+
+fn map_system_theme_mode(mode: dark_light::Mode) -> Option<&'static str> {
+    match mode {
+        dark_light::Mode::Dark => Some("dark"),
+        dark_light::Mode::Light => Some("light"),
+        dark_light::Mode::Unspecified => None,
+    }
+}
+
+fn detect_system_theme_blocking() -> Option<&'static str> {
+    match dark_light::detect() {
+        Ok(mode) => map_system_theme_mode(mode),
+        Err(e) => {
+            log::debug!("Failed to detect system theme via dark-light: {e}");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7190,5 +7226,24 @@ mod tests {
             command,
             "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
         );
+    }
+
+    #[test]
+    fn map_system_theme_mode_maps_correctly() {
+        assert_eq!(map_system_theme_mode(dark_light::Mode::Dark), Some("dark"));
+        assert_eq!(
+            map_system_theme_mode(dark_light::Mode::Light),
+            Some("light")
+        );
+        assert_eq!(map_system_theme_mode(dark_light::Mode::Unspecified), None);
+    }
+
+    #[tokio::test]
+    async fn get_system_theme_returns_valid_variant() {
+        let res = get_system_theme().await;
+        assert!(res.is_ok());
+        if let Ok(Some(theme)) = res {
+            assert!(theme == "dark" || theme == "light");
+        }
     }
 }
