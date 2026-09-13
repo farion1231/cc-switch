@@ -18,6 +18,13 @@ body:
             我已搜索过[已有的 Issue](https://github.com/farion1231/cc-switch/issues)，包括已关闭的。
           required: true
 
+  - type: markdown
+    attributes:
+      value: |
+        > **Planning to implement this request? / 计划参与实现？**
+        > Reporting an idea does not require permission. If you plan to implement it, read the [Pull Request Guidelines](https://github.com/farion1231/cc-switch/blob/main/CONTRIBUTING.md#pull-request-guidelines) first. New features require issue discussion. First-time code contributors also need a pre-approved ordinary issue (`help wanted` or `good first issue`) or explicit maintainer confirmation. New managed applications, provider families, protocol bridges, harness integrations, and comparable long-lived integrations always require explicit maintainer confirmation.
+        > 提交想法本身不需要许可。如果计划参与实现，请先阅读 [Pull Request 指南](https://github.com/farion1231/cc-switch/blob/main/CONTRIBUTING.md#pull-request-指南)。新功能需要先在 Issue 中讨论。首次提交代码的贡献者还需要选择已预先批准的普通 Issue（标记为 `help wanted` 或 `good first issue`），或获得维护者明确确认。新增受管应用、供应商系列、协议桥接、harness 集成及其他同类长期集成始终需要维护者明确确认。
+
   - type: dropdown
     attributes:
       label: Related App / 涉及应用
@@ -32,6 +39,20 @@ body:
         - OpenCode
         - OpenClaw
         - General / 通用
+    validations:
+      required: true
+
+  - type: dropdown
+    id: change_type
+    attributes:
+      label: Change Type / 变更类型
+      options:
+        - General feature / 一般功能
+        - New managed application / 新受管应用
+        - New provider family / 新供应商系列
+        - Protocol bridge / 协议桥接
+        - Harness integration / Harness 集成
+        - Other long-lived integration / 其他长期集成
     validations:
       required: true
 
@@ -57,6 +78,26 @@ body:
       required: false
 
   - type: textarea
+    id: scope_and_non_goals
+    attributes:
+      label: Scope and Non-goals / 范围与非目标
+      description: |
+        For implementation proposals, describe what is in scope and what is intentionally out of scope.
+        对于实现提案，请说明本次范围以及明确不包含的内容。
+    validations:
+      required: false
+
+  - type: textarea
+    id: maintenance_and_test_plan
+    attributes:
+      label: Maintenance and Test Plan / 维护与测试计划
+      description: |
+        For new integrations, include upstream documentation or terms, expected maintenance ownership, supported platforms, compatibility or security considerations, and a test plan.
+        对于新集成，请提供上游文档或条款、预期维护责任、支持的平台、兼容性或安全注意事项以及测试计划。
+    validations:
+      required: false
+
+  - type: textarea
     attributes:
       label: Additional Context / 补充信息
       description: |
@@ -66,10 +107,11 @@ body:
       required: false
 
   - type: checkboxes
+    id: contribution
     attributes:
       label: Contribution / 参与贡献
       options:
         - label: |
-            I am interested in contributing to this feature.
-            我有兴趣参与开发此功能。
+            I am interested in contributing to this feature. I understand that implementation may require prior maintainer confirmation.
+            我有兴趣参与开发此功能。我了解实现功能可能需要事先获得维护者确认。
           required: false

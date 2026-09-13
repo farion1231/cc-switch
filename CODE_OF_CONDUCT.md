@@ -118,7 +118,7 @@ For answers to common questions about this code of conduct, see the FAQ at [http
 
 社区领袖有责任解释和落实我们所认可的行为准则，并妥善公正地对他们认为不当、威胁、冒犯或有害的任何行为采取纠正措施。
 
-社区领袖有权力和责任删除、编辑或拒绝与本行为准则不相符的评论（comment）、提交（able）、代码、维基（wiki）编辑、议题（able）或其他贡献，并在适当时告知采取措施的理由。
+社区领袖有权力和责任删除、编辑或拒绝与本行为准则不相符的评论、提交（commits）、代码、维基（wiki）编辑、议题（issues）或其他贡献，并在适当时告知采取措施的理由。
 
 ## 适用范围
 

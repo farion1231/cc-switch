@@ -594,7 +594,7 @@ pnpm test:unit --coverage
 - 通过格式检查：`pnpm format:check`
 - 通过单元测试：`pnpm test:unit`
 
-新功能开发前，欢迎先开 Issue 讨论实现方案，不适合项目的功能性 PR 有可能会被关闭。
+开始实现新功能或长期集成前，请先阅读 [Pull Request 指南](./CONTRIBUTING.md#pull-request-指南)。新功能需要先在 Issue 中讨论。首次提交代码的贡献者还需要选择已预先批准的普通 Issue（标记为 `help wanted` 或 `good first issue`），或获得维护者明确确认。新增受管应用、供应商系列、协议桥接、harness 集成及其他同类长期集成必须获得维护者明确确认。提交 Issue 报告本身不需要许可。
 
 ## Star History
 

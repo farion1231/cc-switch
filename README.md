@@ -591,7 +591,7 @@ Before submitting PRs, please ensure:
 - Pass format check: `pnpm format:check`
 - Pass unit tests: `pnpm test:unit`
 
-For new features, please open an issue for discussion before submitting a PR. PRs for features that are not a good fit for the project may be closed.
+Before implementing a new feature or long-lived integration, read the [Pull Request Guidelines](./CONTRIBUTING.md#pull-request-guidelines). New features require issue discussion. First-time code contributors also need a pre-approved ordinary issue (`help wanted` or `good first issue`) or explicit maintainer confirmation. New managed applications, provider families, protocol bridges, harness integrations, and comparable long-lived integrations require explicit maintainer confirmation. Reporting an issue does not require permission.
 
 ## Star History
 
