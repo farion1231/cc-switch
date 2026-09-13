@@ -184,13 +184,21 @@ fn build_activation_request_to_endpoint(
     let mut body = json!({
         "model": model.model,
         "input": [{
-            "type": "message",
             "role": "user",
             "content": [{
                 "type": "input_text",
                 "text": ACTIVATION_PROMPT
             }]
         }],
+        // Keep the activation request aligned with the existing Codex OAuth
+        // Responses transform. The ChatGPT consumer backend expects these
+        // stateless/default fields even when the request has no tools or
+        // instructions of its own.
+        "instructions": "",
+        "tools": [],
+        "parallel_tool_calls": true,
+        "include": ["reasoning.encrypted_content"],
+        "store": false,
         "stream": true
     });
     if model.reasoning_effort.as_deref() == Some("low") {
@@ -413,8 +421,14 @@ mod tests {
             .and_then(|value| value.to_str().ok())
             == Some("workspace-id")
             && body["model"] == "gpt-test"
+            && body["input"][0].get("type").is_none()
             && body["input"][0]["content"][0]["text"] == ACTIVATION_PROMPT;
-        if !valid {
+        let protocol_fields_valid = body["store"] == false
+            && body["instructions"] == ""
+            && body["tools"] == json!([])
+            && body["parallel_tool_calls"] == true
+            && body["include"] == json!(["reasoning.encrypted_content"]);
+        if !valid || !protocol_fields_valid {
             return (
                 StatusCode::BAD_REQUEST,
                 [("content-type", "application/json")],
@@ -457,6 +471,12 @@ mod tests {
             serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
         assert_eq!(body["model"], "gpt-test");
         assert_eq!(body["input"][0]["content"][0]["text"], ACTIVATION_PROMPT);
+        assert!(body["input"][0].get("type").is_none());
+        assert_eq!(body["instructions"], "");
+        assert_eq!(body["tools"], json!([]));
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(body["store"], false);
         assert_eq!(body["reasoning"]["effort"], "low");
     }
 
