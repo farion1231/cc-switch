@@ -611,6 +611,32 @@ fn convert_input_to_messages(
             }
             Some("function_call_output" | "custom_tool_call_output" | "tool_search_output") => {
                 let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+                if call_id.is_empty() {
+                    // Cross-thread deliveries (`send_message_to_thread`) and
+                    // some sub-agent flows replay a tool output that never had
+                    // a call_id: there is no tool_use in this conversation to
+                    // attach it to, and Anthropic-compatible upstreams reject
+                    // an empty `tool_use_id`. Surface the payload as plain
+                    // user content instead of dropping it.
+                    if item.get("output").is_some() {
+                        match tool_result_content_from_responses_item(item).content {
+                            Value::String(text) if is_meaningful_text(&text) => {
+                                push_block(
+                                    &mut messages,
+                                    "user",
+                                    json!({"type": "text", "text": text}),
+                                );
+                            }
+                            Value::Array(blocks) => {
+                                for block in blocks {
+                                    push_block(&mut messages, "user", block);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
                 let output = tool_result_content_from_responses_item(item);
                 let mut block = json!({
                     "type": "tool_result",
@@ -1828,6 +1854,43 @@ mod tests {
         assert_eq!(content[0]["tool_use_id"], "c1");
         assert_eq!(content[0]["content"], "A");
         assert_eq!(content[1]["tool_use_id"], "c2");
+    }
+
+    #[test]
+    fn test_request_call_less_function_call_output_surfaces_as_user_text() {
+        // Cross-thread deliveries (`send_message_to_thread`) replay tool
+        // outputs without a call_id; Anthropic-compatible upstreams reject a
+        // tool_result whose tool_use_id is empty.
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 100,
+            "input": [
+                { "role": "user", "content": "run it" },
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "c1", "output": "A" },
+                { "type": "function_call_output", "output": "MESSAGE_TEST_OK please reply." }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // The delivered text rides in the same user turn as the matched
+        // tool_result, after it (Anthropic requires tool_result blocks first).
+        let last = messages.last().unwrap();
+        assert_eq!(last["role"], "user");
+        let content = last["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "c1");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "MESSAGE_TEST_OK please reply.");
+        assert!(messages.iter().all(|message| {
+            message["content"].as_array().is_none_or(|blocks| {
+                blocks.iter().all(|block| {
+                    block.get("type").and_then(Value::as_str) != Some("tool_result")
+                        || block.get("tool_use_id").and_then(Value::as_str) != Some("")
+                })
+            })
+        }));
     }
 
     #[test]

@@ -664,6 +664,44 @@ fn append_responses_input_as_chat_messages(
     Ok(())
 }
 
+/// Codex cross-thread deliveries (`send_message_to_thread`) and some sub-agent
+/// flows replay a tool output that never carried a `call_id`: there is no tool
+/// call in this conversation to attach it to. Every Chat upstream rejects a
+/// `tool` message with an empty `tool_call_id` (DeepSeek reports it as
+/// `tool_call_id 长度不足`), so surface the payload as a plain user message
+/// instead of dropping it. Returns `true` when the item was consumed here.
+fn append_call_less_tool_output_as_user_message(
+    messages: &mut Vec<Value>,
+    pending_media: &mut Vec<Value>,
+    item: &Value,
+) -> bool {
+    let has_call_id = item
+        .get("call_id")
+        .and_then(|v| v.as_str())
+        .is_some_and(|id| !id.is_empty());
+    if has_call_id {
+        return false;
+    }
+    let Some(output) = item.get("output") else {
+        return true;
+    };
+    let content = match output {
+        Value::String(text) if !text.is_empty() => Value::String(text.clone()),
+        Value::Array(_) => responses_content_to_chat_content("user", output),
+        other => Value::String(canonical_json_string(other)),
+    };
+    if content.as_str().is_some_and(str::is_empty) || content.as_array().is_some_and(Vec::is_empty)
+    {
+        return true;
+    }
+    flush_pending_chat_tool_media(messages, pending_media);
+    messages.push(json!({
+        "role": "user",
+        "content": content
+    }));
+    true
+}
+
 fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
@@ -698,6 +736,9 @@ fn append_responses_item_as_chat_message(
                 pending_reasoning,
                 last_assistant_index,
             );
+            if append_call_less_tool_output_as_user_message(messages, pending_media, item) {
+                return Ok(());
+            }
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
             let media_plan = item
                 .get("output")
@@ -729,6 +770,9 @@ fn append_responses_item_as_chat_message(
                 pending_reasoning,
                 last_assistant_index,
             );
+            if append_call_less_tool_output_as_user_message(messages, pending_media, item) {
+                return Ok(());
+            }
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
             let mut transformed_item = item.clone();
             let replacement_block = json!({
@@ -2399,6 +2443,79 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn function_call_output_without_call_id_surfaces_as_user_message() {
+        // Codex `send_message_to_thread` deliveries replay a function_call_output
+        // that never carried a call_id; a `tool` message with an empty
+        // tool_call_id is rejected by Chat upstreams (DeepSeek reports
+        // `tool_call_id 长度不足` even for otherwise valid turns).
+        let input = json!({
+            "model": "deepseek-v4-pro",
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "Run the task." }] },
+                { "type": "function_call", "call_id": "call_1", "name": "run", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "call_1", "output": "done" },
+                { "type": "function_call_output", "output": "MESSAGE_TEST_OK please reply." }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // The normal call/output pair is untouched.
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_call_id"], "call_1");
+        // The call-less output becomes a user message, keeping the delivered
+        // text visible to the model instead of failing the request.
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(messages[3]["content"], "MESSAGE_TEST_OK please reply.");
+        assert!(messages
+            .iter()
+            .all(|message| message.get("tool_call_id").and_then(Value::as_str) != Some("")));
+    }
+
+    #[test]
+    fn function_call_output_without_call_id_maps_structured_parts_to_user_content() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "output": [
+                        { "type": "input_text", "text": "Wall time: 1.3 seconds" },
+                        { "type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgo" }
+                    ]
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image_url");
+    }
+
+    #[test]
+    fn custom_tool_call_output_without_call_id_surfaces_as_user_message() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                { "type": "custom_tool_call_output", "output": "cross-thread delivery" }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "cross-thread delivery");
     }
 
     #[test]
