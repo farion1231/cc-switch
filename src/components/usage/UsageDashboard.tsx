@@ -33,7 +33,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useQueryClient } from "@tanstack/react-query";
-import { usageKeys, useModelStats, useProviderStats } from "@/lib/query/usage";
+import {
+  useCodexBackgroundUsage,
+  usageKeys,
+  useModelStats,
+  useProviderStats,
+} from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import {
   Accordion,
@@ -254,6 +259,15 @@ export function UsageDashboard({
     optionsRefetch,
   );
 
+  const backgroundVisible =
+    (appType === "all" || appType === "codex") && !providerName;
+  const { data: backgroundOptionsData } = useCodexBackgroundUsage(
+    range,
+    undefined,
+    refreshIntervalMs,
+    backgroundVisible,
+  );
+
   const providerOptions = useMemo(() => {
     const names = new Set<string>();
     for (const stat of providerOptionsData ?? []) {
@@ -270,9 +284,12 @@ export function UsageDashboard({
     for (const stat of modelOptionsData ?? []) {
       names.add(stat.model);
     }
+    if (backgroundVisible) {
+      for (const stat of backgroundOptionsData ?? []) names.add(stat.model);
+    }
     if (model) names.add(model);
     return Array.from(names);
-  }, [modelOptionsData, model]);
+  }, [modelOptionsData, backgroundOptionsData, backgroundVisible, model]);
 
   return (
     <motion.div
@@ -414,7 +431,7 @@ export function UsageDashboard({
         refreshIntervalMs={refreshIntervalMs}
       />
 
-      {(appType === "all" || appType === "codex") && !providerName && (
+      {backgroundVisible && (
         <CodexBackgroundUsage
           range={range}
           model={model}

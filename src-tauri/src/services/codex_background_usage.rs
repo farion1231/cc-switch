@@ -6,14 +6,20 @@ use crate::error::AppError;
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::session_usage::SessionSyncResult;
 use crate::services::usage_stats::find_model_pricing;
+#[cfg(any(target_os = "macos", test))]
 use chrono::DateTime;
 use rusqlite::{params, Connection};
 use rust_decimal::Decimal;
 use serde::Serialize;
+#[cfg(any(target_os = "macos", test))]
 use sha2::{Digest, Sha256};
+#[cfg(any(target_os = "macos", test))]
 use std::collections::HashMap;
+#[cfg(any(target_os = "macos", test))]
 use std::fs;
+#[cfg(any(target_os = "macos", test))]
 use std::io::{BufRead, BufReader, Read};
+#[cfg(any(target_os = "macos", test))]
 use std::path::Path;
 
 pub(crate) fn create_tables(conn: &Connection) -> Result<(), AppError> {
@@ -36,6 +42,7 @@ fn db_error(error: rusqlite::Error) -> AppError {
     AppError::Database(format!("Codex background usage: {error}"))
 }
 
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, PartialEq)]
 struct Event {
     key: String,
@@ -48,6 +55,7 @@ struct Event {
     output: u32,
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn parse(line: &str) -> Option<Event> {
     let (timestamp, rest) = line.split_once(' ')?;
     let rest =
@@ -119,6 +127,7 @@ pub fn sync(db: &Database) -> Result<SessionSyncResult, AppError> {
 
 // Changed-file incremental scan. No raw log text, prompts, or conversation IDs
 // are persisted. Re-scan changed files so truncation/rotation need no byte repair.
+#[cfg(any(target_os = "macos", test))]
 fn sync_root(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     if !root.exists() {
@@ -128,6 +137,7 @@ fn sync_root(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> 
     Ok(result)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn visit(
     db: &Database,
     dir: &Path,
@@ -154,6 +164,7 @@ fn visit(
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn sync_file(db: &Database, path: &Path) -> Result<Option<u32>, AppError> {
     let metadata = fs::metadata(path).map_err(|e| AppError::io(path, e))?;
     let modified = format!(

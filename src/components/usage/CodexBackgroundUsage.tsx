@@ -1,8 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { usageApi } from "@/lib/api/usage";
-import { usageKeys } from "@/lib/query/usage";
-import { resolveUsageRange } from "@/lib/usageRange";
+import { useCodexBackgroundUsage } from "@/lib/query/usage";
 import type { UsageRangeSelection } from "@/types/usage";
 
 export function CodexBackgroundUsage({
@@ -15,14 +12,7 @@ export function CodexBackgroundUsage({
   refreshIntervalMs: number;
 }) {
   const { t } = useTranslation();
-  const query = useQuery({
-    queryKey: [...usageKeys.all, "codex-background", range, model],
-    queryFn: () => {
-      const { startDate, endDate } = resolveUsageRange(range);
-      return usageApi.getCodexBackgroundUsage(startDate, endDate, model);
-    },
-    refetchInterval: refreshIntervalMs || false,
-  });
+  const query = useCodexBackgroundUsage(range, model, refreshIntervalMs);
   if (query.isPending) return null;
   if (query.isError) return <p role="alert">{t("usage.background.error")}</p>;
   if (!query.data.length) return null;

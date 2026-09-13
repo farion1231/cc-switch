@@ -16,7 +16,8 @@ locations are not implemented.
 The usage dashboard shows a separate **Codex Desktop background usage** table
 when the application filter is All or Codex and no provider is selected. It
 respects the date range and model filter, groups by model, feature and status,
-and hides when no matching records are present. Events with reported usage are
+and hides when no matching records are present. The model picker includes models
+found only in background events, even when no request/session records use them. Events with reported usage are
 included even when the generation status is not `success`.
 
 ## Accounting boundaries
@@ -41,6 +42,9 @@ included even when the generation status is not `success`.
 - Coverage is local to this machine and retained logs, not account-wide.
   Imported observations survive source log deletion. This first version does
   not provide a background-ledger purge/rebuild control.
+- WebDAV/S3 exports exclude background rows and file metadata. Sync imports
+  preserve the local ledger, including when an older snapshot has no background
+  tables. Full manual backups still include and restore these records.
 - Only structured usage fields and hashes are stored, plus local file metadata
   for scan caching. Prompts and unrelated log text are not stored.
 

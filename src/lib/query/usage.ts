@@ -390,3 +390,21 @@ export function useDeleteModelPricing() {
     },
   });
 }
+
+// Unfiltered background observations also supply models absent from request logs.
+export function useCodexBackgroundUsage(
+  range: UsageRangeSelection,
+  model: string | undefined,
+  refreshIntervalMs: number,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: [...usageKeys.all, "codex-background", range, model],
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getCodexBackgroundUsage(startDate, endDate, model);
+    },
+    refetchInterval: refreshIntervalMs || false,
+    enabled,
+  });
+}
