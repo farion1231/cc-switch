@@ -116,6 +116,11 @@ impl McpService {
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
+            AppType::Dsh => {
+                // DSH mounts MCP servers through profile cordis patches, not a
+                // native config file; file sync is not supported yet.
+                log::debug!("DSH MCP sync is not supported yet, skipping");
+            }
             AppType::Codex => {
                 // Codex uses TOML format, must use the correct function
                 mcp::sync_single_server_to_codex(&Default::default(), &server.id, &server.server)?;
@@ -168,6 +173,11 @@ impl McpService {
             AppType::Claude => mcp::remove_server_from_claude(id)?,
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
+            }
+            AppType::Dsh => {
+                // DSH mounts MCP servers through profile cordis patches, not a
+                // native config file; file sync is not supported yet.
+                log::debug!("DSH MCP sync is not supported yet, skipping");
             }
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
