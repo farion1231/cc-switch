@@ -44,6 +44,12 @@ export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
       : typeof item?.supports_parallel_tool_calls === "boolean"
         ? item.supports_parallel_tool_calls
         : undefined;
+  const useResponsesLite =
+    typeof item?.useResponsesLite === "boolean"
+      ? item.useResponsesLite
+      : typeof item?.use_responses_lite === "boolean"
+        ? item.use_responses_lite
+        : undefined;
   const inputModalities = Array.isArray(item?.inputModalities)
     ? item.inputModalities
     : Array.isArray(item?.input_modalities)
@@ -85,6 +91,7 @@ export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
     ...(supportsParallelToolCalls !== undefined
       ? { supportsParallelToolCalls }
       : {}),
+    ...(useResponsesLite !== undefined ? { useResponsesLite } : {}),
     ...(inputModalities ? { inputModalities } : {}),
     ...(baseInstructions ? { baseInstructions } : {}),
     ...(reasoningLevels && reasoningLevels.length > 0
