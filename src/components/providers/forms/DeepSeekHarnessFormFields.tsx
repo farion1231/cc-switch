@@ -293,7 +293,10 @@ export function DeepSeekHarnessFormFields({
               <span className="w-9" />
             </div>
             {models.map((model, index) => (
-              <div key={model.rowKey ?? index} className="flex items-center gap-2">
+              <div
+                key={model.rowKey ?? index}
+                className="flex items-center gap-2"
+              >
                 <div className="flex min-w-0 flex-1 gap-1">
                   <ImeSafeInput
                     value={model.id}

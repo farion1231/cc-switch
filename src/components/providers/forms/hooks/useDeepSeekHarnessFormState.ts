@@ -136,7 +136,10 @@ export function useDeepSeekHarnessFormState({
       } catch (error) {
         // Field edits cannot be merged into a malformed JSON document; warn so
         // the drop is at least visible in the console instead of fully silent.
-        console.warn("[DeepSeekHarness] malformed settingsConfig, edit skipped", error);
+        console.warn(
+          "[DeepSeekHarness] malformed settingsConfig, edit skipped",
+          error,
+        );
       }
     },
     [getSettingsConfig, onSettingsConfigChange, dshIsOfficial],
@@ -203,7 +206,8 @@ export function useDeepSeekHarnessFormState({
   const resetDshState = useCallback(
     (config?: Record<string, unknown>, isOfficial?: boolean) => {
       const source = config ?? {};
-      const official = isOfficial ?? isDshOfficial(undefined, undefined, source);
+      const official =
+        isOfficial ?? isDshOfficial(undefined, undefined, source);
       const models = normalizeDshModels(source.models);
 
       setDshIsOfficial(official);

@@ -11,10 +11,7 @@ export const dshApi = {
     return await invoke("get_dsh_current_state");
   },
 
-  async setCurrentModel(
-    providerId: string,
-    modelId: string,
-  ): Promise<boolean> {
+  async setCurrentModel(providerId: string, modelId: string): Promise<boolean> {
     return await invoke("set_dsh_current_model", { providerId, modelId });
   },
 };

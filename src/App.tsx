@@ -102,10 +102,7 @@ import {
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
 import { dshApi } from "@/lib/api/dsh";
-import {
-  invalidateDshProviderCaches,
-  dshKeys,
-} from "@/lib/query/dsh";
+import { invalidateDshProviderCaches, dshKeys } from "@/lib/query/dsh";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";

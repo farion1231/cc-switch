@@ -1042,10 +1042,8 @@ function ProviderFormFull({
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
-  const {
-    data: dshCurrentState,
-    isLoading: isDshCurrentStateLoading,
-  } = useDshCurrentState(appId === "deepseek-harness");
+  const { data: dshCurrentState, isLoading: isDshCurrentStateLoading } =
+    useDshCurrentState(appId === "deepseek-harness");
 
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {

@@ -991,6 +991,9 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+// The only caller lives behind `#[cfg(not(test))]` in
+// deepseek_harness_config::settings_override, so test builds see no caller.
+#[cfg_attr(test, allow(dead_code))]
 pub fn get_dsh_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
