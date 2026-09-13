@@ -12,6 +12,8 @@ pub struct AppState {
     // 内部已使用细粒度锁（accounts/access_tokens/refresh_locks），所有方法均为
     // `&self`，无需外层 RwLock；避免持有粗粒度锁跨网络刷新导致的连锁阻塞。
     pub codex_oauth_manager: Arc<CodexOAuthManager>,
+    pub codex_quota_activation:
+        Arc<crate::services::codex_quota_activation::CodexQuotaActivationCoordinator>,
 }
 
 impl AppState {
@@ -21,12 +23,21 @@ impl AppState {
             Arc::new(CodexOAuthManager::new(crate::config::get_app_config_dir()));
         let proxy_service =
             ProxyService::new_with_codex_oauth_manager(db.clone(), codex_oauth_manager.clone());
+        let usage_cache = Arc::new(UsageCache::new());
+        let codex_quota_activation = Arc::new(
+            crate::services::codex_quota_activation::CodexQuotaActivationCoordinator::new(
+                db.clone(),
+                codex_oauth_manager.clone(),
+                usage_cache.clone(),
+            ),
+        );
 
         Self {
             db,
             proxy_service,
-            usage_cache: Arc::new(UsageCache::new()),
+            usage_cache,
             codex_oauth_manager,
+            codex_quota_activation,
         }
     }
 }

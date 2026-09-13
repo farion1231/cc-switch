@@ -697,22 +697,159 @@ fn is_codex_token_stale(last_refresh: &str) -> bool {
 
 // ── Codex API 查询 ──────────────────────────────────────
 
-#[derive(Deserialize)]
-struct CodexRateLimitWindow {
-    used_percent: Option<f64>,
-    limit_window_seconds: Option<i64>,
-    reset_at: Option<i64>,
+/// 原始 Codex quota bucket。该结构保留 UI 百分比以外的字段，供激活协调器
+/// 判断 reset generation；`f64` 同时接受 JSON 整数和小数，不在后端 round。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct CodexRateLimitWindow {
+    #[serde(default, alias = "limitId")]
+    pub(crate) limit_id: Option<String>,
+    #[serde(
+        default,
+        alias = "percent",
+        alias = "usedPercent",
+        deserialize_with = "deserialize_optional_f64"
+    )]
+    pub(crate) used_percent: Option<f64>,
+    #[serde(default, alias = "limitWindowSeconds")]
+    pub(crate) limit_window_seconds: Option<i64>,
+    #[serde(default, alias = "resetAt")]
+    pub(crate) reset_at: Option<i64>,
+    #[serde(default, alias = "resetAfterSeconds")]
+    pub(crate) reset_after_seconds: Option<i64>,
+    #[serde(default, alias = "allowed")]
+    pub(crate) allowed: Option<bool>,
+    #[serde(default, alias = "limitReached")]
+    pub(crate) limit_reached: Option<bool>,
+    #[serde(
+        default,
+        alias = "rateLimitReachedType",
+        deserialize_with = "deserialize_optional_rate_limit_reached_type"
+    )]
+    pub(crate) rate_limit_reached_type: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct CodexRateLimit {
-    primary_window: Option<CodexRateLimitWindow>,
-    secondary_window: Option<CodexRateLimitWindow>,
+fn deserialize_optional_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(number) => number
+            .as_f64()
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom("invalid numeric quota percentage")),
+        serde_json::Value::String(text) => text
+            .trim()
+            .parse::<f64>()
+            .map(Some)
+            .map_err(|_| serde::de::Error::custom("invalid string quota percentage")),
+        _ => Err(serde::de::Error::custom(
+            "quota percentage must be a number",
+        )),
+    }
 }
 
-#[derive(Deserialize)]
-struct CodexUsageResponse {
-    rate_limit: Option<CodexRateLimit>,
+/// WHAM has returned `rate_limit_reached_type` both as a string and as an
+/// object such as `{ "type": "rate_limit_reached" }`. Keep malformed non-null
+/// values as an opaque blocking marker instead of rejecting the whole quota
+/// response; the activation coordinator fails closed for unknown values.
+fn deserialize_optional_rate_limit_reached_type<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let resolved = match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(value) => Some(value),
+        serde_json::Value::Object(object) => object
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .or_else(|| Some("unknown".to_string())),
+        _ => Some("unknown".to_string()),
+    };
+    Ok(resolved)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct CodexRateLimit {
+    #[serde(default)]
+    pub(crate) allowed: Option<bool>,
+    #[serde(default, alias = "limitReached")]
+    pub(crate) limit_reached: Option<bool>,
+    #[serde(
+        default,
+        alias = "rateLimitReachedType",
+        deserialize_with = "deserialize_optional_rate_limit_reached_type"
+    )]
+    pub(crate) rate_limit_reached_type: Option<String>,
+    #[serde(default, alias = "primaryWindow")]
+    pub(crate) primary_window: Option<CodexRateLimitWindow>,
+    #[serde(default, alias = "secondaryWindow")]
+    pub(crate) secondary_window: Option<CodexRateLimitWindow>,
+    /// Newer responses can expose named buckets outside primary/secondary.
+    #[serde(default, alias = "additionalRateLimits")]
+    pub(crate) additional_rate_limits: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct CodexUsageResponse {
+    #[serde(default, alias = "planType")]
+    pub(crate) plan_type: Option<String>,
+    #[serde(default)]
+    pub(crate) allowed: Option<bool>,
+    #[serde(default, alias = "limitReached")]
+    pub(crate) limit_reached: Option<bool>,
+    #[serde(
+        default,
+        alias = "rateLimitReachedType",
+        deserialize_with = "deserialize_optional_rate_limit_reached_type"
+    )]
+    pub(crate) rate_limit_reached_type: Option<String>,
+    #[serde(default, alias = "additionalRateLimits")]
+    pub(crate) additional_rate_limits: Option<serde_json::Value>,
+    #[serde(default, alias = "rateLimit")]
+    pub(crate) rate_limit: Option<CodexRateLimit>,
+}
+
+/// A normalized fresh response passed to the activation coordinator. It is
+/// deliberately not serialized into `SubscriptionQuota`, so cached UI values
+/// cannot accidentally trigger an external request.
+#[derive(Debug, Clone)]
+pub(crate) struct CodexQuotaWindowObservation {
+    pub(crate) limit_id: String,
+    /// Additional feature buckets are kept for diagnostics, but are not the
+    /// account-wide Codex quota window used for display or activation.
+    pub(crate) is_additional: bool,
+    pub(crate) used_percent: Option<f64>,
+    pub(crate) limit_window_seconds: Option<i64>,
+    pub(crate) reset_at: Option<i64>,
+    pub(crate) reset_after_seconds: Option<i64>,
+    pub(crate) allowed: Option<bool>,
+    pub(crate) limit_reached: Option<bool>,
+    pub(crate) rate_limit_reached_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CodexQuotaObservation {
+    #[allow(dead_code)]
+    pub(crate) plan_type: Option<String>,
+    pub(crate) allowed: Option<bool>,
+    pub(crate) limit_reached: Option<bool>,
+    pub(crate) rate_limit_reached_type: Option<String>,
+    pub(crate) windows: Vec<CodexQuotaWindowObservation>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CodexQuotaQueryResult {
+    pub(crate) quota: SubscriptionQuota,
+    pub(crate) observation: Option<CodexQuotaObservation>,
 }
 
 /// 根据窗口秒数映射到 tier 名称（与 Claude 的命名兼容以复用前端 i18n）
@@ -735,6 +872,21 @@ fn window_seconds_to_tier_name(secs: i64) -> String {
     }
 }
 
+/// Pro-family responses are weekly-only for the account-wide Codex quota. The
+/// backend can still include a 5-hour bucket for another metered feature, or
+/// briefly return a stale primary bucket; neither should become a Pro quota
+/// row or an activation target.
+pub(crate) fn is_weekly_only_codex_plan(plan_type: Option<&str>) -> bool {
+    let Some(plan_type) = plan_type
+        .map(str::trim)
+        .map(|value| value.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    matches!(plan_type.as_str(), "pro" | "prolite" | "chatgpt_pro")
+        || plan_type.ends_with("_prolite")
+}
+
 /// Unix 时间戳（秒）转 ISO 8601 字符串
 fn unix_ts_to_iso(ts: i64) -> Option<String> {
     chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.to_rfc3339())
@@ -751,6 +903,27 @@ pub(crate) async fn query_codex_quota(
     tool_label: &str,
     expired_message: &str,
 ) -> Result<SubscriptionQuota, String> {
+    Ok(query_codex_quota_with_observation(
+        access_token,
+        account_id,
+        tool_label,
+        expired_message,
+        false,
+    )
+    .await?
+    .quota)
+}
+
+/// Same endpoint as [`query_codex_quota`], retaining the fresh raw bucket data.
+/// `activation_suppressed` is used for the post-activation readback so that a readback
+/// can never recursively schedule another activation.
+pub(crate) async fn query_codex_quota_with_observation(
+    access_token: &str,
+    account_id: Option<&str>,
+    tool_label: &str,
+    expired_message: &str,
+    activation_suppressed: bool,
+) -> Result<CodexQuotaQueryResult, String> {
     let client = crate::proxy::http_client::get();
 
     let mut req = client
@@ -762,6 +935,9 @@ pub(crate) async fn query_codex_quota(
     if let Some(id) = account_id {
         req = req.header("ChatGPT-Account-Id", id);
     }
+    if activation_suppressed {
+        req = req.query(&[("activation_suppressed", "true")]);
+    }
 
     let resp = match req.timeout(std::time::Duration::from_secs(15)).send().await {
         Ok(r) => r,
@@ -771,20 +947,26 @@ pub(crate) async fn query_codex_quota(
     let status = resp.status();
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(SubscriptionQuota::error(
-            tool_label,
-            CredentialStatus::Expired,
-            format!("{expired_message} (HTTP {status})"),
-        ));
+        return Ok(CodexQuotaQueryResult {
+            quota: SubscriptionQuota::error(
+                tool_label,
+                CredentialStatus::Expired,
+                format!("{expired_message} (HTTP {status})"),
+            ),
+            observation: None,
+        });
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Ok(SubscriptionQuota::error(
-            tool_label,
-            CredentialStatus::Valid,
-            format!("API error (HTTP {status}): {body}"),
-        ));
+        return Ok(CodexQuotaQueryResult {
+            quota: SubscriptionQuota::error(
+                tool_label,
+                CredentialStatus::Valid,
+                format!("API error (HTTP {status}): {body}"),
+            ),
+            observation: None,
+        });
     }
 
     let raw = match resp.bytes().await {
@@ -794,46 +976,175 @@ pub(crate) async fn query_codex_quota(
     let body: CodexUsageResponse = match serde_json::from_slice(&raw) {
         Ok(v) => v,
         Err(e) => {
-            return Ok(SubscriptionQuota::error(
-                tool_label,
-                CredentialStatus::Valid,
-                format!("Failed to parse API response: {e}"),
-            ));
+            return Ok(CodexQuotaQueryResult {
+                quota: SubscriptionQuota::error(
+                    tool_label,
+                    CredentialStatus::Valid,
+                    format!("Failed to parse API response: {e}"),
+                ),
+                observation: None,
+            });
         }
     };
 
-    let mut tiers = Vec::new();
+    Ok(build_codex_quota_query_result(body, tool_label))
+}
 
-    if let Some(rate_limit) = body.rate_limit {
-        for window in [rate_limit.primary_window, rate_limit.secondary_window]
+fn build_codex_quota_query_result(
+    body: CodexUsageResponse,
+    tool_label: &str,
+) -> CodexQuotaQueryResult {
+    let mut tiers = Vec::new();
+    // `additional_rate_limits` is retained for observation/fail-closed checks,
+    // but the legacy SubscriptionQuota display only renders account-wide
+    // primary/secondary windows. Keep one row per standard duration.
+    let mut displayed_tier_names = HashSet::new();
+    let weekly_only_plan = is_weekly_only_codex_plan(body.plan_type.as_deref());
+    let observation = body.rate_limit.as_ref().map(|rate_limit| {
+        let mut canonical_windows = Vec::new();
+        if let Some(mut window) = rate_limit.primary_window.clone() {
+            window.limit_id.get_or_insert_with(|| "primary".to_string());
+            canonical_windows.push(window);
+        }
+        if let Some(mut window) = rate_limit.secondary_window.clone() {
+            window
+                .limit_id
+                .get_or_insert_with(|| "secondary".to_string());
+            canonical_windows.push(window);
+        }
+        let mut additional_windows = Vec::new();
+        if let Some(additional) = rate_limit.additional_rate_limits.as_ref() {
+            collect_additional_rate_limit_windows(additional, &mut additional_windows);
+        }
+        if let Some(additional) = body.additional_rate_limits.as_ref() {
+            collect_additional_rate_limit_windows(additional, &mut additional_windows);
+        }
+
+        let raw_windows = canonical_windows
             .into_iter()
-            .flatten()
-        {
-            if let Some(used) = window.used_percent {
-                tiers.push(QuotaTier {
-                    name: window
+            .map(|window| (window, false))
+            .chain(additional_windows.into_iter().map(|window| (window, true)));
+        let mut windows = Vec::new();
+        for (window, is_additional) in raw_windows {
+            let limit_id = window.limit_id.clone().unwrap_or_else(|| {
+                window
+                    .limit_window_seconds
+                    .map(window_seconds_to_tier_name)
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
+            if !is_additional {
+                if let Some(used) = window.used_percent {
+                    let tier_name = window
                         .limit_window_seconds
                         .map(window_seconds_to_tier_name)
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    utilization: used,
-                    resets_at: window.reset_at.and_then(unix_ts_to_iso),
-                    used_value_usd: None,
-                    max_value_usd: None,
-                });
+                        .unwrap_or_else(|| limit_id.clone());
+                    let is_hidden_pro_five_hour = weekly_only_plan && tier_name == TIER_FIVE_HOUR;
+                    if !is_hidden_pro_five_hour && displayed_tier_names.insert(tier_name.clone()) {
+                        tiers.push(QuotaTier {
+                            name: tier_name,
+                            utilization: used,
+                            resets_at: window.reset_at.and_then(unix_ts_to_iso),
+                            used_value_usd: None,
+                            max_value_usd: None,
+                        });
+                    }
+                }
+            }
+            windows.push(CodexQuotaWindowObservation {
+                limit_id,
+                is_additional,
+                used_percent: window.used_percent,
+                limit_window_seconds: window.limit_window_seconds,
+                reset_at: window.reset_at,
+                reset_after_seconds: window.reset_after_seconds,
+                allowed: window.allowed.or(rate_limit.allowed),
+                limit_reached: window.limit_reached.or(rate_limit.limit_reached),
+                rate_limit_reached_type: window
+                    .rate_limit_reached_type
+                    .or_else(|| rate_limit.rate_limit_reached_type.clone()),
+            });
+        }
+        CodexQuotaObservation {
+            plan_type: body.plan_type.clone(),
+            allowed: body.allowed.or(rate_limit.allowed),
+            limit_reached: body.limit_reached.or(rate_limit.limit_reached),
+            rate_limit_reached_type: body
+                .rate_limit_reached_type
+                .clone()
+                .or_else(|| rate_limit.rate_limit_reached_type.clone()),
+            windows,
+        }
+    });
+
+    CodexQuotaQueryResult {
+        quota: SubscriptionQuota {
+            tool: tool_label.to_string(),
+            credential_status: CredentialStatus::Valid,
+            credential_message: None,
+            success: true,
+            tiers,
+            extra_usage: None,
+            error: None,
+            queried_at: Some(now_millis()),
+        },
+        observation,
+    }
+}
+
+fn collect_additional_rate_limit_windows(
+    value: &serde_json::Value,
+    out: &mut Vec<CodexRateLimitWindow>,
+) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_additional_rate_limit_windows(item, out);
             }
         }
+        serde_json::Value::Object(map) => {
+            let has_window_fields = [
+                "limit_window_seconds",
+                "limitWindowSeconds",
+                "used_percent",
+                "usedPercent",
+                "percent",
+                "reset_at",
+                "resetAt",
+                "reset_after_seconds",
+                "resetAfterSeconds",
+                "limit_id",
+                "limitId",
+            ]
+            .iter()
+            .any(|key| map.contains_key(*key));
+            if has_window_fields {
+                if let Ok(mut window) = serde_json::from_value::<CodexRateLimitWindow>(
+                    serde_json::Value::Object(map.clone()),
+                ) {
+                    if window.limit_id.is_none() {
+                        window.limit_id = map
+                            .get("limit_id")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
+                    }
+                    out.push(window);
+                }
+            } else {
+                for (name, item) in map {
+                    let before = out.len();
+                    collect_additional_rate_limit_windows(item, out);
+                    if out.len() > before {
+                        for window in &mut out[before..] {
+                            if window.limit_id.is_none() {
+                                window.limit_id = Some(name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
     }
-
-    Ok(SubscriptionQuota {
-        tool: tool_label.to_string(),
-        credential_status: CredentialStatus::Valid,
-        credential_message: None,
-        success: true,
-        tiers,
-        extra_usage: None,
-        error: None,
-        queried_at: Some(now_millis()),
-    })
 }
 
 // ── Gemini 凭据读取 ──────────────────────────────────────
@@ -1593,5 +1904,229 @@ mod tests {
         // 其他窗口按小时/天回退命名
         assert_eq!(window_seconds_to_tier_name(3600), "1_hour");
         assert_eq!(window_seconds_to_tier_name(86400), "1_day");
+    }
+
+    #[test]
+    fn codex_quota_accepts_integer_and_decimal_percentages_and_preserves_status() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "plan_type": "plus",
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "rate_limit_reached_type": "none",
+                "primary_window": {
+                    "used_percent": 0,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 2000000,
+                    "reset_after_seconds": 18000
+                },
+                "secondary_window": {
+                    "used_percent": "12.5",
+                    "limit_window_seconds": 604800,
+                    "reset_at": 2500000,
+                    "reset_after_seconds": 604800
+                }
+            }
+        }))
+        .unwrap();
+        let result = build_codex_quota_query_result(body, "codex_oauth");
+        assert_eq!(result.quota.tiers[0].utilization, 0.0);
+        assert_eq!(result.quota.tiers[1].utilization, 12.5);
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.allowed, Some(true));
+        assert_eq!(observation.limit_reached, Some(false));
+        assert_eq!(observation.windows.len(), 2);
+        assert_eq!(observation.windows[0].reset_after_seconds, Some(18000));
+    }
+
+    #[test]
+    fn codex_quota_accepts_object_rate_limit_reached_type_without_losing_windows() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "plan_type": "plus",
+            "rate_limit_reached_type": {
+                "type": "workspace_member_usage_limit_reached"
+            },
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                    "used_percent": 42,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 2000000
+                }
+            }
+        }))
+        .unwrap();
+        let result = build_codex_quota_query_result(body, "codex_oauth");
+        assert!(result.quota.success);
+        assert_eq!(
+            result
+                .observation
+                .unwrap()
+                .rate_limit_reached_type
+                .as_deref(),
+            Some("workspace_member_usage_limit_reached")
+        );
+    }
+
+    #[test]
+    fn codex_quota_treats_malformed_rate_limit_reached_type_as_unknown() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "rate_limit_reached_type": {"unexpected": true},
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                    "used_percent": 0,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 2000000
+                }
+            }
+        }))
+        .unwrap();
+        let result = build_codex_quota_query_result(body, "codex_oauth");
+        assert_eq!(
+            result
+                .observation
+                .unwrap()
+                .rate_limit_reached_type
+                .as_deref(),
+            Some("unknown")
+        );
+    }
+
+    #[test]
+    fn codex_quota_collects_named_additional_rate_limits() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": null,
+                "secondary_window": null,
+                "additional_rate_limits": {
+                    "weekly": {
+                        "used_percent": 1.25,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 2000000,
+                        "reset_after_seconds": 604800
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let result = build_codex_quota_query_result(body, "codex_oauth");
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.windows[0].limit_id, "weekly");
+        assert_eq!(observation.windows[0].used_percent, Some(1.25));
+        assert!(observation.windows[0].is_additional);
+        assert!(result.quota.tiers.is_empty());
+    }
+
+    #[test]
+    fn codex_quota_collects_camel_case_additional_rate_limits() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "rateLimit": {
+                "allowed": true,
+                "limitReached": false,
+                "primaryWindow": null,
+                "secondaryWindow": null,
+                "additionalRateLimits": {
+                    "weekly": {
+                        "usedPercent": 1.25,
+                        "limitWindowSeconds": 604800,
+                        "resetAt": 2000000,
+                        "resetAfterSeconds": 604800
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let result = build_codex_quota_query_result(body, "codex_oauth");
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.windows.len(), 1);
+        assert_eq!(observation.windows[0].limit_id, "weekly");
+        assert_eq!(observation.windows[0].used_percent, Some(1.25));
+        assert!(observation.windows[0].is_additional);
+    }
+
+    #[test]
+    fn pro_quota_hides_five_hour_window() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "plan_type": "pro",
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                    "used_percent": 0,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 2000000
+                },
+                "secondary_window": {
+                    "used_percent": 11,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 2500000
+                }
+            }
+        }))
+        .unwrap();
+        let result = build_codex_quota_query_result(body, "codex_oauth");
+        assert_eq!(
+            result
+                .quota
+                .tiers
+                .iter()
+                .map(|tier| tier.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![TIER_SEVEN_DAY]
+        );
+    }
+
+    #[test]
+    fn pro_family_plan_variants_are_weekly_only() {
+        assert!(is_weekly_only_codex_plan(Some("pro")));
+        assert!(is_weekly_only_codex_plan(Some("prolite")));
+        assert!(is_weekly_only_codex_plan(Some(
+            "self_serve_business_prolite"
+        )));
+        assert!(!is_weekly_only_codex_plan(Some("plus")));
+    }
+
+    #[test]
+    fn codex_quota_does_not_render_duplicate_duration_rows() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                    "used_percent": 11,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 2000000
+                },
+                "secondary_window": {
+                    "used_percent": 0,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1800000
+                },
+                "additional_rate_limits": {
+                    "weekly": {
+                        "used_percent": 0,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 2000000
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let result = build_codex_quota_query_result(body, "codex_oauth");
+        assert_eq!(
+            result
+                .quota
+                .tiers
+                .iter()
+                .map(|tier| tier.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![TIER_SEVEN_DAY, TIER_FIVE_HOUR]
+        );
+        assert_eq!(result.observation.unwrap().windows.len(), 3);
     }
 }
