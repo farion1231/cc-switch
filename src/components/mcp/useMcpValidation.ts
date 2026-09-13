@@ -73,10 +73,20 @@ export function useMcpValidation() {
           }
 
           const typ = (obj as any)?.type;
-          if (typ === "stdio" && !(obj as any)?.command?.trim()) {
+          // 类型安全判断：command 可能是数组（OpenCode 原生条目形状，
+          // 如 ["blender-mcp"]），直接 .trim() 会抛 TypeError；非空数组视为有效。
+          const commandValue = (obj as any)?.command;
+          const hasCommand =
+            (typeof commandValue === "string" &&
+              commandValue.trim().length > 0) ||
+            (Array.isArray(commandValue) && commandValue.length > 0);
+          if (typ === "stdio" && !hasCommand) {
             return t("mcp.error.commandRequired");
           }
-          if ((typ === "http" || typ === "sse") && !(obj as any)?.url?.trim()) {
+          const urlValue = (obj as any)?.url;
+          const hasUrl =
+            typeof urlValue === "string" && urlValue.trim().length > 0;
+          if ((typ === "http" || typ === "sse") && !hasUrl) {
             return t("mcp.wizard.urlRequired");
           }
         }
