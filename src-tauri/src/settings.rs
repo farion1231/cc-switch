@@ -283,6 +283,58 @@ impl S3SyncSettings {
     }
 }
 
+/// 共享记忆设置（跨平台统一读写通道，默认对接 Cloudflare KV 云端）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedMemorySettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_shared_memory_url")]
+    pub url: String,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_bytes: Option<u64>,
+}
+
+fn default_shared_memory_url() -> String {
+    "https://codex-memory.1716775457.workers.dev".to_string()
+}
+
+impl Default for SharedMemorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: default_shared_memory_url(),
+            token: String::new(),
+            last_sync_at: None,
+            last_sync_bytes: None,
+        }
+    }
+}
+
+impl SharedMemorySettings {
+    pub fn validate(&self) -> Result<(), crate::error::AppError> {
+        if self.url.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "sharedMemory.url.required",
+                "共享记忆云端地址不能为空",
+                "Shared memory URL is required.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn normalize(&mut self) {
+        self.url = self.url.trim().trim_end_matches('/').to_string();
+        self.token = self.token.trim().to_string();
+        if self.url.is_empty() {
+            self.url = default_shared_memory_url();
+        }
+    }
+}
 /// 本机自动迁移状态。
 ///
 /// 这里记录的是本机启动时执行过的一次性迁移；标记不随数据库同步。
@@ -476,6 +528,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3_sync: Option<S3SyncSettings>,
 
+    // ===== 共享记忆设置 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_memory: Option<SharedMemorySettings>,
+
     // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
@@ -562,6 +618,7 @@ impl Default for AppSettings {
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
             s3_sync: None,
+            shared_memory: None,
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
@@ -656,6 +713,15 @@ impl AppSettings {
             s3.normalize();
             if s3.is_empty() {
                 self.s3_sync = None;
+            }
+        }
+
+        if let Some(shared_memory) = &mut self.shared_memory {
+            let blank =
+                shared_memory.url.trim().is_empty() && shared_memory.token.trim().is_empty();
+            shared_memory.normalize();
+            if blank {
+                self.shared_memory = None;
             }
         }
     }
@@ -771,6 +837,9 @@ pub fn get_settings_for_frontend() -> AppSettings {
     }
     if let Some(s3) = &mut settings.s3_sync {
         s3.secret_access_key.clear();
+    }
+    if let Some(shared_memory) = &mut settings.shared_memory {
+        shared_memory.token.clear();
     }
     settings.webdav_backup = None;
     settings
@@ -1181,6 +1250,15 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
         if let Some(s3) = current.s3_sync.as_mut() {
             s3.status = status;
         }
+    })
+}
+pub fn get_shared_memory_settings() -> Option<SharedMemorySettings> {
+    settings_store().read().ok()?.shared_memory.clone()
+}
+
+pub fn set_shared_memory_settings(settings: Option<SharedMemorySettings>) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.shared_memory = settings;
     })
 }
 
