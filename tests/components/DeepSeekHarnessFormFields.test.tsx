@@ -77,7 +77,9 @@ describe("DeepSeekHarnessFormFields", () => {
     expect(screen.queryByLabelText("Credential Ref")).not.toBeInTheDocument();
     expect(screen.queryByText("API Format")).not.toBeInTheDocument();
     expect(screen.getByText("Model Catalog")).toBeInTheDocument();
-    expect(screen.getByLabelText("API Key")).toBeDisabled();
+    // The official DeepSeek route has no OAuth login and requires an API key,
+    // so the input stays editable even in the "official" category.
+    expect(screen.getByLabelText("API Key")).toBeEnabled();
   });
 
   it("updates a model name", () => {
@@ -106,13 +108,15 @@ describe("DeepSeekHarnessFormFields", () => {
     ]);
   });
 
-  it("adds a model row", () => {
+  it("adds a model row with a stable row key", () => {
     const onModelsChange = vi.fn();
     renderFields({ models: [], onModelsChange });
 
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
-    expect(onModelsChange).toHaveBeenCalledWith([{ id: "", name: undefined }]);
+    expect(onModelsChange).toHaveBeenCalledWith([
+      { id: "", name: undefined, rowKey: expect.any(String) },
+    ]);
   });
 
   it("removes a model row", () => {
@@ -144,6 +148,17 @@ describe("DeepSeekHarnessFormFields", () => {
     });
 
     expect(onDefaultModelChange).toHaveBeenCalledWith("glm-5");
+  });
+
+  it("disables the default model for background providers with a hint", () => {
+    renderFields({ isDefaultModelApplicable: false });
+
+    expect(screen.getByLabelText("Default Model")).toBeDisabled();
+    expect(
+      screen.getByText(
+        "This provider is not the route DSH currently uses; default-model changes would not apply.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("fetches models and fills the row from the inline dropdown", async () => {

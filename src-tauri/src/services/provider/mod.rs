@@ -5017,7 +5017,6 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
-                    AppType::DeepSeekHarness => crate::deepseek_harness_config::remove_provider()?,
                     _ => {}
                 }
             }
@@ -5461,7 +5460,6 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
-                    AppType::DeepSeekHarness => crate::deepseek_harness_config::remove_provider(),
                     _ => Ok(()),
                 };
 

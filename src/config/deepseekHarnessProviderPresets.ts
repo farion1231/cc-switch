@@ -116,6 +116,18 @@ function reserveApiKeyEnv(name: string, usedRefs: Set<string>): string {
 }
 
 /**
+ * Preset ids can end up as native provider keys, and the backend only accepts
+ * `[A-Za-z0-9._-]`; slugify so localized preset names stay valid.
+ */
+function toDshPresetId(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  return slug || "dsh-preset";
+}
+
+/**
  * Maps one OpenCode provider preset onto a DSH custom (pi-ai) preset. Returns
  * `null` for presets that have no meaningful DSH equivalent or are unsupported.
  */
@@ -147,7 +159,7 @@ export function toDeepSeekHarnessPreset(
   );
 
   return {
-    id: preset.name,
+    id: toDshPresetId(preset.name),
     name: preset.name,
     nameKey: preset.nameKey,
     websiteUrl: preset.websiteUrl,

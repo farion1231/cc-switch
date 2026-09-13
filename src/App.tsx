@@ -102,7 +102,10 @@ import {
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
 import { dshApi } from "@/lib/api/dsh";
-import { invalidateDshProviderCaches } from "@/lib/query/dsh";
+import {
+  invalidateDshProviderCaches,
+  dshKeys,
+} from "@/lib/query/dsh";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -854,6 +857,22 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    // The native official route is a singleton keyed by id; a copy inheriting
+    // its dsh_deepseek provider_type would be routed to the same id-blind
+    // llm-deepseek adapter, so deleting or enabling the copy would clobber
+    // the real official route.
+    if (
+      activeApp === "deepseek-harness" &&
+      (provider.id === "deepseek-official" ||
+        provider.meta?.providerType === "dsh_deepseek")
+    ) {
+      toast.error(
+        t("deepseekHarness.officialNotCopyable", {
+          defaultValue: "官方 DeepSeek 路由不可复制",
+        }),
+      );
+      return;
+    }
     const newSortIndex =
       provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
 
@@ -875,7 +894,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "deepseek-harness"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -895,12 +915,19 @@ function App() {
                     queryKey: hermesKeys.liveProviderIds,
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
-                : (
-                    await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
-                    })
-                  ).enabledProviderIds;
+                : activeApp === "pi"
+                  ? (
+                      await queryClient.ensureQueryData({
+                        queryKey: ["pi", "currentState"],
+                        queryFn: () => piApi.getCurrentState(),
+                      })
+                    ).enabledProviderIds
+                  : (
+                      await queryClient.ensureQueryData({
+                        queryKey: dshKeys.currentState,
+                        queryFn: () => dshApi.getCurrentState(),
+                      })
+                    ).providerIds;
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",

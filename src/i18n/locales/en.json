@@ -1077,6 +1077,9 @@
     "providerKeyPlaceholder": "my-provider",
     "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, and hyphens only.",
     "providerKeyOfficialHint": "The official DeepSeek route uses the fixed deepseek-official key.",
+    "officialApiKeyPlaceholder": "Enter the DeepSeek API key (stored in ~/.dsh/.credentials.yaml)",
+    "officialDuplicate": "The official DeepSeek route already exists and cannot be added twice.",
+    "officialNotCopyable": "The official DeepSeek route cannot be duplicated.",
     "providerKeyLockedHint": "This provider is in the DSH config; the key is locked.",
     "providerKeyHint": "Lowercase letters, numbers, and hyphens only.",
     "modelsRequired": "Add at least one model",
@@ -1096,7 +1099,8 @@
     "addModel": "Add",
     "noModels": "No models configured. Click Add to add a model.",
     "defaultModel": "Default Model",
-    "defaultModelHint": "The model DSH uses by default."
+    "defaultModelHint": "The model DSH uses by default.",
+    "defaultModelBackgroundHint": "This provider is not the route DSH currently uses; default-model changes would not apply."
   },
   "appSwitcher": {
     "more": "More apps"

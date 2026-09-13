@@ -21,6 +21,7 @@ import {
 } from "@/lib/api/model-fetch";
 import {
   DSH_MODEL_API_OPTIONS,
+  nextDshRowKey,
   type DshModel,
 } from "./helpers/deepseekHarnessFormUtils";
 import type { ProviderCategory } from "@/types";
@@ -60,6 +61,9 @@ interface DeepSeekHarnessFormFieldsProps {
   // Default model
   defaultModel: string;
   onDefaultModelChange: (value: string) => void;
+  /** False for background providers: the backend only applies the default
+   * model of the route DSH currently uses, so the field is disabled. */
+  isDefaultModelApplicable?: boolean;
 }
 
 export function DeepSeekHarnessFormFields({
@@ -81,6 +85,7 @@ export function DeepSeekHarnessFormFields({
   onModelsChange,
   defaultModel,
   onDefaultModelChange,
+  isDefaultModelApplicable = true,
 }: DeepSeekHarnessFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -127,17 +132,33 @@ export function DeepSeekHarnessFormFields({
   const addModel = (id = "") => {
     const trimmed = id.trim();
     if (trimmed && models.some((model) => model.id === trimmed)) return;
-    onModelsChange([...models, { id: trimmed, name: trimmed || undefined }]);
+    onModelsChange([
+      ...models,
+      { id: trimmed, name: trimmed || undefined, rowKey: nextDshRowKey() },
+    ]);
   };
 
   return (
     <>
       {/* API Key */}
+      {/* The official DeepSeek route has no OAuth login: it requires an API
+          key stored under DEEPSEEK_API_KEY, so the input must stay editable
+          even though the category is "official". */}
       <ApiKeySection
         id="dsh-api-key"
         value={apiKey}
         onChange={onApiKeyChange}
         category={category}
+        disabled={false}
+        placeholder={{
+          official: t("deepseekHarness.officialApiKeyPlaceholder", {
+            defaultValue:
+              "Enter the DeepSeek API key (stored in ~/.dsh/.credentials.yaml)",
+          }),
+          thirdParty: t("providerForm.apiKeyAutoFill", {
+            defaultValue: "输入 API Key，将自动填充到配置",
+          }),
+        }}
         shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}
         isPartner={isPartner}
@@ -272,7 +293,7 @@ export function DeepSeekHarnessFormFields({
               <span className="w-9" />
             </div>
             {models.map((model, index) => (
-              <div key={index} className="flex items-center gap-2">
+              <div key={model.rowKey ?? index} className="flex items-center gap-2">
                 <div className="flex min-w-0 flex-1 gap-1">
                   <ImeSafeInput
                     value={model.id}
@@ -346,11 +367,17 @@ export function DeepSeekHarnessFormFields({
             value={defaultModel}
             onValueChange={onDefaultModelChange}
             placeholder={models[0]?.id ?? ""}
+            disabled={!isDefaultModelApplicable}
           />
           <p className="text-xs text-muted-foreground">
-            {t("deepseekHarness.defaultModelHint", {
-              defaultValue: "The model DSH uses by default.",
-            })}
+            {isDefaultModelApplicable
+              ? t("deepseekHarness.defaultModelHint", {
+                  defaultValue: "The model DSH uses by default.",
+                })
+              : t("deepseekHarness.defaultModelBackgroundHint", {
+                  defaultValue:
+                    "This provider is not the route DSH currently uses; default-model changes would not apply.",
+                })}
           </p>
         </div>
       </div>

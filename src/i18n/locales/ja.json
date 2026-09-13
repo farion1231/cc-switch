@@ -1077,6 +1077,9 @@
     "providerKeyPlaceholder": "my-provider",
     "providerKeyInvalid": "無効な形式です。小文字、数字、ハイフンのみ使用できます。",
     "providerKeyOfficialHint": "公式 DeepSeek ルートは固定の deepseek-official キーを使用します。",
+    "officialApiKeyPlaceholder": "DeepSeek API キーを入力してください（~/.dsh/.credentials.yaml に保存されます）",
+    "officialDuplicate": "公式 DeepSeek ルートは既に存在するため、重複して追加できません",
+    "officialNotCopyable": "公式 DeepSeek ルートは複製できません",
     "providerKeyLockedHint": "このプロバイダーは DSH 設定に追加済みのため、キーは変更できません。",
     "providerKeyHint": "小文字、数字、ハイフンのみ使用できます。",
     "modelsRequired": "モデルを1つ以上追加してください",
@@ -1096,7 +1099,8 @@
     "addModel": "追加",
     "noModels": "モデルがありません。「追加」をクリックして作成してください。",
     "defaultModel": "デフォルトモデル",
-    "defaultModelHint": "DSH がデフォルトで使用するモデル。"
+    "defaultModelHint": "DSH がデフォルトで使用するモデル。",
+    "defaultModelBackgroundHint": "このプロバイダーは DSH の現在のルートではないため、デフォルトモデルの変更は適用されません。"
   },
   "appSwitcher": {
     "more": "その他のアプリ"

@@ -14,7 +14,74 @@ export type DshModel = {
   id: string;
   name?: string;
   contextWindow?: number;
+  /** Client-only stable React key; stripped before persisting. */
+  rowKey?: string;
 };
+
+let dshRowKeySeq = 0;
+
+/** Mirrors the stable per-row keys Pi's provider form uses for model rows. */
+export function nextDshRowKey(): string {
+  dshRowKeySeq += 1;
+  return `dsh-row-${dshRowKeySeq}`;
+}
+
+export function withDshRowKeys(models: DshModel[]): DshModel[] {
+  return models.map((model) => ({
+    ...model,
+    rowKey: model.rowKey ?? nextDshRowKey(),
+  }));
+}
+
+/**
+ * Drops blank model rows before persisting. The Add button appends empty
+ * rows (mirroring Pi/OpenCode), so a half-filled row must never reach the
+ * native `models` catalog where it would break model resolution.
+ *
+ * Bare-id strings are a valid native catalog form (the backend `model_id_of`
+ * accepts them), so they survive the prune — trimmed like object ids so they
+ * match the trimmed `meta.dshCurrentModel` comparison on the Rust side.
+ */
+export function pruneDshModelRows(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!Array.isArray(config.models)) return config;
+  let changed = false;
+  const pruned: unknown[] = [];
+  for (const model of config.models) {
+    if (typeof model === "string") {
+      const id = model.trim();
+      if (id === "") {
+        changed = true;
+        continue;
+      }
+      if (id !== model) changed = true;
+      pruned.push(id);
+      continue;
+    }
+    if (
+      model !== null &&
+      typeof model === "object" &&
+      !Array.isArray(model) &&
+      typeof (model as Record<string, unknown>).id === "string" &&
+      ((model as Record<string, unknown>).id as string).trim() !== ""
+    ) {
+      const raw = model as Record<string, unknown>;
+      const id = (raw.id as string).trim();
+      if (id !== raw.id) {
+        changed = true;
+        pruned.push({ ...raw, id });
+        continue;
+      }
+      pruned.push(model);
+      continue;
+    }
+    // Nulls, arrays, and objects without a usable id are not model entries.
+    changed = true;
+  }
+  if (!changed) return config;
+  return { ...config, models: pruned };
+}
 
 export const DSH_OFFICIAL_DEFAULT_CONFIG = DEEPSEEK_HARNESS_DEFAULT_CONFIG;
 
@@ -26,15 +93,6 @@ export const DSH_CUSTOM_DEFAULT_CONFIG: Record<string, unknown> = {
   apiKey: "",
   models: [],
 };
-
-export interface DshSettingsConfigInput {
-  apiKey: string;
-  baseURL: string;
-  api: string;
-  apiKeyEnv: string;
-  models: DshModel[];
-  displayName?: string;
-}
 
 // ── Pure functions ───────────────────────────────────────────────────
 
@@ -67,12 +125,15 @@ export function normalizeDshModels(value: unknown): DshModel[] {
   const models: DshModel[] = [];
   for (const entry of value) {
     if (typeof entry === "string") {
-      models.push({ id: entry });
+      // Bare-id strings are valid native catalog entries; trim so the editor
+      // matches the trimmed default-model comparison on the Rust side.
+      const id = entry.trim();
+      if (id !== "") models.push({ id });
       continue;
     }
     if (entry && typeof entry === "object" && !Array.isArray(entry)) {
       const item = entry as Record<string, unknown>;
-      const id = item.id == null ? "" : String(item.id);
+      const id = item.id == null ? "" : String(item.id).trim();
       const name =
         typeof item.name === "string" && item.name ? item.name : undefined;
       const contextWindow =
@@ -89,43 +150,4 @@ export function normalizeDshModels(value: unknown): DshModel[] {
 /** DSH credential reference names must match the backend's env-var pattern. */
 export function isValidCredentialRef(value: string): boolean {
   return /^[A-Z_][A-Z0-9_]*$/.test(value);
-}
-
-/**
- * Assembles the persisted `settings_config` for the current state, keeping the
- * official and custom (pi-ai) shapes distinct.
- */
-export function buildDshSettingsConfig(
-  state: DshSettingsConfigInput,
-  isOfficial: boolean,
-): Record<string, unknown> {
-  const models = (state.models || [])
-    .map((model) => {
-      const id = model.id.trim();
-      const name = model.name?.trim() || id;
-      return {
-        id,
-        name,
-        ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
-      };
-    })
-    .filter((model) => model.id);
-
-  if (isOfficial) {
-    return {
-      apiKey: state.apiKey.trim(),
-      baseURL: state.baseURL.trim(),
-      profile: "desktop",
-      models,
-    };
-  }
-
-  return {
-    displayName: (state.displayName ?? "").trim(),
-    api: state.api,
-    baseURL: state.baseURL.trim(),
-    apiKeyEnv: state.apiKeyEnv.trim(),
-    apiKey: state.apiKey.trim(),
-    models,
-  };
 }

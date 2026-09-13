@@ -358,6 +358,35 @@ pub fn set_current_model(provider_id: &str, model_id: &str) -> Result<(), AppErr
     })
 }
 
+/// Drop `agent-default-model` when it still points at `provider_id`.
+///
+/// The provider/model pair is coupled in DSH: keeping the namespace after the
+/// referenced route is deleted would leave the Harness runtime targeting a
+/// provider that no longer exists. Returns whether the pointer was cleared.
+pub fn clear_current_model_if_provider(provider_id: &str) -> Result<bool, AppError> {
+    let settings_path = get_settings_path();
+    if !settings_path.exists() {
+        return Ok(false);
+    }
+    let document = parse_yaml_document(&settings_path)?;
+    let points_at_provider = document
+        .as_hash()
+        .and_then(|hash| hash.get(&mapping_key(DEFAULT_MODEL_NAMESPACE)))
+        .and_then(Yaml::as_hash)
+        .and_then(|hash| yaml_string(hash, "provider"))
+        .is_some_and(|provider| provider == provider_id);
+    if !points_at_provider {
+        return Ok(false);
+    }
+    update_yaml_document(&settings_path, |document| {
+        if let Yaml::Hash(hash) = document {
+            hash.remove(&mapping_key(DEFAULT_MODEL_NAMESPACE));
+        }
+        Ok(())
+    })?;
+    Ok(true)
+}
+
 fn with_resolved_api_key(mut config: Value, credentials: &HashMap<String, String>) -> Value {
     let reference = config
         .get("apiKeyEnv")
@@ -886,10 +915,7 @@ mod tests {
             .unwrap();
 
             let state = read_native_state().unwrap();
-            assert_eq!(
-                state.current_provider.as_deref(),
-                Some("company-gateway")
-            );
+            assert_eq!(state.current_provider.as_deref(), Some("company-gateway"));
             assert_eq!(state.current_model.as_deref(), Some("example-model-1"));
             assert_eq!(state.providers.len(), 2);
 

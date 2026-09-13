@@ -1045,6 +1045,11 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
 /// 这是设备级别的设置，不随数据库同步。
 /// 传入 `None` 会清除当前供应商设置。
 pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), AppError> {
+    // Pi and DeepSeek Harness keep no device-level current provider in the
+    // settings store; skip the pointless read-modify-write of the file.
+    if matches!(app_type, AppType::Pi | AppType::DeepSeekHarness) {
+        return Ok(());
+    }
     let id_owned = id.map(|s| s.to_string());
     mutate_settings(|settings| match app_type {
         AppType::Claude => settings.current_provider_claude = id_owned.clone(),

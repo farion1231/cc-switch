@@ -518,7 +518,9 @@ export function ProviderList({
                       ? isHermesCurrent
                       : appId === "openclaw"
                         ? isProviderDefaultModel(provider.id)
-                        : false
+                        : // deepseek-harness deletion is protected via
+                          // canDelete=!isCurrent, not this membership-only prop.
+                          false
                 }
                 isStateChangeProtected={
                   appId === "pi" && !isPiAuthoritativeStateReady

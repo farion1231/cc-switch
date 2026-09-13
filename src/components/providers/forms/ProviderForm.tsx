@@ -135,6 +135,7 @@ import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import {
   DSH_CUSTOM_DEFAULT_CONFIG,
   isValidCredentialRef,
+  pruneDshModelRows,
 } from "./helpers/deepseekHarnessFormUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
@@ -1311,6 +1312,22 @@ function ProviderFormFull({
 
     // deepseek-harness: official routes use the reserved key and skip provider
     // key validation; custom routes need a unique key and at least one model.
+    if (appId === "deepseek-harness") {
+      // The native official route is a singleton: a second entry would pass
+      // form validation and only fail at the backend with a raw error.
+      if (
+        !providerId &&
+        dshForm.dshIsOfficial &&
+        dshCurrentState?.providerIds.includes("deepseek-official")
+      ) {
+        toast.error(
+          t("deepseekHarness.officialDuplicate", {
+            defaultValue: "官方 DeepSeek 路由已存在，无法重复添加",
+          }),
+        );
+        return;
+      }
+    }
     if (appId === "deepseek-harness" && !dshForm.dshIsOfficial) {
       if (!dshForm.dshProviderKey.trim()) {
         toast.error(
@@ -1683,6 +1700,18 @@ function ProviderFormFull({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
+    } else if (appId === "deepseek-harness") {
+      // Blank model rows are legitimate in the editor (Add appends one) but
+      // must never reach the native catalog.
+      try {
+        const config = JSON.parse(values.settingsConfig) as Record<
+          string,
+          unknown
+        >;
+        settingsConfig = JSON.stringify(pruneDshModelRows(config));
+      } catch {
+        settingsConfig = values.settingsConfig.trim();
+      }
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -2046,6 +2075,20 @@ function ProviderFormFull({
     partnerPromotionKey: hermesPartnerPromotionKey,
   } = useApiKeyLink({
     appId: "hermes",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
+  // 使用 API Key 链接 hook (DeepSeek Harness)
+  const {
+    shouldShowApiKeyLink: shouldShowDshApiKeyLink,
+    websiteUrl: dshWebsiteUrl,
+    isPartner: isDshPartner,
+    partnerPromotionKey: dshPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "deepseek-harness",
     category,
     selectedPresetId,
     presetEntries,
@@ -2864,9 +2907,16 @@ function ProviderFormFull({
               onModelsChange={dshForm.handleDshModelsChange}
               defaultModel={dshForm.dshDefaultModel}
               onDefaultModelChange={dshForm.handleDshDefaultModelChange}
+              isDefaultModelApplicable={
+                !providerId ||
+                isDshCurrentStateLoading ||
+                dshCurrentState?.currentProviderId === providerId
+              }
               category={category}
-              shouldShowApiKeyLink={false}
-              websiteUrl={form.watch("websiteUrl") || ""}
+              shouldShowApiKeyLink={shouldShowDshApiKeyLink}
+              websiteUrl={dshWebsiteUrl}
+              isPartner={isDshPartner}
+              partnerPromotionKey={dshPartnerPromotionKey}
             />
           )}
 

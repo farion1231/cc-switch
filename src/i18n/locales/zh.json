@@ -1077,6 +1077,9 @@
     "providerKeyPlaceholder": "my-provider",
     "providerKeyInvalid": "标识格式无效，只能使用小写字母、数字和连字符",
     "providerKeyOfficialHint": "官方 DeepSeek 路由使用固定的 deepseek-official 标识。",
+    "officialApiKeyPlaceholder": "输入 DeepSeek API Key（将写入 ~/.dsh/.credentials.yaml）",
+    "officialDuplicate": "官方 DeepSeek 路由已存在，无法重复添加",
+    "officialNotCopyable": "官方 DeepSeek 路由不可复制",
     "providerKeyLockedHint": "该供应商已存在于 DSH 配置中，标识不可修改。",
     "providerKeyHint": "只能使用小写字母、数字和连字符。",
     "modelsRequired": "请至少添加一个模型",
@@ -1096,7 +1099,8 @@
     "addModel": "添加",
     "noModels": "暂无模型，点击“添加”新增。",
     "defaultModel": "默认模型",
-    "defaultModelHint": "DSH 默认使用的模型。"
+    "defaultModelHint": "DSH 默认使用的模型。",
+    "defaultModelBackgroundHint": "该供应商不是 DSH 当前使用的路由，默认模型修改不会生效。"
   },
   "appSwitcher": {
     "more": "更多应用"

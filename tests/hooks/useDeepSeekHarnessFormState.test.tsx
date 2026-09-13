@@ -2,10 +2,11 @@ import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useDeepSeekHarnessFormState } from "@/components/providers/forms/hooks/useDeepSeekHarnessFormState";
 import {
-  buildDshSettingsConfig,
   isDshOfficial,
   isValidCredentialRef,
   normalizeDshModels,
+  pruneDshModelRows,
+  withDshRowKeys,
 } from "@/components/providers/forms/helpers/deepseekHarnessFormUtils";
 
 interface RenderOptions {
@@ -74,7 +75,11 @@ describe("useDeepSeekHarnessFormState", () => {
     expect(result.current.dshBaseUrl).toBe("https://api.deepseek.com");
     expect(result.current.dshApi).toBe("openai-completions");
     expect(result.current.dshModels).toEqual([
-      { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" },
+      {
+        id: "deepseek-v4-pro",
+        name: "DeepSeek-V4-Pro",
+        rowKey: expect.any(String),
+      },
     ]);
   });
 
@@ -263,54 +268,52 @@ describe("deepseekHarnessFormUtils", () => {
       normalizeDshModels([
         { id: "a", name: "A", contextWindow: 1000 },
         "b",
-        { id: "c" },
+        { id: "  pad  " },
+        "  spaced  ",
+        "",
         null,
         42,
       ]),
     ).toEqual([
       { id: "a", name: "A", contextWindow: 1000 },
       { id: "b", name: undefined, contextWindow: undefined },
-      { id: "c", name: undefined, contextWindow: undefined },
+      { id: "pad", name: undefined, contextWindow: undefined },
+      { id: "spaced", name: undefined, contextWindow: undefined },
     ]);
     expect(normalizeDshModels("nope")).toEqual([]);
   });
 
-  it("builds the official and custom settings config", () => {
-    const official = buildDshSettingsConfig(
-      {
-        apiKey: " k ",
-        baseURL: " https://x/ ",
-        api: "anthropic-messages",
-        apiKeyEnv: "X",
-        models: [{ id: " m ", name: "" }],
-      },
-      true,
-    );
-    expect(official).toEqual({
-      apiKey: "k",
-      baseURL: "https://x/",
-      profile: "desktop",
-      models: [{ id: "m", name: "m" }],
+  it("prunes blank rows, keeps string-form models, and trims ids", () => {
+    const config = {
+      displayName: "Gateway",
+      models: [
+        { id: "" },
+        { id: "  real  ", name: "Real" },
+        "  str-model  ",
+        "",
+        null,
+        42,
+      ],
+    };
+    // Bare-id strings are valid native catalog entries (the Rust
+    // model_id_of accepts them), so the prune keeps them — trimmed.
+    expect(pruneDshModelRows(config)).toEqual({
+      displayName: "Gateway",
+      models: [{ id: "real", name: "Real" }, "str-model"],
     });
+    // No pruning or trimming needed: the same object reference comes back.
+    const clean = { models: [{ id: "only" }, "plain"] };
+    expect(pruneDshModelRows(clean)).toBe(clean);
+    expect(pruneDshModelRows({})).toEqual({});
+  });
 
-    const custom = buildDshSettingsConfig(
-      {
-        apiKey: "k",
-        baseURL: "https://x",
-        api: "openai-responses",
-        apiKeyEnv: "X",
-        models: [{ id: "m" }],
-        displayName: " Name ",
-      },
-      false,
-    );
-    expect(custom).toEqual({
-      displayName: "Name",
-      api: "openai-responses",
-      baseURL: "https://x",
-      apiKeyEnv: "X",
-      apiKey: "k",
-      models: [{ id: "m", name: "m" }],
-    });
+  it("assigns stable client-only row keys without sharing them", () => {
+    const rows = withDshRowKeys([
+      { id: "a", rowKey: "kept" },
+      { id: "b" },
+    ]);
+    expect(rows[0].rowKey).toBe("kept");
+    expect(rows[1].rowKey).toMatch(/^dsh-row-/);
+    expect(rows[0].rowKey).not.toBe(rows[1].rowKey);
   });
 });

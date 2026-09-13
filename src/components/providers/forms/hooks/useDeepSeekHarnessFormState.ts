@@ -4,6 +4,7 @@ import {
   DSH_CUSTOM_DEFAULT_CONFIG,
   isDshOfficial,
   normalizeDshModels,
+  withDshRowKeys,
   type DshModel,
 } from "../helpers/deepseekHarnessFormUtils";
 
@@ -51,7 +52,9 @@ export function useDeepSeekHarnessFormState({
   const initial =
     appId === "deepseek-harness" ? (initialData?.settingsConfig ?? {}) : {};
   const initialModels =
-    appId === "deepseek-harness" ? normalizeDshModels(initial.models) : [];
+    appId === "deepseek-harness"
+      ? withDshRowKeys(normalizeDshModels(initial.models))
+      : [];
 
   const [dshProviderKey, setDshProviderKey] = useState<string>(() => {
     if (appId !== "deepseek-harness") return "";
@@ -130,8 +133,10 @@ export function useDeepSeekHarnessFormState({
         ) as Record<string, unknown>;
         updater(config);
         onSettingsConfigChange(JSON.stringify(config, null, 2));
-      } catch {
-        // ignore malformed settingsConfig
+      } catch (error) {
+        // Field edits cannot be merged into a malformed JSON document; warn so
+        // the drop is at least visible in the console instead of fully silent.
+        console.warn("[DeepSeekHarness] malformed settingsConfig, edit skipped", error);
       }
     },
     [getSettingsConfig, onSettingsConfigChange, dshIsOfficial],
@@ -182,7 +187,8 @@ export function useDeepSeekHarnessFormState({
     (models: DshModel[]) => {
       setDshModels(models);
       updateDshSettings((config) => {
-        config.models = models;
+        // Row keys are client-only React state and never reach the config.
+        config.models = models.map(({ rowKey: _rowKey, ...model }) => model);
       });
     },
     [updateDshSettings],
@@ -214,7 +220,7 @@ export function useDeepSeekHarnessFormState({
           ? source.api
           : "openai-completions",
       );
-      setDshModels(models);
+      setDshModels(withDshRowKeys(models));
       setDshDefaultModel(models[0]?.id ?? "");
     },
     [],

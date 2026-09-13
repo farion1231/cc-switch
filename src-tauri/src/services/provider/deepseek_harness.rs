@@ -39,13 +39,29 @@ pub(super) fn add(
         &crate::app_config::AppType::DeepSeekHarness,
         &provider,
     )?;
+    // The official route is a singleton keyed by id; a copy carrying its
+    // provider_type would be routed to the same id-blind llm-deepseek
+    // adapter, so a delete of the copy would wipe the real official route.
+    if provider.id != crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID
+        && provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("dsh_deepseek")
+    {
+        return Err(AppError::InvalidInput(
+            "Only the native official route may use the dsh_deepseek provider type".to_string(),
+        ));
+    }
+    // Validate the model catalog before any write so a model-less provider
+    // cannot be half-committed to the native file and the database.
+    let first_model = first_model_id(&provider.settings_config)?;
     if add_to_live {
         write_native_provider(&provider)?;
     }
     state.db.save_provider(APP, &provider)?;
     if state.db.get_current_provider(APP)?.is_none() && add_to_live {
-        let model = first_model_id(&provider.settings_config)?;
-        crate::deepseek_harness_config::set_current_model(&provider.id, &model)?;
+        crate::deepseek_harness_config::set_current_model(&provider.id, &first_model)?;
         state.db.set_current_provider(APP, &provider.id)?;
         crate::settings::set_current_provider(
             &crate::app_config::AppType::DeepSeekHarness,
@@ -75,8 +91,38 @@ pub(super) fn update(
         &crate::app_config::AppType::DeepSeekHarness,
         &provider,
     )?;
+    let native = crate::deepseek_harness_config::read_native_state()?;
+    // The edit form's default-model field only takes effect on the route that
+    // is currently selected in DSH; applying it unconditionally would let an
+    // edit of a background provider silently steal the native selection.
+    let desired_model = if native.current_provider.as_deref() == Some(provider.id.as_str()) {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.dsh_current_model.as_deref())
+            .filter(|model| !model.trim().is_empty())
+    } else {
+        None
+    };
+    // Validate before any write so an unknown model cannot half-commit the
+    // native file and the database row that the writes below already made.
+    if let Some(model) = desired_model {
+        if !provider_has_model(&provider.settings_config, model) {
+            return Err(AppError::InvalidInput(format!(
+                "Model '{model}' is not configured for DSH provider '{}'",
+                provider.id
+            )));
+        }
+    }
     write_native_provider(&provider)?;
     state.db.save_provider(APP, &provider)?;
+    if let Some(model) = desired_model {
+        if native.current_model.as_deref() != Some(model) {
+            crate::deepseek_harness_config::set_current_model(&provider.id, model)?;
+            let native = crate::deepseek_harness_config::read_native_state()?;
+            sync_native_locked(state, &native)?;
+        }
+    }
     Ok(true)
 }
 
@@ -86,6 +132,7 @@ pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
         return Ok(());
     };
     remove_native_provider(&provider)?;
+    crate::deepseek_harness_config::clear_current_model_if_provider(id)?;
     state.db.delete_provider(APP, id)
 }
 
@@ -123,10 +170,9 @@ pub(super) fn set_current_model(
         .get(provider_id)
         .ok_or_else(|| AppError::InvalidInput(format!("Provider '{provider_id}' not found")))?;
     if let Some(models) = provider.config.get("models").and_then(Value::as_array) {
-        let known = models.iter().any(|model| {
-            model.get("id").and_then(Value::as_str) == Some(model_id)
-                || model.as_str() == Some(model_id)
-        });
+        let known = models
+            .iter()
+            .any(|model| model_id_of(model) == Some(model_id));
         if !known {
             return Err(AppError::InvalidInput(format!(
                 "Model '{model_id}' is not configured for DSH provider '{provider_id}'"
@@ -215,7 +261,9 @@ pub(super) fn remove_from_live(state: &AppState, id: &str) -> Result<(), AppErro
         .db
         .get_provider_by_id(id, APP)?
         .ok_or_else(|| AppError::InvalidInput(format!("Provider '{id}' not found")))?;
-    remove_native_provider(&provider)
+    remove_native_provider(&provider)?;
+    crate::deepseek_harness_config::clear_current_model_if_provider(id)?;
+    Ok(())
 }
 
 fn write_native_provider(provider: &Provider) -> Result<(), AppError> {
@@ -250,16 +298,22 @@ pub(super) fn remove_native_provider(provider: &Provider) -> Result<(), AppError
     }
 }
 
+/// A DSH model entry is either a bare id string or an `{id}` object; blank ids
+/// never count as a usable model.
+fn model_id_of(model: &Value) -> Option<&str> {
+    match model {
+        Value::String(id) => Some(id.as_str()),
+        Value::Object(_) => model.get("id").and_then(Value::as_str),
+        _ => None,
+    }
+    .filter(|id| !id.trim().is_empty())
+}
+
 fn first_model_id(config: &Value) -> Result<String, AppError> {
     config
         .get("models")
         .and_then(Value::as_array)
-        .and_then(|models| {
-            models
-                .iter()
-                .find_map(|model| model.get("id").and_then(Value::as_str))
-        })
-        .filter(|id| !id.trim().is_empty())
+        .and_then(|models| models.iter().find_map(model_id_of))
         .map(ToOwned::to_owned)
         .ok_or_else(|| AppError::InvalidInput("DeepSeek Harness provider has no model".to_string()))
 }
@@ -271,7 +325,7 @@ fn provider_has_model(config: &Value, model_id: &str) -> bool {
         .is_some_and(|models| {
             models
                 .iter()
-                .any(|model| model.get("id").and_then(Value::as_str) == Some(model_id))
+                .any(|model| model_id_of(model) == Some(model_id))
         })
 }
 
@@ -472,5 +526,199 @@ mod tests {
         assert!(!settings.contains("llm-deepseek"));
         assert!(settings.contains("llm-pi-ai"));
         assert!(settings.contains("company"));
+        // The removed route was not the current one: the default-model pointer
+        // must survive untouched.
+        assert!(settings.contains("agent-default-model"));
+    }
+
+    #[test]
+    #[serial]
+    fn deleting_the_current_provider_clears_the_native_default_model() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+
+        delete(&state, "company").unwrap();
+
+        let settings = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        assert!(!settings.contains("agent-default-model"));
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert!(native.current_provider.is_none());
+        assert!(native.current_model.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn remove_from_live_of_the_current_provider_clears_the_default_model() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        enable(&state, "company").unwrap();
+
+        remove_from_live(&state, "company").unwrap();
+
+        let settings = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        assert!(!settings.contains("company"));
+        assert!(!settings.contains("agent-default-model"));
+    }
+
+    #[test]
+    #[serial]
+    fn update_applies_the_default_model_for_the_current_provider() {
+        let _home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        let mut provider = state
+            .db
+            .get_provider_by_id("company", APP)
+            .unwrap()
+            .unwrap();
+        provider.meta.as_mut().unwrap().dsh_current_model = Some("new-model".to_string());
+
+        // The model is not in the catalog yet: the edit must be rejected.
+        assert!(update(&state, None, provider.clone()).is_err());
+
+        provider.settings_config["models"] = json!([{ "id": "glm-5.3" }, { "id": "new-model" }]);
+        update(&state, None, provider).unwrap();
+
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert_eq!(native.current_provider.as_deref(), Some("company"));
+        assert_eq!(native.current_model.as_deref(), Some("new-model"));
+    }
+
+    #[test]
+    #[serial]
+    fn update_ignores_the_default_model_for_background_providers() {
+        let _home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        let mut official = state
+            .db
+            .get_provider_by_id(crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID, APP)
+            .unwrap()
+            .unwrap();
+        official.meta.as_mut().unwrap().dsh_current_model = Some("deepseek-v4-pro".to_string());
+
+        update(&state, None, official).unwrap();
+
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert_eq!(native.current_provider.as_deref(), Some("company"));
+        assert_eq!(native.current_model.as_deref(), Some("glm-5.3"));
+    }
+
+    #[test]
+    #[serial]
+    fn update_rejects_unknown_default_model_without_writing() {
+        let _home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        let mut provider = state
+            .db
+            .get_provider_by_id("company", APP)
+            .unwrap()
+            .unwrap();
+        provider.meta.as_mut().unwrap().dsh_current_model = Some("no-such-model".to_string());
+
+        assert!(update(&state, None, provider).is_err());
+
+        // The rejected edit must not reach the database row: the native file
+        // may rewrite byte-identically, but the meta must keep the old model.
+        let saved = state
+            .db
+            .get_provider_by_id("company", APP)
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            saved.meta.as_ref().unwrap().dsh_current_model.as_deref(),
+            Some("no-such-model")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn add_rejects_dsh_deepseek_meta_on_a_copy() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        let before = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+
+        let mut provider = Provider::with_id(
+            "official-copy".to_string(),
+            "DeepSeek copy".to_string(),
+            json!({
+                "displayName": "DeepSeek copy",
+                "baseURL": "https://api.deepseek.com",
+                "apiKey": "secret",
+                "models": [{ "id": "deepseek-v4-pro" }]
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("dsh_deepseek".to_string()),
+            ..Default::default()
+        });
+
+        assert!(add(&state, provider, true).is_err());
+
+        let after = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        assert_eq!(before, after);
+        assert!(state
+            .db
+            .get_provider_by_id("official-copy", APP)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn add_rejects_model_less_providers_without_partial_writes() {
+        let _home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        let mut provider = Provider::with_id(
+            "no-models".to_string(),
+            "No Models".to_string(),
+            json!({
+                "displayName": "No Models",
+                "api": "openai-completions",
+                "baseURL": "https://x.example/v1",
+                "apiKeyEnv": "NO_MODELS_API_KEY",
+                "apiKey": "secret",
+                "models": []
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("dsh_pi_ai".to_string()),
+            ..Default::default()
+        });
+
+        assert!(add(&state, provider, true).is_err());
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert!(!native.providers.contains_key("no-models"));
+        assert!(state
+            .db
+            .get_provider_by_id("no-models", APP)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn enable_supports_string_form_model_catalogs_and_skips_blank_ids() {
+        let home = DshHome::new();
+        std::fs::write(
+            home._dir.path().join("settings.yaml"),
+            "llm-pi-ai:\n  providers:\n    strings:\n      baseURL: https://s.example\n      models:\n        - \"\"\n        - str-model\n",
+        )
+        .unwrap();
+        let state = state();
+        import_from_live(&state).unwrap();
+
+        enable(&state, "strings").unwrap();
+
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert_eq!(native.current_provider.as_deref(), Some("strings"));
+        assert_eq!(native.current_model.as_deref(), Some("str-model"));
     }
 }
