@@ -5,7 +5,8 @@
 //! OpenAI-compatible Chat Completions endpoint.
 
 use super::codex_chat_common::{
-    append_reasoning_content, extract_reasoning_field_text, extract_reasoning_summary_text,
+    append_reasoning_content, attach_optional_google_thought_signature,
+    extract_reasoning_field_text, extract_reasoning_summary_text, google_thought_signature,
     response_function_call_item, response_function_call_item_with_namespace,
     split_leading_think_block,
 };
@@ -1431,14 +1432,16 @@ fn responses_function_call_to_chat_tool_call(
     let chat_name = tool_context.chat_name_for_response_function(name, namespace);
     let arguments = canonicalize_tool_arguments(item.get("arguments"));
 
-    json!({
+    let mut tool_call = json!({
         "id": call_id,
         "type": "function",
         "function": {
             "name": chat_name,
             "arguments": arguments
         }
-    })
+    });
+    attach_optional_google_thought_signature(&mut tool_call, google_thought_signature(item));
+    tool_call
 }
 
 fn responses_custom_tool_call_to_chat_tool_call(item: &Value) -> Value {
@@ -1450,14 +1453,16 @@ fn responses_custom_tool_call_to_chat_tool_call(item: &Value) -> Value {
     let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
 
-    json!({
+    let mut tool_call = json!({
         "id": call_id,
         "type": "function",
         "function": {
             "name": name,
             "arguments": canonical_json_string(&json!({ CUSTOM_TOOL_INPUT_FIELD: input }))
         }
-    })
+    });
+    attach_optional_google_thought_signature(&mut tool_call, google_thought_signature(item));
+    tool_call
 }
 
 fn responses_tool_search_call_to_chat_tool_call(item: &Value) -> Value {
@@ -1471,14 +1476,16 @@ fn responses_tool_search_call_to_chat_tool_call(item: &Value) -> Value {
         .map(canonical_json_string)
         .unwrap_or_else(|| "{}".to_string());
 
-    json!({
+    let mut tool_call = json!({
         "id": call_id,
         "type": "function",
         "function": {
             "name": TOOL_SEARCH_PROXY_NAME,
             "arguments": arguments
         }
-    })
+    });
+    attach_optional_google_thought_signature(&mut tool_call, google_thought_signature(item));
+    tool_call
 }
 
 fn responses_tool_choice_to_chat(tool_choice: &Value, tool_context: &CodexToolContext) -> Value {
@@ -1772,7 +1779,7 @@ fn chat_tool_call_to_response_item(
     let arguments = canonicalize_tool_arguments(function.get("arguments"));
 
     let item_id = response_tool_call_item_id_from_chat_name(&call_id, name, tool_context);
-    response_tool_call_item_from_chat_name(
+    let mut item = response_tool_call_item_from_chat_name(
         &item_id,
         "completed",
         &call_id,
@@ -1780,7 +1787,9 @@ fn chat_tool_call_to_response_item(
         &arguments,
         reasoning,
         tool_context,
-    )
+    );
+    attach_optional_google_thought_signature(&mut item, google_thought_signature(tool_call));
+    item
 }
 
 fn chat_legacy_function_call_to_response_item(
@@ -5264,5 +5273,122 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    #[tokio::test]
+    async fn preserves_google_thought_signature_across_non_streaming_sequential_tool_call() {
+        let signature = "gemini-thought-signature";
+        let chat_response = json!({
+            "id": "chatcmpl_gemini",
+            "model": "gemini-3.7-flash",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_gemini",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"README.md\"}"
+                        },
+                        "extra_content": {
+                            "google": {
+                                "thought_signature": signature
+                            }
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let response = chat_completion_to_response(chat_response).unwrap();
+        assert_eq!(
+            response["output"][0]["extra_content"]["google"]["thought_signature"],
+            signature
+        );
+
+        let history = super::super::codex_chat_history::CodexChatHistoryStore::default();
+        history.record_response(&response).await;
+
+        let mut follow_up = json!({
+            "previous_response_id": response["id"].clone(),
+            "model": "gemini-3.7-flash",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_gemini",
+                "output": "ok"
+            }]
+        });
+        assert_eq!(history.enrich_request(&mut follow_up).await, 1);
+
+        let rebuilt_chat = responses_to_chat_completions(follow_up).unwrap();
+        assert_eq!(
+            rebuilt_chat["messages"][0]["tool_calls"][0]["extra_content"]["google"]
+                ["thought_signature"],
+            signature
+        );
+    }
+
+    #[tokio::test]
+    async fn preserves_google_thought_signature_across_custom_tool_sequential_call() {
+        let signature = "gemini-custom-tool-thought-signature";
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "custom", "name": "apply_patch"}],
+            "input": "Patch it."
+        });
+        let context = build_codex_tool_context_from_request(&request);
+        let chat_response = json!({
+            "id": "chatcmpl_gemini_custom",
+            "model": "gemini-3.7-flash",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_patch",
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "arguments": "{\"input\":\"*** Begin Patch\\n*** End Patch\"}"
+                        },
+                        "extra_content": {
+                            "google": {"thought_signature": signature}
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let response = chat_completion_to_response_with_context(chat_response, &context).unwrap();
+        assert_eq!(response["output"][0]["type"], "custom_tool_call");
+        assert_eq!(
+            response["output"][0]["extra_content"]["google"]["thought_signature"],
+            signature
+        );
+
+        let history = super::super::codex_chat_history::CodexChatHistoryStore::default();
+        history.record_response(&response).await;
+
+        let mut follow_up = json!({
+            "previous_response_id": response["id"].clone(),
+            "model": "gemini-3.7-flash",
+            "input": [{
+                "type": "custom_tool_call_output",
+                "call_id": "call_patch",
+                "output": "patched"
+            }]
+        });
+        assert_eq!(history.enrich_request(&mut follow_up).await, 1);
+
+        let rebuilt_chat = responses_to_chat_completions(follow_up).unwrap();
+        assert_eq!(
+            rebuilt_chat["messages"][0]["tool_calls"][0]["extra_content"]["google"]
+                ["thought_signature"],
+            signature
+        );
     }
 }

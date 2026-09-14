@@ -150,6 +150,49 @@ pub(crate) fn attach_optional_reasoning_content_field(
     attach_reasoning_content_field(item, reasoning)
 }
 
+pub(crate) fn google_thought_signature(value: &Value) -> Option<&str> {
+    value
+        .pointer("/extra_content/google/thought_signature")
+        .and_then(Value::as_str)
+        .filter(|signature| !signature.is_empty())
+}
+
+pub(crate) fn attach_optional_google_thought_signature(
+    item: &mut Value,
+    signature: Option<&str>,
+) -> bool {
+    if !matches!(
+        item.get("type").and_then(Value::as_str),
+        Some("function_call" | "function" | "custom_tool_call" | "tool_search_call")
+    ) {
+        return false;
+    }
+    let Some(signature) = signature.filter(|signature| !signature.is_empty()) else {
+        return false;
+    };
+
+    let Some(object) = item.as_object_mut() else {
+        return false;
+    };
+    let extra_content = object
+        .entry("extra_content".to_string())
+        .or_insert_with(|| json!({}));
+    let Some(extra_content) = extra_content.as_object_mut() else {
+        return false;
+    };
+    let google = extra_content
+        .entry("google".to_string())
+        .or_insert_with(|| json!({}));
+    let Some(google) = google.as_object_mut() else {
+        return false;
+    };
+    google.insert(
+        "thought_signature".to_string(),
+        Value::String(signature.to_string()),
+    );
+    true
+}
+
 pub(crate) fn response_function_call_item(
     item_id: &str,
     status: &str,
