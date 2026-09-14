@@ -172,6 +172,8 @@ export function AutoFailoverConfigPanel({
         circuitTimeoutSeconds: raw.circuitTimeoutSeconds,
         circuitErrorRateThreshold: raw.circuitErrorRateThreshold / 100,
         circuitMinRequests: raw.circuitMinRequests,
+        // 保留 subagent 路由规则，避免保存故障转移配置时将其清空
+        subagentRoute: config.subagentRoute,
       });
       toast.success(
         t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),

@@ -156,8 +156,23 @@ pub struct GlobalProxyConfig {
     pub enable_logging: bool,
 }
 
+/// Subagent 跨供应商路由规则（仅 claude 应用生效）
+///
+/// 代理接管模式下，模型名匹配 subagent 角色的请求改道到目标供应商，
+/// 其余请求仍走当前供应商。设计见
+/// docs/superpowers/specs/2026-09-06-subagent-cross-provider-routing-design.md
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentRoute {
+    /// 目标供应商 id（claude 应用下的供应商）
+    pub provider_id: String,
+    /// 发给目标供应商的模型名；None = 透传请求中的模型名
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
 /// 应用级代理配置（每个 app 独立）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppProxyConfig {
     /// 应用类型 (claude/codex/gemini)
@@ -184,6 +199,9 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+    /// Subagent 跨供应商路由规则；None = 关闭
+    #[serde(default)]
+    pub subagent_route: Option<SubagentRoute>,
 }
 
 /// 整流器配置
@@ -371,6 +389,7 @@ impl LogConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_rectifier_config_default_enabled() {
@@ -519,5 +538,49 @@ mod tests {
         let parsed: LogConfig = serde_json::from_str(&json).unwrap();
         assert!(parsed.enabled);
         assert_eq!(parsed.level, "debug");
+    }
+
+    #[test]
+    fn app_proxy_config_subagent_route_roundtrip() {
+        let config = AppProxyConfig {
+            app_type: "claude".to_string(),
+            enabled: false,
+            auto_failover_enabled: false,
+            max_retries: 3,
+            streaming_first_byte_timeout: 60,
+            streaming_idle_timeout: 120,
+            non_streaming_timeout: 600,
+            circuit_failure_threshold: 4,
+            circuit_success_threshold: 2,
+            circuit_timeout_seconds: 60,
+            circuit_error_rate_threshold: 0.6,
+            circuit_min_requests: 10,
+            subagent_route: Some(SubagentRoute {
+                provider_id: "b".to_string(),
+                model: Some("glm-5.5-flash".to_string()),
+            }),
+        };
+
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(
+            value["subagentRoute"],
+            json!({"providerId": "b", "model": "glm-5.5-flash"})
+        );
+        let parsed: AppProxyConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn app_proxy_config_without_subagent_route_is_backward_compatible() {
+        // 旧前端/旧库数据没有 subagentRoute 字段，反序列化必须成功且为 None
+        let legacy = json!({
+            "appType": "claude", "enabled": false, "autoFailoverEnabled": false,
+            "maxRetries": 3, "streamingFirstByteTimeout": 60, "streamingIdleTimeout": 120,
+            "nonStreamingTimeout": 600, "circuitFailureThreshold": 4,
+            "circuitSuccessThreshold": 2, "circuitTimeoutSeconds": 60,
+            "circuitErrorRateThreshold": 0.6, "circuitMinRequests": 10
+        });
+        let parsed: AppProxyConfig = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.subagent_route.is_none());
     }
 }

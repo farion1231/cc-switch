@@ -136,17 +136,71 @@ pub async fn get_proxy_config_for_app(
         .map_err(|e| e.to_string())
 }
 
-/// 更新指定应用的代理配置
+/// 规则变更后尽力重写接管 live env（spec §6：注入值必须与决策基准同源）
 ///
-/// 更新应用级配置（enabled、auto_failover、超时、熔断器等）
-#[tauri::command]
-pub async fn update_proxy_config_for_app(
-    state: tauri::State<'_, AppState>,
+/// 接管生效期间，注入到 Claude live 配置的 CLAUDE_CODE_SUBAGENT_MODEL 与
+/// subagent 路由决策共用同一来源；若保存规则后不重写 live，运行中的请求
+/// 仍按旧模型名识别 subagent，导致改道静默失效。仅当接管开启且 live 配置
+/// 确实处于接管态时才重写（与 sibling 判定一致，组合使用接管状态与
+/// live 探测，不引入新判定）。任何失败仅告警，不阻塞配置保存。
+async fn resync_claude_live_subagent_route(state: &AppState) {
+    let takeover_enabled = match state.proxy_service.get_takeover_status().await {
+        Ok(status) => status.claude,
+        Err(e) => {
+            log::warn!("[SubagentRoute] 读取接管状态失败，跳过 live env 重同步: {e}");
+            return;
+        }
+    };
+    if !takeover_enabled
+        || !state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&crate::app_config::AppType::Claude)
+    {
+        return;
+    }
+
+    // 与 sibling 调用方一致：从 SSOT（本地 settings + 数据库 is_current）取当前供应商
+    let current_id = match crate::settings::get_effective_current_provider(
+        &state.db,
+        &crate::app_config::AppType::Claude,
+    ) {
+        Ok(Some(id)) => id,
+        Ok(None) => return,
+        Err(e) => {
+            log::warn!("[SubagentRoute] 获取当前供应商失败，跳过 live env 重同步: {e}");
+            return;
+        }
+    };
+    let provider = match state
+        .db
+        .get_provider_by_id(&current_id, crate::app_config::AppType::Claude.as_str())
+    {
+        Ok(Some(provider)) => provider,
+        Ok(None) => return,
+        Err(e) => {
+            log::warn!("[SubagentRoute] 读取当前供应商失败，跳过 live env 重同步: {e}");
+            return;
+        }
+    };
+
+    if let Err(e) = state
+        .proxy_service
+        .sync_claude_live_from_provider_while_proxy_active(&provider)
+        .await
+    {
+        log::warn!(
+            "[SubagentRoute] 规则变更后重写 claude live env 失败（规则已保存，重启接管后生效）: {e}"
+        );
+    }
+}
+
+async fn update_proxy_config_for_app_internal(
+    state: &AppState,
     config: AppProxyConfig,
 ) -> Result<(), String> {
     let db = &state.db;
     let app_type = config.app_type.clone();
-    require_proxy_app(&app_type)?;
+    let app = require_proxy_app(&app_type)?;
     let circuit_config = CircuitBreakerConfig::from(&config);
 
     db.update_proxy_config_for_app(config)
@@ -156,7 +210,25 @@ pub async fn update_proxy_config_for_app(
     state
         .proxy_service
         .update_circuit_breaker_config_for_app(&app_type, circuit_config)
-        .await
+        .await?;
+
+    // 仅 claude 有接管 live env 注入，规则变更后需保持注入值与决策基准同源
+    if matches!(app, crate::app_config::AppType::Claude) {
+        resync_claude_live_subagent_route(state).await;
+    }
+    Ok(())
+}
+
+/// 更新指定应用的代理配置
+///
+/// 更新应用级配置（enabled、auto_failover、超时、熔断器等）；
+/// claude 接管生效期间会顺带重写 live env，使注入的 subagent 模型与刚保存的规则一致
+#[tauri::command]
+pub async fn update_proxy_config_for_app(
+    state: tauri::State<'_, AppState>,
+    config: AppProxyConfig,
+) -> Result<(), String> {
+    update_proxy_config_for_app_internal(&state, config).await
 }
 
 async fn get_default_cost_multiplier_internal(
@@ -465,4 +537,204 @@ pub async fn get_circuit_breaker_stats(
     // 目前先返回 None，后续可以通过 ProxyService 暴露接口来实现
     let _ = (state, provider_id, app_type);
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::AppType;
+    use crate::provider::Provider;
+    use crate::proxy::types::SubagentRoute;
+    use serde_json::json;
+    use serial_test::serial;
+    use std::env;
+    use tempfile::TempDir;
+
+    /// 与 services::proxy::tests 中的 TempHome 相同：隔离 HOME，
+    /// 保证 claude live 配置写入临时目录（需 #[serial]）。
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn claude_provider(id: &str, env: serde_json::Value) -> Provider {
+        Provider::with_id(id.to_string(), id.to_string(), json!({"env": env}), None)
+    }
+
+    fn app_config(app_type: &str, enabled: bool, route: Option<SubagentRoute>) -> AppProxyConfig {
+        AppProxyConfig {
+            app_type: app_type.to_string(),
+            enabled,
+            auto_failover_enabled: false,
+            max_retries: 3,
+            streaming_first_byte_timeout: 60,
+            streaming_idle_timeout: 120,
+            non_streaming_timeout: 600,
+            circuit_failure_threshold: 4,
+            circuit_success_threshold: 2,
+            circuit_timeout_seconds: 60,
+            circuit_error_rate_threshold: 0.6,
+            circuit_min_requests: 10,
+            subagent_route: route,
+        }
+    }
+
+    /// 写入一个处于接管态的 claude live 配置（含占位符与旧的注入值）
+    fn write_taken_over_claude_live(subagent_model: &str) {
+        let settings_path = crate::config::get_claude_settings_path();
+        std::fs::create_dir_all(settings_path.parent().unwrap()).expect("create claude dir");
+        crate::config::write_json_file(
+            &settings_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": subagent_model,
+                }
+            }),
+        )
+        .expect("write taken-over claude live");
+    }
+
+    fn read_claude_live_env() -> serde_json::Value {
+        let settings_path = crate::config::get_claude_settings_path();
+        let value: serde_json::Value =
+            crate::config::read_json_file(&settings_path).expect("read claude live");
+        value.get("env").cloned().unwrap_or(serde_json::Value::Null)
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_config_resyncs_claude_live_subagent_env_while_takeover_active() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = std::sync::Arc::new(crate::database::Database::memory().expect("init db"));
+        db.save_provider(
+            "claude",
+            &claude_provider("a", json!({"ANTHROPIC_AUTH_TOKEN": "sk-a"})),
+        )
+        .expect("save provider a");
+        db.set_current_provider("claude", "a").expect("set current");
+        let state = crate::store::AppState::new(db.clone());
+
+        // live 已处于接管态，注入的是旧模型名
+        write_taken_over_claude_live("old-model");
+        assert!(state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&AppType::Claude));
+
+        // 保存新规则（enabled=true 保持接管）→ live env 应同步为新模型名
+        let config = app_config(
+            "claude",
+            true,
+            Some(SubagentRoute {
+                provider_id: "b".to_string(),
+                model: Some("glm-flash".to_string()),
+            }),
+        );
+        update_proxy_config_for_app_internal(&state, config)
+            .await
+            .expect("save config should succeed");
+
+        let env = read_claude_live_env();
+        assert_eq!(
+            env.get("CLAUDE_CODE_SUBAGENT_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("glm-flash"),
+            "live env should be re-synced to the just-saved rule model"
+        );
+        // 重写后接管字段仍在（live 仍处于接管态）
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()),
+            Some("PROXY_MANAGED")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_config_skips_live_resync_when_takeover_off() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = std::sync::Arc::new(crate::database::Database::memory().expect("init db"));
+        db.save_provider(
+            "claude",
+            &claude_provider("a", json!({"ANTHROPIC_AUTH_TOKEN": "sk-a"})),
+        )
+        .expect("save provider a");
+        db.set_current_provider("claude", "a").expect("set current");
+        let state = crate::store::AppState::new(db.clone());
+
+        // 未接管：live 就是普通供应商配置，保存规则不应改写它
+        write_taken_over_claude_live("user-own-env");
+        // 去掉占位符，模拟未接管状态
+        let settings_path = crate::config::get_claude_settings_path();
+        crate::config::write_json_file(
+            &settings_path,
+            &json!({"env": {"ANTHROPIC_AUTH_TOKEN": "sk-a"}}),
+        )
+        .expect("write plain claude live");
+
+        let config = app_config(
+            "claude",
+            false,
+            Some(SubagentRoute {
+                provider_id: "b".to_string(),
+                model: Some("glm-flash".to_string()),
+            }),
+        );
+        update_proxy_config_for_app_internal(&state, config)
+            .await
+            .expect("save config should succeed");
+
+        let env = read_claude_live_env();
+        assert!(
+            env.get("CLAUDE_CODE_SUBAGENT_MODEL").is_none(),
+            "live env must not be injected when takeover is off"
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()),
+            Some("sk-a")
+        );
+    }
 }
