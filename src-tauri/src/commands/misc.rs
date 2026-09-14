@@ -428,7 +428,7 @@ fn tool_display_name(tool: &str) -> &'static str {
     match tool {
         "claude" => "Claude Code",
         "codex" => "Codex",
-        "gemini" => "Gemini CLI",
+        "gemini" => "Antigravity",
         "grok" => "Grok Build",
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
@@ -510,7 +510,6 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" => Some("npm i -g @anthropic-ai/claude-code@latest"),
         "codex" => Some("npm i -g @openai/codex@latest"),
-        "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "grok" => Some("npm i -g @xai-official/grok@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
@@ -809,7 +808,7 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@anthropic-ai/claude-code", tool, local).await
         }
         "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
-        "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
+        "gemini" => None,
         "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
         "opencode" => {
             if let Some(version) =
@@ -1125,42 +1124,51 @@ enum ShellProbe {
 fn try_get_version(tool: &str) -> ShellProbe {
     use std::process::Command;
 
-    let output = {
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|s| is_valid_shell(s))
-            .unwrap_or_else(|| "sh".to_string());
-        let flag = default_flag_for_shell(&shell);
-        Command::new(shell)
-            .arg(flag)
-            .arg(format!("{tool} --version"))
-            .output()
+    let candidates: &[&str] = if tool == "gemini" {
+        &["agy", "antigravity", "gemini"]
+    } else {
+        std::slice::from_ref(&tool)
     };
 
-    match output {
-        Ok(out) => {
-            let stdout = decode_command_output(&out.stdout).trim().to_string();
-            let stderr = decode_command_output(&out.stderr).trim().to_string();
-            if out.status.success() {
-                let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                if raw.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| is_valid_shell(s))
+        .unwrap_or_else(|| "sh".to_string());
+    let flag = default_flag_for_shell(&shell);
+
+    let mut last_probe = ShellProbe::NotFound(NOT_INSTALLED.to_string());
+
+    for bin in candidates {
+        let output = Command::new(&shell)
+            .arg(flag)
+            .arg(format!("{bin} --version"))
+            .output();
+
+        match output {
+            Ok(out) => {
+                let stdout = decode_command_output(&out.stdout).trim().to_string();
+                let stderr = decode_command_output(&out.stderr).trim().to_string();
+                if out.status.success() {
+                    let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                    if !raw.is_empty() {
+                        return ShellProbe::Found(extract_version(raw));
+                    }
                 } else {
-                    ShellProbe::Found(extract_version(raw))
-                }
-            } else {
-                // exit 127 = shell 找不到命令（可放心 fallback 到搜索路径）；其它非零码
-                // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
-                let err = if stderr.is_empty() { stdout } else { stderr };
-                if out.status.code() == Some(127) || err.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
-                } else {
-                    ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
+                    // exit 127 = shell 找不到命令（可放心 fallback 到搜索路径）；其它非零码
+                    // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
+                    let err = if stderr.is_empty() { stdout } else { stderr };
+                    if out.status.code() != Some(127) && !err.is_empty() {
+                        if !matches!(last_probe, ShellProbe::FoundButFailed(_)) {
+                            last_probe = ShellProbe::FoundButFailed(last_lines(err.trim(), 4));
+                        }
+                    }
                 }
             }
+            Err(_) => {}
         }
-        Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
+
+    last_probe
 }
 
 /// 校验 WSL 发行版名称是否合法
@@ -1312,21 +1320,13 @@ fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
 }
 
 #[cfg(target_os = "windows")]
-fn try_get_version_wsl(
-    tool: &str,
+fn try_get_single_version_wsl(
+    bin: &str,
     distro: &str,
     force_shell: Option<&str>,
     force_shell_flag: Option<&str>,
 ) -> ShellProbe {
     use std::process::Command;
-
-    // 防御性断言：tool 只能是预定义的值
-    debug_assert!(VALID_TOOLS.contains(&tool), "unexpected tool name: {tool}");
-
-    // 校验 distro 名称，防止命令注入
-    if !is_valid_wsl_distro_name(distro) {
-        return ShellProbe::NotFound(format!("[WSL:{distro}] invalid distro name"));
-    }
 
     // 构建 Shell 脚本检测逻辑
     let (shell, flag, cmd) = if let Some(shell) = force_shell {
@@ -1344,17 +1344,17 @@ fn try_get_version_wsl(
             default_flag_for_shell(shell)
         };
 
-        (shell.to_string(), flag, format!("{tool} --version"))
+        (shell.to_string(), flag, format!("{bin} --version"))
     } else {
         let cmd = if let Some(flag) = force_shell_flag {
             if !is_valid_shell_flag(flag) {
                 return ShellProbe::NotFound(format!("[WSL:{distro}] invalid shell flag: {flag}"));
             }
-            format!("\"${{SHELL:-sh}}\" {flag} '{tool} --version'")
+            format!("\"${{SHELL:-sh}}\" {flag} '{bin} --version'")
         } else {
             // 兜底：自动尝试 -lic, -lc, -c
             format!(
-                "\"${{SHELL:-sh}}\" -lic '{tool} --version' 2>/dev/null || \"${{SHELL:-sh}}\" -lc '{tool} --version' 2>/dev/null || \"${{SHELL:-sh}}\" -c '{tool} --version'"
+                "\"${{SHELL:-sh}}\" -lic '{bin} --version' 2>/dev/null || \"${{SHELL:-sh}}\" -lc '{bin} --version' 2>/dev/null || \"${{SHELL:-sh}}\" -c '{bin} --version'"
             )
         };
 
@@ -1397,6 +1397,42 @@ fn try_get_version_wsl(
         }
         Err(e) => ShellProbe::NotFound(format!("[WSL:{distro}] exec failed: {e}")),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn try_get_version_wsl(
+    tool: &str,
+    distro: &str,
+    force_shell: Option<&str>,
+    force_shell_flag: Option<&str>,
+) -> ShellProbe {
+    // 防御性断言：tool 只能是预定义的值
+    debug_assert!(VALID_TOOLS.contains(&tool), "unexpected tool name: {tool}");
+
+    // 校验 distro 名称，防止命令注入
+    if !is_valid_wsl_distro_name(distro) {
+        return ShellProbe::NotFound(format!("[WSL:{distro}] invalid distro name"));
+    }
+
+    let candidates: &[&str] = if tool == "gemini" {
+        &["agy", "antigravity", "gemini"]
+    } else {
+        std::slice::from_ref(&tool)
+    };
+
+    let mut last_probe = ShellProbe::NotFound(format!("[WSL:{distro}] {NOT_INSTALLED}"));
+    for bin in candidates {
+        match try_get_single_version_wsl(bin, distro, force_shell, force_shell_flag) {
+            p @ ShellProbe::Found(_) => return p,
+            p @ ShellProbe::FoundButFailed(_) => {
+                if !matches!(last_probe, ShellProbe::FoundButFailed(_)) {
+                    last_probe = p;
+                }
+            }
+            ShellProbe::NotFound(_) => {}
+        }
+    }
+    last_probe
 }
 
 /// 非 Windows 平台的 WSL 版本检测存根
@@ -1596,22 +1632,29 @@ fn grok_extra_search_paths(
 }
 
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
+    let names: &[&str] = if tool == "gemini" {
+        &["agy", "antigravity", "gemini"]
+    } else {
+        std::slice::from_ref(&tool)
+    };
+
     #[cfg(target_os = "windows")]
     {
-        let extensionless = dir.join(tool);
-        let mut candidates = vec![
-            dir.join(format!("{tool}.cmd")),
-            dir.join(format!("{tool}.exe")),
-        ];
-        if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
-            candidates.push(extensionless);
+        let mut candidates = Vec::new();
+        for name in names {
+            let extensionless = dir.join(name);
+            candidates.push(dir.join(format!("{name}.cmd")));
+            candidates.push(dir.join(format!("{name}.exe")));
+            if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
+                candidates.push(extensionless);
+            }
         }
         candidates
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        vec![dir.join(tool)]
+        names.iter().map(|name| dir.join(name)).collect()
     }
 }
 
@@ -1773,6 +1816,38 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
 
     // 常见的安装路径（原生安装优先）
     let mut search_paths: Vec<std::path::PathBuf> = Vec::new();
+    if tool == "gemini" {
+        if !home.as_os_str().is_empty() {
+            push_unique_path(&mut search_paths, home.join(".gemini/bin"));
+            push_unique_path(&mut search_paths, home.join(".gemini/antigravity/bin"));
+            push_unique_path(&mut search_paths, home.join(".antigravity/bin"));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            push_unique_path(&mut search_paths, std::path::PathBuf::from("/opt/Antigravity/bin"));
+            push_unique_path(&mut search_paths, std::path::PathBuf::from("/opt/Antigravity"));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            push_unique_path(
+                &mut search_paths,
+                std::path::PathBuf::from("/Applications/Antigravity.app/Contents/MacOS"),
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(local_data) = dirs::data_local_dir() {
+                push_unique_path(
+                    &mut search_paths,
+                    local_data.join("Programs").join("Antigravity"),
+                );
+                push_unique_path(
+                    &mut search_paths,
+                    local_data.join("Programs").join("Antigravity").join("bin"),
+                );
+            }
+        }
+    }
     if tool == "grok" {
         let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
         for path in extra_paths {
@@ -2286,34 +2361,46 @@ fn resolve_path_default(
 ) -> Result<Option<std::path::PathBuf>, String> {
     use std::process::{Command, Stdio};
 
+    let candidates: &[&str] = if tool == "gemini" {
+        &["agy", "antigravity", "gemini"]
+    } else {
+        std::slice::from_ref(&tool)
+    };
+
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let mut cmd = Command::new(shell);
-    cmd.arg(flag)
-        .arg(format!("command -v {tool}"))
-        // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
-        // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    isolate_child_process_group(&mut cmd);
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
-    let out = wait_child_output(child, deadline)?;
-    if !out.status.success() {
-        return Ok(None);
+
+    for bin in candidates {
+        let mut cmd = Command::new(&shell);
+        cmd.arg(flag)
+            .arg(format!("command -v {bin}"))
+            // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
+            // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_child_process_group(&mut cmd);
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to locate {bin}: {e}"))?;
+        let out = wait_child_output(child, deadline)?;
+        if !out.status.success() {
+            continue;
+        }
+        let raw = decode_command_output(&out.stdout);
+        // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
+        // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
+        let Some(first) = first_abs_path_line(&raw) else {
+            continue;
+        };
+        if let Ok(canon) = std::fs::canonicalize(first) {
+            return Ok(Some(canon));
+        }
     }
-    let raw = decode_command_output(&out.stdout);
-    // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
-    // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
-    let Some(first) = first_abs_path_line(&raw) else {
-        return Ok(None);
-    };
-    Ok(std::fs::canonicalize(first).ok())
+    Ok(None)
 }
 
 #[cfg(target_os = "windows")]
@@ -2355,32 +2442,43 @@ fn resolve_path_default(
     // form searches only the supplied environment variable while still seeing
     // registry PATH entries lost by an in-app-update relaunch (#6061).
     let current_path = effective_path_os().unwrap_or_default();
-    let child = windows_path_lookup_command(tool, &current_path)
-        .spawn()
-        .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
-    let out = wait_child_output(child, deadline)?;
-    if !out.status.success() {
-        return Ok(None);
-    }
-    let raw = decode_command_output(&out.stdout);
-    // `where` lists every match on PATH in order; the first is what the user
-    // actually runs. Skip App Execution Aliases (reparse points under
-    // `Microsoft\WindowsApps`) — they launch the Store / a protocol handler,
-    // are not CLIs we can `--version`-probe, and must not be treated as the
-    // PATH default. Take the first remaining real entry.
-    let resolved = raw.lines().map(str::trim).find(|line| {
-        !line.is_empty()
-            && !is_windows_app_execution_alias_dir(
-                Path::new(line).parent().unwrap_or(Path::new("")),
-            )
-    });
-    let Some(first) = resolved else {
-        return Ok(None);
+    let candidates: &[&str] = if tool == "gemini" {
+        &["agy", "antigravity", "gemini"]
+    } else {
+        std::slice::from_ref(&tool)
     };
-    let path = Path::new(first);
-    let preferred =
-        windows_runnable_sibling_for_extensionless_tool(path).unwrap_or_else(|| path.to_path_buf());
-    Ok(std::fs::canonicalize(preferred).ok())
+
+    for bin in candidates {
+        let child = windows_path_lookup_command(bin, &current_path)
+            .spawn()
+            .map_err(|e| format!("Failed to locate {bin}: {e}"))?;
+        let out = wait_child_output(child, deadline)?;
+        if !out.status.success() {
+            continue;
+        }
+        let raw = decode_command_output(&out.stdout);
+        // `where` lists every match on PATH in order; the first is what the user
+        // actually runs. Skip App Execution Aliases (reparse points under
+        // `Microsoft\WindowsApps`) — they launch the Store / a protocol handler,
+        // are not CLIs we can `--version`-probe, and must not be treated as the
+        // PATH default. Take the first remaining real entry.
+        let resolved = raw.lines().map(str::trim).find(|line| {
+            !line.is_empty()
+                && !is_windows_app_execution_alias_dir(
+                    Path::new(line).parent().unwrap_or(Path::new("")),
+                )
+        });
+        let Some(first) = resolved else {
+            continue;
+        };
+        let path = Path::new(first);
+        let preferred =
+            windows_runnable_sibling_for_extensionless_tool(path).unwrap_or_else(|| path.to_path_buf());
+        if let Ok(canon) = std::fs::canonicalize(preferred) {
+            return Ok(Some(canon));
+        }
+    }
+    Ok(None)
 }
 
 /// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
@@ -5090,6 +5188,15 @@ mod tests {
     }
 
     #[test]
+    fn gemini_lifecycle_metadata_reflects_antigravity() {
+        let requested = vec!["unsupported".to_string(), "gemini".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["gemini"]);
+        assert_eq!(tool_display_name("gemini"), "Antigravity");
+        assert_eq!(npm_install_command_for("gemini"), None);
+        assert_eq!(official_update_args("gemini"), None);
+    }
+
+    #[test]
     fn pi_lifecycle_metadata_matches_pinned_distribution() {
         let requested = vec!["unsupported".to_string(), "pi".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["pi"]);
@@ -6491,12 +6598,9 @@ mod tests {
         }
 
         #[test]
-        fn gemini_install_keeps_static_npm() {
-            // Google 文档同时支持 brew/npm,但本表保持与 update fallback 一致的 npm。
-            // 用户若已装 brew gemini-cli,update 路径的锚定会识别 formula → brew upgrade,
-            // 所以 install 端不强行替用户决策"用 brew 还是 npm"。
+        fn gemini_install_has_no_npm_lifecycle() {
             let cmd = install_command_for("gemini");
-            assert_eq!(cmd, "npm i -g @google/gemini-cli@latest");
+            assert_eq!(cmd, "");
         }
 
         #[test]
@@ -6546,7 +6650,7 @@ mod tests {
             assert!(!static_fallback_command("codex").contains("codex update"));
             assert_eq!(
                 static_fallback_command("gemini"),
-                "npm i -g @google/gemini-cli@latest"
+                ""
             );
             assert!(!static_fallback_command("gemini").contains("gemini update"));
             assert_eq!(
@@ -6901,6 +7005,16 @@ mod tests {
         let candidates = tool_executable_candidates("opencode", &dir);
 
         assert_eq!(candidates, vec![PathBuf::from("/usr/local/bin/opencode")]);
+
+        let gemini_candidates = tool_executable_candidates("gemini", &dir);
+        assert_eq!(
+            gemini_candidates,
+            vec![
+                PathBuf::from("/usr/local/bin/agy"),
+                PathBuf::from("/usr/local/bin/antigravity"),
+                PathBuf::from("/usr/local/bin/gemini"),
+            ]
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -6915,6 +7029,22 @@ mod tests {
                 PathBuf::from("C:\\tools\\opencode.cmd"),
                 PathBuf::from("C:\\tools\\opencode.exe"),
                 PathBuf::from("C:\\tools\\opencode"),
+            ]
+        );
+
+        let gemini_candidates = tool_executable_candidates("gemini", &dir);
+        assert_eq!(
+            gemini_candidates,
+            vec![
+                PathBuf::from("C:\\tools\\agy.cmd"),
+                PathBuf::from("C:\\tools\\agy.exe"),
+                PathBuf::from("C:\\tools\\agy"),
+                PathBuf::from("C:\\tools\\antigravity.cmd"),
+                PathBuf::from("C:\\tools\\antigravity.exe"),
+                PathBuf::from("C:\\tools\\antigravity"),
+                PathBuf::from("C:\\tools\\gemini.cmd"),
+                PathBuf::from("C:\\tools\\gemini.exe"),
+                PathBuf::from("C:\\tools\\gemini"),
             ]
         );
     }

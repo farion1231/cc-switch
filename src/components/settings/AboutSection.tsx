@@ -130,8 +130,6 @@ const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${posixScriptInstallCommand("https://claude.ai/install.sh")} || npm i -g @anthropic-ai/claude-code@latest
 # Codex
 npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
 # Grok Build
 npm i -g @xai-official/grok@latest
 # OpenCode
@@ -147,8 +145,6 @@ const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
 # Codex
 npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
 # Grok Build
 npm i -g @xai-official/grok@latest
 # OpenCode
@@ -167,7 +163,7 @@ const ONE_CLICK_INSTALL_COMMANDS = isWindows()
 const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
   codex: "Codex",
-  gemini: "Gemini CLI",
+  gemini: "Antigravity",
   grok: "Grok Build",
   opencode: "OpenCode",
   openclaw: "OpenClaw",
@@ -285,6 +281,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const updatableToolNames = useMemo(
     () =>
       TOOL_NAMES.filter((toolName) => {
+        if (toolName === "gemini") return false;
         const tool = toolVersionByName.get(toolName);
         return isUpdateAvailable(tool?.version, tool?.latest_version);
       }),
@@ -1068,9 +1065,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             // 已安装却跑不起来（如 Node 版本不达标）：用它区分卡片文案与按钮，避免把
             // "装了跑不起来"误判成"未安装"而给出无用的安装按钮（重装同一版本解决不了）。
             const installedButBroken = Boolean(tool?.installed_but_broken);
-            // loading 和 broken 都没有可执行动作；其余按是否已装/是否过期选择。
+            // loading 和 broken 都没有可执行动作；gemini（Antigravity）不提供应用内生命周期管理；其余按是否已装/是否过期选择。
             const action: ToolLifecycleAction | null =
-              isToolVersionLoading || installedButBroken
+              toolName === "gemini" || isToolVersionLoading || installedButBroken
                 ? null
                 : !tool?.version
                   ? "install"
@@ -1251,11 +1248,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                         ? t("settings.toolInstall")
                         : t("settings.toolUpdate")}
                     </Button>
-                  ) : (
+                  ) : tool?.version ? (
                     <span className="text-xs text-muted-foreground">
                       {t("settings.toolReady")}
                     </span>
-                  )}
+                  ) : null}
                 </div>
               </motion.div>
             );
