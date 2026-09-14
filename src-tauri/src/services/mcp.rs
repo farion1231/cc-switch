@@ -243,9 +243,11 @@ impl McpService {
         for server in servers.values() {
             if server.apps.is_enabled_for(app) {
                 Self::sync_server_to_app(state, server, app)?;
-            } else {
+            } else if !matches!(app, AppType::Mcode) {
                 Self::remove_server_from_app(state, &server.id, app)?;
             }
+            // MCode's false flag also covers pre-existing, unmanaged servers.
+            // Only explicit disable/delete operations may remove those entries.
         }
 
         Ok(())

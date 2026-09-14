@@ -16,6 +16,41 @@ use support::{
 };
 
 #[test]
+fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".minimax/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let native = json!({"mcpServers":{"context7":{"command":"native-server","enabled":true}}});
+    fs::write(&path, native.to_string()).unwrap();
+    let server = McpServer {
+        id: "context7".into(),
+        name: "Context7".into(),
+        server: json!({"command":"managed-server"}),
+        apps: McpApps {
+            claude: true,
+            ..Default::default()
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: vec![],
+    };
+    state.db.save_mcp_server(&server).unwrap();
+    McpService::sync_enabled_for_app(&state, &AppType::Mcode).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap(),
+        native
+    );
+    McpService::toggle_app(&state, "context7", AppType::Mcode, true).unwrap();
+    McpService::toggle_app(&state, "context7", AppType::Mcode, false).unwrap();
+    let disabled: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(disabled["mcpServers"].get("context7").is_none());
+}
+
+#[test]
 fn import_default_config_claude_persists_provider() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
