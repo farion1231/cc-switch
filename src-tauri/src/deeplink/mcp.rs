@@ -41,6 +41,8 @@ pub fn import_mcp_from_deeplink(
     state: &AppState,
     request: DeepLinkImportRequest,
 ) -> Result<McpImportResult, AppError> {
+    crate::settings::ensure_mcp_management_enabled()?;
+
     // Verify this is an MCP request
     if request.resource != "mcp" {
         return Err(AppError::InvalidInput(format!(

@@ -26,12 +26,14 @@ pub async fn read_claude_mcp_config() -> Result<Option<String>, String> {
 /// 新增或更新一个 MCP 服务器条目
 #[tauri::command]
 pub async fn upsert_claude_mcp_server(id: String, spec: serde_json::Value) -> Result<bool, String> {
+    crate::settings::ensure_mcp_management_enabled().map_err(|e| e.to_string())?;
     claude_mcp::upsert_mcp_server(&id, spec).map_err(|e| e.to_string())
 }
 
 /// 删除一个 MCP 服务器条目
 #[tauri::command]
 pub async fn delete_claude_mcp_server(id: String) -> Result<bool, String> {
+    crate::settings::ensure_mcp_management_enabled().map_err(|e| e.to_string())?;
     claude_mcp::delete_mcp_server(&id).map_err(|e| e.to_string())
 }
 

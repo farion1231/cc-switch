@@ -90,6 +90,7 @@ interface UsageDashboardProps {
   onSessionAutoSyncEnabledChange?: (
     next: boolean,
   ) => Promise<boolean> | boolean | void;
+  managesSessions?: boolean;
 }
 
 export function UsageDashboard({
@@ -97,6 +98,7 @@ export function UsageDashboard({
   onRefreshIntervalChange,
   sessionAutoSyncEnabled = true,
   onSessionAutoSyncEnabledChange,
+  managesSessions = true,
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -482,43 +484,45 @@ export function UsageDashboard({
       </div>
 
       <div className="space-y-4">
-        <div className="rounded-xl glass-card px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <ScanSearch className="h-5 w-5 text-sky-500" />
-            <div>
-              <h3 className="text-base font-semibold">
-                {t("usage.sessionSync.title")}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {t("usage.sessionSync.description")}
-              </p>
+        {managesSessions && (
+          <div className="rounded-xl glass-card px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <ScanSearch className="h-5 w-5 text-sky-500" />
+              <div>
+                <h3 className="text-base font-semibold">
+                  {t("usage.sessionSync.title")}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {t("usage.sessionSync.description")}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              {!sessionAutoSyncEnabled && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={syncingSession}
+                  onClick={() => void runManualSessionSync()}
+                >
+                  {syncingSession ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                  )}
+                  {t("usage.sessionSync.syncNow")}
+                </Button>
+              )}
+              <Switch
+                checked={sessionAutoSyncEnabled}
+                onCheckedChange={(value) =>
+                  void onSessionAutoSyncEnabledChange?.(value)
+                }
+                aria-label={t("usage.sessionSync.title")}
+              />
             </div>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
-            {!sessionAutoSyncEnabled && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={syncingSession}
-                onClick={() => void runManualSessionSync()}
-              >
-                {syncingSession ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                )}
-                {t("usage.sessionSync.syncNow")}
-              </Button>
-            )}
-            <Switch
-              checked={sessionAutoSyncEnabled}
-              onCheckedChange={(value) =>
-                void onSessionAutoSyncEnabledChange?.(value)
-              }
-              aria-label={t("usage.sessionSync.title")}
-            />
-          </div>
-        </div>
+        )}
 
         <Accordion
           type="multiple"
@@ -546,56 +550,60 @@ export function UsageDashboard({
               <PricingConfigPanel />
             </AccordionContent>
           </AccordionItem>
-          <AccordionItem
-            value="maintenance"
-            className="rounded-xl glass-card overflow-hidden"
-          >
-            <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-              <div className="flex items-center gap-3">
-                <DatabaseBackup className="h-5 w-5 text-orange-500" />
-                <div className="text-left">
-                  <h3 className="text-base font-semibold">
-                    {t("usage.rebuildCodex.title")}
-                  </h3>
-                  <p className="text-sm text-muted-foreground font-normal">
-                    {t("usage.rebuildCodex.description")}
-                  </p>
+          {managesSessions && (
+            <AccordionItem
+              value="maintenance"
+              className="rounded-xl glass-card overflow-hidden"
+            >
+              <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                <div className="flex items-center gap-3">
+                  <DatabaseBackup className="h-5 w-5 text-orange-500" />
+                  <div className="text-left">
+                    <h3 className="text-base font-semibold">
+                      {t("usage.rebuildCodex.title")}
+                    </h3>
+                    <p className="text-sm text-muted-foreground font-normal">
+                      {t("usage.rebuildCodex.description")}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-              <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 p-4">
-                <p className="text-sm text-muted-foreground">
-                  {t("usage.rebuildCodex.warning")}
-                </p>
-                <Button
-                  variant="destructive"
-                  disabled={rebuildingCodex}
-                  onClick={() => setShowRebuildConfirm(true)}
-                  className="shrink-0"
-                >
-                  {rebuildingCodex ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <DatabaseBackup className="mr-2 h-4 w-4" />
-                  )}
-                  {t("usage.rebuildCodex.action")}
-                </Button>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
+              </AccordionTrigger>
+              <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 p-4">
+                  <p className="text-sm text-muted-foreground">
+                    {t("usage.rebuildCodex.warning")}
+                  </p>
+                  <Button
+                    variant="destructive"
+                    disabled={rebuildingCodex}
+                    onClick={() => setShowRebuildConfirm(true)}
+                    className="shrink-0"
+                  >
+                    {rebuildingCodex ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <DatabaseBackup className="mr-2 h-4 w-4" />
+                    )}
+                    {t("usage.rebuildCodex.action")}
+                  </Button>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          )}
         </Accordion>
       </div>
 
-      <ConfirmDialog
-        isOpen={showRebuildConfirm}
-        title={t("usage.rebuildCodex.confirmTitle")}
-        message={t("usage.rebuildCodex.confirmMessage")}
-        confirmText={t("usage.rebuildCodex.confirmAction")}
-        variant="destructive"
-        onConfirm={() => void rebuildCodexUsage()}
-        onCancel={() => setShowRebuildConfirm(false)}
-      />
+      {managesSessions && (
+        <ConfirmDialog
+          isOpen={showRebuildConfirm}
+          title={t("usage.rebuildCodex.confirmTitle")}
+          message={t("usage.rebuildCodex.confirmMessage")}
+          confirmText={t("usage.rebuildCodex.confirmAction")}
+          variant="destructive"
+          onConfirm={() => void rebuildCodexUsage()}
+          onCancel={() => setShowRebuildConfirm(false)}
+        />
+      )}
     </motion.div>
   );
 }

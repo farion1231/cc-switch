@@ -2,8 +2,13 @@
 
 use crate::session_manager;
 
+fn ensure_session_management_enabled() -> Result<(), String> {
+    crate::settings::ensure_sessions_management_enabled().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
+    ensure_session_management_enabled()?;
     let sessions = tauri::async_runtime::spawn_blocking(session_manager::scan_sessions)
         .await
         .map_err(|e| format!("Failed to scan sessions: {e}"))?;
@@ -15,6 +20,7 @@ pub async fn get_session_messages(
     providerId: String,
     sourcePath: String,
 ) -> Result<Vec<session_manager::SessionMessage>, String> {
+    ensure_session_management_enabled()?;
     let provider_id = providerId.clone();
     let source_path = sourcePath.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -64,6 +70,7 @@ pub async fn launch_session_terminal(
     cwd: Option<String>,
     custom_config: Option<String>,
 ) -> Result<bool, String> {
+    ensure_session_management_enabled()?;
     let command = command.clone();
     let cwd = cwd.clone();
     let custom_config = custom_config.clone();
@@ -98,6 +105,7 @@ pub async fn delete_session(
     sessionId: String,
     sourcePath: String,
 ) -> Result<bool, String> {
+    ensure_session_management_enabled()?;
     let provider_id = providerId.clone();
     let session_id = sessionId.clone();
     let source_path = sourcePath.clone();
@@ -113,6 +121,7 @@ pub async fn delete_session(
 pub async fn delete_sessions(
     items: Vec<session_manager::DeleteSessionRequest>,
 ) -> Result<Vec<session_manager::DeleteSessionOutcome>, String> {
+    ensure_session_management_enabled()?;
     tauri::async_runtime::spawn_blocking(move || session_manager::delete_sessions(&items))
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
