@@ -370,6 +370,8 @@ export interface Settings {
   launchOnStartup?: boolean;
   // 静默启动（程序启动时不显示主窗口）
   silentStartup?: boolean;
+  // 记住的轻量模式偏好（仅后端/托盘维护，前端保存设置时会被忽略）
+  lightweightMode?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
   // User has confirmed the local proxy first-run notice
