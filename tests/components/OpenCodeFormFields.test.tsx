@@ -359,4 +359,36 @@ describe("OpenCodeFormFields", () => {
       },
     });
   });
+
+  it("edits top-level modalities in the advanced properties section", () => {
+    const onModelsChange = vi.fn();
+    renderOpenCodeForm({
+      onModelsChange,
+      models: {
+        "kimi-k2": {
+          name: "Kimi K2",
+          modalities: { input: ["text"], output: ["text"] },
+          options: { provider: "baseten" },
+        },
+      },
+    });
+
+    expandFirstModel();
+    const modalitiesInput = screen.getByDisplayValue(
+      '{"input":["text"],"output":["text"]}',
+    );
+    fireEvent.change(modalitiesInput, {
+      target: {
+        value: '{"input":["text","image"],"output":["text"]}',
+      },
+    });
+
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "kimi-k2": {
+        name: "Kimi K2",
+        modalities: { input: ["text", "image"], output: ["text"] },
+        options: { provider: "baseten" },
+      },
+    });
+  });
 });
