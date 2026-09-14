@@ -11,6 +11,7 @@ mod commands;
 mod config;
 mod database;
 mod deeplink;
+pub mod dsh_config;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
@@ -863,6 +864,13 @@ pub fn run() {
                 }
                 Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
+            }
+            match crate::services::provider::import_dsh_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} DSH provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No DSH provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import DSH providers: {e}"),
             }
             match crate::services::provider::import_pi_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {

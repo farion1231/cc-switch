@@ -530,6 +530,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Dsh
         | AppType::Pi
         | AppType::ClaudeDesktop => false,
     }
@@ -605,6 +606,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Dsh
         | AppType::Pi
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
@@ -665,6 +667,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Dsh
         | AppType::Pi
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
@@ -1430,6 +1433,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Dsh => {
+            crate::dsh_config::set_provider(&provider.id, provider.settings_config.clone())?;
+            log::debug!("DSH provider '{}' written to live config", provider.id);
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -1815,6 +1822,25 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Dsh => {
+            let config_path = crate::dsh_config::get_dsh_settings_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "dsh.config.missing",
+                    "DSH 配置文件不存在",
+                    "DSH settings file not found",
+                ));
+            }
+            let yaml_config: serde_yaml::Value = std::fs::read_to_string(&config_path)
+                .map_err(|e| AppError::io(&config_path, e))
+                .and_then(|raw| {
+                    serde_yaml::from_str(&raw).map_err(|e| {
+                        AppError::Config(format!("Failed to parse DSH settings: {e}"))
+                    })
+                })?;
+            let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
+            Ok(config)
+        }
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1926,8 +1952,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+        // OpenCode, OpenClaw, Hermes and DSH use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Dsh | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -2370,6 +2396,89 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 
     openclaw_config::remove_provider(provider_id)?;
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import DSH providers from live config
+///
+/// Reads `llm-pi-ai.providers` from ~/.dsh/settings.yaml into the database.
+/// Secrets stay as `apiKeyEnv` references — DSH resolves them per request,
+/// so no raw key ever enters the cc-switch database.
+pub fn import_dsh_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::dsh_config;
+
+    let providers = dsh_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("dsh")?;
+
+    for (name, config) in providers {
+        if name.trim().is_empty() {
+            log::warn!("Skipping DSH provider with empty name");
+            continue;
+        }
+
+        if existing_ids.contains(&name) {
+            match state.db.get_provider_by_id(&name, "dsh") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("dsh", &provider) {
+                            log::warn!(
+                                "Failed to update DSH provider '{name}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated DSH provider '{name}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("DSH provider '{name}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up DSH provider '{name}': {e}"),
+            }
+            continue;
+        }
+
+        let mut provider = Provider::with_id(name.clone(), name.clone(), config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("dsh", &provider) {
+            log::warn!("Failed to import DSH provider '{name}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported DSH provider '{name}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// Remove a DSH provider from live config
+///
+/// This removes a specific provider from ~/.dsh/settings.yaml
+/// without affecting other providers or the agent-default-model route.
+pub fn remove_dsh_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::dsh_config;
+
+    if !dsh_config::get_dsh_dir().exists() {
+        log::debug!("DSH config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    dsh_config::remove_provider(provider_id)?;
+    log::info!("DSH provider '{provider_id}' removed from live config");
 
     Ok(())
 }

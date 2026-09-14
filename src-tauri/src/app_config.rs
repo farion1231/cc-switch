@@ -32,7 +32,8 @@ impl McpApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
-            AppType::Pi => false, // Pi core has no native MCP registry.
+            AppType::Dsh => false, // DSH mounts MCP via profile cordis patches; no native config-file sync yet.
+            AppType::Pi => false,  // Pi core has no native MCP registry.
             AppType::ClaudeDesktop => false,
         }
     }
@@ -47,7 +48,8 @@ impl McpApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
-            AppType::Pi => {}            // Pi core has no native MCP registry.
+            AppType::Dsh => {} // DSH mounts MCP via profile cordis patches; no native sync yet.
+            AppType::Pi => {}  // Pi core has no native MCP registry.
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
         }
     }
@@ -116,6 +118,7 @@ impl SkillApps {
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
             AppType::Hermes => self.hermes,
+            AppType::Dsh => false, // DSH skills are package-managed (dsh-architect-skills); no file sync.
             AppType::Pi => self.pi,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
@@ -131,6 +134,7 @@ impl SkillApps {
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
+            AppType::Dsh => {} // DSH skills are package-managed; no file sync.
             AppType::Pi => self.pi = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
@@ -391,6 +395,7 @@ pub enum AppType {
     OpenCode,
     OpenClaw,
     Hermes,
+    Dsh,
     Pi,
 }
 
@@ -405,6 +410,7 @@ impl AppType {
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
+            AppType::Dsh => "dsh",
             AppType::Pi => "pi",
         }
     }
@@ -413,11 +419,11 @@ impl AppType {
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
     /// - Additive mode (true): Providers coexist in native config and can be enabled independently
-    ///   (OpenCode, OpenClaw, Hermes, Pi)
+    ///   (OpenCode, OpenClaw, Hermes, DSH, Pi)
     pub fn is_additive_mode(&self) -> bool {
         matches!(
             self,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Dsh | AppType::Pi
         )
     }
 
@@ -439,6 +445,7 @@ impl AppType {
             AppType::OpenCode,
             AppType::OpenClaw,
             AppType::Hermes,
+            AppType::Dsh,
             AppType::Pi,
         ]
         .into_iter()
@@ -459,11 +466,12 @@ impl FromStr for AppType {
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
+            "dsh" | "deepseek-harness" | "deepseek_harness" => Ok(AppType::Dsh),
             "pi" => Ok(AppType::Pi),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, dsh, pi。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, dsh, pi."),
             )),
         }
     }
@@ -503,6 +511,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
+            AppType::Dsh => None, // DSH has no per-app common-config snippet surface yet.
             AppType::Pi => None,
         }
     }
@@ -518,6 +527,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
+            AppType::Dsh => {} // DSH has no per-app common-config snippet surface yet.
             AppType::Pi => {}
         }
     }
@@ -842,6 +852,9 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
             AppType::Hermes => &mut config.prompts.hermes.prompts,
+            // DSH prompts target ~/.dsh/AGENTS.md; auto-import is disabled
+            // until the portable kernel (P1) defines its content contract.
+            AppType::Dsh => return Ok(false),
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
             AppType::Pi => return Ok(false),
@@ -888,6 +901,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
+                AppType::Dsh => continue,      // DSH didn't exist in v3.6.x, skip
                 AppType::Pi => continue,       // Pi didn't exist in v3.6.x, skip
             };
 

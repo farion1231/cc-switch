@@ -792,6 +792,7 @@
     "openclawConfigDir": "OpenClaw 設定ディレクトリ",
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
+    "dshConfigDir": "DSH 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
@@ -802,6 +803,7 @@
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderDsh": "例：/home/<user>/.dsh",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
@@ -914,6 +916,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "dsh": "DSH",
     "pi": "Pi"
   },
   "pi": {

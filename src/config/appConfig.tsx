@@ -25,6 +25,7 @@ export const APP_IDS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "dsh",
   "pi",
 ];
 
@@ -37,6 +38,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   opencode: true,
   openclaw: true,
   hermes: true,
+  dsh: false,
   pi: true,
 };
 
@@ -70,13 +72,14 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi"
+  "opencode" | "openclaw" | "hermes" | "dsh" | "pi"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "dsh",
   "pi",
 ];
 
@@ -84,8 +87,12 @@ export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
 }
 
-/** Pi has no native MCP registry; do not manufacture a disabled mirror. */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
+/** Pi has no native MCP registry; DSH mounts MCP via profile cordis patches.
+ *  Neither gets a file-sync mirror here. */
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "dsh" | "pi"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -192,6 +199,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  dsh: {
+    label: "DSH",
+    icon: (
+      <ProviderIcon
+        icon="deepseek"
+        name="DeepSeek Harness (DSH)"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
 };
 

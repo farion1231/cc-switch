@@ -23,6 +23,7 @@ export interface SkillApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  dsh?: boolean;
   pi: boolean;
 }
 

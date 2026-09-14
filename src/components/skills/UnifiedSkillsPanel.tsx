@@ -221,6 +221,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      dsh: 0,
       pi: 0,
     };
     if (!skills) return counts;
