@@ -1976,6 +1976,8 @@
     "updateAvailable": "發現新版本 v{{version}}，升級後即可繼續使用。",
     "incompatibleTitle": "升級也無法解決",
     "incompatibleDescription": "你已是最新版本，但資料庫版本（v{{db}}）仍高於本應用支援的版本（v{{supported}}）。該資料庫可能由第三方用戶端或更高版本建立，升級目前官方應用也無法相容。",
+    "manualUpdateTitle": "需要手動升級",
+    "manualUpdateDescription": "目前版本未啟用應用程式內自動更新，請開啟發佈頁下載並手動安裝較新的 CC Switch 版本。",
     "preparing": "正在準備更新…",
     "downloading": "正在下載更新…",
     "upgradeNow": "升級應用",

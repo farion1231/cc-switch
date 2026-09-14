@@ -1975,6 +1975,8 @@
     "updateAvailable": "Version v{{version}} is available; upgrading will let you continue.",
     "incompatibleTitle": "Upgrading won't fix this",
     "incompatibleDescription": "You are already on the latest version, but the database (v{{db}}) is still newer than this app supports (v{{supported}}). It was likely created by a third-party client or a newer build, so upgrading the official app cannot make it compatible.",
+    "manualUpdateTitle": "Manual upgrade required",
+    "manualUpdateDescription": "In-app updates are disabled for this build. Open the releases page to download and install a newer CC Switch version manually.",
     "preparing": "Preparing update…",
     "downloading": "Downloading update…",
     "upgradeNow": "Upgrade app",

@@ -13,8 +13,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-const RELEASES_URL = "https://github.com/farion1231/cc-switch/releases";
+import { APP_AUTO_UPDATE_ENABLED, APP_RELEASES_URL } from "@/config/constants";
 
 interface DatabaseUpgradeProps {
   payload: {
@@ -59,6 +58,11 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
 
   // 启动时检查可用更新，决定 upgradable / incompatible
   useEffect(() => {
+    if (!APP_AUTO_UPDATE_ENABLED) {
+      setPhase("incompatible");
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {
@@ -195,15 +199,22 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
         {phase === "incompatible" && (
           <div className="space-y-2 rounded-lg border border-red-300/60 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300">
             <p className="font-medium">
-              {t("dbUpgrade.incompatibleTitle", "升级也无法解决")}
+              {APP_AUTO_UPDATE_ENABLED
+                ? t("dbUpgrade.incompatibleTitle", "升级也无法解决")
+                : t("dbUpgrade.manualUpdateTitle", "需要手动升级")}
             </p>
             <p className="leading-relaxed">
-              {t("dbUpgrade.incompatibleDescription", {
-                db: dbVersion,
-                supported: supportedVersion,
-                defaultValue:
-                  "你已是最新版本，但数据库版本（v{{db}}）仍高于本应用支持的版本（v{{supported}}）。该数据库可能由第三方客户端或更高版本创建，升级当前官方应用也无法兼容。",
-              })}
+              {APP_AUTO_UPDATE_ENABLED
+                ? t("dbUpgrade.incompatibleDescription", {
+                    db: dbVersion,
+                    supported: supportedVersion,
+                    defaultValue:
+                      "你已是最新版本，但数据库版本（v{{db}}）仍高于本应用支持的版本（v{{supported}}）。该数据库可能由第三方客户端或更高版本创建，升级当前官方应用也无法兼容。",
+                  })
+                : t(
+                    "dbUpgrade.manualUpdateDescription",
+                    "当前构建未启用应用内自动更新，请打开发布页下载并手动安装较新的 CC Switch 版本。",
+                  )}
             </p>
           </div>
         )}
@@ -247,28 +258,29 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          {(phase === "upgradable" || phase === "error") && (
-            <Button
-              onClick={startUpgrade}
-              className="gap-2 bg-amber-500 text-white hover:bg-amber-600"
-            >
-              {phase === "error" ? (
-                <RefreshCw className="h-4 w-4" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              {phase === "error"
-                ? t("dbUpgrade.retry", "重试升级")
-                : t("dbUpgrade.upgradeNow", "升级应用")}
-            </Button>
-          )}
+          {APP_AUTO_UPDATE_ENABLED &&
+            (phase === "upgradable" || phase === "error") && (
+              <Button
+                onClick={startUpgrade}
+                className="gap-2 bg-amber-500 text-white hover:bg-amber-600"
+              >
+                {phase === "error" ? (
+                  <RefreshCw className="h-4 w-4" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                {phase === "error"
+                  ? t("dbUpgrade.retry", "重试升级")
+                  : t("dbUpgrade.upgradeNow", "升级应用")}
+              </Button>
+            )}
 
           {(phase === "incompatible" || phase === "error") && (
             <Button
               variant="outline"
               className="gap-2"
               onClick={() =>
-                void invoke("open_external", { url: RELEASES_URL })
+                void invoke("open_external", { url: APP_RELEASES_URL })
               }
             >
               <ExternalLink className="h-4 w-4" />

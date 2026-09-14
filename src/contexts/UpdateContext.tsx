@@ -9,6 +9,7 @@ import React, {
 import type { UpdateInfo } from "../lib/updater";
 import { checkForUpdate } from "../lib/updater";
 import { extractErrorMessage } from "../utils/errorUtils";
+import { APP_AUTO_UPDATE_ENABLED } from "@/config/constants";
 
 interface UpdateContextValue {
   // 更新状态
@@ -60,6 +61,13 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   const isCheckingRef = useRef(false);
 
   const checkUpdate = useCallback(async () => {
+    if (!APP_AUTO_UPDATE_ENABLED) {
+      setHasUpdate(false);
+      setUpdateInfo(null);
+      setError(null);
+      return false;
+    }
+
     if (isCheckingRef.current) return false;
     isCheckingRef.current = true;
     setIsChecking(true);
@@ -118,6 +126,8 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
 
   // 应用启动时自动检查更新
   useEffect(() => {
+    if (!APP_AUTO_UPDATE_ENABLED) return;
+
     // 延迟1秒后检查，避免影响启动体验
     const timer = setTimeout(() => {
       checkUpdate().catch(console.error);
