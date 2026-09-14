@@ -43,7 +43,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
 };
 
 /** App IDs shown in Skills panels. */
-export const SKILLS_APP_IDS: Exclude<AppId, "mcode">[] = [
+export const SKILLS_APP_IDS: AppId[] = [
   "claude",
   "codex",
   "gemini",
@@ -51,6 +51,7 @@ export const SKILLS_APP_IDS: Exclude<AppId, "mcode">[] = [
   "opencode",
   "hermes",
   "pi",
+  "mcode",
 ];
 
 export type ProxyAppId = Extract<
@@ -88,10 +89,7 @@ export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
 }
 
 /** Pi has no native MCP registry; do not manufacture a disabled mirror. */
-export type McpAppId = Exclude<
-  AppId,
-  "claude-desktop" | "openclaw" | "pi" | "mcode"
->;
+export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -99,6 +97,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "mcode",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {

@@ -47,6 +47,10 @@ impl McpService {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
 
+        if prev_apps.mcode && !server.apps.mcode {
+            mcp::mcode::sync(&server.id, None)?;
+        }
+
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
 
@@ -145,7 +149,8 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
-            AppType::Pi | AppType::Mcode => {}
+            AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
+            AppType::Pi => {}
         }
         Ok(())
     }
@@ -182,7 +187,8 @@ impl McpService {
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
             }
-            AppType::Pi | AppType::Mcode => {}
+            AppType::Mcode => mcp::mcode::sync(id, None)?,
+            AppType::Pi => {}
         }
         Ok(())
     }
@@ -229,7 +235,7 @@ impl McpService {
     ) -> Result<(), AppError> {
         if matches!(
             app,
-            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Pi | AppType::Mcode
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Pi
         ) {
             return Ok(());
         }
@@ -519,13 +525,14 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 6] = [
+        let results: [(&str, Result<usize, AppError>); 7] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
             ("grokbuild", Self::import_from_grokbuild(state)),
             ("opencode", Self::import_from_opencode(state)),
             ("hermes", Self::import_from_hermes(state)),
+            ("mcode", mcp::mcode::import(state)),
         ];
         for (app, result) in results {
             match result {

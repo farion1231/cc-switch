@@ -222,6 +222,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       openclaw: 0,
       hermes: 0,
       pi: 0,
+      mcode: 0,
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
@@ -278,7 +279,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
-    if (app === "mcode" || !skills || !beginWrite()) return;
+    if (!skills || !beginWrite()) return;
 
     const ids = skills
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)
@@ -1049,6 +1050,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
           pi: false,
+          mcode: skill.foundIn.includes("mcode"),
         },
       ]),
     ),
@@ -1077,6 +1079,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           openclaw: false,
           hermes: false,
           pi: false,
+          mcode: false,
         },
       })),
     );

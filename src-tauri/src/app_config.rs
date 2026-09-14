@@ -8,6 +8,8 @@ use crate::services::skill::SkillStore;
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct McpApps {
     #[serde(default)]
+    pub mcode: bool,
+    #[serde(default)]
     pub claude: bool,
     #[serde(default)]
     pub codex: bool,
@@ -32,7 +34,8 @@ impl McpApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
-            AppType::Pi | AppType::Mcode => false, // Pi core has no native MCP registry.
+            AppType::Mcode => self.mcode,
+            AppType::Pi => false, // Pi core has no native MCP registry.
             AppType::ClaudeDesktop => false,
         }
     }
@@ -47,7 +50,8 @@ impl McpApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
-            AppType::Pi | AppType::Mcode => {} // Pi core has no native MCP registry.
+            AppType::Mcode => self.mcode = enabled,
+            AppType::Pi => {}            // Pi core has no native MCP registry.
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
         }
     }
@@ -70,6 +74,9 @@ impl McpApps {
         if self.opencode {
             apps.push(AppType::OpenCode);
         }
+        if self.mcode {
+            apps.push(AppType::Mcode);
+        }
         if self.hermes {
             apps.push(AppType::Hermes);
         }
@@ -84,12 +91,15 @@ impl McpApps {
             && !self.grokbuild
             && !self.opencode
             && !self.hermes
+            && !self.mcode
     }
 }
 
 /// Skill 应用启用状态（标记 Skill 应用到哪些客户端）
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct SkillApps {
+    #[serde(default)]
+    pub mcode: bool,
     #[serde(default)]
     pub claude: bool,
     #[serde(default)]
@@ -117,7 +127,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode,
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
-            AppType::Mcode => false,
+            AppType::Mcode => self.mcode,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
         }
@@ -133,7 +143,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::Mcode => {}
+            AppType::Mcode => self.mcode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
@@ -157,6 +167,9 @@ impl SkillApps {
         if self.opencode {
             apps.push(AppType::OpenCode);
         }
+        if self.mcode {
+            apps.push(AppType::Mcode);
+        }
         if self.hermes {
             apps.push(AppType::Hermes);
         }
@@ -174,6 +187,7 @@ impl SkillApps {
             && !self.grokbuild
             && !self.opencode
             && !self.hermes
+            && !self.mcode
             && !self.pi
     }
 

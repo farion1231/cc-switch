@@ -209,7 +209,7 @@ export function McodeProviderForm({
           <BasicFormFields form={form} />
           <OpenCodeFormFields
             apiFormats={API_FORMATS}
-            npm={config.api ?? ""}
+            npm={config.api ?? "anthropic-messages"}
             onNpmChange={(api) => update({ ...config, api })}
             apiKey={config.options?.apiKey ?? ""}
             onApiKeyChange={(apiKey) => updateOptions({ apiKey })}

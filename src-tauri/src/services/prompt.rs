@@ -5,7 +5,7 @@ use crate::app_config::AppType;
 use crate::config::write_text_file;
 use crate::error::AppError;
 use crate::prompt::Prompt;
-use crate::prompt_files::prompt_file_path;
+use crate::prompt_files::{prompt_file_path, validate_prompt_content};
 use crate::services::pi_prompt_files::PiAgentsFileGuard;
 use crate::store::AppState;
 
@@ -75,6 +75,7 @@ impl PromptService {
         // 检查是否为已启用的提示词
         let is_enabled = prompt.enabled;
 
+        validate_prompt_content(&app, &prompt.content)?;
         state.db.save_prompt(app.as_str(), &prompt)?;
 
         if is_enabled {
@@ -117,6 +118,11 @@ impl PromptService {
     pub fn enable_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
         if matches!(app, AppType::Pi) {
             return enable_pi_prompt(state, id);
+        }
+        if matches!(app, AppType::Mcode) {
+            if let Some(prompt) = state.db.get_prompts(app.as_str())?.get(id) {
+                validate_prompt_content(&app, &prompt.content)?;
+            }
         }
 
         // 回填当前 live 文件内容到已启用的提示词，或创建备份
@@ -176,6 +182,7 @@ impl PromptService {
         }
 
         if let Some(prompt) = prompts.get_mut(id) {
+            validate_prompt_content(&app, &prompt.content)?;
             prompt.enabled = true;
             write_text_file(&target_path, &prompt.content)?; // 原子写入
             state.db.save_prompt(app.as_str(), prompt)?;
@@ -244,12 +251,15 @@ impl PromptService {
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
         // Pi derives activation from its native AGENTS.md; its persisted prompt
         // rows are intentionally disabled and must not drive generic projection.
-        if matches!(app, AppType::ClaudeDesktop | AppType::Mcode | AppType::Pi) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
             return Ok(());
         }
 
         let prompts = state.db.get_prompts(app.as_str())?;
         let target_path = prompt_file_path(&app)?;
+        if let Some(prompt) = prompts.values().find(|prompt| prompt.enabled) {
+            validate_prompt_content(&app, &prompt.content)?;
+        }
         if let Some(warning) = project_prompt_set_to_path(&prompts, &target_path)? {
             return Err(AppError::Message(warning));
         }
@@ -260,7 +270,7 @@ impl PromptService {
     pub fn sync_all_to_live(state: &AppState) -> Result<(), AppError> {
         let mut failures = Vec::new();
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop | AppType::Mcode) {
+            if matches!(app, AppType::ClaudeDesktop) {
                 continue;
             }
             if let Err(error) = Self::sync_to_live(state, app.clone()) {
@@ -318,6 +328,7 @@ impl PromptService {
             }
         };
 
+        validate_prompt_content(&app, &content)?;
         // 检查内容是否为空
         if content.trim().is_empty() {
             return Ok(0);

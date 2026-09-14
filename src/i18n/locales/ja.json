@@ -1723,7 +1723,8 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "mcode": "MCode"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -2027,7 +2028,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "mcode": "MCode"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",

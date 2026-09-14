@@ -42,31 +42,36 @@ const original = {
 };
 
 describe("McodeProviderForm", () => {
-  it("edits native fields while preserving model options and unknown settings", async () => {
-    const submit = vi.fn();
-    render(
-      <McodeProviderForm
-        appId="mcode"
-        providerId="existing"
-        initialData={{ name: "Existing", settingsConfig: original }}
-        submitLabel="Save"
-        onSubmit={submit}
-        onCancel={() => {}}
-      />,
-    );
-    fireEvent.change(screen.getByLabelText("provider.name"), {
-      target: { value: "Renamed" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
-    expect(saved).toEqual({ ...original, name: "Renamed" });
-    expect(submit.mock.calls[0][0].providerKey).toBe("existing");
-    expect(screen.getByLabelText("API Key")).toHaveAttribute(
-      "type",
-      "password",
-    );
-  });
+  it.each([true, false])(
+    "edits native fields while preserving model options and unknown settings (explicit API: %s)",
+    async (explicitApi) => {
+      const submit = vi.fn();
+      const settings: Record<string, unknown> = { ...original };
+      if (!explicitApi) delete settings.api;
+      render(
+        <McodeProviderForm
+          appId="mcode"
+          providerId="existing"
+          initialData={{ name: "Existing", settingsConfig: settings }}
+          submitLabel="Save"
+          onSubmit={submit}
+          onCancel={() => {}}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText("provider.name"), {
+        target: { value: "Renamed" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+      expect(saved).toEqual({ ...settings, name: "Renamed" });
+      expect(submit.mock.calls[0][0].providerKey).toBe("existing");
+      expect(screen.getByLabelText("API Key")).toHaveAttribute(
+        "type",
+        "password",
+      );
+    },
+  );
 
   it("keeps a rejected save open and displays the failure", async () => {
     render(

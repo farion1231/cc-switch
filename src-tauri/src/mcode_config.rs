@@ -8,8 +8,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub(crate) fn data_dir() -> PathBuf {
+    get_home_dir().join(".minimax")
+}
+
 pub(crate) fn config_path() -> PathBuf {
-    get_home_dir().join(".minimax").join("config.yaml")
+    data_dir().join("config.yaml")
 }
 
 fn read(path: &Path) -> Result<serde_yaml::Value, AppError> {
@@ -66,7 +70,9 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
         ));
     }
     if !matches!(
-        config.get("api").and_then(Value::as_str),
+        config
+            .get("api")
+            .map_or(Some("anthropic-messages"), Value::as_str),
         Some("anthropic-messages" | "openai-completions" | "openai-responses")
     ) {
         return Err(AppError::InvalidInput(
@@ -196,6 +202,15 @@ pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn native_provider_can_omit_api_format() {
+        let mut provider = json!({"options":{"baseURL":"https://example.com","apiKey":"test-key"},"models":{"model":{}}});
+        validate_provider("native", &provider).unwrap();
+        for api in [json!(null), json!(true), json!("unsupported")] {
+            provider["api"] = api;
+            assert!(validate_provider("native", &provider).is_err());
+        }
+    }
     #[test]
     fn additive_changes_preserve_other_providers_and_settings() {
         let dir = tempfile::tempdir().unwrap();
@@ -346,5 +361,107 @@ mod tests {
             get_providers().unwrap()[&provider.id]["name"],
             "Renamed in MCode"
         );
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    use crate::{
+        app_config::{AppType, McpApps, McpServer},
+        database::Database,
+        services::{prompt::PromptService, skill::SkillService, McpService},
+        store::AppState,
+    };
+    use serde_json::json;
+    use std::sync::Arc;
+
+    #[test]
+    #[ignore = "runs alone in an isolated CC_SWITCH_TEST_HOME; prepares real MCode validation"]
+    fn mcode_capability_lifecycle() {
+        let home = std::env::var("CC_SWITCH_TEST_HOME").expect("isolated home");
+        assert_ne!(Some(PathBuf::from(&home)), dirs::home_dir());
+        let db = Arc::new(Database::memory().unwrap());
+        let state = AppState::new(db.clone());
+        fs::create_dir_all(data_dir()).unwrap();
+        let mcp_path = data_dir().join("mcp.json");
+        let original = json!({"extension":42,"mcpServers":{"keep":{"type":"sse","url":"https://example.com/sse","enabled":false}}});
+        fs::write(&mcp_path, original.to_string()).unwrap();
+        let server = McpServer {
+            id: "cc-switch-validation".into(),
+            name: "Validation".into(),
+            server: json!({"type":"stdio","command":std::env::var("MCODE_TEST_NODE").unwrap(),"args":[std::env::var("MCODE_TEST_MCP_SERVER").unwrap()]}),
+            apps: McpApps {
+                mcode: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec![],
+        };
+        McpService::upsert_server(&state, server.clone()).unwrap();
+        assert!(db.get_all_mcp_servers().unwrap()[&server.id].apps.mcode);
+        McpService::toggle_app(&state, &server.id, AppType::Mcode, false).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&fs::read_to_string(&mcp_path).unwrap()).unwrap(),
+            original
+        );
+        McpService::toggle_app(&state, &server.id, AppType::Mcode, true).unwrap();
+        McpService::delete_server(&state, &server.id).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&fs::read_to_string(&mcp_path).unwrap()).unwrap(),
+            original
+        );
+        McpService::upsert_server(&state, server).unwrap();
+        crate::mcp::mcode::import(&state).unwrap();
+        assert!(!db.get_all_mcp_servers().unwrap()["keep"].apps.mcode);
+        let path = crate::prompt_files::prompt_file_path(&AppType::Mcode).unwrap();
+        fs::write(
+            &path,
+            "For validation, write GLOBAL-INSTRUCTION-OK to global-proof.txt in the project.\n",
+        )
+        .unwrap();
+        assert_eq!(
+            PromptService::import_from_file_on_first_launch(&state, AppType::Mcode).unwrap(),
+            1
+        );
+        let prompts = PromptService::get_prompts(&state, AppType::Mcode).unwrap();
+        let (id, prompt) = prompts.first().unwrap();
+        PromptService::enable_prompt(&state, AppType::Mcode, id).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), prompt.content);
+        let mut oversized = prompt.clone();
+        oversized.id = "oversized".into();
+        oversized.content = "中".repeat(10923);
+        assert!(PromptService::upsert_prompt(
+            &state,
+            AppType::Mcode,
+            "oversized",
+            oversized.clone()
+        )
+        .is_err());
+        assert_eq!(db.get_prompts("mcode").unwrap().len(), 1);
+        oversized.enabled = false;
+        db.save_prompt("mcode", &oversized).unwrap();
+        assert!(PromptService::enable_prompt(&state, AppType::Mcode, "oversized").is_err());
+        assert!(db.get_prompts("mcode").unwrap()[id].enabled);
+        assert!(!db.get_prompts("mcode").unwrap()["oversized"].enabled);
+        db.delete_prompt("mcode", id).unwrap();
+        oversized.enabled = true;
+        db.save_prompt("mcode", &oversized).unwrap();
+        assert!(PromptService::sync_to_live(&state, AppType::Mcode).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), prompt.content);
+        let skill_dir = SkillService::get_ssot_dir()
+            .unwrap()
+            .join("cc-switch-validation");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"),"---\nname: cc-switch-validation\ndescription: Use when asked to validate the CC Switch MCode integration.\n---\nCall the cc-switch-validation MCP tool validation_proof. Write its exact result into mcp-proof.txt. Write SKILL-INSTRUCTION-OK into skill-proof.txt. Fix the project bug and run its test.\n").unwrap();
+        SkillService::sync_to_app_dir("cc-switch-validation", &AppType::Mcode).unwrap();
+        assert!(data_dir()
+            .join("skills/cc-switch-validation/SKILL.md")
+            .exists());
+        SkillService::remove_from_app("cc-switch-validation", &AppType::Mcode).unwrap();
+        assert!(!data_dir().join("skills/cc-switch-validation").exists());
+        SkillService::sync_to_app_dir("cc-switch-validation", &AppType::Mcode).unwrap();
     }
 }

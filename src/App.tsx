@@ -226,14 +226,6 @@ function App() {
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
-    if (
-      sharedFeatureApp === "mcode" &&
-      currentView !== "providers" &&
-      currentView !== "settings"
-    ) {
-      setCurrentView("providers");
-      return;
-    }
     if (currentView === "mcp" && sharedFeatureApp === "pi") {
       setCurrentView("providers");
       return;
@@ -247,7 +239,8 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
-      sharedFeatureApp !== "pi"
+      sharedFeatureApp !== "pi" &&
+      sharedFeatureApp !== "mcode"
     ) {
       setCurrentView("providers");
     }
@@ -315,8 +308,7 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport =
-    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "mcode";
+  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -325,9 +317,9 @@ function App() {
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
-    sharedFeatureApp === "pi";
-  const hasMcpSupport =
-    sharedFeatureApp !== "pi" && sharedFeatureApp !== "mcode";
+    sharedFeatureApp === "pi" ||
+    sharedFeatureApp === "mcode";
+  const hasMcpSupport = sharedFeatureApp !== "pi";
 
   const {
     addProvider,
@@ -1700,7 +1692,7 @@ function App() {
                               >
                                 <Wrench className="flex-shrink-0 w-4 h-4" />
                               </Button>
-                              {activeApp !== "mcode" && (
+                              {
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -1710,7 +1702,7 @@ function App() {
                                 >
                                   <Book className="w-4 h-4" />
                                 </Button>
-                              )}
+                              }
                               <Button
                                 variant="ghost"
                                 size="sm"
