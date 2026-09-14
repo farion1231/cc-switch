@@ -1155,14 +1155,18 @@ impl CodexOAuthManager {
         account_id: &str,
     ) -> Result<Option<String>, CodexOAuthError> {
         let _lifecycle = self.lifecycle_lock.read().await;
-        let refresh_lock = self.get_refresh_lock(account_id).await;
-        let _guard = refresh_lock.lock().await;
         {
             let accounts = self.accounts.read().await;
-            accounts
-                .get(account_id)
-                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?;
+            if !accounts.contains_key(account_id) {
+                // Auth Center removal already cleared this account's live
+                // credentials. Provider bindings are intentionally retained so
+                // the same local account ID can recover after re-login, so a
+                // switch away from that stale binding is already complete.
+                return Ok(None);
+            }
         }
+        let refresh_lock = self.get_refresh_lock(account_id).await;
+        let _guard = refresh_lock.lock().await;
         let Some((live_refresh, live_id_token, live_last_refresh_ms)) = self
             .read_managed_live_auth_refresh_for_account(account_id)
             .await?

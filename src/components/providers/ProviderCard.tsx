@@ -219,6 +219,10 @@ export function ProviderCard({
   const managedCodexAccount = codexAuthStatus?.accounts.find(
     (account) => account.id === managedCodexAccountId,
   );
+  const isManagedCodexAccountUnavailable =
+    codexOfficialIdentity === "managed_account" &&
+    isCodexAuthStatusSuccess &&
+    !managedCodexAccount;
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
     managedCodexAccount?.login &&
@@ -684,6 +688,9 @@ export function ProviderCard({
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
+              isManagedCodexAccountUnavailable={
+                isManagedCodexAccountUnavailable
+              }
               isInConfig={isInConfig}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
