@@ -5124,6 +5124,13 @@ mod tests {
     fn dsh_is_part_of_environment_checks() {
         assert!(VALID_TOOLS.contains(&"dsh"));
         assert_eq!(tool_display_name("dsh"), "DeepSeek Harness");
+        // The macOS probe shells out to a locally installed DSH Desktop; CI
+        // runners and machines without DSH must not fail the suite over it.
+        #[cfg(target_os = "macos")]
+        if !std::path::Path::new("/Applications/DSH Desktop.app/Contents/Info.plist").exists() {
+            eprintln!("DSH Desktop not installed; skipping the version probe");
+            return;
+        }
         #[cfg(target_os = "macos")]
         match try_get_dsh_desktop_version() {
             ShellProbe::Found(version) => assert!(!version.is_empty()),
