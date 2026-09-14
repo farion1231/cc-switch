@@ -1135,6 +1135,36 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
         .or_else(|| config_text.and_then(extract_codex_experimental_bearer_token))
 }
 
+/// The `base_url` of the table `model_provider` selects, but only when that
+/// table opts into the official login the way Codex CLI itself reads it —
+/// `requires_openai_auth = true` with no `env_key` /
+/// `experimental_bearer_token` short-circuit
+/// (`codex_provider_table_falls_back_to_official_auth`). Without the
+/// top-level fallback `extract_codex_base_url` accepts, and rejecting a blank
+/// value.
+///
+/// Callers that forward a first-party credential need this stricter form. The
+/// takeover route makes Codex hand its ChatGPT authorization to the local
+/// proxy, and the forwarder passes it through unchanged for official cards, so
+/// every host this returns will receive that token. A table that never asked
+/// for OpenAI auth (`requires_openai_auth` absent/false, or carrying its own
+/// credential) must therefore not be returned — Codex CLI would not send the
+/// login there either. A top-level `base_url` can linger from an earlier
+/// third-party setup and is not reachable from the official card UI, so
+/// honouring it would send the credential to a host the active provider never
+/// named.
+pub fn extract_active_codex_provider_base_url(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<toml_edit::DocumentMut>().ok()?;
+    let active = doc.get("model_provider")?.as_str()?;
+    let table = doc.get("model_providers")?.get(active)?.as_table_like()?;
+    if !codex_provider_table_falls_back_to_official_auth(table) {
+        return None;
+    }
+    let base_url = table.get("base_url")?.as_str()?.trim();
+
+    (!base_url.is_empty()).then(|| base_url.to_string())
+}
+
 /// Extract the upstream base URL from a Codex `config.toml` string.
 ///
 /// Prefers the active `[model_providers.<model_provider>].base_url`, falling
