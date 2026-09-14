@@ -393,6 +393,15 @@ export function TerminalPanel({
       return null;
     }
   });
+  /**
+   * 已激活（保持挂载）的终端集合：选中即激活，此后常驻——切换标签只是
+   * display:none 隐藏，xterm 屏幕状态原样保留。全屏 TUI 会话（Claude /
+   * Codex 等）依靠 PTY 字节历史回放无法可靠还原屏幕（会切出空白），
+   * 因此挂载过的终端不再卸载；应用重启后的恢复仍走后端历史回放。
+   */
+  const [activatedIds, setActivatedIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   /** 删除进行中的实例 id（ref：effect 中用于抑制删除后的自动切换） */
   const deletingRef = useRef<string | null>(null);
   /** 开发项目：列表 + 当前选中（localStorage 记忆） */
@@ -518,6 +527,19 @@ export function TerminalPanel({
   const selected = selectedId
     ? (instances.find((item) => item.id === selectedId) ?? null)
     : null;
+
+  // 选中即激活：终端加入常驻挂载集合（切换标签只隐藏，不卸载）
+  useEffect(() => {
+    if (!selectedId) return;
+    setActivatedIds((prev) =>
+      prev.has(selectedId) ? prev : new Set(prev).add(selectedId),
+    );
+  }, [selectedId]);
+
+  /** 常驻挂载的终端（过滤掉已删除的实例） */
+  const activatedInstances = instances.filter((item) =>
+    activatedIds.has(item.id),
+  );
 
   // 选中终端持久化；列表变化时保证选中有效。
   // 注意：启动时 instances 先空后加载，空窗期不要清除已持久化的选中，等实例到位后再校验。
@@ -1478,9 +1500,12 @@ export function TerminalPanel({
         </Button>
       </div>
 
-      {/* 终端主体：面板内嵌 PTY 终端（xterm.js） */}
+      {/* 终端主体：面板内嵌 PTY 终端（xterm.js）。
+          已激活的终端常驻挂载，非选中项以 display:none 隐藏——切换标签时
+          xterm 屏幕状态原样保留，无需回放 PTY 历史即可完整恢复显示
+          （全屏 TUI 会话靠字节回放无法可靠还原屏幕）。 */}
       <div className="min-h-0 flex-1 p-1">
-        {selected ? (
+        {selected && activatedInstances.length > 0 ? (
           <Suspense
             fallback={
               <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
@@ -1491,14 +1516,27 @@ export function TerminalPanel({
               </div>
             }
           >
-            <EmbeddedTerminalLazy
-              instance={selected}
-              resetNonce={hub.resetNonce[selected.id] ?? 0}
-              onPtyChange={(ptyId) => hub.registerEmbedded(selected.id, ptyId)}
-              onExitChange={(exited) =>
-                hub.setEmbeddedExited(selected.id, exited)
-              }
-            />
+            {activatedInstances.map((instance) => {
+              const active = instance.id === selectedId;
+              return (
+                <div
+                  key={instance.id}
+                  className={cn("h-full", !active && "hidden")}
+                >
+                  <EmbeddedTerminalLazy
+                    instance={instance}
+                    active={active}
+                    resetNonce={hub.resetNonce[instance.id] ?? 0}
+                    onPtyChange={(ptyId) =>
+                      hub.registerEmbedded(instance.id, ptyId)
+                    }
+                    onExitChange={(exited) =>
+                      hub.setEmbeddedExited(instance.id, exited)
+                    }
+                  />
+                </div>
+              );
+            })}
           </Suspense>
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">

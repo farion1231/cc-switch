@@ -6,12 +6,13 @@
 //! 并发请求也能正确累加吞吐。
 //!
 //! 除窗口速率外，另维护：
-//! - 最近一次请求的输入（上下文长度）与输出、真实耗时 → 展示「上下文 Xk」与「上次 Y tok/s」；
+//! - 最近一次请求的输入（上下文长度）与输出、真实耗时 → 展示「上下文 Xk」与「上次 Y tok/s」
+//!   （只认正式请求，后台小请求不覆盖）；
 //! - 会话累计的输入 / 输出 / 缓存用量 → 展示「当前的用量」；
-//! - 流式在途的实时输出（字符级估算）→ 生成中显示实时速率。
+//! - 流式在途的实时输出（宽字符加权估算）→ 生成中显示实时速率。
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -24,10 +25,15 @@ use super::parser::TokenUsage;
 const WINDOW_SECS: u64 = 60;
 /// 实时「生成中」判定：超过该时长没有新文本增量视为已结束
 const GENERATING_IDLE_MS: u64 = 3000;
+/// 「上次请求」展示的最小输出 token：低于该值的多为后台小请求
+/// （Claude Code 的 haiku 主题判定、配额探测等，输出只有几个 token），
+/// 不覆盖「上次耗时 / 上下文 / 速率」展示，避免主请求刚结束就被顶掉。
+/// 仍计入窗口速率与会话用量。
+const LAST_REQUEST_MIN_OUTPUT: u64 = 50;
 
 struct RateSample {
     at_ms: u64,
-    /// 该请求自身的流式耗时（首个样本被用于推算窗口起点）
+    /// 该请求自身的流式耗时（扣除首字等待；首个样本被用于推算窗口起点）
     duration_ms: u64,
     output_tokens: u64,
 }
@@ -38,6 +44,10 @@ static LAST_MODEL: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 static TOTAL_TOKENS: AtomicU64 = AtomicU64::new(0);
 /// 最近一次请求的耗时（毫秒）
 static LAST_DURATION_MS: AtomicU64 = AtomicU64::new(0);
+/// 最近一次请求的纯流式耗时（总耗时扣除首字等待；供速率分母使用）
+static LAST_STREAM_MS: AtomicU64 = AtomicU64::new(0);
+/// 已经出现过「正式请求」（用于小请求兜底：会话里只有小请求时也展示其数值）
+static LAST_REQUEST_SEEN: AtomicBool = AtomicBool::new(false);
 /// 最近一次请求的输入（= 上下文长度）
 static LAST_INPUT_TOKENS: AtomicU64 = AtomicU64::new(0);
 /// 最近一次请求的输出
@@ -46,8 +56,8 @@ static LAST_OUTPUT_TOKENS: AtomicU64 = AtomicU64::new(0);
 static SESSION_INPUT: AtomicU64 = AtomicU64::new(0);
 static SESSION_OUTPUT: AtomicU64 = AtomicU64::new(0);
 static SESSION_CACHE: AtomicU64 = AtomicU64::new(0);
-/// 流式实时输出（字符级，近似 token；仅用于生成中实时速率展示）
-static LIVE_OUTPUT_CHARS: AtomicU64 = AtomicU64::new(0);
+/// 流式实时输出（毫 token，宽字符加权估算；仅用于生成中实时速率展示）
+static LIVE_OUTPUT_MILLI: AtomicU64 = AtomicU64::new(0);
 /// 最近一次实时增量的时间（epoch ms；0 = 无在途输出）
 static LIVE_LAST_AT: AtomicU64 = AtomicU64::new(0);
 /// 当前突发（一次流式输出）的起点
@@ -60,19 +70,48 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// 流式事件到达时记录文本增量（字符级，尽力估算；权威计数仍以请求结束时的
-/// usage 为准）。在透传流的每个 SSE 事件上调用，用于生成中显示实时速率。
+/// 宽字符（CJK / 谚文 / 全角）判定：这类字符约 1 字符 = 1 token，
+/// 而拉丁文本约 4 字符 = 1 token。统一按「毫 token」加权累计，
+/// 避免中文输出把实时速率低估约 4 倍。
+fn is_wide_char(ch: char) -> bool {
+    matches!(ch as u32,
+        0x1100..=0x11FF   // Hangul Jamo
+        | 0x2E80..=0x303F // CJK 部首 / 标点
+        | 0x3040..=0x30FF // 平假名 / 片假名
+        | 0x3130..=0x318F // Hangul Compatibility Jamo
+        | 0x3400..=0x4DBF // CJK 扩展 A
+        | 0x4E00..=0x9FFF // CJK 统一表意文字
+        | 0xA960..=0xA97F // Hangul Jamo Extended-A
+        | 0xAC00..=0xD7FF // Hangul 音节
+        | 0xF900..=0xFAFF // CJK 兼容表意文字
+        | 0xFF00..=0xFFEF // 全角 / 半角形式
+        | 0x20000..=0x2FA1F // CJK 扩展 B~F
+    )
+}
+
+/// 字符数 → 毫 token（千分之一 token）：宽字符 1000/字，其余 250/字。
+fn estimate_milli_tokens(text: &str) -> u64 {
+    let mut milli = 0u64;
+    for ch in text.chars() {
+        milli += if is_wide_char(ch) { 1000 } else { 250 };
+    }
+    milli
+}
+
+/// 流式事件到达时记录文本增量（宽字符加权的毫 token 估算；权威计数仍以
+/// 请求结束时的 usage 为准）。在透传流的每个 SSE 事件上调用，
+/// 用于生成中显示实时速率。
 pub fn record_live_delta(event: &serde_json::Value) {
-    let mut chars = 0usize;
+    let mut milli = 0u64;
     // Claude 系：{"type":"content_block_delta","delta":{"type":"text_delta","text":"…"}}
     if let Some(text) = event.pointer("/delta/text").and_then(|v| v.as_str()) {
-        chars += text.chars().count();
+        milli += estimate_milli_tokens(text);
     }
     // OpenAI / opencode 系：{"choices":[{"delta":{"content":"…"}}]}
     if let Some(choices) = event.get("choices").and_then(|v| v.as_array()) {
         for choice in choices {
             if let Some(text) = choice.pointer("/delta/content").and_then(|v| v.as_str()) {
-                chars += text.chars().count();
+                milli += estimate_milli_tokens(text);
             }
         }
     }
@@ -82,13 +121,13 @@ pub fn record_live_delta(event: &serde_json::Value) {
             if let Some(parts) = cand.pointer("/content/parts").and_then(|v| v.as_array()) {
                 for part in parts {
                     if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                        chars += text.chars().count();
+                        milli += estimate_milli_tokens(text);
                     }
                 }
             }
         }
     }
-    if chars == 0 {
+    if milli == 0 {
         return;
     }
     let now = now_ms();
@@ -97,11 +136,11 @@ pub fn record_live_delta(event: &serde_json::Value) {
     // 避免残留计数把下一次生成的实时速率拖低
     let prev_at = LIVE_LAST_AT.swap(now, Ordering::Relaxed);
     let burst_expired = prev_at > 0 && now.saturating_sub(prev_at) > GENERATING_IDLE_MS;
-    LIVE_OUTPUT_CHARS.fetch_add(chars as u64, Ordering::Relaxed);
+    LIVE_OUTPUT_MILLI.fetch_add(milli, Ordering::Relaxed);
     let mut start = LIVE_BURST_START.lock().unwrap();
     if start.is_none() || burst_expired {
         if burst_expired {
-            LIVE_OUTPUT_CHARS.store(chars as u64, Ordering::Relaxed);
+            LIVE_OUTPUT_MILLI.store(milli, Ordering::Relaxed);
         }
         *start = Some(Instant::now());
     }
@@ -109,11 +148,17 @@ pub fn record_live_delta(event: &serde_json::Value) {
 
 /// 记录一次成功请求的用量（供速率统计与用量展示）。
 ///
-/// `duration_ms` 为该请求从发出到收到完整响应的耗时：速率分母按真实
-/// 流式时长计算，而不是把整段输出压进一个时间点。
+/// `duration_ms` 为该请求从发出到收到完整响应的耗时；`first_token_ms`
+/// 为到上游首包的耗时（流式请求才有）：速率分母用扣除首字等待后的
+/// 纯流式时长——等待首包期间没有 token 产出，计入分母会把速率拉低。
 ///
 /// `model` 为实际发往上游的模型名（映射后的真值），用于「上次请求」展示。
-pub fn record_output(usage: &TokenUsage, duration_ms: u64, model: &str) {
+pub fn record_output(
+    usage: &TokenUsage,
+    duration_ms: u64,
+    model: &str,
+    first_token_ms: Option<u64>,
+) {
     // 模型名先于任何提前返回写入：即使 0 输出也更新「上次请求」展示
     *LAST_MODEL.lock().unwrap() = if model.is_empty() {
         None
@@ -125,28 +170,41 @@ pub fn record_output(usage: &TokenUsage, duration_ms: u64, model: &str) {
         + usage.cache_read_tokens as u64
         + usage.cache_creation_tokens as u64;
     TOTAL_TOKENS.fetch_add(total, Ordering::Relaxed);
-    LAST_DURATION_MS.store(duration_ms, Ordering::Relaxed);
-    // 请求结束：更新「最近一次」与「会话累计」，并重置在途突发计数。
-    // 放在 output==0 提前返回之前，保证缓存命中（0 输出）也计入上下文/用量。
-    LAST_INPUT_TOKENS.store(usage.input_tokens as u64, Ordering::Relaxed);
-    LAST_OUTPUT_TOKENS.store(usage.output_tokens as u64, Ordering::Relaxed);
+    // 请求结束：更新会话累计。放在 output==0 提前返回之前，
+    // 保证缓存命中（0 输出）也计入用量。
     SESSION_INPUT.fetch_add(usage.input_tokens as u64, Ordering::Relaxed);
     SESSION_OUTPUT.fetch_add(usage.output_tokens as u64, Ordering::Relaxed);
     SESSION_CACHE.fetch_add(
         usage.cache_read_tokens as u64 + usage.cache_creation_tokens as u64,
         Ordering::Relaxed,
     );
-    LIVE_OUTPUT_CHARS.store(0, Ordering::Relaxed);
-    LIVE_LAST_AT.store(0, Ordering::Relaxed);
-    *LIVE_BURST_START.lock().unwrap() = None;
 
     if usage.output_tokens == 0 {
         return;
     }
+
+    // 纯流式时长：总耗时扣除首字等待（异常值时退回总耗时）
+    let stream_ms = match first_token_ms {
+        Some(ttfb) if ttfb > 0 && ttfb < duration_ms => duration_ms - ttfb,
+        _ => duration_ms,
+    };
+
+    // 「上次请求」展示只认正式请求：后台小请求（haiku 判题、配额探测）
+    // 不覆盖主请求留下的耗时 / 上下文 / 速率。会话里只有小请求时仍兜底展示。
+    let significant = usage.output_tokens >= LAST_REQUEST_MIN_OUTPUT as u32
+        || !LAST_REQUEST_SEEN.load(Ordering::Relaxed);
+    if significant {
+        LAST_REQUEST_SEEN.store(true, Ordering::Relaxed);
+        LAST_DURATION_MS.store(duration_ms, Ordering::Relaxed);
+        LAST_STREAM_MS.store(stream_ms, Ordering::Relaxed);
+        LAST_INPUT_TOKENS.store(usage.input_tokens as u64, Ordering::Relaxed);
+        LAST_OUTPUT_TOKENS.store(usage.output_tokens as u64, Ordering::Relaxed);
+    }
+
     let now = now_ms();
     let sample = RateSample {
         at_ms: now,
-        duration_ms,
+        duration_ms: stream_ms,
         output_tokens: usage.output_tokens as u64,
     };
     let mut samples = SAMPLES.lock().unwrap();
@@ -184,7 +242,8 @@ pub struct ModelRateInfo {
     pub session_cache_tokens: u64,
     /// 当前是否有流式输出在途（近 3s 内有文本增量）
     pub generating: bool,
-    /// 生成中的实时速率（字符级近似：按 4 字符 ≈ 1 token 估算）
+    /// 生成中的实时速率（宽字符加权估算：CJK 约 1 字符 ≈ 1 token，
+    /// 其余约 4 字符 ≈ 1 token）
     pub live_speed_tok_s: f64,
 }
 
@@ -219,23 +278,24 @@ pub fn current_rate() -> ModelRateInfo {
     info.last_duration_ms = LAST_DURATION_MS.load(Ordering::Relaxed);
     info.last_input_tokens = LAST_INPUT_TOKENS.load(Ordering::Relaxed);
     info.last_output_tokens = LAST_OUTPUT_TOKENS.load(Ordering::Relaxed);
-    let last_dur = info.last_duration_ms;
-    info.last_speed_tok_s = if last_dur > 0 && info.last_output_tokens > 0 {
-        info.last_output_tokens as f64 * 1000.0 / last_dur as f64
+    // 速率分母用纯流式时长（总耗时扣除首字等待）
+    let last_stream = LAST_STREAM_MS.load(Ordering::Relaxed);
+    info.last_speed_tok_s = if last_stream > 0 && info.last_output_tokens > 0 {
+        info.last_output_tokens as f64 * 1000.0 / last_stream as f64
     } else {
         0.0
     };
     info.session_input_tokens = SESSION_INPUT.load(Ordering::Relaxed);
     info.session_output_tokens = SESSION_OUTPUT.load(Ordering::Relaxed);
     info.session_cache_tokens = SESSION_CACHE.load(Ordering::Relaxed);
-    let live_chars = LIVE_OUTPUT_CHARS.load(Ordering::Relaxed);
+    let live_milli = LIVE_OUTPUT_MILLI.load(Ordering::Relaxed);
     let live_at = LIVE_LAST_AT.load(Ordering::Relaxed);
     info.generating = live_at > 0 && now.saturating_sub(live_at) < GENERATING_IDLE_MS;
-    if info.generating && live_chars > 0 {
+    if info.generating && live_milli > 0 {
         let start = *LIVE_BURST_START.lock().unwrap().get_or_insert_with(Instant::now);
         let secs = start.elapsed().as_secs_f64().max(0.5);
-        // 字符 → token 近似（约 4 字符/token），仅用于生成中实时展示
-        info.live_speed_tok_s = live_chars as f64 / 4.0 / secs;
+        // 毫 token → token（宽字符加权估算，仅用于生成中实时展示）
+        info.live_speed_tok_s = live_milli as f64 / 1000.0 / secs;
     }
     info
 }
@@ -243,4 +303,27 @@ pub fn current_rate() -> ModelRateInfo {
 #[tauri::command]
 pub fn get_model_rate() -> ModelRateInfo {
     current_rate()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wide_chars_count_as_full_tokens() {
+        // 4 个汉字 ≈ 4 token；旧实现按 4 字符/token 只会估出 1
+        assert_eq!(estimate_milli_tokens("你好世界"), 4000);
+    }
+
+    #[test]
+    fn ascii_chars_count_as_quarter_tokens() {
+        assert_eq!(estimate_milli_tokens("abcd"), 1000);
+        assert_eq!(estimate_milli_tokens(""), 0);
+    }
+
+    #[test]
+    fn mixed_text_weights_by_script() {
+        // 2 个汉字 + 4 个字母 → 2000 + 1000 = 3000 毫 token
+        assert_eq!(estimate_milli_tokens("两ab字cd"), 3000);
+    }
 }

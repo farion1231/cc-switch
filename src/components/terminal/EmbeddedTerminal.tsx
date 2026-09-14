@@ -62,6 +62,11 @@ const LIGHT_TERMINAL_THEME = {
 export interface EmbeddedTerminalProps {
   /** 要启动的终端实例（切换实例时自动重启会话） */
   instance: TerminalInstance;
+  /**
+   * 终端是否可见。隐藏（display:none）期间会话与 xterm 都保持挂载，
+   * 重新可见时需要重新自适应尺寸并强制重绘。
+   */
+  active?: boolean;
   /** 递增触发重启（重置/恢复会话用） */
   resetNonce?: number;
   /** 会话 pty 状态变化回调（供外部停止按钮使用） */
@@ -77,6 +82,7 @@ export interface EmbeddedTerminalProps {
  */
 export function EmbeddedTerminal({
   instance,
+  active = true,
   resetNonce = 0,
   onPtyChange,
   onExitChange,
@@ -143,6 +149,21 @@ export function EmbeddedTerminal({
       // 容器尚未布局完成，忽略
     }
   }, []);
+
+  // 终端重新变为可见（切换标签回来）时：重新自适应尺寸并强制重绘。
+  // display:none 期间容器尺寸为 0，fit 与渲染都失效，需要激活后补救。
+  useEffect(() => {
+    if (!active) return;
+    doFit();
+    const term = termRef.current;
+    if (term) {
+      try {
+        term.refresh(0, term.rows - 1);
+      } catch {
+        // 终端尚未渲染完成，忽略
+      }
+    }
+  }, [active, doFit]);
 
   const boot = useCallback(async () => {
     const current = instanceRef.current;
