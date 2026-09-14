@@ -871,7 +871,10 @@ fn try_get_dsh_desktop_version() -> ShellProbe {
 
 #[cfg(not(target_os = "macos"))]
 fn try_get_dsh_desktop_version() -> ShellProbe {
-    try_get_version("dsh")
+    // DSH Desktop is only distributed as a macOS .app; other platforms have no
+    // standalone desktop bundle to probe (their DSH CLI detection goes through
+    // try_get_version / try_get_version_wsl in the environment-check flow).
+    ShellProbe::NotFound("DSH Desktop is only available on macOS".to_string())
 }
 
 /// 该工具在 npm 上的预发布通道 tag(靠前者优先)。仅当本地版本已**严格领先**
