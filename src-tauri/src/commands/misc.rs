@@ -1170,27 +1170,25 @@ fn try_get_version(tool: &str) -> ShellProbe {
             .arg(format!("{bin} --version"))
             .output();
 
-        match output {
-            Ok(out) => {
-                let stdout = decode_command_output(&out.stdout).trim().to_string();
-                let stderr = decode_command_output(&out.stderr).trim().to_string();
-                if out.status.success() {
-                    let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                    if !raw.is_empty() {
-                        return ShellProbe::Found(extract_version(raw));
-                    }
-                } else {
-                    // exit 127 = shell 找不到命令（可放心 fallback 到搜索路径）；其它非零码
-                    // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
-                    let err = if stderr.is_empty() { stdout } else { stderr };
-                    if out.status.code() != Some(127) && !err.is_empty() {
-                        if !matches!(last_probe, ShellProbe::FoundButFailed(_)) {
-                            last_probe = ShellProbe::FoundButFailed(last_lines(err.trim(), 4));
-                        }
-                    }
+        if let Ok(out) = output {
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            if out.status.success() {
+                let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                if !raw.is_empty() {
+                    return ShellProbe::Found(extract_version(raw));
+                }
+            } else {
+                // exit 127 = shell 找不到命令（可放心 fallback 到搜索路径）；其它非零码
+                // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
+                let err = if stderr.is_empty() { stdout } else { stderr };
+                if out.status.code() != Some(127)
+                    && !err.is_empty()
+                    && !matches!(last_probe, ShellProbe::FoundButFailed(_))
+                {
+                    last_probe = ShellProbe::FoundButFailed(last_lines(err.trim(), 4));
                 }
             }
-            Err(_) => {}
         }
     }
 
