@@ -4,6 +4,7 @@ import {
   GripVertical,
   ChevronDown,
   ChevronUp,
+  ShieldCheck,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
@@ -15,7 +16,9 @@ import type { OpenClawProviderConfig, Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { ProviderActions } from "@/components/providers/ProviderActions";
+import { ModelVerifierDialog } from "@/components/providers/ModelVerifierDialog";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
@@ -305,6 +308,12 @@ export function ProviderCard({
       : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  const supportsModelVerifier =
+    appId === "codex" &&
+    provider.category !== "official" &&
+    !isCopilot &&
+    provider.meta?.providerType !== PROVIDER_TYPES.CODEX_OAUTH &&
+    provider.meta?.providerType !== PROVIDER_TYPES.XAI_OAUTH;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
   // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
   const codexNeedsRouting =
@@ -327,6 +336,7 @@ export function ProviderCard({
     usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
 
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showModelVerifier, setShowModelVerifier] = useState(false);
 
   useEffect(() => {
     if (hasMultiplePlans) {
@@ -681,6 +691,17 @@ export function ProviderCard({
           </div>
 
           <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+            {supportsModelVerifier && (
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setShowModelVerifier(true)}
+                title={t("modelVerifier.action", { defaultValue: "验证模型" })}
+                className="h-8 w-8 p-1 hover:text-emerald-600 dark:hover:text-emerald-400"
+              >
+                <ShieldCheck className="h-4 w-4" />
+              </Button>
+            )}
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
@@ -749,6 +770,15 @@ export function ProviderCard({
             inline={false}
           />
         </div>
+      )}
+
+      {supportsModelVerifier && (
+        <ModelVerifierDialog
+          open={showModelVerifier}
+          onOpenChange={setShowModelVerifier}
+          appId={appId}
+          provider={provider}
+        />
       )}
     </div>
   );
