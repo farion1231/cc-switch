@@ -456,7 +456,7 @@ export function ProxyPanel({
                   {geminiQueue.length > 0 && (
                     <ProviderQueueGroup
                       appType="gemini"
-                      appLabel="Gemini"
+                      appLabel="Antigravity"
                       targets={geminiQueue.map((item) => ({
                         id: item.providerId,
                         name: item.providerName,
