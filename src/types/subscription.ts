@@ -31,3 +31,29 @@ export interface SubscriptionQuota {
   error: string | null;
   queriedAt: number | null;
 }
+
+export interface CodexQuotaActivationAttempt {
+  status: string;
+  windowType: string;
+  model: string | null;
+  reasoningEffort: string | null;
+  startedAt: number;
+  endedAt: number | null;
+  exitCode: number | null;
+  error: string | null;
+}
+
+export interface CodexQuotaActivationPolicy {
+  accountId: string;
+  ownerProviderId: string;
+  ownerProviderName: string | null;
+  enabled: boolean;
+  canEdit: boolean;
+  updatedAt: number;
+  lastStatus: string | null;
+  lastError: string | null;
+  lastWindowType: string | null;
+  lastModel: string | null;
+  lastAttemptAt: number | null;
+  latestAttempt: CodexQuotaActivationAttempt | null;
+}

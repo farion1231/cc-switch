@@ -472,6 +472,7 @@ pub async fn queryProviderUsage(
     //      保留上次 data 的语义一致；否则失败快照会经 useUsageCacheBridge 盲写
     //      回 query 缓存，抹掉 reject 本该保留的旧值。
     let inner = query_provider_usage_inner(
+        &app_handle,
         &state,
         &copilot_state,
         &xai_state,
@@ -542,6 +543,7 @@ fn resolve_coding_plan_credentials(
 }
 
 async fn query_provider_usage_inner(
+    app_handle: &tauri::AppHandle,
     state: &AppState,
     copilot_state: &CopilotAuthState,
     xai_state: &XaiOAuthState,
@@ -721,6 +723,21 @@ async fn query_provider_usage_inner(
                 .and_then(|p| p.meta.as_ref())
                 .and_then(|m| m.managed_account_id_for("xai_oauth"));
             crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id).await?
+        } else if provider
+            .and_then(|p| p.meta.as_ref())
+            .and_then(|m| m.managed_account_id_for("codex_oauth"))
+            .is_some()
+        {
+            let account_id = provider
+                .and_then(|p| p.meta.as_ref())
+                .and_then(|m| m.managed_account_id_for("codex_oauth"));
+            crate::commands::codex_oauth::fetch_codex_oauth_quota(
+                app_handle,
+                state,
+                &state.codex_oauth_manager,
+                account_id,
+            )
+            .await?
         } else {
             crate::services::subscription::get_subscription_quota(app_type.as_str())
                 .await

@@ -371,18 +371,43 @@ impl Database {
             params![original_id, app_type],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        if app_type == "codex" {
+            tx.execute(
+                "UPDATE codex_quota_activation_policies
+                    SET owner_provider_id = ?1, updated_at = ?2
+                  WHERE owner_provider_id = ?3",
+                params![
+                    provider.id,
+                    chrono::Utc::now().timestamp_millis(),
+                    original_id
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
     pub fn delete_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-        conn.execute(
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
             "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        if app_type == "codex" {
+            tx.execute(
+                "DELETE FROM codex_quota_activation_policies
+                  WHERE owner_provider_id = ?1",
+                params![id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -888,6 +913,26 @@ mod ensure_official_seed_tests {
             .expect("Codex official restored");
         assert_eq!(provider.category.as_deref(), Some("official"));
         assert_eq!(provider.settings_config["auth"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn deleting_codex_owner_removes_orphaned_activation_policy() {
+        let db = Database::memory().expect("memory db");
+        db.init_default_official_providers().expect("seed");
+        db.upsert_codex_quota_activation_policy(
+            CODEX_OFFICIAL_PROVIDER_ID,
+            CODEX_OFFICIAL_PROVIDER_ID,
+            true,
+            1,
+        )
+        .expect("policy");
+
+        db.delete_provider(AppType::Codex.as_str(), CODEX_OFFICIAL_PROVIDER_ID)
+            .expect("delete Codex owner");
+        assert!(db
+            .get_codex_quota_activation_policy(CODEX_OFFICIAL_PROVIDER_ID)
+            .expect("policy lookup")
+            .is_none());
     }
 
     #[test]

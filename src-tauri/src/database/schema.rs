@@ -336,7 +336,54 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 19. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
+        // 19. Codex 额度激活策略（按自管账号归属）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_quota_activation_policies (
+                account_id TEXT PRIMARY KEY,
+                owner_provider_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL,
+                last_status TEXT,
+                last_error TEXT,
+                last_window_type TEXT,
+                last_model TEXT,
+                last_attempt_at INTEGER,
+                last_observed_limit_id TEXT,
+                last_observed_window_seconds INTEGER,
+                last_observed_reset_at INTEGER,
+                last_observed_reset_after_seconds INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_quota_activation_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL,
+                limit_id TEXT NOT NULL,
+                window_seconds INTEGER NOT NULL,
+                window_generation TEXT NOT NULL,
+                owner_provider_id TEXT NOT NULL,
+                model TEXT,
+                reasoning_effort TEXT,
+                status TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                ended_at INTEGER,
+                exit_code INTEGER,
+                error TEXT,
+                UNIQUE(account_id, limit_id, window_generation)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_codex_quota_activation_attempts_account
+             ON codex_quota_activation_attempts(account_id, started_at DESC)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 20. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
         //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS profiles (
@@ -548,6 +595,11 @@ impl Database {
                         log::info!("迁移数据库从 v17 到 v18（会话日志字节游标列）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（Codex 额度激活策略与幂等账本）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1596,6 +1648,56 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// v18 -> v19: account-scoped Codex quota activation policy and claims.
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_quota_activation_policies (
+                account_id TEXT PRIMARY KEY,
+                owner_provider_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL,
+                last_status TEXT,
+                last_error TEXT,
+                last_window_type TEXT,
+                last_model TEXT,
+                last_attempt_at INTEGER,
+                last_observed_limit_id TEXT,
+                last_observed_window_seconds INTEGER,
+                last_observed_reset_at INTEGER,
+                last_observed_reset_after_seconds INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 Codex 激活策略表失败: {e}")))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_quota_activation_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL,
+                limit_id TEXT NOT NULL,
+                window_seconds INTEGER NOT NULL,
+                window_generation TEXT NOT NULL,
+                owner_provider_id TEXT NOT NULL,
+                model TEXT,
+                reasoning_effort TEXT,
+                status TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                ended_at INTEGER,
+                exit_code INTEGER,
+                error TEXT,
+                UNIQUE(account_id, limit_id, window_generation)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 Codex 激活账本失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_codex_quota_activation_attempts_account
+             ON codex_quota_activation_attempts(account_id, started_at DESC)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 Codex 激活账本索引失败: {e}")))?;
         Ok(())
     }
 
@@ -3793,6 +3895,39 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_creates_activation_tables_and_unique_claim() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::set_user_version(&conn, 18)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(
+            &conn,
+            "codex_quota_activation_policies"
+        )?);
+        assert!(Database::table_exists(
+            &conn,
+            "codex_quota_activation_attempts"
+        )?);
+        let inserted = conn.execute(
+            "INSERT INTO codex_quota_activation_attempts
+             (account_id, limit_id, window_seconds, window_generation,
+              owner_provider_id, status, started_at)
+             VALUES ('a', 'five_hour', 18000, 'g1', 'p', 'reserved', 1)",
+            [],
+        )?;
+        assert_eq!(inserted, 1);
+        let duplicate = conn.execute(
+            "INSERT OR IGNORE INTO codex_quota_activation_attempts
+             (account_id, limit_id, window_seconds, window_generation,
+              owner_provider_id, status, started_at)
+             VALUES ('a', 'five_hour', 18000, 'g1', 'p', 'reserved', 2)",
+            [],
+        )?;
+        assert_eq!(duplicate, 0);
         Ok(())
     }
 }

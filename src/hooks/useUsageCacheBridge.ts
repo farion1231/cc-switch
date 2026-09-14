@@ -40,4 +40,14 @@ export function useUsageCacheBridge() {
       );
     }
   });
+
+  // A background activation performs a suppressed readback after the HTTP
+  // request. Its account-scoped cache is updated in Rust; invalidate the
+  // account-keyed React Query family without putting an account ID in the
+  // event payload.
+  useTauriEvent("codex-quota-cache-updated", () => {
+    void queryClient.invalidateQueries({
+      queryKey: ["codex_oauth", "quota"],
+    });
+  });
 }
