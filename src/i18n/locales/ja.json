@@ -3261,5 +3261,19 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "mcode": {
+    "description": "インストール済みの mcode CLI（0.4.5 以降）で MiniMax Code の認証情報を管理します。変更は新しい MCode の実行に適用されます。",
+    "source": "MiniMax の認証元",
+    "keySaved": "API キー保存済み",
+    "noKey": "API キー未設定",
+    "saveAndUse": "保存して使用",
+    "useApiKey": "API Key を使用",
+    "useTokenPlan": "Token Plan を使用",
+    "test": "API Key をテスト",
+    "loginHint": "Token Plan を使う前に mcode login でログインしてください。認証情報は MCode の設定に保存されます。",
+    "working": "処理中…",
+    "testPassed": "MiniMax API キーのテストに成功しました。",
+    "saved": "MCode の設定を保存しました。"
   }
 }

@@ -3261,5 +3261,19 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "mcode": {
+    "description": "使用已安装的 mcode CLI（0.4.5 或更新版本）管理 MiniMax Code 凭据，修改对新启动的 MCode 生效。",
+    "source": "MiniMax 凭据来源",
+    "keySaved": "已保存 API Key",
+    "noKey": "未配置 API Key",
+    "saveAndUse": "保存并使用",
+    "useApiKey": "使用 API Key",
+    "useTokenPlan": "使用 Token Plan",
+    "test": "测试 API Key",
+    "loginHint": "使用 Token Plan 前请先运行 mcode login 登录。凭据保存在 MCode 自己的配置中。",
+    "working": "处理中…",
+    "testPassed": "MiniMax API Key 测试通过。",
+    "saved": "已保存 MCode 设置。"
   }
 }
