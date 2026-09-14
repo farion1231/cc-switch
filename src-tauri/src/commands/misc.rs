@@ -1850,8 +1850,14 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         }
         #[cfg(target_os = "linux")]
         {
-            push_unique_path(&mut search_paths, std::path::PathBuf::from("/opt/Antigravity/bin"));
-            push_unique_path(&mut search_paths, std::path::PathBuf::from("/opt/Antigravity"));
+            push_unique_path(
+                &mut search_paths,
+                std::path::PathBuf::from("/opt/Antigravity/bin"),
+            );
+            push_unique_path(
+                &mut search_paths,
+                std::path::PathBuf::from("/opt/Antigravity"),
+            );
         }
         #[cfg(target_os = "macos")]
         {
@@ -2498,8 +2504,8 @@ fn resolve_path_default(
             continue;
         };
         let path = Path::new(first);
-        let preferred =
-            windows_runnable_sibling_for_extensionless_tool(path).unwrap_or_else(|| path.to_path_buf());
+        let preferred = windows_runnable_sibling_for_extensionless_tool(path)
+            .unwrap_or_else(|| path.to_path_buf());
         if let Ok(canon) = std::fs::canonicalize(preferred) {
             return Ok(Some(canon));
         }
@@ -6682,10 +6688,7 @@ mod tests {
                 "npm i -g @openai/codex@latest"
             );
             assert!(!static_fallback_command("codex").contains("codex update"));
-            assert_eq!(
-                static_fallback_command("gemini"),
-                ""
-            );
+            assert_eq!(static_fallback_command("gemini"), "");
             assert!(!static_fallback_command("gemini").contains("gemini update"));
             assert_eq!(
                 static_fallback_command("grok"),
