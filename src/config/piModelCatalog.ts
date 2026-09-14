@@ -184,7 +184,7 @@ export const piModelCatalog = {
     capabilities: {
       name: "gemini-3.1-flash-lite",
       reasoning: true,
-      input: ["text", "image","video","file","audio"],
+      input: ["text", "image"],
       contextWindow: 1_048_576,
       maxTokens: 65_536,
     },
