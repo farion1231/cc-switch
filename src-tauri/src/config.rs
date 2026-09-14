@@ -328,6 +328,12 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
     atomic_write_with_unix_mode(path, data, None)
 }
 
+/// Atomically writes a file while forcing the temporary and destination file
+/// to use `mode` on Unix. Other platforms use their native permission model.
+pub(crate) fn atomic_write_with_mode(path: &Path, data: &[u8], mode: u32) -> Result<(), AppError> {
+    atomic_write_with_unix_mode(path, data, Some(mode))
+}
+
 /// 原子写入包含凭据的文件。Unix 上新文件和替换文件始终使用 0600。
 pub fn atomic_write_private(path: &Path, data: &[u8]) -> Result<(), AppError> {
     atomic_write_with_unix_mode(path, data, Some(0o600))

@@ -73,6 +73,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   opencode: {},
   openclaw: {},
   hermes: {},
+  dsh: {},
   pi: {},
 });
 
@@ -85,6 +86,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   opencode: "",
   openclaw: "",
   hermes: "",
+  dsh: "",
   pi: "",
 });
 
@@ -101,6 +103,7 @@ let settingsState: Settings = {
   enableClaudePluginIntegration: false,
   claudeConfigDir: "/default/claude",
   codexConfigDir: "/default/codex",
+  dshConfigDir: "/default/dsh",
   language: "zh",
 };
 let appConfigDirOverride: string | null = null;
@@ -199,6 +202,7 @@ let mcpConfigs: McpConfigState = {
   opencode: {},
   openclaw: {},
   hermes: {},
+  dsh: {},
   pi: {},
 };
 
@@ -221,6 +225,7 @@ export const resetProviderState = () => {
     enableClaudePluginIntegration: false,
     claudeConfigDir: "/default/claude",
     codexConfigDir: "/default/codex",
+    dshConfigDir: "/default/dsh",
     language: "zh",
   };
   appConfigDirOverride = null;
@@ -269,6 +274,7 @@ export const resetProviderState = () => {
     opencode: {},
     openclaw: {},
     hermes: {},
+    dsh: {},
     pi: {},
   };
 };

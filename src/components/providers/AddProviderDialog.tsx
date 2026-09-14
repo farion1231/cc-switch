@@ -47,14 +47,16 @@ export function AddProviderDialog({
   onSubmit,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode and OpenClaw don't support universal providers
+  // These applications have dedicated configuration surfaces instead of the
+  // SQLite-backed universal-provider form.
   const showUniversalTab =
     appId !== "opencode" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "pi" &&
     appId !== "grokbuild" &&
-    appId !== "claude-desktop";
+    appId !== "claude-desktop" &&
+    appId !== "dsh";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
   );

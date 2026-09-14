@@ -47,6 +47,7 @@ export const handlers = [
     success(null),
   ),
   http.post(`${TAURI_ENDPOINT}/list_profiles`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_installed_skills`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));
@@ -259,8 +260,20 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/get_config_dir`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
-    return success(app === "claude" ? "/default/claude" : "/default/codex");
+    if (app === "claude") return success("/default/claude");
+    if (app === "codex") return success("/default/codex");
+    if (app === "gemini") return success("/default/gemini");
+    if (app === "grokbuild") return success("/default/grok");
+    if (app === "opencode") return success("/default/opencode");
+    if (app === "openclaw") return success("/default/openclaw");
+    return success("/default/hermes");
   }),
+
+  http.post(`${TAURI_ENDPOINT}/dsh_get_home`, () => success("/default/dsh")),
+  http.post(`${TAURI_ENDPOINT}/dsh_get_default_home`, () =>
+    success("/default/dsh"),
+  ),
+  http.post(`${TAURI_ENDPOINT}/dsh_open_home`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/is_portable_mode`, () => success(false)),
 

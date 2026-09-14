@@ -31,6 +31,7 @@ const APP_CONFIG: Array<{
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
+  { id: "dsh", icon: "deepseek", nameKey: "apps.dsh" },
   { id: "pi", icon: "pi", nameKey: "apps.pi" },
 ];
 
@@ -81,9 +82,15 @@ export function AppVisibilitySettings({
               disabled={isDisabled}
               onClick={() => handleToggle(app.id)}
               icon={app.icon}
-              name={t(app.nameKey)}
+              name={t(app.nameKey, {
+                defaultValue:
+                  app.id === "dsh" ? "DeepSeek Harness" : app.nameKey,
+              })}
             >
-              {t(app.nameKey)}
+              {t(app.nameKey, {
+                defaultValue:
+                  app.id === "dsh" ? "DeepSeek Harness" : app.nameKey,
+              })}
             </AppButton>
           );
         })}
