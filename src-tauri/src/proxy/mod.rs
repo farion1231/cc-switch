@@ -2,6 +2,13 @@
 //!
 //! 提供本地HTTP代理服务，支持多Provider故障转移和请求透传
 
+/// Authentication marker written only into CC Switch's isolated Claude Science
+/// profile. The forwarder consumes it locally and replaces it before upstream.
+pub(crate) const CLAUDE_SCIENCE_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED_CLAUDE_SCIENCE";
+pub(crate) const CLAUDE_SCIENCE_PROXY_USER_ID: &str = "00000000-0000-4000-8000-000000157210";
+pub(crate) const CLAUDE_SCIENCE_PROXY_ORG_ID: &str = "00000000-0000-4000-8000-000000157211";
+pub(crate) const CLAUDE_SCIENCE_PROXY_EMAIL: &str = "cc-switch-proxy@localhost.invalid";
+
 pub mod body_filter;
 pub mod cache_injector;
 pub mod circuit_breaker;
