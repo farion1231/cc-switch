@@ -1468,6 +1468,10 @@ mod tests {
             "gemini-3.8-flash"
         );
         assert_eq!(
+            normalize_antigravity_pricing_model("3.8"),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
             normalize_antigravity_pricing_model("gemini-3.8"),
             "gemini-3.8-flash"
         );
@@ -1476,8 +1480,60 @@ mod tests {
             "gemini-3.8-flash"
         );
         assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.8-flash-tiered"),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
             normalize_antigravity_pricing_model("gemini-3.8-flash-thinking"),
             "gemini-3.8-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("3.7flash"),
+            "gemini-3.7-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("3.7-flash"),
+            "gemini-3.7-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("3.7"),
+            "gemini-3.7-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.7"),
+            "gemini-3.7-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.7-flash-exp-b"),
+            "gemini-3.7-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.7-flash-thinking"),
+            "gemini-3.7-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("3.6flash"),
+            "gemini-3.6-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("3.6-flash"),
+            "gemini-3.6-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("3.6"),
+            "gemini-3.6-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.6"),
+            "gemini-3.6-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.6-flash-exp-a"),
+            "gemini-3.6-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.6-flash-thinking"),
+            "gemini-3.6-flash"
         );
         assert_eq!(normalize_antigravity_pricing_model("unknown"), "unknown");
         assert_eq!(
