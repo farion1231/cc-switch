@@ -2320,21 +2320,12 @@ impl RequestForwarder {
             short_value_hash(Some(&filtered_body))
         );
 
-        // 确定超时
+        // 确定超时（logical-request 级别；redirect 链共享同一预算）
         let timeout = if self.non_streaming_timeout.is_zero() {
             std::time::Duration::from_secs(600) // 默认 600 秒
         } else {
             self.non_streaming_timeout
         };
-
-        // 获取全局代理 URL
-        let upstream_proxy_url: Option<String> = super::http_client::get_current_proxy_url();
-
-        // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
-        let is_socks_proxy = upstream_proxy_url
-            .as_deref()
-            .map(|u| u.starts_with("socks5"))
-            .unwrap_or(false);
 
         let preserve_exact_header_case = should_preserve_exact_header_case(
             adapter.name(),
@@ -2343,6 +2334,13 @@ impl RequestForwarder {
             is_copilot,
         );
 
+        // 首个 hop 的原子路由决策：reqwest/hyper 分支判断、SOCKS/HTTP/direct
+        // 判断、explicit proxy 元数据与实际 Client 全部来自同一次快照
+        // （review finding MAJOR-2：禁止先读 metadata、再独立选 client）。
+        // 分支在请求启动时确定；链内每个 hop 重新解析（见下方循环）。
+        let initial_route = super::http_client::resolve_route_for_url(&url);
+        let is_socks_proxy = initial_route.proxy_kind == super::http_client::RouteProxyKind::Socks5;
+
         // 发送请求
         let response = if is_socks_proxy || !preserve_exact_header_case {
             // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
@@ -2350,55 +2348,243 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = super::http_client::get();
-            let mut request = client.request(method.clone(), &url);
-            if request_is_streaming {
-                // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
-                // 的首包/静默期超时控制，避免长流被总时长误杀。
-                request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
-            } else if !self.non_streaming_timeout.is_zero() {
-                request = request.timeout(self.non_streaming_timeout);
-            }
-            for (key, value) in &ordered_headers {
-                request = request.header(key, value);
-            }
-            let send = request.body(body_bytes).send();
-            let send_result = if request_is_streaming {
-                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
-                    timeout
+            // loopback upstream 必须直连：无显式代理时不得继承系统代理；
+            // redirect 由统一显式状态机处理（客户端禁用自动 redirect）：
+            // 同一 logical budget（初始请求不计，≤10 次 follow，第 11 次拒绝）
+            // + 单一 request-level deadline；method/body/敏感头/Referer 语义镜像
+            // reqwest 0.12 / tower-http 0.6（review findings P2-A/MAJOR-1/MINOR-2）。
+            let mut redirect_url = url.clone();
+            let mut redirect_method = method.clone();
+            let mut redirect_headers = ordered_headers.clone();
+            let mut redirect_body: Option<Vec<u8>> = Some(body_bytes);
+            let mut redirects_followed = 0usize;
+            let mut route = initial_route.clone();
+            let mut hop_referer: Option<http::header::HeaderValue> = None;
+            // 非流式：整条 redirect 链共享一个绝对的 deadline。
+            let non_streaming_deadline = std::time::Instant::now() + timeout;
+            // 流式：首包等待窗口同样是整条链共享的绝对窗口；拿到真正的
+            // streaming response 后交回 response_processor 的生命周期控制。
+            let header_budget = if self.streaming_first_byte_timeout.is_zero() {
+                timeout
+            } else {
+                self.streaming_first_byte_timeout
+            };
+            let header_deadline = std::time::Instant::now() + header_budget;
+
+            let reqwest_resp = loop {
+                // 诊断：每个 hop 的路由决策（同一次快照派生；见 resolve_route_for_url）。
+                log::debug!(
+                    "[GlobalProxy] route hop={} gen={} loopback_direct={} proxy_kind={:?}",
+                    redirects_followed,
+                    route.generation,
+                    route.loopback_direct,
+                    route.proxy_kind
+                );
+                let mut request = route.client.request(redirect_method.clone(), &redirect_url);
+                if request_is_streaming {
+                    // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
+                    // 的首包/静默期超时控制，避免长流被总时长误杀。
+                    request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
                 } else {
-                    self.streaming_first_byte_timeout
-                };
-                tokio::time::timeout(header_timeout, send)
-                    .await
-                    .map_err(|_| {
+                    let remaining =
+                        non_streaming_deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(ProxyError::Timeout(format!(
+                            "上游请求超时: {}s 内 redirect 链未完成",
+                            timeout.as_secs()
+                        )));
+                    }
+                    request = request.timeout(remaining);
+                }
+                // 本跳请求头 = 链头 map + 本跳 Referer（历史 hop 的 Referer
+                // 绝不进入链头 map；与 tower-http 的 headers/on_request 分离一致）。
+                let mut headers_for_hop = redirect_headers.clone();
+                if let Some(referer) = hop_referer.as_ref() {
+                    headers_for_hop.insert(http::header::REFERER, referer.clone());
+                }
+                for (key, value) in &headers_for_hop {
+                    request = request.header(key, value);
+                }
+                if let Some(body) = redirect_body.as_ref() {
+                    request = request.body(body.clone());
+                }
+                let send = request.send();
+                let send_result = if request_is_streaming {
+                    let remaining =
+                        header_deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(ProxyError::Timeout(format!(
+                            "流式响应首包超时: {}s（上游未返回响应头）",
+                            header_budget.as_secs()
+                        )));
+                    }
+                    tokio::time::timeout(remaining, send).await.map_err(|_| {
                         ProxyError::Timeout(format!(
                             "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
+                            header_budget.as_secs()
                         ))
                     })?
-            } else {
-                send.await
+                } else {
+                    send.await
+                };
+                let resp = send_result.map_err(map_reqwest_send_error)?;
+
+                // 统一 redirect 记账（与 raw hyper 分支共用同一实现）：任何类别
+                // 组合都消费同一个 logical budget；第 11 次 follow 被拒绝。
+                match apply_redirect_bookkeeping(
+                    &redirect_url,
+                    resp.status(),
+                    resp.headers(),
+                    &mut redirect_method,
+                    &mut redirect_headers,
+                    &mut redirect_body,
+                    redirects_followed,
+                )? {
+                    Some((next_url, referer)) => {
+                        hop_referer = referer;
+                        redirect_url = next_url;
+                        redirects_followed += 1;
+                        // 下一跳：新的原子路由决策（ONE HOP = ONE SNAPSHOT）。
+                        route = super::http_client::resolve_route_for_url(&redirect_url);
+                        continue;
+                    }
+                    None => break resp,
+                }
             };
-            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
             ProxyResponse::Reqwest(reqwest_resp)
         } else {
-            // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
-            // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let uri: http::Uri = url.parse().map_err(|e| {
-                ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
-            })?;
-            super::hyper_client::send_request(
-                uri,
-                &target_for_log,
-                method.clone(),
-                ordered_headers,
-                extensions.clone(),
-                body_bytes,
-                timeout,
-                upstream_proxy_url.as_deref(),
-            )
-            .await?
+            // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）；
+            // redirect 由与 reqwest 分支相同的统一状态机处理：单一 logical
+            // budget、单一 request-level deadline、同一 method/body/敏感头/
+            // Referer 语义，且每跳重新解析一个原子 RouteDecision（review
+            // finding MAJOR-3：两侧 transport 必须共享同一链语义）。
+            let mut redirect_url = url.clone();
+            let mut redirect_method = method.clone();
+            let mut redirect_headers = ordered_headers.clone();
+            let mut redirect_body: Option<Vec<u8>> = Some(body_bytes);
+            let mut redirects_followed = 0usize;
+            let mut route = initial_route.clone();
+            let mut hop_referer: Option<http::header::HeaderValue> = None;
+            let non_streaming_deadline = std::time::Instant::now() + timeout;
+            let header_budget = if self.streaming_first_byte_timeout.is_zero() {
+                timeout
+            } else {
+                self.streaming_first_byte_timeout
+            };
+            let header_deadline = std::time::Instant::now() + header_budget;
+            loop {
+                let uri: http::Uri = redirect_url.parse().map_err(|e| {
+                    ProxyError::ForwardFailed(format!(
+                        "Invalid upstream URL ({target_for_log}): {e}"
+                    ))
+                })?;
+                let hop_timeout = if request_is_streaming {
+                    // 流式：交由 response_processor 控制生命周期，仅用绝对首包
+                    // 窗口约束 header 获取阶段。
+                    std::time::Duration::from_secs(24 * 60 * 60)
+                } else {
+                    let remaining =
+                        non_streaming_deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(ProxyError::Timeout(format!(
+                            "上游请求超时: {}s 内 redirect 链未完成",
+                            timeout.as_secs()
+                        )));
+                    }
+                    remaining
+                };
+                // 本跳请求头 = 链头 map + 本跳 Referer（历史 hop 的 Referer 绝不
+                // 进入链头 map；与 tower-http 的 headers/on_request 分离一致）。
+                let mut headers_for_hop = redirect_headers.clone();
+                if let Some(referer) = hop_referer.as_ref() {
+                    headers_for_hop.insert(http::header::REFERER, referer.clone());
+                }
+                // 本跳 transport 由同一 RouteDecision 决定：SOCKS5 代理无法用
+                // hyper 的 HTTP-CONNECT 表达，切换为该决策自带的 reqwest 客户端
+                // （review finding：链内 transport 重选必须与决策同源）。
+                let hop_resp = if route.proxy_kind == super::http_client::RouteProxyKind::Socks5 {
+                    let mut request = route.client.request(redirect_method.clone(), &redirect_url);
+                    request = if request_is_streaming {
+                        request.timeout(std::time::Duration::from_secs(24 * 60 * 60))
+                    } else {
+                        request.timeout(hop_timeout)
+                    };
+                    for (key, value) in &headers_for_hop {
+                        request = request.header(key, value);
+                    }
+                    if let Some(body) = redirect_body.as_ref() {
+                        request = request.body(body.clone());
+                    }
+                    let send = request.send();
+                    let send_result = if request_is_streaming {
+                        let remaining =
+                            header_deadline.saturating_duration_since(std::time::Instant::now());
+                        if remaining.is_zero() {
+                            return Err(ProxyError::Timeout(format!(
+                                "流式响应首包超时: {}s（上游未返回响应头）",
+                                header_budget.as_secs()
+                            )));
+                        }
+                        tokio::time::timeout(remaining, send).await.map_err(|_| {
+                            ProxyError::Timeout(format!(
+                                "流式响应首包超时: {}s（上游未返回响应头）",
+                                header_budget.as_secs()
+                            ))
+                        })?
+                    } else {
+                        send.await
+                    };
+                    ProxyResponse::Reqwest(send_result.map_err(map_reqwest_send_error)?)
+                } else {
+                    let send = super::hyper_client::send_request(
+                        uri,
+                        &target_for_log,
+                        redirect_method.clone(),
+                        headers_for_hop,
+                        extensions.clone(),
+                        redirect_body.clone().unwrap_or_default(),
+                        hop_timeout,
+                        route.explicit_proxy_url.as_deref(),
+                    );
+                    if request_is_streaming {
+                        let remaining =
+                            header_deadline.saturating_duration_since(std::time::Instant::now());
+                        if remaining.is_zero() {
+                            return Err(ProxyError::Timeout(format!(
+                                "流式响应首包超时: {}s（上游未返回响应头）",
+                                header_budget.as_secs()
+                            )));
+                        }
+                        tokio::time::timeout(remaining, send).await.map_err(|_| {
+                            ProxyError::Timeout(format!(
+                                "流式响应首包超时: {}s（上游未返回响应头）",
+                                header_budget.as_secs()
+                            ))
+                        })??
+                    } else {
+                        send.await?
+                    }
+                };
+                match apply_redirect_bookkeeping(
+                    &redirect_url,
+                    hop_resp.status(),
+                    hop_resp.headers(),
+                    &mut redirect_method,
+                    &mut redirect_headers,
+                    &mut redirect_body,
+                    redirects_followed,
+                )? {
+                    Some((next_url, referer)) => {
+                        hop_referer = referer;
+                        redirect_url = next_url;
+                        redirects_followed += 1;
+                        // 下一跳：新的原子路由决策（ONE HOP = ONE SNAPSHOT）。
+                        route = super::http_client::resolve_route_for_url(&redirect_url);
+                        continue;
+                    }
+                    None => break hop_resp,
+                }
+            }
         };
 
         // 检查响应状态
@@ -3561,6 +3747,140 @@ fn should_force_identity_encoding(
     headers: &axum::http::HeaderMap,
 ) -> bool {
     is_streaming_request(endpoint, body, headers)
+}
+
+/// logical-request 级别的 redirect 预算：跨所有 hop（同类别/跨类别/混合链）
+/// 共享；初始 HTTP 请求不计，允许 10 次 follow，第 11 次拒绝——与 reqwest
+/// 默认 10-hop 单链语义一致（review finding MAJOR-1）。
+const MAX_LOGICAL_REDIRECTS: usize = 10;
+
+/// 统一 redirect 记账（reqwest 与 raw hyper 两条 transport 路径共用）：
+/// 预算门（第 11 次 follow 拒绝）+ method/body/payload-header/敏感头语义
+/// （镜像 reqwest 0.12 / tower-http 0.6）。返回 `Some((next_url, referer))`
+/// = 继续下一跳（referer = 本跳应携带的 Referer，None = 不发送——HTTPS→HTTP
+/// 降级；历史 hop 的 Referer 绝不写入链头 header map，与 tower-http 的
+/// `this.headers` / `on_request` 分离语义一致）；`None` = 当前响应不是
+/// redirect（调用方直接使用该响应）。
+#[allow(clippy::too_many_arguments)]
+fn apply_redirect_bookkeeping(
+    from_url: &str,
+    status: reqwest::StatusCode,
+    resp_headers: &http::HeaderMap,
+    redirect_method: &mut http::Method,
+    redirect_headers: &mut http::HeaderMap,
+    redirect_body: &mut Option<Vec<u8>>,
+    redirects_followed: usize,
+) -> Result<Option<(String, Option<http::HeaderValue>)>, ProxyError> {
+    let Some(next_url) = next_redirect_target(from_url, status, resp_headers) else {
+        return Ok(None);
+    };
+    if redirects_followed >= MAX_LOGICAL_REDIRECTS {
+        return Err(ProxyError::ForwardFailed(format!(
+            "上游重定向次数超过上限（{MAX_LOGICAL_REDIRECTS} 次重定向）"
+        )));
+    }
+    let (new_method, drop_body, drop_payload_headers) =
+        redirect_method_transform(redirect_method, status);
+    if drop_body {
+        *redirect_body = None;
+    }
+    if drop_payload_headers {
+        for header in [
+            http::header::CONTENT_TYPE,
+            http::header::CONTENT_LENGTH,
+            http::header::CONTENT_ENCODING,
+            http::header::TRANSFER_ENCODING,
+        ] {
+            redirect_headers.remove(header);
+        }
+    }
+    if redirect_cross_host(from_url, &next_url) {
+        for header in [
+            http::header::AUTHORIZATION,
+            http::header::COOKIE,
+            http::header::PROXY_AUTHORIZATION,
+            http::header::WWW_AUTHENTICATE,
+        ] {
+            redirect_headers.remove(header);
+        }
+        redirect_headers.remove("cookie2");
+    }
+    // Referer 语义镜像 reqwest（make_referer + tower-http 的链头/hop 分离）：
+    // 下一跳携带 Referer = 上一跳 URL；HTTPS→HTTP 降级时不发送。返回值由调用方
+    // 在发送前并入该跳的请求头，绝不写回 redirect_headers。
+    let referer = redirect_referer(from_url, &next_url);
+    *redirect_method = new_method;
+    Ok(Some((next_url.to_string(), referer)))
+}
+
+/// 生成下一跳的 Referer（镜像 reqwest `make_referer`，reqwest-0.12.28
+/// `src/redirect.rs:293`）：Referer = 上一跳 URL，剥离 user/password/fragment；
+/// HTTPS→HTTP 降级时不发送（返回 None）。review finding MINOR-2。
+pub(crate) fn redirect_referer(previous: &str, next: &reqwest::Url) -> Option<http::HeaderValue> {
+    let Ok(mut referer) = reqwest::Url::parse(previous) else {
+        return None;
+    };
+    if next.scheme() == "http" && referer.scheme() == "https" {
+        return None;
+    }
+    let _ = referer.set_username("");
+    let _ = referer.set_password(None);
+    referer.set_fragment(None);
+    referer.as_str().parse().ok()
+}
+
+/// 解析 30x 响应的下一跳目标（仅在跨类别 hop 需要重选 transport 时调用）。
+fn next_redirect_target(
+    current: &str,
+    status: reqwest::StatusCode,
+    headers: &http::HeaderMap,
+) -> Option<reqwest::Url> {
+    if !matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let location = headers.get(http::header::LOCATION)?.to_str().ok()?;
+    let base = reqwest::Url::parse(current).ok()?;
+    base.join(location).ok()
+}
+
+/// 镜像 reqwest/tower-http 的 redirect method/body 变换。
+///
+/// 返回 (新 method, 是否丢弃 body, 是否移除 payload headers)：
+/// - 301/302：POST -> GET（丢 body 与 payload headers），其余方法保持不变；
+/// - 303：非 HEAD -> GET，恒丢 body 与 payload headers；
+/// - 307/308：method/body 不变。
+fn redirect_method_transform(
+    method: &http::Method,
+    status: reqwest::StatusCode,
+) -> (http::Method, bool, bool) {
+    match status.as_u16() {
+        301 | 302 => {
+            if *method == http::Method::POST {
+                (http::Method::GET, true, true)
+            } else {
+                (method.clone(), false, false)
+            }
+        }
+        303 => {
+            let new_method = if *method == http::Method::HEAD {
+                method.clone()
+            } else {
+                http::Method::GET
+            };
+            (new_method, true, true)
+        }
+        307 | 308 => (method.clone(), false, false),
+        _ => (method.clone(), false, false),
+    }
+}
+
+/// 跨 host/port 判断（镜像 reqwest 的 remove_sensitive_headers 条件）。
+fn redirect_cross_host(previous: &str, next: &reqwest::Url) -> bool {
+    let Ok(previous) = reqwest::Url::parse(previous) else {
+        return true;
+    };
+    next.host_str() != previous.host_str()
+        || next.port_or_known_default() != previous.port_or_known_default()
 }
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
