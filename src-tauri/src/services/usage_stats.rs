@@ -2094,7 +2094,32 @@ fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String
 
 pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
     let normalized = model_id.trim().to_ascii_lowercase();
-    normalized.is_empty() || matches!(normalized.as_str(), "unknown" | "null" | "none")
+    normalized.is_empty()
+        || matches!(normalized.as_str(), "unknown" | "null" | "none")
+        || normalized.starts_with("model_placeholder_")
+}
+
+/// Maps Antigravity placeholders and physical model aliases to billable model IDs.
+pub(crate) fn resolve_antigravity_pricing_placeholder(normalized: &str) -> Option<String> {
+    let without_thinking = normalized.strip_suffix("-thinking").unwrap_or(normalized);
+    match without_thinking {
+        "model_placeholder_m187" | "model_placeholder_m20" | "gemini-default" => {
+            Some("gemini-3.5-flash".to_string())
+        }
+        "model_placeholder_m132" | "gemini-3-flash-a" => Some("gemini-3.5-flash".to_string()),
+        "model_placeholder_m36"
+        | "gemini-3.1-pro-low"
+        | "model_placeholder_m16"
+        | "gemini-pro-default" => Some("gemini-3.1-pro-preview".to_string()),
+        "model_placeholder_m35" | "claude-sonnet-4-6" => {
+            Some("claude-sonnet-4-6-20260217".to_string())
+        }
+        "model_placeholder_m26" | "claude-opus-4-6" => Some("claude-opus-4-6-20260206".to_string()),
+        "gpt-oss-120b-medium" => Some("gpt-oss-120b-medium".to_string()),
+        "unknown" | "null" | "none" | "" => Some("unknown".to_string()),
+        other if other.starts_with("model_placeholder_") => Some("unknown".to_string()),
+        _ => None,
+    }
 }
 
 fn query_model_pricing_exact(
@@ -2147,7 +2172,9 @@ fn query_model_pricing_prefix(
 }
 
 fn model_pricing_candidates(model_id: &str) -> Vec<String> {
-    let cleaned = clean_model_id_for_pricing(model_id);
+    let resolved = resolve_antigravity_pricing_placeholder(&model_id.trim().to_ascii_lowercase())
+        .unwrap_or_else(|| model_id.to_string());
+    let cleaned = clean_model_id_for_pricing(&resolved);
     if is_placeholder_pricing_model(&cleaned) {
         return Vec::new();
     }
