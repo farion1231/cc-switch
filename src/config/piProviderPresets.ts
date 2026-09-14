@@ -413,11 +413,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "APIKEY.FUN",
     providerKey: "cc-switch-apikey-fun",
-    websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    websiteUrl: "https://apikey.fan",
+    apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
     settingsConfig: {
       name: "APIKEY.FUN",
-      baseUrl: "https://api.apikey.fun",
+      baseUrl: "https://api.apikey.fan",
       api: "anthropic-messages",
       apiKey: "",
       models: [

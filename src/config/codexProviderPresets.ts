@@ -484,8 +484,8 @@ requires_openai_auth = true`,
   },
   {
     name: "APIKEY.FUN",
-    websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    websiteUrl: "https://apikey.fan",
+    apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
@@ -496,10 +496,11 @@ disable_response_storage = true
 
 [model_providers.custom]
 name = "APIKEY.FUN"
-base_url = "https://api.apikey.fun/v1"
+base_url = "https://api.apikey.fan/v1"
 wire_api = "responses"
 requires_openai_auth = true`,
     endpointCandidates: [
+      "https://api.apikey.fan/v1",
       "https://api.apikey.fun/v1",
       "https://slb.apikey.fun/v1",
     ],

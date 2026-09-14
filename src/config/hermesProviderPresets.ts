@@ -425,11 +425,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "APIKEY.FUN",
-    websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    websiteUrl: "https://apikey.fan",
+    apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
     settingsConfig: {
       name: "apikeyfun",
-      base_url: "https://api.apikey.fun",
+      base_url: "https://api.apikey.fan",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
