@@ -38,12 +38,20 @@ fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
         tags: vec![],
     };
     state.db.save_mcp_server(&server).unwrap();
+    let error = McpService::import_from_all_apps(&state).unwrap_err();
+    assert!(error.to_string().contains("context7"));
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()["context7"]
+            .apps
+            .mcode
+    );
     McpService::sync_enabled_for_app(&state, &AppType::Mcode).unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap(),
         native
     );
     McpService::toggle_app(&state, "context7", AppType::Mcode, true).unwrap();
+    McpService::import_from_all_apps(&state).unwrap();
     McpService::toggle_app(&state, "context7", AppType::Mcode, false).unwrap();
     let disabled: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();

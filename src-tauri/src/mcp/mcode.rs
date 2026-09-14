@@ -70,6 +70,11 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
             .unwrap_or(true);
         spec.as_object_mut().unwrap().remove("enabled");
         let server = if let Some(mut server) = existing.shift_remove(id) {
+            if unified_spec(&server.server) != spec {
+                return Err(AppError::InvalidInput(format!(
+                    "MCode MCP '{id}' conflicts with an existing server; its native configuration was preserved"
+                )));
+            }
             server.apps.mcode = enabled;
             server
         } else {
@@ -99,6 +104,8 @@ fn unified_spec(native: &Value) -> Value {
         || (spec.is_object() && spec.get("type").is_none() && spec.get("url").is_some())
     {
         spec["type"] = json!("http");
+    } else if spec.is_object() && spec.get("type").is_none() && spec.get("command").is_some() {
+        spec["type"] = json!("stdio");
     }
     spec
 }
