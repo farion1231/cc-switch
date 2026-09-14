@@ -241,10 +241,18 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
             ));
         }
 
-        let proxy = reqwest::Proxy::all(url)
+        // socks5 语义下 reqwest 会在本地解析目标域名，只把 IP 字面量交给代理；
+        // http(s):// 的 CONNECT 则始终把域名交给代理。同一代理端口因 scheme 不同
+        // 走出两种分流行为（代理侧只能按 IP 规则匹配，容易走错出口）。
+        // 统一按远程解析（socks5h）发出，与 http:// 行为对齐。
+        let effective = with_remote_dns(parsed);
+        let proxy = reqwest::Proxy::all(effective.as_str())
             .map_err(|e| format!("Invalid proxy URL '{}': {}", mask_url(url), e))?;
         builder = builder.proxy(proxy);
-        log::debug!("[GlobalProxy] Proxy configured: {}", mask_url(url));
+        log::debug!(
+            "[GlobalProxy] Proxy configured: {}",
+            mask_url(effective.as_str())
+        );
     } else {
         // 未设置全局代理时，让 reqwest 自动检测系统代理（环境变量）
         // 若系统代理指向本机，禁用系统代理避免自环
@@ -261,6 +269,18 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
     builder
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
+}
+
+/// 把 socks5:// 规范化为 socks5h://（目标域名交给代理解析），
+/// 其余 scheme 原样返回。
+fn with_remote_dns(proxy: url::Url) -> url::Url {
+    if proxy.scheme() == "socks5" {
+        let mut remote = proxy;
+        let _ = remote.set_scheme("socks5h");
+        remote
+    } else {
+        proxy
+    }
 }
 
 fn system_proxy_points_to_loopback() -> bool {
@@ -397,6 +417,32 @@ mod tests {
     fn test_build_client_with_socks5_proxy() {
         let result = build_client(Some("socks5://127.0.0.1:1080"));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_with_remote_dns_rewrites_socks5() {
+        let url = url::Url::parse("socks5://127.0.0.1:1080").unwrap();
+        assert_eq!(with_remote_dns(url).as_str(), "socks5h://127.0.0.1:1080");
+
+        // 凭据等其他部分保持不变
+        let url = url::Url::parse("socks5://user:pass@proxy.example.com:1080").unwrap();
+        assert_eq!(
+            with_remote_dns(url).as_str(),
+            "socks5h://user:pass@proxy.example.com:1080"
+        );
+    }
+
+    #[test]
+    fn test_with_remote_dns_keeps_other_schemes() {
+        for raw in [
+            "socks5h://127.0.0.1:1080",
+            "http://127.0.0.1:7890",
+            "https://proxy.example.com:443",
+        ] {
+            let url = url::Url::parse(raw).unwrap();
+            // round-trip 解析比较，避免 special scheme 的路径规范化差异
+            assert_eq!(with_remote_dns(url), url::Url::parse(raw).unwrap());
+        }
     }
 
     #[test]
