@@ -7,6 +7,13 @@ import type {
   AppProxyConfig,
 } from "@/types/proxy";
 
+export type ModelRouteTestInput = {
+  enabled: boolean;
+  matchMode: "exact" | "prefix" | "suffix" | "contains" | "regex";
+  source: string;
+  target: string;
+};
+
 export const proxyApi = {
   // ========== 代理服务器控制 API ==========
 
@@ -65,6 +72,14 @@ export const proxyApi = {
   // 更新指定应用的代理配置
   async updateProxyConfigForApp(config: AppProxyConfig): Promise<void> {
     return invoke("update_proxy_config_for_app", { config });
+  },
+
+  // 使用 Rust 代理的实际匹配逻辑测试模型路由
+  async testModelRoutes(
+    routes: ModelRouteTestInput[],
+    model: string,
+  ): Promise<number | null> {
+    return invoke("test_model_routes", { routes, model });
   },
 
   // ========== 计费默认配置 API ==========

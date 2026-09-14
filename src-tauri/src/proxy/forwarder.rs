@@ -3,6 +3,10 @@
 //! 负责将请求转发到上游Provider，支持故障转移
 
 use super::hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES};
+use super::model_router::{
+    apply_model_route_to_endpoint, apply_model_routing, strip_one_m_suffix_for_upstream,
+    strip_one_m_suffix_for_upstream_from_body,
+};
 use super::{
     body_filter::filter_private_params_with_whitelist,
     content_encoding::{decompress_body_with_limit, get_content_encoding},
@@ -1245,29 +1249,33 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
-        let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
+        let routed_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
         } else {
-            let (mapped_body, _original_model, _mapped_model) =
-                super::model_mapper::apply_model_mapping(body.clone(), provider);
-            mapped_body
+            let (routed_body, _original_model, _routed_model) =
+                apply_model_routing(body.clone(), provider);
+            routed_body
         };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mut mapped_body = normalize_thinking_type(mapped_body);
+        let mut routed_body = normalize_thinking_type(routed_body);
+
+        // Gemini 原生协议将模型放在 URL 中，而不是 JSON 请求体中。
+        // 对不含模型的端点（包括 Claude 路由），此函数不会修改 URL。
+        let endpoint = apply_model_route_to_endpoint(endpoint.to_string(), provider);
 
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
         // the optional Responses -> Chat/Anthropic bridge.
         if matches!(app_type, AppType::GrokBuild) {
-            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            super::providers::apply_codex_upstream_model(provider, &mut routed_body);
         }
 
         if is_copilot {
-            mapped_body =
-                super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
-            self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
+            routed_body =
+                super::providers::copilot_model_map::apply_copilot_model_normalization(routed_body);
+            self.apply_copilot_live_model_resolution(provider, &mut routed_body)
                 .await;
             // Strip the [1M] context marker after Copilot normalization/resolve.
             // A user's mapped value (e.g. "gpt-5.6-sol[1M]") carries [1M] as a
@@ -1276,15 +1284,13 @@ impl RequestForwarder {
             // rewrites claude-xxx[1M] into the "-1m" dash form Copilot accepts, and
             // the strip helper only touches the "[1m]" bracket form, so "-1m"
             // variants pass through unchanged.
-            mapped_body =
-                super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
+            routed_body = strip_one_m_suffix_for_upstream_from_body(routed_body);
         } else if !codex_responses_to_anthropic {
             // Skip on the Codex→Anthropic path: stripping [1m] here would break both the
             // model-catalog match (apply_codex_upstream_model) and the transform's own
             // strip+`context-1m` beta detection. The marker is stripped later, on the
             // final anthropic_body.
-            mapped_body =
-                super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
+            routed_body = strip_one_m_suffix_for_upstream_from_body(routed_body);
         }
 
         // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---
@@ -1299,7 +1305,7 @@ impl RequestForwarder {
             //    孤立 tool_result 仍保持 tool_result 类型，分类能正确识别为 agent
             let has_anthropic_beta = headers.contains_key("anthropic-beta");
             let classification = super::copilot_optimizer::classify_request(
-                &mapped_body,
+                &routed_body,
                 has_anthropic_beta,
                 self.copilot_optimizer_config.compact_detection,
                 self.copilot_optimizer_config.subagent_detection,
@@ -1315,17 +1321,17 @@ impl RequestForwarder {
 
             // 2. 孤立 tool_result 清理 — 分类完成后再清洗
             //    防止上游 API 因不匹配的 tool_result 报错导致重试/重复计费
-            mapped_body = super::copilot_optimizer::sanitize_orphan_tool_results(mapped_body);
+            routed_body = super::copilot_optimizer::sanitize_orphan_tool_results(routed_body);
 
             // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
             if self.copilot_optimizer_config.tool_result_merging {
-                mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
+                routed_body = super::copilot_optimizer::merge_tool_results(routed_body);
             }
 
             // 3.5. 主动剥离 thinking block — Copilot 走 OpenAI 兼容端点不识别该块
             //      避免上游拒绝后由 rectifier 反应式重试（首次请求已消耗 quota）
             if self.copilot_optimizer_config.strip_thinking {
-                mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
+                routed_body = super::copilot_optimizer::strip_thinking_blocks(routed_body);
             }
 
             // 4. Warmup 小模型降级
@@ -1334,7 +1340,7 @@ impl RequestForwarder {
                     "[Copilot] Warmup 请求降级到模型: {}",
                     self.copilot_optimizer_config.warmup_model
                 );
-                mapped_body["model"] =
+                routed_body["model"] =
                     serde_json::json!(&self.copilot_optimizer_config.warmup_model);
             }
 
@@ -1373,7 +1379,7 @@ impl RequestForwarder {
                 .unwrap_or_default();
             let det_request_id = if self.copilot_optimizer_config.deterministic_request_id {
                 Some(super::copilot_optimizer::deterministic_request_id(
-                    &mapped_body,
+                    &routed_body,
                     &session_id,
                 ))
             } else {
@@ -1420,7 +1426,7 @@ impl RequestForwarder {
         }
         let resolved_claude_api_format = if adapter.name() == "Claude" {
             Some(
-                self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
+                self.resolve_claude_api_format(provider, &routed_body, is_copilot)
                     .await,
             )
         } else {
@@ -1429,11 +1435,11 @@ impl RequestForwarder {
         if adapter.name() == "Claude" {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
                 super::providers::normalize_anthropic_messages_for_provider(
-                    &mut mapped_body,
+                    &mut routed_body,
                     provider,
                     api_format,
                 );
-                self.apply_media_prevention(&mut mapped_body, provider);
+                self.apply_media_prevention(&mut routed_body, provider);
             }
         }
         let needs_transform = match resolved_claude_api_format.as_deref() {
@@ -1453,18 +1459,18 @@ impl RequestForwarder {
                 .and_then(|meta| meta.impersonate_claude_code)
                 == Some(true);
         let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
-            rewrite_codex_responses_endpoint_to_chat(endpoint)
+            rewrite_codex_responses_endpoint_to_chat(&endpoint)
         } else if codex_responses_to_anthropic {
-            rewrite_codex_responses_endpoint_to_anthropic(endpoint)
+            rewrite_codex_responses_endpoint_to_anthropic(&endpoint)
         } else if needs_transform && adapter.name() == "Claude" {
             let api_format = resolved_claude_api_format
                 .as_deref()
                 .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-            rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+            rewrite_claude_transform_endpoint(&endpoint, api_format, is_copilot, &routed_body)
         } else {
             (
-                endpoint.to_string(),
-                split_endpoint_and_query(endpoint)
+                endpoint.clone(),
+                split_endpoint_and_query(&endpoint)
                     .1
                     .map(ToString::to_string),
             )
@@ -1517,7 +1523,7 @@ impl RequestForwarder {
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
         // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。
-        let mut outbound_model = mapped_body
+        let mut outbound_model = routed_body
             .get("model")
             .and_then(|m| m.as_str())
             .filter(|m| !m.is_empty())
@@ -1529,25 +1535,25 @@ impl RequestForwarder {
 
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
-            let mut mapped_body = mapped_body;
-            let explicit_prompt_cache_key = mapped_body
+            let mut routed_body = routed_body;
+            let explicit_prompt_cache_key = routed_body
                 .get("prompt_cache_key")
                 .and_then(|value| value.as_str())
                 .map(ToString::to_string);
             let restored = self
                 .codex_chat_history
-                .enrich_request(&mut mapped_body)
+                .enrich_request(&mut routed_body)
                 .await;
             if restored > 0 {
                 log::debug!(
                     "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
-            super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            super::providers::apply_codex_chat_upstream_model(provider, &mut routed_body);
             let reasoning_config =
-                super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+                super::providers::resolve_codex_chat_reasoning_config(provider, &routed_body);
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
-                mapped_body,
+                routed_body,
                 reasoning_config.as_ref(),
             )?;
             super::providers::inject_codex_chat_prompt_cache_key(
@@ -1559,8 +1565,8 @@ impl RequestForwarder {
             );
             chat_body
         } else if codex_responses_to_anthropic {
-            let mut mapped_body = mapped_body;
-            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            let mut routed_body = routed_body;
+            super::providers::apply_codex_upstream_model(provider, &mut routed_body);
             // Per-provider output ceiling override. Codex does not forward its
             // `model_max_output_tokens` in the request body, so honor the value
             // configured on the provider here — it takes precedence over any
@@ -1575,7 +1581,7 @@ impl RequestForwarder {
                 .and_then(|meta| meta.max_output_tokens)
                 .filter(|v| *v > 0)
             {
-                mapped_body["max_output_tokens"] = Value::from(max_out);
+                routed_body["max_output_tokens"] = Value::from(max_out);
             }
             // Anthropic requires max_tokens; fall back to this default only when the
             // Codex request omits max_output_tokens (rare — Codex normally sends it).
@@ -1586,7 +1592,7 @@ impl RequestForwarder {
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
             let mut anthropic_body =
                 super::providers::transform_codex_anthropic::responses_request_to_anthropic(
-                    mapped_body,
+                    routed_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
                 )?;
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
@@ -1595,7 +1601,7 @@ impl RequestForwarder {
             // name carrying [1m] from the provider config, so strip it once more on
             // the final body here.
             if let Some(model) = anthropic_body.get("model").and_then(|v| v.as_str()) {
-                let stripped = super::model_mapper::strip_one_m_suffix_for_upstream(model);
+                let stripped = strip_one_m_suffix_for_upstream(model);
                 if stripped != model {
                     codex_anthropic_one_m = true;
                     anthropic_body["model"] = Value::String(stripped.to_string());
@@ -1620,7 +1626,7 @@ impl RequestForwarder {
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
                 super::providers::transform_claude_request_for_api_format(
-                    mapped_body,
+                    routed_body,
                     provider,
                     api_format,
                     self.session_client_provided
@@ -1628,10 +1634,10 @@ impl RequestForwarder {
                     Some(self.gemini_shadow.as_ref()),
                 )?
             } else {
-                adapter.transform_request(mapped_body, provider)?
+                adapter.transform_request(routed_body, provider)?
             }
         } else {
-            mapped_body
+            routed_body
         };
 
         // Native Responses passthrough to a strict third-party gateway (xAI).

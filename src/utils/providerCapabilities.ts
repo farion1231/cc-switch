@@ -22,6 +22,23 @@ export type CodexOfficialIdentity =
 const nonEmptyString = (value: unknown): boolean =>
   typeof value === "string" && value.trim().length > 0;
 
+// 判断供应商是否存在至少一条会生效的模型路由。
+export function hasEnabledModelRoutes(
+  provider: Pick<Provider, "settingsConfig">,
+): boolean {
+  const routes = provider.settingsConfig?.modelRoutes;
+  if (!Array.isArray(routes)) return false;
+
+  return routes.some(
+    (route) =>
+      route &&
+      typeof route === "object" &&
+      route.enabled !== false &&
+      nonEmptyString(route.source) &&
+      nonEmptyString(route.target),
+  );
+}
+
 function hasExplicitCodexThirdPartyUpstream(
   settings: Record<string, unknown>,
 ): boolean {

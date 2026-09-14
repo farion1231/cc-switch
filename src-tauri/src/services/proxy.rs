@@ -6,6 +6,7 @@ use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
+use crate::proxy::model_router::strip_one_m_suffix_for_upstream;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
@@ -672,9 +673,7 @@ impl ProxyService {
     }
 
     fn strip_claude_one_m_marker(model: &str) -> String {
-        crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model)
-            .trim()
-            .to_string()
+        strip_one_m_suffix_for_upstream(model).trim().to_string()
     }
 
     fn claude_provider_with_effective_settings(

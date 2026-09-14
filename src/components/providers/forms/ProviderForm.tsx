@@ -93,6 +93,11 @@ import {
   type PricingModelSourceOption,
 } from "./ProviderAdvancedConfig";
 import {
+  ModelRoutingField,
+  type ModelRouteMatchMode,
+  type ModelRouteRow,
+} from "./ModelRoutingField";
+import {
   useProviderCategory,
   useApiKeyState,
   useBaseUrlState,
@@ -203,6 +208,52 @@ export const normalizeCodexCatalogModelsForSave = (
   }
 
   return normalized;
+};
+
+export const normalizeProviderModelRoutesForSave = (
+  rows: ModelRouteRow[],
+): Array<{
+  enabled: boolean;
+  matchMode: ModelRouteMatchMode;
+  source: string;
+  target: string;
+}> =>
+  rows
+    .map(({ enabled, matchMode, source, target }) => ({
+      enabled,
+      matchMode,
+      source: source.trim(),
+      target: target.trim(),
+    }))
+    .filter(({ source, target }) => source.length > 0 && target.length > 0);
+
+const readProviderModelRoutes = (raw: unknown): ModelRouteRow[] => {
+  if (Array.isArray(raw)) {
+    return raw.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const value = entry as Record<string, unknown>;
+      const source = typeof value.source === "string" ? value.source : "";
+      const target = typeof value.target === "string" ? value.target : "";
+      const mode = value.matchMode;
+      const matchMode: ModelRouteMatchMode =
+        mode === "prefix" ||
+        mode === "suffix" ||
+        mode === "contains" ||
+        mode === "regex"
+          ? mode
+          : "exact";
+      return [
+        {
+          id: crypto.randomUUID(),
+          enabled: value.enabled !== false,
+          matchMode,
+          source,
+          target,
+        },
+      ];
+    });
+  }
+  return [];
 };
 
 const normalizeCodexChatReasoningForSave = (
@@ -378,6 +429,9 @@ function ProviderFormFull({
       initialData?.meta?.pricingModelSource,
     ),
   }));
+  const [modelRoutes, setModelRoutes] = useState<ModelRouteRow[]>(() => {
+    return readProviderModelRoutes(initialData?.settingsConfig?.modelRoutes);
+  });
 
   const { category } = useProviderCategory({
     appId,
@@ -411,6 +465,9 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setModelRoutes(
+      readProviderModelRoutes(initialData?.settingsConfig?.modelRoutes),
+    );
     setSelectedGitHubAccountId(
       resolveManagedAccountId(initialData?.meta, "github_copilot"),
     );
@@ -1585,6 +1642,22 @@ function ProviderFormFull({
       settingsConfig = values.settingsConfig.trim();
     }
 
+    if (["claude", "codex", "gemini"].includes(appId)) {
+      try {
+        const parsed = JSON.parse(settingsConfig) as Record<string, unknown>;
+        const normalizedRoutes =
+          normalizeProviderModelRoutesForSave(modelRoutes);
+        if (normalizedRoutes.length > 0) {
+          parsed.modelRoutes = normalizedRoutes;
+        } else {
+          delete parsed.modelRoutes;
+        }
+        settingsConfig = JSON.stringify(parsed);
+      } catch {
+        // 各应用的前置校验会在执行到这里之前报告 JSON 格式错误。
+      }
+    }
+
     const payload: ProviderFormValues = {
       ...values,
       name: values.name.trim(),
@@ -1945,6 +2018,7 @@ function ProviderFormFull({
     setSelectedPresetId(value);
     if (value === "custom") {
       setActivePreset(null);
+      setModelRoutes([]);
       form.reset(defaultValues);
 
       if (appId === "codex") {
@@ -1976,8 +2050,20 @@ function ProviderFormFull({
 
     const entry = presetEntries.find((item) => item.id === value);
     if (!entry) {
+      setModelRoutes([]);
       return;
     }
+
+    const presetSettingsConfig =
+      "settingsConfig" in entry.preset
+        ? entry.preset.settingsConfig
+        : undefined;
+    setModelRoutes(
+      readProviderModelRoutes(
+        (presetSettingsConfig as Record<string, unknown> | undefined)
+          ?.modelRoutes,
+      ),
+    );
 
     setActivePreset({
       id: value,
@@ -2434,6 +2520,12 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              modelRoutingField={
+                <ModelRoutingField
+                  rows={modelRoutes}
+                  onChange={setModelRoutes}
+                />
+              }
             />
           )}
 
@@ -2509,6 +2601,12 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              modelRoutingField={
+                <ModelRoutingField
+                  rows={modelRoutes}
+                  onChange={setModelRoutes}
+                />
+              }
             />
           )}
 
@@ -2539,6 +2637,10 @@ function ProviderFormFull({
               onModelChange={handleGeminiModelChange}
               speedTestEndpoints={speedTestEndpoints}
             />
+          )}
+
+          {appId === "gemini" && (
+            <ModelRoutingField rows={modelRoutes} onChange={setModelRoutes} />
           )}
 
           {appId === "opencode" && !isAnyOmoCategory && (
