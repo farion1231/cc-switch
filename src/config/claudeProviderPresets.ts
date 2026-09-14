@@ -1850,7 +1850,6 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     endpointCandidates: ["https://api.laonongapi.com"],
-    modelsUrl: "https://www.laonongapi.com/#/models",
     icon: "laonongapi",
     iconColor: "#7B61FF",
   },
