@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "CC Switch",
-    "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"
+    "description": "Claude Code・Codex・Antigravity のためのオールインワンアシスタント"
   },
   "common": {
     "add": "追加",
@@ -47,7 +47,7 @@
   },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
-    "bodyDefault": "CC Switch は Claude Code / Codex / Gemini CLI の複数プロバイダーをワンクリックで切り替えられるツールです。すでにこれらのツールを設定済みの場合、CC Switch は現在の設定を「default」という名前のプロバイダーとして自動的に保存するので、既存の設定が失われることはありません。",
+    "bodyDefault": "CC Switch は Claude Code / Codex / Antigravity の複数プロバイダーをワンクリックで切り替えられるツールです。すでにこれらのツールを設定済みの場合、CC Switch は現在の設定を「default」という名前のプロバイダーとして自動的に保存するので、既存の設定が失われることはありません。",
     "bodyOfficial": "リストには「Official（公式）」プリセットも用意されており、公式バージョンに戻したくなったらクリックするだけで切り替えられます。切り替える前に現在の設定は自動で default にバックアップされるので、自由に行き来できます。これが CC Switch の仕組みです 😊",
     "confirm": "了解しました"
   },
@@ -124,7 +124,7 @@
     "addFooterHint": "💡 プリセットを選んだら、下のフィールド（API Key など）を入力してください",
     "addClaudeProvider": "Claude Code プロバイダーを追加",
     "addCodexProvider": "Codex プロバイダーを追加",
-    "addGeminiProvider": "Gemini プロバイダーを追加",
+    "addGeminiProvider": "Antigravity プロバイダーを追加",
     "addOpenCodeProvider": "OpenCode プロバイダーを追加",
     "addToConfig": "追加",
     "removeFromConfig": "削除",
@@ -169,8 +169,8 @@
     "sortUpdated": "並び順を更新しました",
     "usageSaved": "利用状況の設定を保存しました",
     "usageSaveFailed": "利用状況設定の保存に失敗しました",
-    "geminiConfig": "Gemini 設定",
-    "geminiConfigHint": ".env 形式で Gemini を設定してください",
+    "geminiConfig": "Antigravity 設定",
+    "geminiConfigHint": ".env 形式で Antigravity を設定してください",
     "form": {
       "gemini": {
         "model": "モデル",
@@ -719,7 +719,7 @@
       "description": "ホームページに表示するアプリを選択",
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
-      "geminiDesc": "Google Gemini CLI",
+      "geminiDesc": "Antigravity（Gemini CLI の設定と履歴に対応）",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "プロジェクト切り替えを表示",
       "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します"
@@ -730,7 +730,7 @@
       "ccSwitch": "CC Switch",
       "unified": "~/.agents/skills",
       "ccSwitchHint": "スキルは ~/.cc-switch/skills/ に保存され、シンボリックリンクまたはコピーで各アプリに同期されます。",
-      "unifiedHint": "スキルは ~/.agents/skills/ に保存されます（Agent Skills オープン標準）。対応ツール（Claude Code、Codex、Gemini CLI など）はこのディレクトリのスキルを直接検出します。",
+      "unifiedHint": "スキルは ~/.agents/skills/ に保存されます（Agent Skills オープン標準）。対応ツール（Claude Code、Codex、Antigravity など）はこのディレクトリのスキルを直接検出します。",
       "confirmTitle": "スキル保存場所の移行",
       "confirmMessage": "{{count}} 個のスキルを新しい場所に移動します。続行しますか？",
       "migrationSuccess": "{{count}} 個のスキルを移行しました",
@@ -783,8 +783,8 @@
     "claudeConfigDirDescription": "Claude の設定ディレクトリ（settings.json）を上書きします。カスタムディレクトリでは .claude.json（MCP）をその中に保存し、既定の ~/.claude では Claude Code の既定どおり ~/.claude.json を使います。",
     "codexConfigDir": "Codex 設定ディレクトリ",
     "codexConfigDirDescription": "Codex の設定ディレクトリを上書きします。",
-    "geminiConfigDir": "Gemini 設定ディレクトリ",
-    "geminiConfigDirDescription": "Gemini の設定ディレクトリ（.env）を上書きします。",
+    "geminiConfigDir": "Antigravity 設定ディレクトリ",
+    "geminiConfigDirDescription": "Antigravity の設定ディレクトリ（.env）を上書きします。",
     "grokConfigDir": "Grok Build 設定ディレクトリ",
     "grokConfigDirDescription": "Grok Build の設定ディレクトリ（config.toml）を上書きします。",
     "opencodeConfigDir": "OpenCode 設定ディレクトリ",
@@ -909,7 +909,7 @@
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
-    "gemini": "Gemini",
+    "gemini": "Antigravity",
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
@@ -1075,7 +1075,7 @@
   },
   "sessionManager": {
     "title": "セッション管理",
-    "subtitle": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi のセッションを管理",
+    "subtitle": "Claude Code / Codex / Antigravity / Grok Build / OpenCode / OpenClaw / Hermes / Pi のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
@@ -1586,13 +1586,13 @@
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
-    "envFileHint": ".env 形式で Gemini の環境変数を設定",
+    "envFileHint": ".env 形式で Antigravity の環境変数を設定",
     "configJson": "設定ファイル (config.json)",
-    "configJsonHint": "Gemini 拡張パラメーターを JSON 形式で設定（任意）",
+    "configJsonHint": "Antigravity 拡張パラメーターを JSON 形式で設定（任意）",
     "writeCommonConfig": "共通設定を適用",
     "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "Gemini 共通設定スニペットを編集",
-    "commonConfigHint": "「共通設定を適用」がオンのとき Gemini の .env に書き込みます（GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY は使用できません）",
+    "editCommonConfigTitle": "Antigravity 共通設定スニペットを編集",
+    "commonConfigHint": "「共通設定を適用」がオンのとき Antigravity の .env に書き込みます（GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY は使用できません）",
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
@@ -1719,7 +1719,7 @@
       "all": "すべて",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini",
+      "gemini": "Antigravity",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi"
@@ -2005,7 +2005,7 @@
     "addMcp": "MCPを追加",
     "claudeTitle": "Claude Code MCP 管理",
     "codexTitle": "Codex MCP 管理",
-    "geminiTitle": "Gemini MCP 管理",
+    "geminiTitle": "Antigravity MCP 管理",
     "unifiedPanel": {
       "title": "MCP サーバー管理",
       "addServer": "サーバーを追加",
@@ -2022,7 +2022,7 @@
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
-        "gemini": "Gemini",
+        "gemini": "Antigravity",
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
@@ -2485,7 +2485,7 @@
   "skills": {
     "manage": "Skills",
     "title": "Skills 管理",
-    "description": "人気リポジトリからスキルを探してインストールし、Claude Code/Codex/Gemini を拡張",
+    "description": "人気リポジトリからスキルを探してインストールし、Claude Code/Codex/Antigravity を拡張",
     "refresh": "更新",
     "refreshing": "更新中...",
     "repoManager": "リポジトリ管理",
@@ -2639,7 +2639,7 @@
     "apps": {
       "claude": "Claude",
       "codex": "Codex",
-      "gemini": "Gemini",
+      "gemini": "Antigravity",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
     },
@@ -3006,7 +3006,7 @@
     "duplicatedAndSynced": "統合プロバイダーを複製して同期しました",
     "duplicateError": "統合プロバイダーの複製に失敗しました",
     "title": "統合プロバイダー",
-    "description": "統合プロバイダーは Claude、Codex、Gemini の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
+    "description": "統合プロバイダーは Claude、Codex、Antigravity の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
     "add": "統合プロバイダーを追加",
     "edit": "統合プロバイダーを編集",
     "empty": "統合プロバイダーがありません",
@@ -3033,7 +3033,7 @@
     "updated": "統合プロバイダーを更新しました",
     "deleted": "統合プロバイダーを削除しました",
     "addFailed": "統合プロバイダーの追加に失敗しました",
-    "hint": "クロスアプリ統合設定。Claude/Codex/Gemini に自動同期します",
+    "hint": "クロスアプリ統合設定。Claude/Codex/Antigravity に自動同期します",
     "manage": "管理",
     "loadError": "統合プロバイダーの読み込みに失敗しました",
     "saveError": "統合プロバイダーの保存に失敗しました",
@@ -3041,7 +3041,7 @@
     "deleteConfirmTitle": "統合プロバイダーを削除",
     "deleteConfirmDescription": "「{{name}}」を削除してもよろしいですか？各アプリで生成されたプロバイダー設定も削除されます。",
     "syncConfirmTitle": "統合プロバイダーを同期",
-    "syncConfirmDescription": "「{{name}}」を同期すると、Claude、Codex、Gemini の関連プロバイダー設定が上書きされます。続行しますか？",
+    "syncConfirmDescription": "「{{name}}」を同期すると、Claude、Codex、Antigravity の関連プロバイダー設定が上書きされます。続行しますか？",
     "syncConfirm": "同期",
     "saveAndSync": "保存して同期",
     "savedAndSynced": "すべてのアプリに保存・同期されました",

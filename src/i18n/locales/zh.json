@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "CC Switch",
-    "description": "Claude Code / Codex / Gemini CLI 全方位辅助工具"
+    "description": "Claude Code / Codex / Antigravity 全方位辅助工具"
   },
   "common": {
     "add": "添加",
@@ -47,7 +47,7 @@
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
-    "bodyDefault": "CC Switch 可以帮你在 Claude Code / Codex / Gemini CLI 的多个供应商之间一键切换。如果你之前已经配置过这些工具，CC Switch 会自动把现有设置保存为名为 “default” 的供应商，保证你的配置不会丢失。",
+    "bodyDefault": "CC Switch 可以帮你在 Claude Code / Codex / Antigravity 的多个供应商之间一键切换。如果你之前已经配置过这些工具，CC Switch 会自动把现有设置保存为名为 “default” 的供应商，保证你的配置不会丢失。",
     "bodyOfficial": "列表里还预置了 “官方（Official）” 供应商，随时点一下即可切回官方默认配置。切换前 CC Switch 会自动把当前配置备份回 default，可以放心来回切。CC Switch 就是这样工作的 😊",
     "confirm": "我知道了"
   },
@@ -124,7 +124,7 @@
     "addFooterHint": "💡 选择预设后，请在下方填写 API Key 等字段",
     "addClaudeProvider": "添加 Claude Code 供应商",
     "addCodexProvider": "添加 Codex 供应商",
-    "addGeminiProvider": "添加 Gemini 供应商",
+    "addGeminiProvider": "添加 Antigravity 供应商",
     "addOpenCodeProvider": "添加 OpenCode 供应商",
     "addToConfig": "添加",
     "removeFromConfig": "移除",
@@ -169,8 +169,8 @@
     "sortUpdated": "排序已更新",
     "usageSaved": "用量查询配置已保存",
     "usageSaveFailed": "用量查询配置保存失败",
-    "geminiConfig": "Gemini 配置",
-    "geminiConfigHint": "使用 .env 格式配置 Gemini",
+    "geminiConfig": "Antigravity 配置",
+    "geminiConfigHint": "使用 .env 格式配置 Antigravity",
     "form": {
       "gemini": {
         "model": "模型",
@@ -719,7 +719,7 @@
       "description": "选择在主页面显示的应用",
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
-      "geminiDesc": "Google Gemini CLI",
+      "geminiDesc": "Antigravity（兼容 Gemini CLI 配置与历史数据）",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "显示项目切换",
       "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口"
@@ -730,7 +730,7 @@
       "ccSwitch": "CC Switch",
       "unified": "~/.agents/skills",
       "ccSwitchHint": "技能存储在 ~/.cc-switch/skills/，由 CC Switch 统一管理并同步到各应用。",
-      "unifiedHint": "技能存储在 ~/.agents/skills/，遵循 Agent Skills 开放标准。兼容的工具（Claude Code、Codex、Gemini CLI 等）可直接发现此目录中的技能。",
+      "unifiedHint": "技能存储在 ~/.agents/skills/，遵循 Agent Skills 开放标准。兼容的工具（Claude Code、Codex、Antigravity 等）可直接发现此目录中的技能。",
       "confirmTitle": "迁移技能存储",
       "confirmMessage": "将移动 {{count}} 个技能到新位置，是否继续？",
       "migrationSuccess": "已成功迁移 {{count}} 个技能",
@@ -783,8 +783,8 @@
     "claudeConfigDirDescription": "覆盖 Claude 配置目录 (settings.json)。真正自定义目录会在目录内存放 Claude MCP 的 .claude.json；默认 ~/.claude 目录仍使用 Claude 默认的 ~/.claude.json。",
     "codexConfigDir": "Codex 配置目录",
     "codexConfigDirDescription": "覆盖 Codex 配置目录。",
-    "geminiConfigDir": "Gemini 配置目录",
-    "geminiConfigDirDescription": "覆盖 Gemini 配置目录 (.env)。",
+    "geminiConfigDir": "Antigravity 配置目录",
+    "geminiConfigDirDescription": "覆盖 Antigravity 配置目录 (.env)。",
     "grokConfigDir": "Grok Build 配置目录",
     "grokConfigDirDescription": "覆盖 Grok Build 配置目录 (config.toml)。",
     "opencodeConfigDir": "OpenCode 配置目录",
@@ -909,7 +909,7 @@
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
-    "gemini": "Gemini",
+    "gemini": "Antigravity",
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
@@ -1075,7 +1075,7 @@
   },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 与 Pi 会话记录",
+    "subtitle": "管理 Claude Code、Codex、Antigravity、Grok Build、OpenCode、OpenClaw、Hermes 与 Pi 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
@@ -1586,13 +1586,13 @@
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
-    "envFileHint": "使用 .env 格式配置 Gemini 环境变量",
+    "envFileHint": "使用 .env 格式配置 Antigravity 环境变量",
     "configJson": "配置文件 (config.json)",
-    "configJsonHint": "使用 JSON 格式配置 Gemini 扩展参数（可选）",
+    "configJsonHint": "使用 JSON 格式配置 Antigravity 扩展参数（可选）",
     "writeCommonConfig": "应用通用配置",
     "editCommonConfig": "编辑通用配置",
-    "editCommonConfigTitle": "编辑 Gemini 通用配置片段",
-    "commonConfigHint": "该片段会在勾选\"应用通用配置\"时写入 Gemini 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
+    "editCommonConfigTitle": "编辑 Antigravity 通用配置片段",
+    "commonConfigHint": "该片段会在勾选\"应用通用配置\"时写入 Antigravity 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
@@ -1719,7 +1719,7 @@
       "all": "全部",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini",
+      "gemini": "Antigravity",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi"
@@ -2005,7 +2005,7 @@
     "addMcp": "添加MCP",
     "claudeTitle": "Claude Code MCP 管理",
     "codexTitle": "Codex MCP 管理",
-    "geminiTitle": "Gemini MCP 管理",
+    "geminiTitle": "Antigravity MCP 管理",
     "unifiedPanel": {
       "title": "MCP 服务器管理",
       "addServer": "添加服务器",
@@ -2022,7 +2022,7 @@
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
-        "gemini": "Gemini",
+        "gemini": "Antigravity",
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
@@ -2485,7 +2485,7 @@
   "skills": {
     "manage": "Skills",
     "title": "Skills 管理",
-    "description": "从流行的仓库发现并安装技能，扩展 Claude Code/Codex/Gemini 的能力",
+    "description": "从流行的仓库发现并安装技能，扩展 Claude Code/Codex/Antigravity 的能力",
     "refresh": "刷新",
     "refreshing": "刷新中...",
     "repoManager": "仓库管理",
@@ -2639,7 +2639,7 @@
     "apps": {
       "claude": "Claude",
       "codex": "Codex",
-      "gemini": "Gemini",
+      "gemini": "Antigravity",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
     },
@@ -3006,7 +3006,7 @@
     "duplicatedAndSynced": "统一供应商已复制并同步",
     "duplicateError": "复制统一供应商失败",
     "title": "统一供应商",
-    "description": "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
+    "description": "统一供应商可以同时管理 Claude、Codex 和 Antigravity 的配置。修改后会自动同步到所有启用的应用。",
     "add": "添加统一供应商",
     "edit": "编辑统一供应商",
     "empty": "还没有统一供应商",
@@ -3033,7 +3033,7 @@
     "updated": "统一供应商已更新",
     "deleted": "统一供应商已删除",
     "addFailed": "统一供应商添加失败",
-    "hint": "跨应用统一配置，自动同步到 Claude/Codex/Gemini",
+    "hint": "跨应用统一配置，自动同步到 Claude/Codex/Antigravity",
     "manage": "管理",
     "loadError": "加载统一供应商失败",
     "saveError": "保存统一供应商失败",
@@ -3041,7 +3041,7 @@
     "deleteConfirmTitle": "删除统一供应商",
     "deleteConfirmDescription": "确定要删除 \"{{name}}\" 吗？这将同时删除它在各应用中生成的供应商配置。",
     "syncConfirmTitle": "同步统一供应商",
-    "syncConfirmDescription": "同步 \"{{name}}\" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？",
+    "syncConfirmDescription": "同步 \"{{name}}\" 将会覆盖 Claude、Codex 和 Antigravity 中关联的供应商配置。确定要继续吗？",
     "syncConfirm": "同步",
     "saveAndSync": "保存并同步",
     "savedAndSynced": "已保存并同步到所有应用",

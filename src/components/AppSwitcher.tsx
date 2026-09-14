@@ -43,7 +43,7 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   claude: "Claude Code",
   "claude-desktop": "Claude Desktop",
   codex: "Codex",
-  gemini: "Gemini",
+  gemini: "Antigravity",
   grokbuild: "Grok Build",
   opencode: "OpenCode",
   openclaw: "OpenClaw",

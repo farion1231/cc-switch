@@ -507,7 +507,7 @@ requires_openai_auth = true`;
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div className="flex items-center gap-2">
                 <ProviderIcon icon="gemini" name="Gemini" size={20} />
-                <span className="font-medium">Gemini CLI</span>
+                <span className="font-medium">Antigravity</span>
               </div>
               <Switch
                 checked={geminiEnabled}
@@ -616,7 +616,7 @@ requires_openai_auth = true`;
             <div className="space-y-3 rounded-lg border p-4">
               <div className="flex items-center gap-2 font-medium">
                 <ProviderIcon icon="gemini" name="Gemini" size={16} />
-                Gemini
+                Antigravity
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">
@@ -686,7 +686,7 @@ requires_openai_auth = true`;
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <ProviderIcon icon="gemini" name="Gemini" size={16} />
-                  Gemini
+                  Antigravity
                 </div>
                 <JsonEditor
                   value={JSON.stringify(geminiConfigJson, null, 2)}

@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "CC Switch",
-    "description": "Claude Code / Codex / Gemini CLI 全方位輔助工具"
+    "description": "Claude Code / Codex / Antigravity 全方位輔助工具"
   },
   "common": {
     "add": "新增",
@@ -47,7 +47,7 @@
   },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
-    "bodyDefault": "CC Switch 可以協助您在 Claude Code / Codex / Gemini CLI 的多個供應商之間一鍵切換。如果您之前已經設定過這些工具，CC Switch 會自動將現有設定儲存為名為 default 的供應商，確保您的設定不會遺失。",
+    "bodyDefault": "CC Switch 可以協助您在 Claude Code / Codex / Antigravity 的多個供應商之間一鍵切換。如果您之前已經設定過這些工具，CC Switch 會自動將現有設定儲存為名為 default 的供應商，確保您的設定不會遺失。",
     "bodyOfficial": "清單中還預設了「官方 (Official)」供應商，隨時點擊即可切換回官方預設設定。切換前 CC Switch 會自動將目前設定備份回 default，可以放心來回切換。這就是 CC Switch 的運作方式。",
     "confirm": "我了解了"
   },
@@ -124,7 +124,7 @@
     "addFooterHint": "💡 選擇預設後，請在下方填寫 API Key 等欄位",
     "addClaudeProvider": "新增 Claude Code 供應商",
     "addCodexProvider": "新增 Codex 供應商",
-    "addGeminiProvider": "新增 Gemini 供應商",
+    "addGeminiProvider": "新增 Antigravity 供應商",
     "addOpenCodeProvider": "新增 OpenCode 供應商",
     "addToConfig": "新增",
     "removeFromConfig": "移除",
@@ -169,8 +169,8 @@
     "sortUpdated": "排序已更新",
     "usageSaved": "用量查詢設定已儲存",
     "usageSaveFailed": "用量查詢設定儲存失敗",
-    "geminiConfig": "Gemini 設定",
-    "geminiConfigHint": "使用 .env 格式設定 Gemini",
+    "geminiConfig": "Antigravity 設定",
+    "geminiConfigHint": "使用 .env 格式設定 Antigravity",
     "form": {
       "gemini": {
         "model": "模型",
@@ -719,7 +719,7 @@
       "description": "選擇在主頁面顯示的應用程式",
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
-      "geminiDesc": "Google Gemini CLI",
+      "geminiDesc": "Antigravity（相容 Gemini CLI 設定與歷史資料）",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "顯示專案切換",
       "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口"
@@ -730,7 +730,7 @@
       "ccSwitch": "CC Switch",
       "unified": "~/.agents/skills",
       "ccSwitchHint": "技能儲存在 ~/.cc-switch/skills/，由 CC Switch 統一管理並同步至各應用程式。",
-      "unifiedHint": "技能儲存在 ~/.agents/skills/，遵循 Agent Skills 開放標準。相容的工具（Claude Code、Codex、Gemini CLI 等）可直接發現此目錄中的技能。",
+      "unifiedHint": "技能儲存在 ~/.agents/skills/，遵循 Agent Skills 開放標準。相容的工具（Claude Code、Codex、Antigravity 等）可直接發現此目錄中的技能。",
       "confirmTitle": "遷移技能儲存位置",
       "confirmMessage": "將移動 {{count}} 個技能至新位置，是否繼續？",
       "migrationSuccess": "已成功遷移 {{count}} 個技能",
@@ -783,8 +783,8 @@
     "claudeConfigDirDescription": "覆寫 Claude 設定目錄 (settings.json)。真正自訂目錄會在目錄內存放 Claude MCP 的 .claude.json；預設 ~/.claude 目錄仍使用 Claude 預設的 ~/.claude.json。",
     "codexConfigDir": "Codex 設定目錄",
     "codexConfigDirDescription": "覆寫 Codex 設定目錄。",
-    "geminiConfigDir": "Gemini 設定目錄",
-    "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
+    "geminiConfigDir": "Antigravity 設定目錄",
+    "geminiConfigDirDescription": "覆寫 Antigravity 設定目錄 (.env)。",
     "grokConfigDir": "Grok Build 設定目錄",
     "grokConfigDirDescription": "覆寫 Grok Build 設定目錄 (config.toml)。",
     "opencodeConfigDir": "OpenCode 設定目錄",
@@ -910,7 +910,7 @@
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
-    "gemini": "Gemini",
+    "gemini": "Antigravity",
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
@@ -1076,7 +1076,7 @@
   },
   "sessionManager": {
     "title": "工作階段管理",
-    "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 與 Pi 工作階段紀錄",
+    "subtitle": "管理 Claude Code、Codex、Antigravity、Grok Build、OpenCode、OpenClaw、Hermes 與 Pi 工作階段紀錄",
     "searchPlaceholder": "搜尋對話內容、目錄或 ID",
     "searchSessions": "搜尋工作階段",
     "providerFilterAll": "全部",
@@ -1587,13 +1587,13 @@
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
-    "envFileHint": "使用 .env 格式設定 Gemini 環境變數",
+    "envFileHint": "使用 .env 格式設定 Antigravity 環境變數",
     "configJson": "設定檔 (config.json)",
-    "configJsonHint": "使用 JSON 格式設定 Gemini 擴充參數（選填）",
+    "configJsonHint": "使用 JSON 格式設定 Antigravity 擴充參數（選填）",
     "writeCommonConfig": "套用通用設定",
     "editCommonConfig": "編輯通用設定",
-    "editCommonConfigTitle": "編輯 Gemini 通用設定片段",
-    "commonConfigHint": "該片段會在勾選「套用通用設定」時寫入 Gemini 的 .env（不允許包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
+    "editCommonConfigTitle": "編輯 Antigravity 通用設定片段",
+    "commonConfigHint": "該片段會在勾選「套用通用設定」時寫入 Antigravity 的 .env（不允許包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
     "extractFromCurrent": "從編輯內容擷取",
     "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",
     "extractFailed": "擷取失敗：{{error}}",
@@ -1720,7 +1720,7 @@
       "all": "全部",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini",
+      "gemini": "Antigravity",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi"
@@ -2006,7 +2006,7 @@
     "addMcp": "新增 MCP",
     "claudeTitle": "Claude Code MCP 管理",
     "codexTitle": "Codex MCP 管理",
-    "geminiTitle": "Gemini MCP 管理",
+    "geminiTitle": "Antigravity MCP 管理",
     "unifiedPanel": {
       "title": "MCP 伺服器管理",
       "addServer": "新增伺服器",
@@ -2023,7 +2023,7 @@
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
-        "gemini": "Gemini",
+        "gemini": "Antigravity",
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
@@ -2486,7 +2486,7 @@
   "skills": {
     "manage": "Skills",
     "title": "Skills 管理",
-    "description": "從熱門的儲存庫發現並安裝技能，擴充 Claude Code/Codex/Gemini 的能力",
+    "description": "從熱門的儲存庫發現並安裝技能，擴充 Claude Code/Codex/Antigravity 的能力",
     "refresh": "重新整理",
     "refreshing": "重新整理中...",
     "repoManager": "儲存庫管理",
@@ -2640,7 +2640,7 @@
     "apps": {
       "claude": "Claude",
       "codex": "Codex",
-      "gemini": "Gemini",
+      "gemini": "Antigravity",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
     },
@@ -3007,7 +3007,7 @@
     "duplicatedAndSynced": "通用供應商已複製並同步",
     "duplicateError": "複製通用供應商失敗",
     "title": "通用供應商",
-    "description": "通用供應商可以同時管理 Claude、Codex 和 Gemini 的設定。修改後會自動同步至所有啟用的應用程式。",
+    "description": "通用供應商可以同時管理 Claude、Codex 和 Antigravity 的設定。修改後會自動同步至所有啟用的應用程式。",
     "add": "新增通用供應商",
     "edit": "編輯通用供應商",
     "empty": "還沒有通用供應商",
@@ -3034,7 +3034,7 @@
     "updated": "通用供應商已更新",
     "deleted": "通用供應商已刪除",
     "addFailed": "通用供應商新增失敗",
-    "hint": "跨應用程式通用設定，自動同步至 Claude/Codex/Gemini",
+    "hint": "跨應用程式通用設定，自動同步至 Claude/Codex/Antigravity",
     "manage": "管理",
     "loadError": "載入通用供應商失敗",
     "saveError": "儲存通用供應商失敗",
@@ -3042,7 +3042,7 @@
     "deleteConfirmTitle": "刪除通用供應商",
     "deleteConfirmDescription": "確定要刪除 \"{{name}}\" 嗎？這將同時刪除它在各應用程式中產生的供應商設定。",
     "syncConfirmTitle": "同步通用供應商",
-    "syncConfirmDescription": "同步 \"{{name}}\" 將會覆寫 Claude、Codex 和 Gemini 中關聯的供應商設定。確定要繼續嗎？",
+    "syncConfirmDescription": "同步 \"{{name}}\" 將會覆寫 Claude、Codex 和 Antigravity 中關聯的供應商設定。確定要繼續嗎？",
     "syncConfirm": "同步",
     "saveAndSync": "儲存並同步",
     "savedAndSynced": "已儲存並同步至所有應用程式",
