@@ -2439,6 +2439,7 @@ mod tests {
             session_client_provided: false,
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
+            sensitive_word_config: SensitiveWordConfig::default(),
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
             non_streaming_timeout,
             streaming_first_byte_timeout,
