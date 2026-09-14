@@ -1074,6 +1074,12 @@
     "maxOutputTokensHint": "默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。"
   },
   "sessionManager": {
+    "selectMessages": "选择消息",
+    "selectAllMessages": "全选",
+    "clearMessageSelection": "清空选择",
+    "copySelectedMessages": "复制（{{count}}）",
+    "selectMessage": "选择第 {{number}} 条消息",
+    "selectTurn": "选择第 {{number}} 轮对话",
     "title": "会话管理",
     "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 与 Pi 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",

@@ -1075,6 +1075,12 @@
     "maxOutputTokensHint": "預設上限 8192 容易在長回答或深度思考時被截斷（stop_reason=max_tokens）。此處設定會作為 Anthropic 的 max_tokens 覆蓋請求值。請勿超過該模型／閘道的真實輸出上限，否則可能 400。留空使用預設 8192。"
   },
   "sessionManager": {
+    "selectMessages": "選擇訊息",
+    "selectAllMessages": "全選",
+    "clearMessageSelection": "清空選擇",
+    "copySelectedMessages": "複製（{{count}}）",
+    "selectMessage": "選擇第 {{number}} 則訊息",
+    "selectTurn": "選擇第 {{number}} 輪對話",
     "title": "工作階段管理",
     "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 與 Pi 工作階段紀錄",
     "searchPlaceholder": "搜尋對話內容、目錄或 ID",

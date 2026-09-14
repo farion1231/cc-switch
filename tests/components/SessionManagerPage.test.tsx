@@ -222,6 +222,52 @@ describe("SessionManagerPage", () => {
     setSessionFixtures(sessions, messages);
   });
 
+  it("copies complete messages in order and clears selection when switching sessions", async () => {
+    const longContent = "full response ".repeat(400);
+    const getMessages = vi.spyOn(sessionsApi, "getMessages").mockResolvedValue([
+      { role: "user", content: "question" },
+      { role: "assistant", content: longContent },
+    ]);
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    renderPage();
+    await screen.findByRole("heading", { name: "Alpha Session" });
+    await waitFor(() => expect(getMessages).toHaveBeenCalled());
+    await user.click(
+      screen.getByRole("button", { name: "sessionManager.selectMessages" }),
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "sessionManager.copySelectedMessages",
+      }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "sessionManager.selectAllMessages" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "sessionManager.copySelectedMessages",
+      }),
+    );
+    expect(writeText).toHaveBeenCalledWith(
+      `sessionManager.roleUser\nquestion\n\nAI\n${longContent}`,
+    );
+    await user.click(screen.getByRole("button", { name: /Beta Session/ }));
+    await screen.findByRole("heading", { name: "Beta Session" });
+    await user.click(
+      screen.getByRole("button", { name: "sessionManager.selectMessages" }),
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "sessionManager.copySelectedMessages",
+      }),
+    ).toBeDisabled();
+    getMessages.mockRestore();
+    writeText.mockRestore();
+  });
+
   it("surfaces a relative Pi sessionDir instead of presenting an empty scan as authoritative", async () => {
     const discovery = vi.spyOn(piApi, "getSessionDiscovery").mockResolvedValue({
       status: "requires_project_context",
