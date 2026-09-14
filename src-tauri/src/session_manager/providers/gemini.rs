@@ -2,6 +2,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::gemini_session::{self, GeminiSessionFile};
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{parse_timestamp_to_ms, truncate_summary};
@@ -17,7 +18,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
     let mut sessions = Vec::new();
 
-    // Iterate over project directories: tmp/<project_name>/chats/session-*.json
+    // Iterate over project directories: tmp/<project_name>/chats/session-*.{json,jsonl}
     let project_dirs = match std::fs::read_dir(&tmp_dir) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
@@ -39,7 +40,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
         for file_entry in chat_files.flatten() {
             let path = file_entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            if !gemini_session::has_session_extension(&path) {
                 continue;
             }
             if let Some(meta) = parse_session(&path) {
@@ -55,17 +56,10 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let data = std::fs::read_to_string(path).map_err(|e| format!("Failed to read session: {e}"))?;
-    let value: Value =
-        serde_json::from_str(&data).map_err(|e| format!("Failed to parse session JSON: {e}"))?;
-
-    let messages = value
-        .get("messages")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "No messages array found".to_string())?;
+    let session = gemini_session::load(path)?;
 
     let mut result = Vec::new();
-    for msg in messages {
+    for msg in &session.messages {
         let role = match msg.get("type").and_then(Value::as_str) {
             Some("gemini") => "assistant",
             Some("user") => "user",
@@ -74,15 +68,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         };
 
         // Gemini content may be a plain string or an array of {text: ...} objects
-        let mut content = match msg.get("content") {
-            Some(Value::String(s)) => s.to_string(),
-            Some(Value::Array(items)) => items
-                .iter()
-                .filter_map(|item| item.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            _ => String::new(),
-        };
+        let mut content = gemini_session::message_text(msg).unwrap_or_default();
 
         // Append tool call names from the optional toolCalls array
         if let Some(Value::Array(calls)) = msg.get("toolCalls") {
@@ -138,25 +124,20 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
-    let data = std::fs::read_to_string(path).ok()?;
-    let value: Value = serde_json::from_str(&data).ok()?;
+    let session: GeminiSessionFile = gemini_session::load(path).ok()?;
 
-    let session_id = value.get("sessionId").and_then(Value::as_str)?.to_string();
+    let session_id = session.session_id.clone()?;
 
-    let created_at = value.get("startTime").and_then(parse_timestamp_to_ms);
-    let last_active_at = value.get("lastUpdated").and_then(parse_timestamp_to_ms);
+    let created_at = session.start_time.as_ref().and_then(parse_timestamp_to_ms);
+    let last_active_at = session
+        .last_updated
+        .as_ref()
+        .and_then(parse_timestamp_to_ms);
 
     // Derive title from first user message
-    let title = value
-        .get("messages")
-        .and_then(Value::as_array)
-        .and_then(|msgs| {
-            msgs.iter()
-                .find(|m| m.get("type").and_then(Value::as_str) == Some("user"))
-                .and_then(|m| m.get("content").and_then(Value::as_str))
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| truncate_summary(s, 160))
-        });
+    let title = session
+        .first_user_text()
+        .map(|text| truncate_summary(&text, 160));
 
     let source_path = path.to_string_lossy().to_string();
 
@@ -229,6 +210,86 @@ mod tests {
         assert_eq!(msgs[0].content, "hello");
         assert_eq!(msgs[1].role, "assistant");
         assert_eq!(msgs[1].content, "world");
+    }
+
+    #[test]
+    fn load_messages_reads_incremental_jsonl() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-09-14T03-16-abcd1234.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"sessionId":"s-1","startTime":"2026-09-14T03:16:00.000Z","kind":"main"}"#,
+                "\n",
+                r#"{"$set":{"messages":[{"id":"m1","type":"user","content":[{"text":"hello"}]}]}}"#,
+                "\n",
+                r#"{"id":"m2","type":"gemini","content":"world"}"#,
+                "\n",
+                r#"{"id":"m2","type":"gemini","content":"world","toolCalls":[{"name":"web_search"}]}"#,
+                "\n",
+                r#"{"id":"m3","type":"info","content":"system info"}"#,
+                "\n",
+            ),
+        )
+        .expect("write");
+
+        let msgs = load_messages(&path).expect("load");
+        assert_eq!(msgs.len(), 2, "同 id 重写不应产生重复消息");
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "hello");
+        assert_eq!(msgs[1].role, "assistant");
+        assert!(msgs[1].content.contains("world"));
+        assert!(msgs[1].content.contains("[Tool: web_search]"));
+    }
+
+    #[test]
+    fn parse_session_reads_jsonl_metadata() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-09-14T03-16-abcd1234.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"sessionId":"s-2","startTime":"2026-09-14T03:16:00.000Z","lastUpdated":"2026-09-14T03:16:00.000Z","kind":"main"}"#,
+                "\n",
+                r#"{"id":"m1","type":"user","content":[{"text":"<session_context>ctx</session_context>"}]}"#,
+                "\n",
+                r#"{"$set":{"lastUpdated":"2026-09-14T03:20:00.000Z"}}"#,
+                "\n",
+                r#"{"id":"m2","type":"user","content":[{"text":"real question"}]}"#,
+                "\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).expect("parse");
+        assert_eq!(meta.session_id, "s-2");
+        assert_eq!(
+            meta.title.as_deref(),
+            Some("real question"),
+            "标题应跳过 <session_context> 引导块"
+        );
+        assert!(meta.last_active_at > meta.created_at);
+        assert_eq!(meta.resume_command.as_deref(), Some("gemini --resume s-2"));
+    }
+
+    #[test]
+    fn delete_session_removes_jsonl_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-09-14T03-16-abcd1234.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"sessionId":"s-3","startTime":"2026-09-14T03:16:00.000Z","kind":"main"}"#,
+                "\n",
+                r#"{"id":"m1","type":"user","content":"hello"}"#,
+                "\n",
+            ),
+        )
+        .expect("write");
+
+        delete_session(temp.path(), &path, "s-3").expect("delete session");
+
+        assert!(!path.exists());
     }
 
     #[test]

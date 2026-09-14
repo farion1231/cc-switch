@@ -1,14 +1,16 @@
 //! Gemini CLI 会话日志使用追踪
 //!
-//! 从 ~/.gemini/tmp/<project_hash>/chats/session-*.json 中提取精确 token 使用数据。
+//! 从 ~/.gemini/tmp/<project_hash>/chats/session-*.{json,jsonl} 中提取精确
+//! token 使用数据。
 //!
 //! ## 数据流
 //! ```text
-//! ~/.gemini/tmp/*/chats/session-*.json → 全量解析 → 费用计算 → proxy_request_logs 表
+//! ~/.gemini/tmp/*/chats/session-*.{json,jsonl} → 回放 → 全量解析 → 费用计算 → proxy_request_logs 表
 //! ```
 //!
 //! ## 与 Claude/Codex 解析器的差异
-//! - JSON 格式（非 JSONL）：每个文件是单个 JSON 对象，包含 messages 数组
+//! - 两种落盘格式：旧版单个 JSON 对象，新版追加式 JSONL，统一由
+//!   [`crate::gemini_session`] 回放成最终消息列表
 //! - 无需 delta 计算：tokens 字段是 per-message 独立值
 //! - 无需状态恢复：不依赖前一条消息的累计值
 //! - 天然去重：每条消息有唯一 id 字段
@@ -16,6 +18,7 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
+use crate::gemini_session;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
@@ -95,7 +98,7 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
         return files;
     }
 
-    // 遍历 tmp/<project_hash>/chats/session-*.json
+    // 遍历 tmp/<project_hash>/chats/session-*.{json,jsonl}
     let project_dirs = match fs::read_dir(&tmp_dir) {
         Ok(entries) => entries,
         Err(_) => return files,
@@ -117,8 +120,8 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
             let is_session = path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("session-") && n.ends_with(".json"))
-                .unwrap_or(false);
+                .is_some_and(|n| n.starts_with("session-"))
+                && gemini_session::has_session_extension(&path);
             if is_session {
                 files.push(path);
             }
@@ -148,23 +151,14 @@ fn sync_single_gemini_file(
         return Ok((0, 0));
     }
 
-    // 读取并解析整个 JSON 文件
-    let content = fs::read_to_string(file_path)
-        .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| AppError::Config(format!("JSON 解析失败: {e}")))?;
+    // 回放会话文件（旧版单对象 JSON / 新版增量 JSONL 都由回放器统一处理）
+    let session = gemini_session::load(file_path).map_err(AppError::Config)?;
 
-    // 提取顶层 sessionId
-    let session_id = value
-        .get("sessionId")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // 遍历 messages 数组
-    let messages = match value.get("messages").and_then(|v| v.as_array()) {
-        Some(msgs) => msgs,
-        None => return Ok((0, 0)),
-    };
+    let messages = &session.messages;
+    if messages.is_empty() {
+        return Ok((0, 0));
+    }
+    let session_id = session.session_id.as_deref();
 
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
@@ -198,17 +192,10 @@ fn sync_single_gemini_file(
         let timestamp = msg.get("timestamp").and_then(|v| v.as_str());
 
         // 生成唯一 request_id
-        let session_id_str = session_id.as_deref().unwrap_or("unknown");
+        let session_id_str = session_id.unwrap_or("unknown");
         let request_id = format!("gemini_session:{session_id_str}:{message_id}");
 
-        match insert_gemini_session_entry(
-            db,
-            &request_id,
-            &tokens,
-            model,
-            session_id.as_deref(),
-            timestamp,
-        ) {
+        match insert_gemini_session_entry(db, &request_id, &tokens, model, session_id, timestamp) {
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
             Err(e) => {
@@ -377,6 +364,102 @@ mod tests {
     fn test_collect_gemini_session_files_nonexistent() {
         let files = collect_gemini_session_files(Path::new("/nonexistent/path"));
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_collect_gemini_session_files_accepts_json_and_jsonl() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let chats = temp.path().join("tmp").join("proj").join("chats");
+        fs::create_dir_all(&chats).expect("create chats dir");
+        fs::write(chats.join("session-a.json"), "{}").expect("write legacy");
+        fs::write(chats.join("session-b.jsonl"), "{}").expect("write jsonl");
+        fs::write(chats.join("logs.json"), "{}").expect("write unrelated");
+        fs::write(chats.join("session-c.txt"), "x").expect("write unrelated ext");
+
+        let mut names: Vec<String> = collect_gemini_session_files(temp.path())
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        names.sort();
+
+        assert_eq!(names, vec!["session-a.json", "session-b.jsonl"]);
+    }
+
+    #[test]
+    fn test_sync_single_gemini_file_reads_incremental_jsonl() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-09-14T03-16-abcd1234.jsonl");
+
+        // 快照里的 m2 从不作为独立行出现；m3 被同 id 重写了一次
+        fs::write(
+            &path,
+            concat!(
+                r#"{"sessionId":"s-1","startTime":"2026-09-14T03:16:00.000Z","kind":"main"}"#,
+                "\n",
+                r#"{"$set":{"messages":[{"id":"m1","type":"user","content":"hi"},{"id":"m2","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-09-14T03:16:10.000Z","tokens":{"input":100,"output":10,"cached":0,"thoughts":0}}]}}"#,
+                "\n",
+                r#"{"id":"m3","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-09-14T03:16:20.000Z","tokens":{"input":200,"output":20,"cached":0,"thoughts":0}}"#,
+                "\n",
+                r#"{"id":"m3","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-09-14T03:16:20.000Z","tokens":{"input":200,"output":20,"cached":0,"thoughts":0},"toolCalls":[{"name":"read_file"}]}"#,
+                "\n",
+            ),
+        )
+        .expect("write session");
+
+        let (imported, _skipped) = sync_single_gemini_file(&db, &path, 0)?;
+        assert_eq!(
+            imported, 2,
+            "快照内消息与追加消息都应被导入，且同 id 只算一次"
+        );
+
+        let conn = lock_conn!(db.conn);
+        let (rows, input, output): (i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens) FROM proxy_request_logs
+             WHERE data_source = 'gemini_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(rows, 2);
+        assert_eq!(input, 300);
+        assert_eq!(output, 30);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_single_gemini_file_reads_legacy_json() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("session-legacy.json");
+        fs::write(
+            &path,
+            r#"{
+              "sessionId": "legacy-1",
+              "messages": [
+                {"id": "m1", "type": "user", "content": "hi"},
+                {"id": "m2", "type": "gemini", "model": "gemini-2.5-pro",
+                 "timestamp": "2026-03-06T10:17:58.000Z",
+                 "tokens": {"input": 50, "output": 5, "cached": 0, "thoughts": 1}}
+              ]
+            }"#,
+        )
+        .expect("write session");
+
+        let (imported, _skipped) = sync_single_gemini_file(&db, &path, 0)?;
+        assert_eq!(imported, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input, output): (i64, i64) = conn.query_row(
+            "SELECT input_tokens, output_tokens FROM proxy_request_logs
+             WHERE data_source = 'gemini_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(input, 50);
+        assert_eq!(output, 6, "thoughts 合并进 output");
+
+        Ok(())
     }
 
     #[test]
