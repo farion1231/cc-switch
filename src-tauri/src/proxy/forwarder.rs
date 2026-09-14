@@ -1481,6 +1481,14 @@ impl RequestForwarder {
         let codex_anthropic_base_is_full_endpoint =
             codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
+        // Mirror image of the guards above: a "full URL" that stops at the version prefix
+        // (`.../v1`) is never a complete endpoint — every wire API appends a further segment
+        // (`/v1/responses`, `/v1/chat/completions`, `/v1/messages`), so full-URL mode would
+        // drop the endpoint path entirely and POST to `.../v1` verbatim (an opaque upstream
+        // 404; e.g. a Codex provider configured from a versioned token-plan base). Fall back
+        // to base-URL concatenation, which already treats `/v1`-suffixed bases as versioned.
+        let full_url_is_version_prefix_only = base_url_is_full_endpoint(&base_url, "/v1");
+
         let codex_standalone_endpoint = matches!(app_type, AppType::Codex)
             .then(|| CodexStandaloneEndpoint::from_effective_endpoint(&effective_endpoint))
             .flatten();
@@ -1491,7 +1499,7 @@ impl RequestForwarder {
                 &effective_endpoint,
                 is_full_url,
             )
-        } else if is_full_url {
+        } else if is_full_url && !full_url_is_version_prefix_only {
             if let Some(endpoint) = codex_standalone_endpoint {
                 rewrite_codex_standalone_full_url(
                     &base_url,
@@ -4492,6 +4500,58 @@ mod tests {
             "https://host.example/v1/chat/completions?api-version=2024",
             "/chat/completions"
         ));
+    }
+
+    #[test]
+    fn full_url_version_prefix_falls_back_to_concatenation() {
+        // With the "full URL" switch on, a URL that stops at the version prefix is not a
+        // complete endpoint for any wire API — full-URL mode must not POST to `.../v1`
+        // verbatim (an opaque upstream 404). The guard routes such URLs through base-URL
+        // concatenation instead.
+        for base in [
+            "https://token-plan.example.com/v1",
+            "https://token-plan.example.com/v1/",
+            "https://host.example/api/v1", // prefixed gateway version prefix
+            "https://host.example/v1?x=1", // query must not hide the prefix
+            "  https://host.example/v1  ",
+        ] {
+            assert!(
+                base_url_is_full_endpoint(base, "/v1"),
+                "expected version-prefix match: {base:?}"
+            );
+        }
+
+        // Real full endpoints (and gemini-style `/v1beta` versions) must keep full-URL
+        // semantics — no fallback.
+        for base in [
+            "https://host.example/v1/responses",
+            "https://host.example/v1/chat/completions",
+            "https://host.example/v1/messages",
+            "https://host.example/v1beta",
+        ] {
+            assert!(
+                !base_url_is_full_endpoint(base, "/v1"),
+                "did not expect version-prefix match: {base:?}"
+            );
+        }
+
+        // After the fallback, concatenation lands on the real endpoint: both adapters
+        // already treat `/v1`-suffixed bases as versioned (direct append + `/v1/v1` dedup).
+        use super::super::providers::ProviderAdapter;
+        let codex = super::super::providers::CodexAdapter::new();
+        assert_eq!(
+            codex.build_url("https://token-plan.example.com/v1", "/responses"),
+            "https://token-plan.example.com/v1/responses"
+        );
+        assert_eq!(
+            codex.build_url("https://token-plan.example.com/v1", "/v1/responses"),
+            "https://token-plan.example.com/v1/responses"
+        );
+        let claude = super::super::providers::ClaudeAdapter;
+        assert_eq!(
+            claude.build_url("https://host.example/v1", "/v1/messages"),
+            "https://host.example/v1/messages"
+        );
     }
 
     #[test]
