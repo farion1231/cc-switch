@@ -2156,6 +2156,8 @@ pub(crate) fn resolve_antigravity_pricing_placeholder(normalized: &str) -> Optio
         | "3.6flash"
         | "3.6-flash"
         | "flash-3.6" => Some("gemini-3.6-flash".to_string()),
+        // Antigravity's placeholders and bare Claude 4.6 IDs use the dated
+        // canonical rows below; both seeded rows intentionally share pricing.
         "model_placeholder_m35" | "claude-sonnet-4-6" => {
             Some("claude-sonnet-4-6-20260217".to_string())
         }
