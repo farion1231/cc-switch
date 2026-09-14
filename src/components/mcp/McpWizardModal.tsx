@@ -248,13 +248,24 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
           <div className="space-y-4 min-h-[400px]">
             {/* Type */}
             <div>
-              <label className="mb-2 block text-sm font-medium text-foreground">
-                {t("mcp.wizard.type")} <span className="text-red-500">*</span>
-              </label>
-              <div className="flex gap-4">
+              <div
+                id="mcp-wizard-type-label"
+                className="mb-2 block text-sm font-medium text-foreground"
+              >
+                {t("mcp.wizard.type")}{" "}
+                <span aria-hidden="true" className="text-red-500">
+                  *
+                </span>
+              </div>
+              <div
+                className="flex gap-4"
+                role="radiogroup"
+                aria-labelledby="mcp-wizard-type-label"
+              >
                 <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
+                    name="mcp-wizard-type"
                     value="stdio"
                     checked={wizardType === "stdio"}
                     onChange={(e) =>
@@ -269,6 +280,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                 <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
+                    name="mcp-wizard-type"
                     value="http"
                     checked={wizardType === "http"}
                     onChange={(e) =>
@@ -283,6 +295,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                 <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
+                    name="mcp-wizard-type"
                     value="sse"
                     checked={wizardType === "sse"}
                     onChange={(e) =>
@@ -299,11 +312,19 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
             {/* Title */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                {t("mcp.form.title")} <span className="text-red-500">*</span>
+              <label
+                htmlFor="mcp-wizard-title"
+                className="mb-1 block text-sm font-medium text-foreground"
+              >
+                {t("mcp.form.title")}{" "}
+                <span aria-hidden="true" className="text-red-500">
+                  *
+                </span>
               </label>
               <Input
+                id="mcp-wizard-title"
                 type="text"
+                aria-required="true"
                 value={wizardTitle}
                 onChange={(e) => setWizardTitle(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -317,12 +338,19 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
               <>
                 {/* Command */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
+                  <label
+                    htmlFor="mcp-wizard-command"
+                    className="mb-1 block text-sm font-medium text-foreground"
+                  >
                     {t("mcp.wizard.command")}{" "}
-                    <span className="text-red-500">*</span>
+                    <span aria-hidden="true" className="text-red-500">
+                      *
+                    </span>
                   </label>
                   <Input
+                    id="mcp-wizard-command"
                     type="text"
+                    aria-required="true"
                     value={wizardCommand}
                     onChange={(e) => setWizardCommand(e.target.value)}
                     onKeyDown={handleKeyDown}
@@ -333,10 +361,14 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
                 {/* Args */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
+                  <label
+                    htmlFor="mcp-wizard-args"
+                    className="mb-1 block text-sm font-medium text-foreground"
+                  >
                     {t("mcp.wizard.args")}
                   </label>
                   <textarea
+                    id="mcp-wizard-args"
                     value={wizardArgs}
                     onChange={(e) => setWizardArgs(e.target.value)}
                     placeholder={t("mcp.wizard.argsPlaceholder")}
@@ -347,10 +379,14 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
                 {/* Env */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
+                  <label
+                    htmlFor="mcp-wizard-env"
+                    className="mb-1 block text-sm font-medium text-foreground"
+                  >
                     {t("mcp.wizard.env")}
                   </label>
                   <textarea
+                    id="mcp-wizard-env"
                     value={wizardEnv}
                     onChange={(e) => setWizardEnv(e.target.value)}
                     placeholder={t("mcp.wizard.envPlaceholder")}
@@ -366,12 +402,19 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
               <>
                 {/* URL */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
+                  <label
+                    htmlFor="mcp-wizard-url"
+                    className="mb-1 block text-sm font-medium text-foreground"
+                  >
                     {t("mcp.wizard.url")}{" "}
-                    <span className="text-red-500">*</span>
+                    <span aria-hidden="true" className="text-red-500">
+                      *
+                    </span>
                   </label>
                   <Input
+                    id="mcp-wizard-url"
                     type="text"
+                    aria-required="true"
                     value={wizardUrl}
                     onChange={(e) => setWizardUrl(e.target.value)}
                     onKeyDown={handleKeyDown}
@@ -382,10 +425,14 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
                 {/* Headers */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
+                  <label
+                    htmlFor="mcp-wizard-headers"
+                    className="mb-1 block text-sm font-medium text-foreground"
+                  >
                     {t("mcp.wizard.headers")}
                   </label>
                   <textarea
+                    id="mcp-wizard-headers"
                     value={wizardHeaders}
                     onChange={(e) => setWizardHeaders(e.target.value)}
                     placeholder={t("mcp.wizard.headersPlaceholder")}
