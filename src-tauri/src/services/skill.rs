@@ -2035,6 +2035,32 @@ impl SkillService {
             let mut apps = selection.apps;
             apps.pi = Self::skill_exists_in_app(&dir_name, &AppType::Pi);
 
+            // An explicitly imported MCode link must point at the managed copy
+            // so subsequent toggles and updates can verify its ownership.
+            if apps.mcode {
+                let native =
+                    Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Mcode)?.join(&dir_name);
+                if Self::is_symlink(&native) && !Self::paths_alias(&native, &dest) {
+                    if Self::compute_pi_deployment_hash(&native)?
+                        != Self::compute_pi_deployment_hash(&dest)?
+                    {
+                        return Err(anyhow!(
+                            "MCode Skill 与托管副本内容不同，拒绝替换链接: {dir_name}"
+                        ));
+                    }
+                    if let Some(deployment) =
+                        Self::inspect_pi_skill_destination(&native, &native, &dir_name)?
+                    {
+                        Self::refresh_pi_skill_destination(&dest, &native, &dir_name, &deployment)?;
+                    }
+                } else {
+                    Self::preflight_install_destination(&dest, &dir_name, &AppType::Mcode)?;
+                }
+                if !native.exists() {
+                    Self::sync_to_app_dir(&dir_name, &AppType::Mcode)?;
+                }
+            }
+
             // 从 lock 文件提取仓库信息
             let (id, repo_owner, repo_name, repo_branch, readme_url) =
                 build_repo_info_from_lock(&agents_lock, &dir_name);
@@ -4946,6 +4972,118 @@ mod tests {
         assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
         SkillService::uninstall(&db, &skill.id).unwrap();
         assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial]
+    fn mcode_imported_external_symlink_can_toggle_without_changing_its_source() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let external = temp.path().join("external-skill");
+        write_skill(&external, "external");
+        let original = fs::read(external.join("SKILL.md")).unwrap();
+        let native = SkillService::get_app_skills_dir(&AppType::Mcode)
+            .unwrap()
+            .join("test-skill");
+        fs::create_dir_all(native.parent().unwrap()).unwrap();
+        SkillService::create_symlink(&external, &native).unwrap();
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps {
+                    mcode: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .unwrap();
+        assert!(SkillService::paths_alias(
+            &native,
+            &SkillService::get_ssot_dir().unwrap().join("test-skill")
+        ));
+        SkillService::toggle_app(&db, &imported[0].id, &AppType::Mcode, false).unwrap();
+        assert!(!native.exists());
+        assert_eq!(fs::read(external.join("SKILL.md")).unwrap(), original);
+        SkillService::toggle_app(&db, &imported[0].id, &AppType::Mcode, true).unwrap();
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+
+        SkillService::remove_path(&native).unwrap();
+        SkillService::create_symlink(&external, &native).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("test-skill"),
+            "different",
+        );
+        let empty_db = Arc::new(Database::memory().unwrap());
+        assert!(SkillService::import_from_apps(
+            &empty_db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps {
+                    mcode: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .is_err());
+        assert!(empty_db.get_all_installed_skills().unwrap().is_empty());
+        assert!(SkillService::paths_alias(&native, &external));
+        assert_eq!(fs::read(external.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn mcode_import_checks_native_copies_and_deploys_selected_skills() {
+        for native_content in [None, Some("shared"), Some("different")] {
+            let temp = tempdir().unwrap();
+            let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+            let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+            let db = Arc::new(Database::memory().unwrap());
+            let claude = SkillService::get_app_skills_dir(&AppType::Claude)
+                .unwrap()
+                .join("test-skill");
+            let native = SkillService::get_app_skills_dir(&AppType::Mcode)
+                .unwrap()
+                .join("test-skill");
+            write_skill(&claude, "shared");
+            if let Some(content) = native_content {
+                write_skill(&native, content);
+            }
+            let imported = SkillService::import_from_apps(
+                &db,
+                vec![ImportSkillSelection {
+                    directory: "test-skill".into(),
+                    apps: SkillApps {
+                        mcode: true,
+                        ..Default::default()
+                    },
+                }],
+            );
+            if native_content == Some("different") {
+                assert!(imported.is_err());
+                assert!(db.get_all_installed_skills().unwrap().is_empty());
+                assert!(fs::read_to_string(native.join("SKILL.md"))
+                    .unwrap()
+                    .contains("different"));
+            } else {
+                let imported = imported.unwrap();
+                assert!(imported[0].apps.mcode);
+                assert_eq!(
+                    fs::read(native.join("SKILL.md")).unwrap(),
+                    fs::read(claude.join("SKILL.md")).unwrap()
+                );
+                SkillService::toggle_app(&db, &imported[0].id, &AppType::Mcode, false).unwrap();
+                assert!(!native.exists());
+            }
+            assert!(fs::read_to_string(claude.join("SKILL.md"))
+                .unwrap()
+                .contains("shared"));
+        }
     }
 
     #[tokio::test]

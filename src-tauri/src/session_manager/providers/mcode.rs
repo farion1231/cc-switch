@@ -62,8 +62,19 @@ pub fn load_messages(source: &str) -> Result<Vec<SessionMessage>, String> {
 
 fn read_messages(conn: &Connection, id: &str) -> rusqlite::Result<Vec<SessionMessage>> {
     let mut query = conn.prepare(
-        "SELECT role, data_json, created_at_ms FROM local_runtime_message_rows
-         WHERE session_id = ?1 AND role IN ('user', 'assistant') ORDER BY id",
+        "WITH migrated AS (
+            SELECT 1 FROM local_runtime_message_row_migrations WHERE session_id = ?1
+         ), display AS (
+            SELECT role, data_json, created_at_ms, id AS sequence
+            FROM local_runtime_message_rows
+            WHERE session_id = ?1 AND EXISTS (SELECT 1 FROM migrated)
+            UNION ALL
+            SELECT json_extract(message.value, '$.role'), message.value, NULL, message.key
+            FROM local_runtime_messages, json_each(display_messages_json) AS message
+            WHERE session_id = ?1 AND NOT EXISTS (SELECT 1 FROM migrated)
+         )
+         SELECT role, data_json, created_at_ms FROM display
+         WHERE role IN ('user', 'assistant') ORDER BY sequence",
     )?;
     let rows = query.query_map([id], |row| {
         let data: String = row.get(1)?;
@@ -71,7 +82,16 @@ fn read_messages(conn: &Connection, id: &str) -> rusqlite::Result<Vec<SessionMes
         Ok(SessionMessage {
             role: row.get(0)?,
             content: super::utils::extract_text(&value["msg_content"]),
-            ts: row.get(2)?,
+            ts: row.get::<_, Option<i64>>(2)?.or_else(|| {
+                let time = value
+                    .get("timestamp")
+                    .filter(|v| !v.is_null())
+                    .or_else(|| value.get("created_at"))?;
+                time.as_f64()
+                    .or_else(|| time.as_str()?.parse::<f64>().ok())
+                    .filter(|time| time.is_finite())
+                    .map(|time| time.floor() as i64)
+            }),
         })
     })?;
     rows.filter_map(|r| match r {
@@ -94,6 +114,9 @@ mod tests {
             ('mvs_public','Project','/work',100,200,'visible',NULL,'conversation'),
             ('mvs_child','Child','/work',100,200,'visible','mvs_public','task'),
             ('mvs_hidden','Hidden','/work',100,200,'hidden',NULL,'conversation');
+            CREATE TABLE local_runtime_messages (session_id TEXT, display_messages_json TEXT);
+            CREATE TABLE local_runtime_message_row_migrations (session_id TEXT);
+            INSERT INTO local_runtime_message_row_migrations VALUES ('mvs_public');
             CREATE TABLE local_runtime_message_rows (id INTEGER, session_id TEXT, role TEXT, data_json TEXT, created_at_ms INTEGER);
             INSERT INTO local_runtime_message_rows VALUES
             (1,'mvs_public','user','{\"msg_content\":\"Fix this project\"}',100),
@@ -108,5 +131,36 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1].content, "Tests passed");
         assert_eq!(messages[1].ts, Some(200));
+
+        let legacy = serde_json::json!([
+            {"role":"user", "msg_content":"Legacy question", "timestamp":"100"},
+            {"role":"assistant", "msg_content":"Legacy answer", "created_at":200},
+            {"role":"tool", "msg_content":"Hidden tool output"}
+        ])
+        .to_string();
+        conn.execute(
+            "INSERT INTO local_runtime_messages VALUES (?1, ?2)",
+            ["mvs_public", &legacy],
+        )
+        .unwrap();
+        // A migrated session must ignore its legacy blob, even if it remains.
+        assert_eq!(read_messages(&conn, "mvs_public").unwrap().len(), 2);
+        conn.execute("DELETE FROM local_runtime_message_row_migrations", [])
+            .unwrap();
+        let messages = read_messages(&conn, "mvs_public").unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "Legacy question");
+        assert_eq!(messages[0].ts, Some(100));
+        assert_eq!(messages[1].content, "Legacy answer");
+        assert_eq!(messages[1].ts, Some(200));
+        assert_eq!(
+            conn.query_row(
+                "SELECT display_messages_json FROM local_runtime_messages",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+            legacy
+        );
     }
 }

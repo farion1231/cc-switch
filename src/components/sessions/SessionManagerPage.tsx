@@ -1183,7 +1183,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 <span>Gemini CLI</span>
                               </div>
                             </SelectItem>
-                            <SelectItem value="mcode">MCode</SelectItem>
+                            <SelectItem value="mcode">MiniMax Code</SelectItem>
                             <SelectItem value="pi">
                               <div className="flex items-center gap-2">
                                 <ProviderIcon icon="pi" name="pi" size={14} />
