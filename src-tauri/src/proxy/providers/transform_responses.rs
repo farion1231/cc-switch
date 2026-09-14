@@ -4894,6 +4894,37 @@ mod tests {
     }
 
     #[test]
+    fn test_responses_muse_spark_contributor_effort_not_dropped() {
+        // muse-spark-1.3-contributor was missing from the reasoning-effort
+        // whitelist, so output_config.effort was silently dropped and the
+        // upstream ran at its default level regardless of /effort.
+        let input = json!({
+            "model": "muse-spark-1.3-contributor",
+            "max_tokens": 1024,
+            "output_config": {"effort": "low"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn test_responses_muse_spark_contributor_max_clamped_to_xhigh() {
+        // Contributor tier rejects reasoning.effort="max" (HTTP 400), so
+        // output_config.effort="max" must clamp to "xhigh", not pass through.
+        let input = json!({
+            "model": "muse-spark-1.3-contributor",
+            "max_tokens": 1024,
+            "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
     fn test_responses_output_config_takes_priority_over_thinking() {
         let input = json!({
             "model": "gpt-5.4",
