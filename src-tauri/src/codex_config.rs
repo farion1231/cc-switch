@@ -450,6 +450,16 @@ pub fn get_codex_config_dir() -> PathBuf {
         return custom;
     }
 
+    // Codex CLI 支持 CODEX_HOME 重定向配置目录（config.toml / auth.json），
+    // 必须与 CLI 读取的目录一致，否则切换供应商/路由写入的配置不生效
+    // （仅在设置了该变量的机器出现）。
+    if let Ok(dir) = std::env::var("CODEX_HOME") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
     get_home_dir().join(".codex")
 }
 

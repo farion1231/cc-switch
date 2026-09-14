@@ -39,6 +39,16 @@ pub fn get_claude_config_dir() -> PathBuf {
         return custom;
     }
 
+    // Claude Code 本身支持用 CLAUDE_CONFIG_DIR 把配置目录（含 settings.json）
+    // 重定向到别处。这里若不跟随，切换供应商/路由接管写入的配置与 CLI 实际
+    // 读取的就不是同一份，表现为路由完全不生效（仅在设置了该变量的机器出现）。
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
     get_home_dir().join(".claude")
 }
 
