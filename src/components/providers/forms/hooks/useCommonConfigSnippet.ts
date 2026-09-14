@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { useCommonConfigSyncGuard } from "./useCommonConfigSyncGuard";
 import {
   updateCommonConfigSnippet,
   hasCommonConfigSnippet,
@@ -45,19 +46,21 @@ export function useCommonConfigSnippet({
   const [isLoading, setIsLoading] = useState(true);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  // 用于跟踪是否正在通过通用配置更新
-  const isUpdatingFromCommonConfig = useRef(false);
+  // 程序性配置写入的回显保护（替代 setTimeout 重置标记）
+  const syncGuard = useCommonConfigSyncGuard();
   // 用于跟踪新建模式是否已初始化默认勾选
   const hasInitializedNewMode = useRef(false);
-  // 用于跟踪编辑模式是否已初始化显式开关/预览
-  const hasInitializedEditMode = useRef(false);
+  // 用于识别 initialData 被 live 配置替换后的表单重置
+  const lastInitialDataRef = useRef<typeof initialData | undefined>(undefined);
+  const lastInitialEnabledRef = useRef<boolean | undefined>(undefined);
 
   // 当预设变化时，重置初始化标记，使新预设能够重新触发初始化逻辑
   useEffect(() => {
     if (!enabled) return;
     hasInitializedNewMode.current = false;
-    hasInitializedEditMode.current = false;
-  }, [selectedPresetId, enabled, initialEnabled]);
+    lastInitialDataRef.current = undefined;
+    lastInitialEnabledRef.current = undefined;
+  }, [selectedPresetId, enabled]);
 
   // 初始化：从 config.json 加载，支持从 localStorage 迁移
   useEffect(() => {
@@ -115,47 +118,46 @@ export function useCommonConfigSnippet({
     };
   }, [enabled]);
 
-  // 初始化时检查通用配置片段（编辑模式）
+  // 编辑态初始化 / live 配置刷新：勾选状态以 meta.commonConfigEnabled 为准。
+  //
+  // 片段已由 useInitialDataCommonConfig 在数据层合并进 initialData，所以这里
+  // 只需同步勾选状态。表单随后会被 reset 到 expectedConfig，把这次重置登记给
+  // syncGuard，避免下面的同步 effect 在重置落地前用旧值做一次无谓的推断。
   useEffect(() => {
     if (!enabled) return;
-    if (initialData && !isLoading && !hasInitializedEditMode.current) {
-      hasInitializedEditMode.current = true;
-
-      const configString = JSON.stringify(initialData.settingsConfig, null, 2);
-      const inferredHasCommon = hasCommonConfigSnippet(
-        configString,
-        commonConfigSnippet,
-      );
-
-      // 优先级：显式设置的 initialEnabled > 从配置推断的值
-      // 如果 initialEnabled 为 undefined，使用推断值
-      const hasCommon =
-        initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
-      setUseCommonConfig(hasCommon);
-
-      // 如果应该启用通用配置但配置中还没有，则自动添加
-      if (hasCommon && !inferredHasCommon) {
-        const { updatedConfig, error } = updateCommonConfigSnippet(
-          settingsConfig,
-          commonConfigSnippet,
-          true,
-        );
-        if (!error) {
-          isUpdatingFromCommonConfig.current = true;
-          onConfigChange(updatedConfig);
-          setTimeout(() => {
-            isUpdatingFromCommonConfig.current = false;
-          }, 0);
-        }
-      }
+    if (
+      !initialData ||
+      isLoading ||
+      (lastInitialDataRef.current === initialData &&
+        lastInitialEnabledRef.current === initialEnabled)
+    ) {
+      return;
     }
+
+    lastInitialDataRef.current = initialData;
+    lastInitialEnabledRef.current = initialEnabled;
+
+    const expectedConfig = JSON.stringify(initialData.settingsConfig, null, 2);
+    const inferredHasCommon = hasCommonConfigSnippet(
+      expectedConfig,
+      commonConfigSnippet,
+    );
+    // 优先级：显式设置的 initialEnabled > 从配置推断的值
+    // 如果 initialEnabled 为 undefined，使用推断值
+    const hasCommon =
+      initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
+
+    setCommonConfigError("");
+    setUseCommonConfig(hasCommon);
+    // 无条件登记：即使表单当前已经是 expectedConfig，也要让同步 effect 跳过
+    // 这一轮推断，否则片段为空/不匹配时会把刚设好的勾选状态又推断成 false。
+    syncGuard.schedule(settingsConfig, expectedConfig);
   }, [
     enabled,
     initialData,
     initialEnabled,
     commonConfigSnippet,
     isLoading,
-    onConfigChange,
     settingsConfig,
   ]);
 
@@ -179,11 +181,8 @@ export function useCommonConfigSnippet({
             true,
           );
           if (!error) {
-            isUpdatingFromCommonConfig.current = true;
+            syncGuard.schedule(settingsConfig, updatedConfig);
             onConfigChange(updatedConfig);
-            setTimeout(() => {
-              isUpdatingFromCommonConfig.current = false;
-            }, 0);
           }
         }
       } catch {
@@ -216,13 +215,8 @@ export function useCommonConfigSnippet({
 
       setCommonConfigError("");
       setUseCommonConfig(checked);
-      // 标记正在通过通用配置更新
-      isUpdatingFromCommonConfig.current = true;
+      syncGuard.schedule(settingsConfig, updatedConfig);
       onConfigChange(updatedConfig);
-      // 在下一个事件循环中重置标记
-      setTimeout(() => {
-        isUpdatingFromCommonConfig.current = false;
-      }, 0);
     },
     [settingsConfig, commonConfigSnippet, onConfigChange],
   );
@@ -251,6 +245,7 @@ export function useCommonConfigSnippet({
             previousSnippet,
             false,
           );
+          syncGuard.schedule(settingsConfig, updatedConfig);
           onConfigChange(updatedConfig);
           setUseCommonConfig(false);
         }
@@ -296,24 +291,24 @@ export function useCommonConfigSnippet({
           return;
         }
 
-        // 标记正在通过通用配置更新，避免触发状态检查
-        isUpdatingFromCommonConfig.current = true;
+        syncGuard.schedule(settingsConfig, addResult.updatedConfig);
         onConfigChange(addResult.updatedConfig);
-        // 在下一个事件循环中重置标记
-        setTimeout(() => {
-          isUpdatingFromCommonConfig.current = false;
-        }, 0);
       }
     },
     [commonConfigSnippet, settingsConfig, useCommonConfig, onConfigChange],
   );
 
-  // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）
+  // 配置变化同步 effect：跳过程序性写入的回显，其余按内容推断勾选状态，
+  // 让用户手动增删片段时勾选框跟着变。
   useEffect(() => {
     if (!enabled) return;
-    if (isUpdatingFromCommonConfig.current || isLoading) {
+    if (isLoading || syncGuard.skip(settingsConfig)) {
       return;
     }
+    // 没有片段可比对时，推断不出任何信息——保持当前勾选状态，
+    // 否则会把 meta.commonConfigEnabled 静默改写成 false。
+    if (!commonConfigSnippet.trim()) return;
+
     const hasCommon = hasCommonConfigSnippet(
       settingsConfig,
       commonConfigSnippet,
