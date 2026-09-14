@@ -3757,7 +3757,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://www.laonongapi.com",
     apiKeyUrl: "https://www.laonongapi.com/#/workspace/keys",
     settingsConfig: {
-      baseUrl: "https://api.laonongapi.com",
+      baseUrl: "https://api.laonongapi.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
