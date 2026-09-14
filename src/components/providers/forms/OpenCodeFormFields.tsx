@@ -27,7 +27,7 @@ import {
   OPENCODE_EXTRA_OPTION_DRAFT_PREFIX,
 } from "./helpers/opencodeFormUtils";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
-import type { ProviderCategory, OpenCodeModel } from "@/types";
+import type { ProviderApiKey, ProviderCategory, OpenCodeModel } from "@/types";
 
 /**
  * Model ID input with local state to prevent focus loss.
@@ -161,6 +161,8 @@ interface OpenCodeFormFieldsProps {
   // API Key
   apiKey: string;
   onApiKeyChange: (value: string) => void;
+  apiKeys?: ProviderApiKey[];
+  onApiKeysChange?: (keys: ProviderApiKey[]) => void;
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
@@ -189,6 +191,8 @@ export function OpenCodeFormFields({
   onNpmChange,
   apiKey,
   onApiKeyChange,
+  apiKeys,
+  onApiKeysChange,
   category,
   shouldShowApiKeyLink,
   websiteUrl,
@@ -527,6 +531,8 @@ export function OpenCodeFormFields({
       <ApiKeySection
         value={apiKey}
         onChange={onApiKeyChange}
+        apiKeys={apiKeys}
+        onApiKeysChange={onApiKeysChange}
         category={category}
         shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}
