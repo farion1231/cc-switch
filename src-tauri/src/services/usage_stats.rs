@@ -2111,6 +2111,16 @@ pub(crate) fn resolve_antigravity_pricing_placeholder(normalized: &str) -> Optio
         | "gemini-3.1-pro-low"
         | "model_placeholder_m16"
         | "gemini-pro-default" => Some("gemini-3.1-pro-preview".to_string()),
+        "gemini-3.8-flash"
+        | "gemini-3.8-flash-a"
+        | "gemini-3.8-flash-low"
+        | "gemini-3.8-flash-medium"
+        | "gemini-3.8-flash-high"
+        | "gemini-3.8-flash-preview"
+        | "gemini-3.8"
+        | "3.8flash"
+        | "3.8-flash"
+        | "flash-3.8" => Some("gemini-3.8-flash".to_string()),
         "model_placeholder_m35" | "claude-sonnet-4-6" => {
             Some("claude-sonnet-4-6-20260217".to_string())
         }

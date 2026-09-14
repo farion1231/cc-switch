@@ -110,9 +110,6 @@ const ENV_BADGE_CONFIG: Record<
 const posixScriptInstallCommand = (url: string) =>
   `bash -c 'tmp=$(mktemp) && curl -fsSL ${url} -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'`;
 
-const HERMES_WINDOWS_INSTALL_SCRIPT =
-  "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
-
 const powershellEncodedCommand = (script: string): string => {
   let binary = "";
   for (let i = 0; i < script.length; i += 1) {
@@ -122,6 +119,16 @@ const powershellEncodedCommand = (script: string): string => {
   return btoa(binary);
 };
 
+const ANTIGRAVITY_WINDOWS_INSTALL_SCRIPT =
+  "irm https://antigravity.google/cli/install.ps1 | iex";
+
+const ANTIGRAVITY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  ANTIGRAVITY_WINDOWS_INSTALL_SCRIPT,
+)}`;
+
+const HERMES_WINDOWS_INSTALL_SCRIPT =
+  "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
+
 const HERMES_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
   HERMES_WINDOWS_INSTALL_SCRIPT,
 )}`;
@@ -130,6 +137,8 @@ const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${posixScriptInstallCommand("https://claude.ai/install.sh")} || npm i -g @anthropic-ai/claude-code@latest
 # Codex
 npm i -g @openai/codex@latest
+# Antigravity
+${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Grok Build
 npm i -g @xai-official/grok@latest
 # OpenCode
@@ -145,6 +154,8 @@ const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
 # Codex
 npm i -g @openai/codex@latest
+# Antigravity
+${ANTIGRAVITY_WINDOWS_INSTALL_COMMAND}
 # Grok Build
 npm i -g @xai-official/grok@latest
 # OpenCode
@@ -1065,9 +1076,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             // 已安装却跑不起来（如 Node 版本不达标）：用它区分卡片文案与按钮，避免把
             // "装了跑不起来"误判成"未安装"而给出无用的安装按钮（重装同一版本解决不了）。
             const installedButBroken = Boolean(tool?.installed_but_broken);
-            // loading 和 broken 都没有可执行动作；gemini（Antigravity）不提供应用内生命周期管理；其余按是否已装/是否过期选择。
+            // loading 和 broken 都没有可执行动作；其余按是否已装/是否过期选择。
             const action: ToolLifecycleAction | null =
-              toolName === "gemini" || isToolVersionLoading || installedButBroken
+              isToolVersionLoading || installedButBroken
                 ? null
                 : !tool?.version
                   ? "install"

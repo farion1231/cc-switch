@@ -445,6 +445,8 @@ fn tool_display_name(tool: &str) -> &'static str {
 /// 先下载到 mktemp 文件再交给 bash,能让 curl 失败稳定变成整条命令失败。
 const CLAUDE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://claude.ai/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+const ANTIGRAVITY_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://antigravity.google/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const OPENCODE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const GROK_INSTALL_UNIX: &str =
@@ -460,6 +462,9 @@ const HERMES_UPDATE_UNIX: &str =
     "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
 #[cfg(target_os = "windows")]
+const ANTIGRAVITY_INSTALL_WINDOWS_SCRIPT: &str =
+    "irm https://antigravity.google/cli/install.ps1 | iex";
+#[cfg(target_os = "windows")]
 const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
 #[cfg(target_os = "windows")]
@@ -474,6 +479,14 @@ fn powershell_encoded_command(script: &str) -> String {
         bytes.extend_from_slice(&unit.to_le_bytes());
     }
     STANDARD.encode(bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn antigravity_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(ANTIGRAVITY_INSTALL_WINDOWS_SCRIPT)
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -564,6 +577,19 @@ fn tool_action_shell_command_for_shell(
             npm_install_command_for(tool)?.to_string(),
             shell,
         ));
+    }
+
+    if tool == "gemini" {
+        return match (action, shell) {
+            (ToolLifecycleAction::Install, LifecycleCommandShell::Posix) => {
+                Some(ANTIGRAVITY_INSTALL_UNIX.to_string())
+            }
+            #[cfg(target_os = "windows")]
+            (ToolLifecycleAction::Install, LifecycleCommandShell::WindowsBatch) => {
+                Some(antigravity_install_windows_command())
+            }
+            _ => None,
+        };
     }
 
     if tool == "hermes" {
@@ -3704,6 +3730,7 @@ fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
 fn posix_install_command_for(tool: &str) -> String {
     match tool {
         "claude" => installer_with_npm_fallback(CLAUDE_INSTALL_UNIX, tool),
+        "gemini" => ANTIGRAVITY_INSTALL_UNIX.to_string(),
         // Grok 的 npm fallback **会切换用户的分发模式**（该包 postinstall 把
         // `~/.grok/config.toml` 的 `[cli] installer` 写成 `npm`，此后 `grok update` 一律走
         // npm、隐式依赖 node）。仍然保留它：官方 installer 不可达（防火墙 / x.ai 被拦）时
@@ -6598,9 +6625,16 @@ mod tests {
         }
 
         #[test]
-        fn gemini_install_has_no_npm_lifecycle() {
+        fn gemini_install_uses_official_installer() {
             let cmd = install_command_for("gemini");
-            assert_eq!(cmd, "");
+            assert!(
+                cmd.contains("https://antigravity.google/cli/install.sh"),
+                "should include official antigravity installer: {cmd}"
+            );
+            assert!(
+                !cmd.contains("npm i -g"),
+                "antigravity install should not fall back to npm: {cmd}"
+            );
         }
 
         #[test]

@@ -1459,6 +1459,26 @@ mod tests {
             normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M26"),
             "claude-opus-4-6-20260206"
         );
+        assert_eq!(
+            normalize_antigravity_pricing_model("3.8flash"),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("3.8-flash"),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.8"),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.8-flash-a"),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
+            normalize_antigravity_pricing_model("gemini-3.8-flash-thinking"),
+            "gemini-3.8-flash"
+        );
         assert_eq!(normalize_antigravity_pricing_model("unknown"), "unknown");
         assert_eq!(
             normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M999"),
