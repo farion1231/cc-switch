@@ -75,6 +75,7 @@ import { ProxyToggle } from "@/components/proxy/ProxyToggle";
 import { ClaudeDesktopRouteToggle } from "@/components/proxy/ClaudeDesktopRouteToggle";
 import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import { RoutingActivationBrand } from "@/components/proxy/RoutingActivationBrand";
+import { CodexModelRoutingCard } from "@/components/proxy/CodexModelRoutingCard";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel, {
@@ -1100,6 +1101,9 @@ function App() {
                     transition={{ duration: 0.15 }}
                     className="space-y-4"
                   >
+                    {activeApp === "codex" && (
+                      <CodexModelRoutingCard providers={providers} />
+                    )}
                     <ProviderList
                       providers={providers}
                       currentProviderId={currentProviderId}

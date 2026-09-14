@@ -85,7 +85,21 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// Only serves the catalog when the live config.toml still references the
 /// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
 /// Codex live-setting import.
-pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+pub async fn handle_models(State(state): State<ProxyState>) -> Result<Json<Value>, ProxyError> {
+    let routing = state
+        .db
+        .get_codex_model_routing()
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    if routing.enabled {
+        let providers = state
+            .db
+            .get_all_providers("codex")
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+        return routing
+            .catalog(&providers)
+            .map(Json)
+            .map_err(|e| ProxyError::ConfigError(e.to_string()));
+    }
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
         Ok(config_text) => {

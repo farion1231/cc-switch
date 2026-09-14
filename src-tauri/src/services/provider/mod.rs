@@ -4723,6 +4723,27 @@ impl ProviderService {
         }
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
+        if matches!(app_type, AppType::Codex) && !provider_id_changed {
+            let routing = state.db.get_codex_model_routing()?;
+            if routing.enabled
+                && futures::executor::block_on(state.db.get_proxy_config_for_app("codex"))?.enabled
+            {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_codex_provider_in_model_routing(&provider),
+                )?;
+                return Ok(true);
+            }
+            // Even an offline draft must not silently retain a deleted model or
+            // an API-key station changed to an account-bound identity.
+            if routing.references_provider(&provider.id) {
+                let mut providers = state.db.get_all_providers("codex")?;
+                providers.insert(provider.id.clone(), provider.clone());
+                routing.validate(&providers, false)?;
+            }
+        }
+
         if provider_id_changed {
             if !app_type.is_additive_mode() {
                 return Err(AppError::Message(
@@ -5040,6 +5061,18 @@ impl ProviderService {
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+        let _routing_guard = if matches!(app_type, AppType::Codex) {
+            let guard =
+                futures::executor::block_on(state.proxy_service.lock_switch_for_app("codex"));
+            if state.db.get_codex_model_routing()?.references_provider(id) {
+                return Err(AppError::InvalidInput(
+                    "该供应商被 Codex 模型路由引用，请先在「管理模型」中取消选择".into(),
+                ));
+            }
+            Some(guard)
+        } else {
+            None
+        };
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }

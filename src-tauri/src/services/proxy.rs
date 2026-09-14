@@ -400,6 +400,9 @@ pub struct HotSwitchOutcome {
     pub logical_target_changed: bool,
 }
 
+mod codex_model_routing;
+pub use codex_model_routing::ModelRoutingSaveResult;
+
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
         let codex_oauth_manager =
@@ -722,6 +725,9 @@ impl ProxyService {
         outgoing_managed_account_id: Option<&str>,
         expected_outgoing_refresh_token: Option<&str>,
     ) -> Result<(), String> {
+        if self.codex_model_routing_enabled()? {
+            return self.refresh_codex_model_routing_live().await;
+        }
         let existing_live = self.read_codex_live().ok();
         let mut effective_settings = build_effective_provider_for_live_with_codex_oauth_manager(
             self.db.as_ref(),
@@ -795,6 +801,9 @@ impl ProxyService {
     }
 
     fn should_preserve_current_codex_auth(&self) -> Result<bool, String> {
+        if self.codex_model_routing_enabled()? {
+            return Ok(true);
+        }
         // Unknown current state is handled conservatively: preserving the live
         // auth file cannot roll a refresh generation back, while restoring an
         // unclassified legacy backup can. A concrete non-official provider is
@@ -834,6 +843,18 @@ impl ProxyService {
     }
 
     async fn refresh_active_target_from_current_provider(&self, app_type: &AppType) {
+        if matches!(app_type, AppType::Codex) {
+            if let Ok(config) = self.codex_model_routing_config() {
+                if config.enabled {
+                    if let Some(server) = self.server.read().await.as_ref() {
+                        server
+                            .set_active_target("codex", "custom", &config.provider_name)
+                            .await;
+                    }
+                    return;
+                }
+            }
+        }
         let Ok(Some(provider)) = self.get_current_provider_for_app(app_type) else {
             return;
         };
@@ -1152,12 +1173,20 @@ impl ProxyService {
     /// - 开启：自动启动代理服务，仅接管当前 app 的 Live 配置
     /// - 关闭：仅恢复当前 app 的 Live 配置；若无其它接管，则自动停止代理服务
     pub async fn set_takeover_for_app(&self, app_type: &str, enabled: bool) -> Result<(), String> {
+        let _guard = self.switch_locks.lock_for_app(app_type).await;
+        self.set_takeover_for_app_inner(app_type, enabled).await
+    }
+
+    async fn set_takeover_for_app_inner(
+        &self,
+        app_type: &str,
+        enabled: bool,
+    ) -> Result<(), String> {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
         if !app.supports_local_proxy() {
             return Err(format!("{} 不支持本地路由", app.as_str()));
         }
         let app_type_str = app.as_str();
-        let _guard = self.switch_locks.lock_for_app(app_type_str).await;
 
         if enabled {
             // 1) 代理服务未运行则自动启动
@@ -1194,6 +1223,9 @@ impl ProxyService {
                 // 只看占位符会把半接管/旧端口残留误判为可复用，导致开启接管后
                 // live 文件仍停留在普通供应商配置。
                 if has_backup && live_matches_current_proxy {
+                    if matches!(app, AppType::Codex) && self.codex_model_routing_enabled()? {
+                        self.refresh_codex_model_routing_live().await?;
+                    }
                     self.refresh_active_target_from_current_provider(&app).await;
                     return Ok(());
                 }
@@ -1438,6 +1470,9 @@ impl ProxyService {
         app_type: &AppType,
         live_config: &Value,
     ) -> Result<(), String> {
+        if matches!(app_type, AppType::Codex) && self.codex_model_routing_enabled()? {
+            return Ok(());
+        }
         match app_type {
             AppType::Claude => {
                 let provider_id =
@@ -2081,6 +2116,9 @@ impl ProxyService {
             }
             AppType::Codex => {
                 self.read_codex_live()?;
+                if self.codex_model_routing_enabled()? {
+                    return self.refresh_codex_model_routing_live().await;
+                }
                 let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
                 self.sync_codex_live_from_provider_while_proxy_active(&codex_provider)
                     .await?;
@@ -2810,6 +2848,9 @@ impl ProxyService {
         provider: &Provider,
         clear_codex_auth_for_account: Option<&str>,
     ) -> Result<(), String> {
+        if app_type == "codex" && self.codex_model_routing_enabled()? {
+            return Ok(());
+        }
         let app_type_enum =
             AppType::from_str(app_type).map_err(|_| format!("未知的应用类型: {app_type}"))?;
         let mut effective_settings = if matches!(app_type_enum, AppType::Codex) {
@@ -2956,6 +2997,11 @@ impl ProxyService {
         app_type: &str,
         provider_id: &str,
     ) -> Result<HotSwitchOutcome, String> {
+        if app_type == "codex" && self.codex_model_routing_enabled()? {
+            return Err(
+                "模型路由已启用，请在「管理模型」中更换模型的供应商，或先关闭模型路由".into(),
+            );
+        }
         let app_type_enum =
             AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
         let provider = self

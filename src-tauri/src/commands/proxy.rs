@@ -8,6 +8,38 @@ use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
 use std::str::FromStr;
 
+#[tauri::command]
+pub async fn get_codex_model_routing(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::proxy::codex_model_routing::CodexModelRoutingConfig, String> {
+    state
+        .db
+        .get_codex_model_routing()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn save_codex_model_routing(
+    state: tauri::State<'_, AppState>,
+    config: crate::proxy::codex_model_routing::CodexModelRoutingConfig,
+) -> Result<crate::services::proxy::ModelRoutingSaveResult, String> {
+    state
+        .proxy_service
+        .save_codex_model_routing_config(config)
+        .await
+}
+
+#[tauri::command]
+pub async fn set_codex_model_routing_enabled(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    state
+        .proxy_service
+        .set_codex_model_routing_enabled(enabled)
+        .await
+}
+
 fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, String> {
     let app = crate::app_config::AppType::from_str(app_type)
         .map_err(|error| format!("无效的应用类型: {error}"))?;

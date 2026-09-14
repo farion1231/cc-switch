@@ -48,6 +48,8 @@ pub struct RequestContext {
     pub current_provider_id: String,
     /// 请求中的模型名称
     pub request_model: String,
+    /// Snapshot of the routing mode for this request, including in-flight retries.
+    pub codex_model_routed: bool,
     /// 实际发往上游的模型名（路由接管/模型映射后的真值，forward 成功后回填）。
     ///
     /// usage 归因的兜底顺序：上游响应回显 → outbound_model → request_model。
@@ -96,7 +98,7 @@ impl RequestContext {
         let start_time = Instant::now();
 
         // 从数据库读取应用级代理配置（per-app）
-        let app_config = state
+        let mut app_config = state
             .db
             .get_proxy_config_for_app(app_type_str)
             .await
@@ -131,17 +133,39 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
+        let routing = if matches!(app_type, AppType::Codex) {
+            Some(
+                state
+                    .db
+                    .get_codex_model_routing()
+                    .map_err(|e| ProxyError::ConfigError(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let codex_model_routed = routing.as_ref().is_some_and(|config| config.enabled);
+        let providers = if let Some(config) = routing.filter(|config| config.enabled) {
+            // The minimal model router has exactly one explicit station, never
+            // the unrelated global failover queue.
+            app_config.auto_failover_enabled = false;
+            vec![config
+                .resolve(&state.db, &request_model)
+                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?]
+        } else {
+            state
+                .provider_router
+                .select_providers(app_type_str)
+                .await
+                .map_err(|e| match e {
+                    crate::error::AppError::AllProvidersCircuitOpen => {
+                        ProxyError::AllProvidersCircuitOpen
+                    }
+                    crate::error::AppError::NoProvidersConfigured => {
+                        ProxyError::NoProvidersConfigured
+                    }
+                    _ => ProxyError::DatabaseError(e.to_string()),
+                })?
+        };
 
         let provider = providers
             .first()
@@ -149,10 +173,11 @@ impl RequestContext {
             .ok_or(ProxyError::NoAvailableProvider)?;
 
         log::debug!(
-            "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
+            "[{}] Provider: {}, model: {}, routed: {}, failover chain: {} providers, session: {}",
             tag,
             provider.name,
             request_model,
+            codex_model_routed,
             providers.len(),
             session_id
         );
@@ -164,6 +189,7 @@ impl RequestContext {
             providers,
             current_provider_id,
             request_model,
+            codex_model_routed,
             outbound_model: None,
             tag,
             app_type_str,
@@ -242,6 +268,7 @@ impl RequestContext {
             self.copilot_optimizer_config.clone(),
             max_retries,
         )
+        .with_codex_model_routing(self.codex_model_routed)
     }
 
     /// 获取 Provider 列表（用于故障转移）
