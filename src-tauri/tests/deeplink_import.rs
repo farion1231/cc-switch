@@ -48,7 +48,7 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
     reset_test_fs();
     let _home = ensure_test_home();
 
-    let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepLink%20Codex&homepage=https%3A%2F%2Fopenai.example&endpoint=https%3A%2F%2Fapi.openai.example%2Fv1&apiKey=sk-test-codex-key&model=gpt-4o&icon=openai";
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepLink%20Codex&homepage=https%3A%2F%2Fopenai.example&endpoint=https%3A%2F%2Fapi.openai.example%2Fv1&apiKey=sk-test-codex-key&model=gpt-4o&icon=openai&supports_websockets=true";
     let request = parse_deeplink_url(url).expect("parse deeplink url");
 
     let db = Arc::new(Database::memory().expect("create memory db"));
@@ -82,5 +82,9 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
     assert!(
         config_text.contains("model = \"gpt-4o\""),
         "config.toml content should contain model setting"
+    );
+    assert!(
+        config_text.contains("supports_websockets = true"),
+        "config.toml content should preserve the WebSocket capability"
     );
 }

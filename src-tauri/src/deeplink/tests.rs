@@ -88,6 +88,15 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
+fn test_parse_codex_deeplink_with_websocket_capability() {
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=key123&supports_websockets=true";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.supports_websockets, Some(true));
+}
+
+#[test]
 fn pi_provider_deeplink_is_not_a_second_add_provider_entry() {
     let url = "ccswitch://v1/import?resource=provider&app=pi&name=Pi";
     assert!(parse_deeplink_url(url).is_err());
@@ -214,6 +223,7 @@ fn test_build_gemini_provider_with_model() {
         api_key: Some("test-api-key".to_string()),
         icon: None,
         model: Some("gemini-2.0-flash".to_string()),
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -267,6 +277,7 @@ fn test_build_gemini_provider_without_model() {
         api_key: Some("test-api-key".to_string()),
         icon: None,
         model: None,
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -313,6 +324,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -360,6 +372,7 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -443,6 +456,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -491,6 +505,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -544,6 +559,7 @@ fn test_parse_and_merge_config_claude() {
         api_key: None,
         icon: None,
         model: None,
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -667,6 +683,7 @@ fn test_parse_and_merge_config_url_override() {
         api_key: Some("sk-new".to_string()), // URL param should override
         icon: None,
         model: None,
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -730,6 +747,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         icon: None,
         // URL param: must win over the same key in config (haiku-from-config)
         model: Some("main-model".to_string()),
+        supports_websockets: None,
         notes: None,
         haiku_model: Some("haiku-from-url".to_string()),
         sonnet_model: None,
@@ -785,6 +803,7 @@ fn test_build_claude_provider_without_config_unchanged() {
         api_key: Some("sk".to_string()),
         icon: None,
         model: None,
+        supports_websockets: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
