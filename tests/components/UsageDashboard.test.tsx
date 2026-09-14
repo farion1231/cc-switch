@@ -12,6 +12,7 @@ import { UsageDashboard } from "@/components/usage/UsageDashboard";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
+const usageHeroMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -46,7 +47,10 @@ vi.mock("@/lib/query/usage", async () => {
 });
 
 vi.mock("@/components/usage/UsageHero", () => ({
-  UsageHero: () => <div data-testid="usage-hero" />,
+  UsageHero: (props: unknown) => {
+    usageHeroMock(props);
+    return <div data-testid="usage-hero" />;
+  },
 }));
 
 vi.mock("@/components/usage/UsageTrendChart", () => ({
@@ -109,6 +113,7 @@ describe("UsageDashboard", () => {
   beforeEach(() => {
     useProviderStatsMock.mockReset();
     useModelStatsMock.mockReset();
+    usageHeroMock.mockReset();
     useProviderStatsMock.mockReturnValue({ data: [] });
     useModelStatsMock.mockReturnValue({ data: [] });
   });
@@ -117,6 +122,28 @@ describe("UsageDashboard", () => {
     renderDashboard({ refreshIntervalMs: 5000 });
 
     expect(screen.getByTestId("select-5000")).toBeInTheDocument();
+  });
+
+  it("filters usage queries to Pi", async () => {
+    renderDashboard();
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.appFilter.pi" }));
+
+    await waitFor(() =>
+      expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+        expect.anything(),
+        { appType: "pi" },
+        expect.anything(),
+      ),
+    );
+    expect(useModelStatsMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      { appType: "pi", providerName: undefined },
+      expect.anything(),
+    );
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appType: "pi" }),
+    );
   });
 
   it("persists refresh interval changes", async () => {

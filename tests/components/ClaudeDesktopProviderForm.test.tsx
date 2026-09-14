@@ -2,9 +2,63 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeDesktopProviderForm } from "@/components/providers/forms/ClaudeDesktopProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
+
+const authState = vi.hoisted(() => ({
+  codexReauthRequired: false,
+}));
+const toastMocks = vi.hoisted(() => ({
+  error: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: toastMocks.error,
+    success: vi.fn(),
+  },
+}));
+
+vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/components/providers/forms/hooks")>();
+  return {
+    ...actual,
+    useCopilotAuth: () => ({
+      isAuthenticated: false,
+      accounts: [],
+    }),
+    useCodexOauth: () => ({
+      isAuthenticated: true,
+      defaultAccountId: "acct-managed",
+      accounts: [
+        {
+          id: "acct-managed",
+          is_default: true,
+          reauth_required: authState.codexReauthRequired,
+          requires_reauth: false,
+        },
+      ],
+    }),
+    useXaiOauth: () => ({
+      isAuthenticated: false,
+      accounts: [],
+    }),
+  };
+});
+
+vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
+  CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
+}));
+
+vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
+  CopilotAuthSection: () => <div data-testid="copilot-auth-section" />,
+}));
+
+vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
+  XaiOAuthSection: () => <div data-testid="xai-oauth-section" />,
+}));
 
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
@@ -31,6 +85,10 @@ function renderForm(
 }
 
 describe("ClaudeDesktopProviderForm", () => {
+  beforeEach(() => {
+    authState.codexReauthRequired = false;
+  });
+
   it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
     "托管 OAuth %s 即使旧数据是 direct 也强制开启模型映射",
     (providerType) => {
@@ -373,5 +431,68 @@ describe("ClaudeDesktopProviderForm", () => {
         model: "claude-sonnet-5",
       },
     });
+  });
+
+  it("不允许保存需要重新登录的 Codex OAuth 账号", async () => {
+    authState.codexReauthRequired = true;
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Codex OAuth Provider",
+        category: "third_party",
+        settingsConfig: { env: {} },
+        meta: {
+          providerType: "codex_oauth",
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "acct-managed",
+          },
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-model" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        "已绑定账号不存在或需要重新登录，请重新选择账号",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("未选择账号时不允许保存需要重新登录的 Codex OAuth 默认账号", async () => {
+    authState.codexReauthRequired = true;
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Codex OAuth Default Account Provider",
+        category: "third_party",
+        settingsConfig: { env: {} },
+        meta: {
+          providerType: "codex_oauth",
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-model" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        "已绑定账号不存在或需要重新登录，请重新选择账号",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

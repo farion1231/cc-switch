@@ -14,6 +14,7 @@
 //! - **OpenRouter**: 已支持 Claude Code 兼容接口，默认透传
 //! - **GitHubCopilot**: GitHub Copilot (OAuth + Copilot Token)
 
+use super::codex_oauth_auth::{CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR};
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
@@ -22,14 +23,10 @@ use serde_json::{json, Value};
 const ANTHROPIC_THINKING_PLACEHOLDER: &str = "tool call";
 const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 // Keep hints lowercase; matching lowercases only the input value.
-const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
-
-// ChatGPT Codex 后端按 originator+version 组合做模型 cohort 路由：非官方身份会把
-// gpt-5.6-luna 解析到未部署的内部引擎（HTTP 404 Model not found，openai/codex#31967，
-// 本机 A/B 实测确认）。两个头必须成对发送，缺一即 404；version 需 ≥ 目标模型
-// catalog 的 minimal_client_version（luna=0.144.0），新模型抬门槛时同步 bump。
-const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-const CODEX_OAUTH_CLIENT_VERSION: &str = "0.144.1";
+// Moonshot/Kimi exited on vendor request (2026-08): their endpoints no longer
+// require thinking replay on tool-call turns, and injected placeholders
+// disrupt the model's chain of thought. Do not re-add without re-confirming.
+const REASONING_VENDOR_HINTS: &[&str] = &["deepseek", "mimo", "xiaomimimo"];
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -1140,6 +1137,31 @@ mod tests {
     }
 
     #[test]
+    fn codex_oauth_generation_uses_gpt6_compatible_identity() {
+        let headers: http::HeaderMap = ClaudeAdapter::new()
+            .get_auth_headers(&AuthInfo::new(
+                "test-token".into(),
+                AuthStrategy::CodexOAuth,
+            ))
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert_eq!(headers["authorization"], "Bearer test-token");
+        assert_eq!(headers["originator"], "codex_cli_rs");
+        let version: Vec<u32> = headers["version"]
+            .to_str()
+            .unwrap()
+            .split('.')
+            .map(|part| part.parse().unwrap())
+            .collect();
+        // Official rust-v0.153.4 catalog: gpt-6-astra requires 0.153.0.
+        assert!(
+            version.as_slice() >= [0, 153, 0].as_slice(),
+            "gpt-6-astra requires Codex >= 0.153.0; sent {version:?}"
+        );
+    }
+
+    #[test]
     fn test_get_auth_headers_anthropic_emits_x_api_key() {
         let adapter = ClaudeAdapter::new();
         let auth = AuthInfo::new("sk-ant-test".to_string(), AuthStrategy::Anthropic);
@@ -2115,7 +2137,9 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_openai_chat_preserves_reasoning_content_for_kimi_provider() {
+    fn test_transform_openai_chat_skips_reasoning_content_for_kimi_provider() {
+        // Kimi 2026-08 反馈：不再需要 reasoning_content 回放，注入反而扰乱思维链。
+        // Kimi/Moonshot 已从 REASONING_VENDOR_HINTS 撤出，应与通用 provider 同行为。
         let provider = create_provider_with_meta(
             json!({
                 "env": {
@@ -2145,8 +2169,8 @@ mod tests {
                 .unwrap();
 
         let msg = &transformed["messages"][0];
-        assert_eq!(msg["reasoning_content"], "I should call the tool.");
         assert!(msg.get("tool_calls").is_some());
+        assert!(msg.get("reasoning_content").is_none());
     }
 
     #[test]
@@ -2312,7 +2336,9 @@ mod tests {
     }
 
     #[test]
-    fn test_kimi_anthropic_tool_history_injects_missing_thinking() {
+    fn test_kimi_anthropic_tool_history_not_modified() {
+        // Kimi 2026-08 反馈：Anthropic 兼容端点不再要求 tool_use 轮回放 thinking，
+        // 注入占位符反而扰乱思维链。Kimi 应走通用透传，请求体一字不动。
         let provider = create_provider(json!({
             "env": {
                 "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
@@ -2328,6 +2354,7 @@ mod tests {
                 ]
             }]
         });
+        let original = body.clone();
 
         let changed = normalize_anthropic_tool_thinking_history_for_provider(
             &mut body,
@@ -2335,11 +2362,8 @@ mod tests {
             "anthropic",
         );
 
-        assert!(changed);
-        let content = body["messages"][0]["content"].as_array().unwrap();
-        assert_eq!(content[0]["type"], "thinking");
-        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
-        assert_eq!(content[1]["type"], "tool_use");
+        assert!(!changed);
+        assert_eq!(body, original);
     }
 
     #[test]

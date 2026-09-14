@@ -83,6 +83,38 @@ describe("HermesFormFields", () => {
     expect(screen.getByText(/第一个模型/)).toBeInTheDocument();
   });
 
+  it("keeps model name composition local until the IME commits", () => {
+    const onModelsChange = vi.fn();
+    const { props, rerender } = renderHermesForm({ onModelsChange });
+    const modelNameInput = screen.getByDisplayValue("Model A");
+
+    fireEvent.compositionStart(modelNameInput);
+    fireEvent.change(modelNameInput, {
+      target: { value: "mimomimo" },
+    });
+
+    expect(modelNameInput).toHaveValue("mimomimo");
+    expect(onModelsChange).not.toHaveBeenCalled();
+
+    rerender(
+      <FormShell>
+        <HermesFormFields {...props} />
+      </FormShell>,
+    );
+    expect(modelNameInput).toHaveValue("mimomimo");
+
+    fireEvent.compositionEnd(modelNameInput, {
+      data: "mimomimo",
+      target: { value: "mimomimo" },
+    });
+
+    expect(onModelsChange).toHaveBeenCalledTimes(1);
+    expect(onModelsChange).toHaveBeenCalledWith([
+      { ...props.models[0], name: "mimomimo" },
+      props.models[1],
+    ]);
+  });
+
   it("shows request interval directly and updates its native provider field", () => {
     const onRateLimitDelayChange = vi.fn();
     renderHermesForm({ onRateLimitDelayChange });

@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,6 +12,7 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
+import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
@@ -23,6 +24,7 @@ import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
+import type { ManagedAuthProvider } from "@/lib/api";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -33,7 +35,6 @@ interface AddProviderDialogProps {
       providerKey?: string;
       suggestedDefaults?: OpenClawSuggestedDefaults;
       ensureClaudeDesktopOfficialSeed?: boolean;
-      ensureCodexOfficialSeed?: boolean;
       ensureGrokBuildOfficialSeed?: boolean;
     },
   ) => Promise<void> | void;
@@ -51,6 +52,7 @@ export function AddProviderDialog({
     appId !== "opencode" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
+    appId !== "pi" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
@@ -60,6 +62,47 @@ export function AddProviderDialog({
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [authSettingsTarget, setAuthSettingsTarget] =
+    useState<ManagedAuthProvider | null>(null);
+
+  useEffect(() => {
+    setAuthSettingsTarget(null);
+  }, [appId, open]);
+
+  const closeDialog = useCallback(() => {
+    setAuthSettingsTarget(null);
+    onOpenChange(false);
+  }, [onOpenChange]);
+
+  const handlePanelClose = useCallback(() => {
+    if (authSettingsTarget) {
+      setAuthSettingsTarget(null);
+      return;
+    }
+    closeDialog();
+  }, [authSettingsTarget, closeDialog]);
+  const formReadyToken = useMemo(
+    () => Symbol("provider-form-ready"),
+    [appId, open],
+  );
+  const currentFormReadyToken = useRef(formReadyToken);
+  currentFormReadyToken.current = formReadyToken;
+  const [formReadyState, setFormReadyState] = useState({
+    token: formReadyToken,
+    ready: appId !== "pi",
+  });
+  const isFormReady =
+    formReadyState.token === formReadyToken
+      ? formReadyState.ready
+      : appId !== "pi";
+  const handleSubmitReadyChange = useCallback(
+    (ready: boolean) => {
+      if (currentFormReadyToken.current === formReadyToken) {
+        setFormReadyState({ token: formReadyToken, ready });
+      }
+    },
+    [formReadyToken],
+  );
 
   const handleUniversalProviderSave = useCallback(
     async (provider: UniversalProvider) => {
@@ -121,7 +164,6 @@ export function AddProviderDialog({
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
         ensureClaudeDesktopOfficialSeed?: boolean;
-        ensureCodexOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
       } = {
         name: values.name.trim(),
@@ -133,7 +175,6 @@ export function AddProviderDialog({
         ...(values.presetCategory ? { category: values.presetCategory } : {}),
         ...(values.meta ? { meta: values.meta } : {}),
       };
-
       if (appId === "claude-desktop" && values.presetId) {
         const presetIndex = parseInt(
           values.presetId.replace("claude-desktop-", ""),
@@ -144,28 +185,23 @@ export function AddProviderDialog({
           preset?.category === "official";
       }
 
-      if (appId === "codex" && values.presetId) {
-        const presetIndex = parseInt(values.presetId.replace("codex-", ""));
-        const preset = codexProviderPresets[presetIndex];
-        providerData.ensureCodexOfficialSeed =
-          values.presetCategory === "official" &&
-          preset?.category === "official";
-      }
-
       if (appId === "grokbuild" && values.presetId) {
         providerData.ensureGrokBuildOfficialSeed =
           values.presetCategory === "official" &&
           values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID;
       }
 
-      // OpenCode/OpenClaw: pass providerKey for ID generation
+      // Apps whose native catalog has a stable provider key use it as the
+      // managed provider identity.
       if (
-        (appId === "opencode" || appId === "openclaw" || appId === "hermes") &&
+        (appId === "opencode" ||
+          appId === "openclaw" ||
+          appId === "hermes" ||
+          appId === "pi") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
       }
-
       const hasCustomEndpoints =
         providerData.meta?.custom_endpoints &&
         Object.keys(providerData.meta.custom_endpoints).length > 0;
@@ -314,9 +350,9 @@ export function AddProviderDialog({
       }
 
       await onSubmit(providerData);
-      onOpenChange(false);
+      closeDialog();
     },
-    [appId, onSubmit, onOpenChange],
+    [appId, onSubmit, closeDialog],
   );
 
   const footer =
@@ -327,7 +363,7 @@ export function AddProviderDialog({
         </span>
         <Button
           variant="outline"
-          onClick={() => onOpenChange(false)}
+          onClick={closeDialog}
           className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
@@ -335,10 +371,14 @@ export function AddProviderDialog({
         <Button
           type="submit"
           form="provider-form"
-          disabled={isFormSubmitting}
+          disabled={isFormSubmitting || !isFormReady}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
-          <Plus className="h-4 w-4 mr-2" />
+          {isFormSubmitting ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Plus className="mr-2 h-4 w-4" />
+          )}
           {t("common.add")}
         </Button>
       </>
@@ -346,7 +386,7 @@ export function AddProviderDialog({
       <>
         <Button
           variant="outline"
-          onClick={() => onOpenChange(false)}
+          onClick={closeDialog}
           className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
@@ -365,9 +405,9 @@ export function AddProviderDialog({
     <FullScreenPanel
       isOpen={open}
       title={t("provider.addNewProvider")}
-      onClose={() => onOpenChange(false)}
+      onClose={handlePanelClose}
       footer={footer}
-      contentClassName="pt-3"
+      contentClassName={appId === "pi" ? "pt-3 pb-0" : "pt-3"}
     >
       {showUniversalTab ? (
         <Tabs
@@ -388,8 +428,10 @@ export function AddProviderDialog({
               appId={appId}
               submitLabel={t("common.add")}
               onSubmit={handleSubmit}
-              onCancel={() => onOpenChange(false)}
+              onCancel={closeDialog}
+              onManageAuthAccounts={setAuthSettingsTarget}
               onSubmittingChange={setIsFormSubmitting}
+              onSubmitReadyChange={handleSubmitReadyChange}
               showButtons={false}
             />
           </TabsContent>
@@ -404,8 +446,10 @@ export function AddProviderDialog({
           appId={appId}
           submitLabel={t("common.add")}
           onSubmit={handleSubmit}
-          onCancel={() => onOpenChange(false)}
+          onCancel={closeDialog}
+          onManageAuthAccounts={setAuthSettingsTarget}
           onSubmittingChange={setIsFormSubmitting}
+          onSubmitReadyChange={handleSubmitReadyChange}
           showButtons={false}
         />
       )}
@@ -418,6 +462,11 @@ export function AddProviderDialog({
           initialPreset={selectedUniversalPreset}
         />
       )}
+
+      <AuthSettingsPanel
+        target={authSettingsTarget}
+        onClose={() => setAuthSettingsTarget(null)}
+      />
     </FullScreenPanel>
   );
 }

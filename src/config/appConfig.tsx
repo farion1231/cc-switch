@@ -1,5 +1,6 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
+import type { VisibleApps } from "@/types";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -24,10 +25,68 @@ export const APP_IDS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "pi",
 ];
 
-/** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
+export const DEFAULT_VISIBLE_APPS: VisibleApps = {
+  claude: true,
+  "claude-desktop": true,
+  codex: true,
+  gemini: true,
+  grokbuild: true,
+  opencode: true,
+  openclaw: true,
+  hermes: true,
+  pi: true,
+};
+
+/** App IDs shown in Skills panels. */
 export const SKILLS_APP_IDS: AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "grokbuild",
+  "opencode",
+  "hermes",
+  "pi",
+];
+
+export type ProxyAppId = Extract<
+  AppId,
+  "claude" | "codex" | "gemini" | "grokbuild"
+>;
+
+/** Apps with a complete local gateway + failover data plane. */
+export const PROXY_APP_IDS: ProxyAppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "grokbuild",
+];
+
+export function isProxyAppId(appId: string): appId is ProxyAppId {
+  return (PROXY_APP_IDS as string[]).includes(appId);
+}
+
+export type AdditiveAppId = Extract<
+  AppId,
+  "opencode" | "openclaw" | "hermes" | "pi"
+>;
+
+export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
+  "opencode",
+  "openclaw",
+  "hermes",
+  "pi",
+];
+
+export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
+  return (ADDITIVE_APP_IDS as string[]).includes(appId);
+}
+
+/** Pi has no native MCP registry; do not manufacture a disabled mirror. */
+export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
+export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
   "gemini",
@@ -36,8 +95,9 @@ export const SKILLS_APP_IDS: AppId[] = [
   "hermes",
 ];
 
-/** App IDs shown in MCP panels (excludes OpenClaw) */
-export const MCP_APP_IDS: AppId[] = [...SKILLS_APP_IDS];
+export function isMcpAppId(appId: string): appId is McpAppId {
+  return (MCP_APP_IDS as string[]).includes(appId);
+}
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
@@ -125,4 +185,16 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
+  pi: {
+    label: "Pi",
+    icon: <ProviderIcon icon="pi" name="Pi" size={14} showFallback={false} />,
+    activeClass:
+      "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
+    badgeClass:
+      "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
 };
+
+export function getAppLabel(appId: string): string {
+  return APP_ICON_MAP[appId as AppId]?.label ?? appId;
+}

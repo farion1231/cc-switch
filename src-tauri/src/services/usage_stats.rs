@@ -216,6 +216,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
+         WHEN '_pi_session' THEN 'Pi (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -2776,10 +2777,10 @@ mod tests {
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
-        // grok-4.5 定价 2/6/0.50：input = (700-250)×2/1M，cache_read = 250×0.5/1M
+        // grok-4.5 定价 2/6/0.30：input = (700-250)×2/1M，cache_read = 250×0.3/1M
         assert_eq!(input_cost, "0.000900");
-        assert_eq!(cache_read_cost, "0.000125");
-        assert_eq!(total_cost, "0.001625");
+        assert_eq!(cache_read_cost, "0.000075");
+        assert_eq!(total_cost, "0.001575");
         Ok(())
     }
 

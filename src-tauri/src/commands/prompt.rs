@@ -5,7 +5,11 @@ use tauri::State;
 
 use crate::app_config::AppType;
 use crate::prompt::Prompt;
-use crate::services::PromptService;
+use crate::services::pi_prompt_files::{
+    PiPromptFileKind, PiPromptFileService, PiPromptFileSnapshot, PiPromptTemplate,
+    PiPromptTemplateService,
+};
+use crate::services::prompt::PromptService;
 use crate::store::AppState;
 
 #[tauri::command]
@@ -61,4 +65,51 @@ pub async fn import_prompt_from_file(
 pub async fn get_current_prompt_file_content(app: String) -> Result<Option<String>, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     PromptService::get_current_file_content(app_type).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_pi_prompt_file(kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, String> {
+    PiPromptFileService::read(kind).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn replace_pi_prompt_file(
+    kind: PiPromptFileKind,
+    #[allow(non_snake_case)] expectedRevision: String,
+    content: String,
+) -> Result<PiPromptFileSnapshot, String> {
+    PiPromptFileService::replace(kind, &expectedRevision, &content)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_pi_prompt_file(
+    kind: PiPromptFileKind,
+    #[allow(non_snake_case)] expectedRevision: String,
+) -> Result<bool, String> {
+    PiPromptFileService::delete(kind, &expectedRevision).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_pi_prompt_templates() -> Result<Vec<PiPromptTemplate>, String> {
+    PiPromptTemplateService::list().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn upsert_pi_prompt_template(
+    slug: String,
+    #[allow(non_snake_case)] originalSlug: Option<String>,
+    #[allow(non_snake_case)] expectedRevision: String,
+    content: String,
+) -> Result<PiPromptTemplate, String> {
+    PiPromptTemplateService::upsert(&slug, originalSlug.as_deref(), &expectedRevision, &content)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_pi_prompt_template(
+    slug: String,
+    #[allow(non_snake_case)] expectedRevision: String,
+) -> Result<bool, String> {
+    PiPromptTemplateService::delete(&slug, &expectedRevision).map_err(|error| error.to_string())
 }

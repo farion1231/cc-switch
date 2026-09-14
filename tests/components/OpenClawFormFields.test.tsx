@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { FormProvider, useForm } from "react-hook-form";
@@ -80,5 +80,29 @@ describe("OpenClawFormFields model editor", () => {
     expect(screen.getByText("上下文长度")).toBeInTheDocument();
     expect(screen.getByText("最大输出 Token 数")).toBeInTheDocument();
     expect(screen.getByText("成本（$/百万 Token）")).toBeInTheDocument();
+  });
+
+  it("keeps model name composition local until the IME commits", () => {
+    const { onModelsChange } = renderForm();
+    const modelNameInput = screen.getByDisplayValue("GPT-5.6 Sol");
+
+    fireEvent.compositionStart(modelNameInput);
+    fireEvent.change(modelNameInput, {
+      target: { value: "mimomimo" },
+    });
+
+    expect(modelNameInput).toHaveValue("mimomimo");
+    expect(onModelsChange).not.toHaveBeenCalled();
+
+    fireEvent.compositionEnd(modelNameInput, {
+      data: "mimomimo",
+      target: { value: "mimomimo" },
+    });
+
+    expect(onModelsChange).toHaveBeenCalledTimes(1);
+    expect(onModelsChange).toHaveBeenCalledWith([
+      { ...models[0], name: "mimomimo" },
+      models[1],
+    ]);
   });
 });

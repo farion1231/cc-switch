@@ -744,14 +744,10 @@ impl ChatToResponsesState {
             "status": status,
             "model": self.model,
             "output": output,
-            "usage": self.latest_usage.clone().unwrap_or_else(|| {
-                json!({
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_tokens": 0,
-                    "output_tokens_details": { "reasoning_tokens": 0 }
-                })
-            })
+            "usage": self
+                .latest_usage
+                .clone()
+                .unwrap_or_else(|| chat_usage_to_responses_usage(None))
         })
     }
 
@@ -965,16 +961,26 @@ mod tests {
     async fn converts_text_chat_sse_to_responses_sse() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6}}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6,\"prompt_tokens_details\":{\"cached_tokens\":0},\"cache_read_input_tokens\":2}}\n\n",
             "data: [DONE]\n\n",
         ])
         .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
 
         assert!(output.contains("event: response.created"));
         assert!(output.contains("event: response.output_text.delta"));
         assert!(output.contains("\"text\":\"Hello\""));
         assert!(output.contains("event: response.completed"));
         assert!(output.contains("\"input_tokens\":4"));
+        assert_eq!(
+            completed["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            2
+        );
+        assert_eq!(completed["response"]["usage"]["cache_read_input_tokens"], 2);
     }
 
     #[tokio::test]
@@ -1179,9 +1185,20 @@ mod tests {
             "data: [DONE]\n\n",
         ])
         .await;
+        let events = parse_sse_events(&output);
 
         assert!(output.contains("event: response.completed"));
         assert!(!output.contains("event: response.failed"));
+        for event_type in ["response.created", "response.completed"] {
+            let event = events
+                .iter()
+                .find(|event| event["type"] == event_type)
+                .unwrap();
+            assert_eq!(
+                event["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+                0
+            );
+        }
     }
 
     /// 上游省略 `index` 时，两个 id 不同的调用不得坍缩成一个。
