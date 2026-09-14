@@ -793,6 +793,8 @@
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
     "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
+    "codebuddyConfigDir": "CodeBuddy 設定目錄",
+    "workbuddyConfigDir": "WorkBuddy 設定目錄",
     "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
@@ -802,6 +804,8 @@
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
+    "browsePlaceholderCodebuddy": "例如：/home/<您的帳號>/.codebuddy",
+    "browsePlaceholderWorkbuddy": "例如：/home/<您的帳號>/.workbuddy",
     "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
@@ -915,7 +919,21 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "codebuddy": "CodeBuddy",
+    "workbuddy": "WorkBuddy"
+  },
+  "codebuddy": {
+    "form": {
+      "name": "名稱",
+      "namePlaceholder": "例如：我的 DeepSeek 端點",
+      "modelKey": "模型 ID（models.json 的 id，建立後不可改）",
+      "url": "API 位址",
+      "apiKey": "API Key",
+      "supportsToolCall": "支援工具呼叫",
+      "supportsImages": "支援圖片輸入",
+      "supportsReasoning": "支援推理"
+    }
   },
   "pi": {
     "empty": {
@@ -1723,7 +1741,9 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "codebuddy": "CodeBuddy",
+      "workbuddy": "WorkBuddy"
     },
     "rawInputLabel": "原始",
     "sessionSync": {

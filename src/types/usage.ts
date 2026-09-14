@@ -187,7 +187,9 @@ export interface UsageRangeSelection {
  * every dashboard query (see `folded_app_type_sql`).
  * `opencode` and `pi` have no proxy handler; their usage reaches this
  * dashboard through session importers. `openclaw` / `hermes` appear only as
- * managed apps elsewhere.
+ * managed apps elsewhere. `codebuddy` (Tencent CodeBuddy / WorkBuddy CLI) and
+ * `workbuddy` (Tencent WorkBuddy desktop) also reach the dashboard through a
+ * session importer only.
  */
 export type AppType =
   | "claude"
@@ -195,7 +197,9 @@ export type AppType =
   | "gemini"
   | "grokbuild"
   | "opencode"
-  | "pi";
+  | "pi"
+  | "codebuddy"
+  | "workbuddy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -206,6 +210,8 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "grokbuild",
   "opencode",
   "pi",
+  "codebuddy",
+  "workbuddy",
 ];
 
 /**
@@ -224,6 +230,8 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
   "grokbuild",
+  "codebuddy",
+  "workbuddy",
 ]);
 
 // Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates

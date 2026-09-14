@@ -222,6 +222,8 @@ impl Provider {
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 str_at(settings.get("apiKey")),
             ),
+            // CodeBuddy model endpoints flatten url/apiKey at the top level.
+            AppType::CodeBuddy => (str_at(settings.get("url")), str_at(settings.get("apiKey"))),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode => {
                 let options = settings.get("options");

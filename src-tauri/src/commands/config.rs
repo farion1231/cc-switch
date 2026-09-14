@@ -146,6 +146,14 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::CodeBuddy => {
+            let models_path = crate::codebuddy_config::get_codebuddy_models_path();
+            let dir = crate::config::get_codebuddy_config_dir();
+            Ok(ConfigStatus {
+                exists: models_path.exists() || dir.exists(),
+                path: dir.to_string_lossy().to_string(),
+            })
+        }
     }
 }
 
@@ -168,6 +176,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::CodeBuddy => crate::config::get_codebuddy_config_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -187,6 +196,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::CodeBuddy => crate::config::get_codebuddy_config_dir(),
     };
 
     if !config_dir.exists() {

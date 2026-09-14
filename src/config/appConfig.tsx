@@ -26,6 +26,7 @@ export const APP_IDS: AppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "codebuddy",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -38,6 +39,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   openclaw: true,
   hermes: true,
   pi: true,
+  codebuddy: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -192,6 +194,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  codebuddy: {
+    label: "CodeBuddy",
+    icon: (
+      <ProviderIcon
+        icon="codebuddy"
+        name="CodeBuddy"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
+    badgeClass:
+      "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
 };
 
