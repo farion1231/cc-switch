@@ -53,6 +53,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -2290,9 +2291,44 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
         ProxyError::TransformError("No response.completed event in upstream SSE".to_string())
     })?;
 
+    // 重要修复：如果流在 output_item.done 事件之前结束（如网络中断），
+    // response.completed 事件本身可能已经包含了 output 数组。
+    // 我们应该合并两者：使用 completed 中的 output（如果存在），
+    // 并添加我们从 output_item.done 事件中单独收集的 items。
+    // 这确保了即使流被截断，已收到的输出项也不会丢失。
+    let existing_output = response.get("output").cloned();
     if !output_items.is_empty() {
+        let mut final_output = if let Some(existing) = existing_output {
+            if let Some(existing_arr) = existing.as_array() {
+                // 避免重复：只添加不在 existing 中的 items
+                let existing_ids: HashSet<&str> = existing_arr
+                    .iter()
+                    .filter_map(|item| item.get("id").and_then(|i| i.as_str()))
+                    .collect();
+                output_items
+                    .into_iter()
+                    .filter(|item| {
+                        item.get("id")
+                            .and_then(|i| i.as_str())
+                            .map(|id| !existing_ids.contains(id))
+                            .unwrap_or(true)
+                    })
+                    .chain(existing_arr.iter().cloned())
+                    .collect()
+            } else {
+                output_items
+            }
+        } else {
+            output_items
+        };
+        // 按 output_index 排序以确保顺序正确
+        final_output.sort_by(|a, b| {
+            let a_idx = a.get("output_index").and_then(|v| v.as_u64()).unwrap_or(0);
+            let b_idx = b.get("output_index").and_then(|v| v.as_u64()).unwrap_or(0);
+            a_idx.cmp(&b_idx)
+        });
         if let Some(obj) = response.as_object_mut() {
-            obj.insert("output".to_string(), Value::Array(output_items));
+            obj.insert("output".to_string(), Value::Array(final_output));
         } else {
             return Err(ProxyError::TransformError(
                 "response.completed payload is not an object".to_string(),
@@ -2308,14 +2344,42 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
 /// 仅在 JSON 解析已失败后调用：合法 JSON 不可能以这些前缀开头，误判面为零。
 /// 覆盖 SSE 规范的全部四种字段行；包含 ":" 是因为 OpenRouter 等会在流前发
 /// `: PROCESSING` 注释行。
+///
+/// 增加额外守卫：匹配 ":" 前缀时要求冒号后至少跟两个非空白字符
+/// （例如 `: PROCESSING` 的 " PROCESSING"）。这防止纯文本错误（如
+/// `": Bad Gateway"`、`": connection refused"`）被误判为 SSE，否则
+/// 聚合器会吃掉原始诊断信息并返回 "No response.completed event" 之类
+/// 误导性的错误。
 fn body_looks_like_sse(body: &str) -> bool {
     let trimmed = body.trim_start_matches('\u{feff}').trim_start();
-    ["data:", "event:", "id:", "retry:", ":"]
-        .iter()
-        .any(|prefix| trimmed.starts_with(prefix))
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Special case for bare ":" prefix used by OpenAI/SSE spec comments:
+    // SSE comments appear as the first line of the body (e.g. ": PROCESSING",
+    // ": OPENROUTER PROCESSING") followed by newline-separated data lines.
+    // Reject error bodies like ": Bad Gateway" which contain lowercase prose.
+    if trimmed.starts_with(':') {
+        // Only the first line matters for SSE comment detection
+        let first_line = trimmed
+            .lines()
+            .next()
+            .unwrap_or(trimmed)
+            .strip_prefix(':')
+            .unwrap_or("")
+            .trim_start();
+        // SSE comment identifiers are all-uppercase; any lowercase means prose.
+        !first_line.is_empty()
+            && first_line
+                .chars()
+                .all(|c| c.is_whitespace() || c.is_ascii_uppercase())
+    } else {
+        // For other SSE field prefixes (data:, event:, id:, retry:), just check presence.
+        ["data:", "event:", "id:", "retry:"]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+    }
 }
-
-/// 构造带现场诊断的上游解析错误：只附结构化分类与元数据，
 /// 避免响应正文经错误链间接进入持久化日志。
 fn upstream_body_parse_error(
     prefix: &str,
@@ -2886,6 +2950,10 @@ mod tests {
         assert!(!body_looks_like_sse("<html><body>blocked</body></html>"));
         assert!(!body_looks_like_sse("Bad Gateway"));
         assert!(!body_looks_like_sse(""));
+        // 纯冒号开头的错误体（如上游健康检查返回 ": connection refused"）不应误判
+        assert!(!body_looks_like_sse(": Bad Gateway"));
+        assert!(!body_looks_like_sse(": upstream timeout\n"));
+        assert!(!body_looks_like_sse(": "));
     }
 
     #[test]

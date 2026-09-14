@@ -1,0 +1,154 @@
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-22.04
+    needs: release
+    permissions:
+      contents: write
+    steps:
+      - name: Download built release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: List downloaded release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la release-assets
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: CC Switch ${{ github.ref_name }}
+          prerelease: true
+          body: |
+            ## CC Switch ${{ github.ref_name }}
+
+            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ccswitch.io](https://ccswitch.io)
+
+            Claude Code 供应商切换工具
+
+            ### 下载
+
+            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
+            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
+            - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+            - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
+
+            > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
+
+            ---
+            macOS 版本已通过 Apple 代码签名和公证，可直接安装使用。
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  assemble-latest-json:
+    name: Assemble latest.json
+    runs-on: ubuntu-22.04
+    needs: publish-release
+    permissions:
+      contents: write
+    steps:
+      - name: Prepare GH
+        run: |
+          gh --version || (type -p curl >/dev/null && sudo apt-get update && sudo apt-get install -y gh || true)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p dl
+          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
+          ls -la dl || true
+      - name: Generate latest.json
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          base_url="https://github.com/$REPO/releases/download/$TAG"
+          # 初始化空平台映射
+          mac_url=""; mac_sig=""
+          win_x64_url=""; win_x64_sig=""
+          win_arm64_url=""; win_arm64_sig=""
+          linux_x64_url=""; linux_x64_sig=""
+          linux_arm64_url=""; linux_arm64_sig=""
+          shopt -s nullglob
+          for sig in dl/*.sig; do
+            base=${sig%.sig}
+            fname=$(basename "$base")
+            url="$base_url/$fname"
+            sig_content=$(cat "$sig")
+            case "$fname" in
+              *.tar.gz)
+                # 视为 macOS updater artifact
+                mac_url="$url"; mac_sig="$sig_content";;
+              *-Windows-arm64.msi)
+                win_arm64_url="$url"; win_arm64_sig="$sig_content";;
+              *-Windows.msi)
+                win_x64_url="$url"; win_x64_sig="$sig_content";;
+              *-Linux-arm64.AppImage|*-Linux-arm64.appimage)
+                linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
+              *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
+                linux_x64_url="$url"; linux_x64_sig="$sig_content";;
+            esac
+          done
+          # 构造 JSON（仅包含存在的目标）
+          tmp_json=$(mktemp)
+          {
+            echo '{'
+            echo "  \"version\": \"$VERSION\",";
+            echo "  \"notes\": \"Release $TAG\",";
+            echo "  \"pub_date\": \"$PUB_DATE\",";
+            echo '  "platforms": {'
+            first=1
+            if [ -n "$mac_url" ] && [ -n "$mac_sig" ]; then
+              # 为兼容 arm64 / x64，重复写入两个键，指向同一 universal 包
+              for key in darwin-aarch64 darwin-x86_64; do
+                [ $first -eq 0 ] && echo ','
+                echo "    \"$key\": {\"signature\": \"$mac_sig\", \"url\": \"$mac_url\"}"
+                first=0
+              done
+            fi
+            if [ -n "$win_x64_url" ] && [ -n "$win_x64_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"windows-x86_64\": {\"signature\": \"$win_x64_sig\", \"url\": \"$win_x64_url\"}"
+              first=0
+            fi
+            if [ -n "$win_arm64_url" ] && [ -n "$win_arm64_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"windows-aarch64\": {\"signature\": \"$win_arm64_sig\", \"url\": \"$win_arm64_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_x64_url" ] && [ -n "$linux_x64_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64\": {\"signature\": \"$linux_x64_sig\", \"url\": \"$linux_x64_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_url" ] && [ -n "$linux_arm64_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64\": {\"signature\": \"$linux_arm64_sig\", \"url\": \"$linux_arm64_url\"}"
+              first=0
+            fi
+            echo '  }'
+            echo '}'
+          } > "$tmp_json"
+          echo "Generated latest.json:" && cat "$tmp_json"
+          mv "$tmp_json" latest.json
+      - name: Upload latest.json to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+
