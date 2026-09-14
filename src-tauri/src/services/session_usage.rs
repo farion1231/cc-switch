@@ -731,10 +731,6 @@ fn update_claude_sync_state_on_conn(
 }
 
 /// 获取 session_log_sync 表中某条目的同步进度。
-///
-/// 生产路径已改为 [`load_sync_cursors`] 批量预取；保留此单行查询给测试
-/// 断言游标状态用。
-#[cfg(test)]
 pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
     let conn = lock_conn!(db.conn);
     let result = conn.query_row(
