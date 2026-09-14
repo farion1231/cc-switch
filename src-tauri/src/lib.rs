@@ -1442,6 +1442,11 @@ pub fn run() {
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,
             commands::get_coding_plan_quota,
+commands::list_volcengine_accounts,
+commands::save_volcengine_account,
+commands::delete_volcengine_account,
+commands::rename_volcengine_account,
+commands::get_volcengine_aksk_status,
             commands::get_balance,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
