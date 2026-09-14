@@ -569,13 +569,12 @@ impl SkillService {
     pub fn get_app_skills_dir(app: &AppType) -> Result<PathBuf> {
         // 目录覆盖：优先使用用户在 settings.json 中配置的 override 目录
         match app {
-            AppType::Mcode => return Ok(crate::mcode_config::data_dir().join("skills")),
             AppType::Claude => {
                 if let Some(custom) = crate::settings::get_claude_override_dir() {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop => {}
+            AppType::ClaudeDesktop | AppType::Mcode => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -617,7 +616,7 @@ impl SkillService {
         let home = crate::config::get_home_dir();
 
         Ok(match app {
-            AppType::Mcode => return Ok(crate::mcode_config::data_dir().join("skills")),
+            AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1037,7 +1036,9 @@ impl SkillService {
 
                     // 其他应用沿用既有的逐项容错行为。
                     for app in AppType::all() {
-                        if matches!(app, AppType::Pi) {
+                        if matches!(app, AppType::Pi)
+                            || (matches!(app, AppType::Mcode) && !skill.apps.mcode)
+                        {
                             continue;
                         }
                         let _ = Self::remove_from_app_preserving(
@@ -2502,7 +2503,9 @@ impl SkillService {
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        if app_dir.exists() {
+        // Unselected MCode directories may have been installed outside CC Switch.
+        // Explicit disable/uninstall handles removal of managed deployments.
+        if app_dir.exists() && !matches!(app, AppType::Mcode) {
             for entry in fs::read_dir(&app_dir)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -2514,13 +2517,6 @@ impl SkillService {
 
                 if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
                     if !skill.apps.is_enabled_for(app) {
-                        if app == &AppType::Mcode {
-                            Self::ensure_pi_skill_destination_matches(
-                                &ssot_dir.join(&dir_name),
-                                &path,
-                                &dir_name,
-                            )?;
-                        }
                         Self::remove_path(&path)?;
                     }
                     continue;
@@ -3430,6 +3426,9 @@ impl SkillService {
         }
 
         for app in AppType::all() {
+            if matches!(app, AppType::Mcode) && !skill.apps.mcode {
+                continue;
+            }
             let app_dir = match Self::get_app_skills_dir(&app) {
                 Ok(dir) => dir,
                 Err(_) => continue,
@@ -4921,6 +4920,32 @@ mod tests {
         assert!(fs::read_to_string(pi_skill.join("SKILL.md"))
             .expect("read external skill")
             .contains("external"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn mcode_unmanaged_copy_survives_sync_migration_and_uninstall() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+        skill.apps.claude = true;
+        db.save_skill(&skill).unwrap();
+        let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+        let native = SkillService::get_app_skills_dir(&AppType::Mcode)
+            .unwrap()
+            .join(&skill.directory);
+        write_skill(&source, "same-content");
+        SkillService::copy_dir_recursive(&source, &native).unwrap();
+        let original = fs::read(native.join("SKILL.md")).unwrap();
+        SkillService::sync_to_app(&db, &AppType::Mcode).unwrap();
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+        SkillService::migrate_storage(&db, SkillStorageLocation::Unified).unwrap();
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
+        SkillService::uninstall(&db, &skill.id).unwrap();
+        assert_eq!(fs::read(native.join("SKILL.md")).unwrap(), original);
     }
 
     #[tokio::test]

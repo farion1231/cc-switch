@@ -76,6 +76,12 @@ impl PromptService {
         let is_enabled = prompt.enabled;
 
         validate_prompt_content(&app, &prompt.content)?;
+        let may_clear_live = !matches!(app, AppType::Mcode)
+            || state
+                .db
+                .get_prompts(app.as_str())?
+                .get(id)
+                .is_some_and(|previous| previous.enabled);
         state.db.save_prompt(app.as_str(), &prompt)?;
 
         if is_enabled {
@@ -87,7 +93,7 @@ impl PromptService {
             let prompts = state.db.get_prompts(app.as_str())?;
             let any_enabled = prompts.values().any(|p| p.enabled);
 
-            if !any_enabled {
+            if !any_enabled && may_clear_live {
                 // 所有提示词都已禁用，清空文件
                 let target_path = prompt_file_path(&app)?;
                 if target_path.exists() {

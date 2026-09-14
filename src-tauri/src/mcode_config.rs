@@ -422,6 +422,14 @@ mod capability_tests {
             "For validation, write GLOBAL-INSTRUCTION-OK to global-proof.txt in the project.\n",
         )
         .unwrap();
+        let original_instructions = fs::read_to_string(&path).unwrap();
+        let draft = serde_json::from_value(
+            json!({"id":"draft","name":"Draft","content":"Draft instructions","enabled":false}),
+        )
+        .unwrap();
+        PromptService::upsert_prompt(&state, AppType::Mcode, "draft", draft).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), original_instructions);
+        PromptService::delete_prompt(&state, AppType::Mcode, "draft").unwrap();
         assert_eq!(
             PromptService::import_from_file_on_first_launch(&state, AppType::Mcode).unwrap(),
             1
@@ -451,6 +459,14 @@ mod capability_tests {
         db.save_prompt("mcode", &oversized).unwrap();
         assert!(PromptService::sync_to_live(&state, AppType::Mcode).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), prompt.content);
+        db.delete_prompt("mcode", "oversized").unwrap();
+        db.save_prompt("mcode", prompt).unwrap();
+        let mut disabled = prompt.clone();
+        disabled.enabled = false;
+        PromptService::upsert_prompt(&state, AppType::Mcode, id, disabled).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().is_empty());
+        PromptService::enable_prompt(&state, AppType::Mcode, id).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), original_instructions);
         let skill_dir = SkillService::get_ssot_dir()
             .unwrap()
             .join("cc-switch-validation");
