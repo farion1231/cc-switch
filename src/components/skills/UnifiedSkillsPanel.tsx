@@ -1095,12 +1095,14 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
             {skills.map((skill) => (
               <div
                 key={skill.directory}
-                className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
+                className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 hover:bg-muted"
+                onClick={() => toggleSelect(skill.directory)}
               >
                 <input
                   type="checkbox"
                   checked={selected.has(skill.directory)}
                   onChange={() => toggleSelect(skill.directory)}
+                  onClick={(event) => event.stopPropagation()}
                   aria-label={skill.name}
                   className="mt-1"
                 />
@@ -1111,7 +1113,10 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                       {skill.description}
                     </div>
                   )}
-                  <div className="mt-2">
+                  <div
+                    className="mt-2"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <AppToggleGroup
                       apps={
                         selectedApps[skill.directory] ?? {
