@@ -214,7 +214,9 @@ pub fn get_app_config_dir() -> PathBuf {
     #[cfg(windows)]
     {
         let default_db = default_dir.join("cc-switch.db");
-        if !default_db.exists() {
+        // 设置了 CC_SWITCH_TEST_HOME 时跳过遗留探测：Git Bash/MSYS 会注入
+        // 指向真实用户目录的 HOME，把显式隔离的测试重新指回真实数据。
+        if !default_db.exists() && std::env::var_os("CC_SWITCH_TEST_HOME").is_none() {
             if let Ok(home_env) = std::env::var("HOME") {
                 let trimmed = home_env.trim();
                 if !trimmed.is_empty() {

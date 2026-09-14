@@ -53,7 +53,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 18;
+pub(crate) const SCHEMA_VERSION: i32 = 19;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -98,6 +98,12 @@ impl Database {
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
     pub fn init() -> Result<Self, AppError> {
+        // Run backup retention before touching the database connection: on a
+        // full disk (#6706), a large schema migration below can hard-fail on
+        // SQLITE_FULL before ever reaching post-init cleanup, so retention
+        // must free space first rather than depend on init succeeding.
+        Self::preflight_backup_retention();
+
         let db_path = get_app_config_dir().join("cc-switch.db");
         let db_exists = db_path.exists();
 

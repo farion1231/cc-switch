@@ -11,6 +11,17 @@ use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
 
+/// `proxy_request_logs.error_message` 的字符数上限：上游错误体（中转站整页
+/// HTML、长 JSON）会被原样取出入库，不设上限时高频报错能把库撑到数 GB（#6706）。
+pub(crate) const MAX_ERROR_MESSAGE_CHARS: usize = 2000;
+
+fn bound_error_message(message: &str) -> &str {
+    match message.char_indices().nth(MAX_ERROR_MESSAGE_CHARS) {
+        None => message,
+        Some((byte_index, _)) => &message[..byte_index],
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct UsageSemantic {
     app_type: String,
@@ -166,6 +177,7 @@ impl<'a> UsageLogger<'a> {
         } else {
             "INSERT OR IGNORE"
         };
+        let error_message = log.error_message.as_deref().map(bound_error_message);
         let sql = format!(
             "{insert_verb} INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model, pricing_model,
@@ -199,7 +211,7 @@ impl<'a> UsageLogger<'a> {
                     log.latency_ms as i64,
                     log.first_token_ms.map(|v| v as i64),
                     log.status_code as i64,
-                    log.error_message,
+                    error_message,
                     log.session_id,
                     log.provider_type,
                     log.is_streaming as i64,
@@ -764,6 +776,47 @@ mod tests {
             .unwrap();
         assert_eq!(status, 500);
         assert_eq!(error, Some("Internal Server Error".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn bound_error_message_truncates_on_char_boundary() {
+        let multibyte = "汉".repeat(MAX_ERROR_MESSAGE_CHARS + 50);
+        let bounded = bound_error_message(&multibyte);
+        assert_eq!(bounded.chars().count(), MAX_ERROR_MESSAGE_CHARS);
+        assert_eq!(bounded, "汉".repeat(MAX_ERROR_MESSAGE_CHARS));
+        assert_eq!(bound_error_message("short"), "short");
+        assert_eq!(bound_error_message(""), "");
+    }
+
+    #[test]
+    fn log_request_bounds_error_message_length() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let logger = UsageLogger::new(&db);
+
+        // Reproduces #6706: a relay returning a multi-megabyte HTML error page
+        // must not be stored verbatim.
+        let huge_body = format!("<html>{}</html>", "e".repeat(MAX_ERROR_MESSAGE_CHARS * 100));
+        logger.log_error(
+            "req-huge-error".to_string(),
+            "provider-1".to_string(),
+            "claude".to_string(),
+            "claude-sonnet-4-5".to_string(),
+            502,
+            huge_body,
+            50,
+        )?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let stored: String = conn
+            .query_row(
+                "SELECT error_message FROM proxy_request_logs WHERE request_id = 'req-huge-error'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored.chars().count(), MAX_ERROR_MESSAGE_CHARS);
+        assert!(stored.starts_with("<html>"));
         Ok(())
     }
 

@@ -449,6 +449,8 @@ export interface Settings {
   backupIntervalHours?: number;
   // Maximum backup files to retain (default 10)
   backupRetainCount?: number;
+  // Total size cap for the backups directory in MB (0=unlimited, default 2048)
+  backupMaxTotalMb?: number;
 
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）

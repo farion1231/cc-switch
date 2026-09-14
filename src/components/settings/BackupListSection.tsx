@@ -26,9 +26,11 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 interface BackupListSectionProps {
   backupIntervalHours?: number;
   backupRetainCount?: number;
+  backupMaxTotalMb?: number;
   onSettingsChange: (updates: {
     backupIntervalHours?: number;
     backupRetainCount?: number;
+    backupMaxTotalMb?: number;
   }) => void;
 }
 
@@ -64,6 +66,7 @@ function getDisplayName(filename: string): string {
 export function BackupListSection({
   backupIntervalHours,
   backupRetainCount,
+  backupMaxTotalMb,
   onSettingsChange,
 }: BackupListSectionProps) {
   const { t } = useTranslation();
@@ -164,6 +167,7 @@ export function BackupListSection({
 
   const intervalValue = String(backupIntervalHours ?? 24);
   const retainValue = String(backupRetainCount ?? 10);
+  const maxTotalValue = String(backupMaxTotalMb ?? 2048);
 
   return (
     <div className="space-y-4">
@@ -245,6 +249,36 @@ export function BackupListSection({
                   {n}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-sm">
+            {t("settings.backupManager.maxTotalLabel", {
+              defaultValue: "Backup Size Cap",
+            })}
+          </Label>
+          <Select
+            value={maxTotalValue}
+            onValueChange={(v) =>
+              onSettingsChange({ backupMaxTotalMb: Number(v) })
+            }
+          >
+            <SelectTrigger className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="512">512 MB</SelectItem>
+              <SelectItem value="1024">1 GB</SelectItem>
+              <SelectItem value="2048">2 GB</SelectItem>
+              <SelectItem value="5120">5 GB</SelectItem>
+              <SelectItem value="10240">10 GB</SelectItem>
+              <SelectItem value="0">
+                {t("settings.backupManager.maxTotalUnlimited", {
+                  defaultValue: "Unlimited",
+                })}
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>

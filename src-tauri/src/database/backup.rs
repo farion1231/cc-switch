@@ -444,6 +444,15 @@ impl Database {
             }
         }
 
+        // Retention (count + total-size cap) also runs when no new backup is
+        // due, so an oversized backups folder is bounded on the first launch
+        // after an upgrade instead of waiting up to a full backup interval.
+        let backup_dir = get_app_config_dir().join("backups");
+        if backup_dir.exists() {
+            let _backup_file_guard = lock_backup_file_operations()?;
+            Self::cleanup_db_backups(&backup_dir, &[])?;
+        }
+
         // Periodic maintenance is always enabled, regardless of auto-backup settings.
         let mut reclaimed_rows = 0u64;
         match self.cleanup_old_stream_check_logs(7) {
@@ -460,6 +469,14 @@ impl Database {
             }
             Err(e) => {
                 log::warn!("Periodic rollup_and_prune failed: {e}");
+            }
+        }
+        match self.cap_session_usage_dedup(super::dao::usage_rollup::SESSION_USAGE_DEDUP_MAX_ROWS) {
+            Ok(deleted) => {
+                reclaimed_rows += deleted;
+            }
+            Err(e) => {
+                log::warn!("Periodic session_usage_dedup cap failed: {e}");
             }
         }
         if reclaimed_rows > 0 {
@@ -598,10 +615,77 @@ impl Database {
         }
     }
 
-    /// 清理旧的数据库备份，保留最新的 N 个
+    /// 删除备份 `.db` 的 SQLite 侧车文件（`-journal`/`-wal`/`-shm`）。
+    /// 只删本体不删侧车时，残留会永久滞留在 backups 目录里（#6706 的目录
+    /// 截图中即有一个孤儿 `-journal`）。
+    fn remove_backup_sidecars(db_path: &Path) {
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let mut name = db_path.as_os_str().to_os_string();
+            name.push(suffix);
+            let sidecar = PathBuf::from(name);
+            match fs::remove_file(&sidecar) {
+                Ok(()) => log::info!("删除数据库备份侧车文件 {}", sidecar.display()),
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                    log::warn!("删除数据库备份侧车文件失败 {}: {}", sidecar.display(), err);
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    /// 在真正打开数据库连接前先执行一次备份保留清理。
+    ///
+    /// 保留策略默认排在 `init()` 成功之后运行，但满盘（#6706 现场）时
+    /// v17→v18 之类的存量迁移会先因 `SQLITE_FULL` 硬失败，清理永远走不到；
+    /// 而清理本身只依赖 settings.json 和文件系统，不需要可用的数据库连接
+    /// 或磁盘余量，因此提到最前面执行，为随后可能触发的迁移腾出 journal
+    /// 空间。
+    pub(crate) fn preflight_backup_retention() {
+        let backup_dir = get_app_config_dir().join("backups");
+        if !backup_dir.exists() {
+            return;
+        }
+        let Ok(_guard) = lock_backup_file_operations() else {
+            return;
+        };
+        if let Err(e) = Self::cleanup_db_backups(&backup_dir, &[]) {
+            log::warn!("Preflight backup retention failed: {e}");
+        }
+    }
+
+    /// 清理旧的数据库备份：先按份数保留最新的 N 个，再把目录总大小压到
+    /// `backup_max_total_mb` 上限内（至少保留 1 份）。protected_paths
+    /// （新建备份/恢复源）在两轮中都绝不删除。
     fn cleanup_db_backups(dir: &Path, protected_paths: &[&Path]) -> Result<(), AppError> {
+        // 先清掉已无对应 `.db` 的孤儿侧车（如恢复中断后遗留的 `-journal`），
+        // 以及进程崩溃/强杀导致析构未运行而残留的临时快照
+        // (`.cc-switch-backup-*.tmp`，见 `backup_database_file_locked`)。
+        // 持锁期间不存在进行中的备份，两者删除都是安全的。`.db` 仍在的侧车
+        // 可能是活跃恢复过程的一部分，保持不动。
+        if let Ok(orphan_iter) = fs::read_dir(dir) {
+            for entry in orphan_iter.filter_map(|entry| entry.ok()) {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if name.starts_with(".cc-switch-backup-") && name.ends_with(".tmp") {
+                    let _ = fs::remove_file(&path);
+                    continue;
+                }
+                let Some(base) = ["-journal", "-wal", "-shm"]
+                    .iter()
+                    .find_map(|suffix| name.strip_suffix(suffix))
+                else {
+                    continue;
+                };
+                if base.ends_with(".db") && !dir.join(base).exists() {
+                    Self::remove_backup_sidecars(&dir.join(base));
+                }
+            }
+        }
+
         let retain = crate::settings::effective_backup_retain_count();
-        let entries = match fs::read_dir(dir) {
+        let mut entries = match fs::read_dir(dir) {
             Ok(iter) => iter
                 .filter_map(|entry| entry.ok())
                 .filter(|entry| {
@@ -615,31 +699,81 @@ impl Database {
             Err(_) => return Ok(()),
         };
 
-        if entries.len() <= retain {
+        let is_protected = |path: &Path| -> bool {
+            protected_paths
+                .iter()
+                .any(|protected| Self::same_existing_backup_path(path, protected))
+        };
+
+        entries.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
+
+        if entries.len() > retain {
+            let remove_count = entries.len() - retain;
+            let mut removed = 0;
+            entries.retain(|entry| {
+                if removed >= remove_count {
+                    return true;
+                }
+                let path = entry.path();
+                if is_protected(&path) {
+                    return true;
+                }
+
+                match fs::remove_file(&path) {
+                    Ok(()) => {
+                        removed += 1;
+                        Self::remove_backup_sidecars(&path);
+                        false
+                    }
+                    Err(err) => {
+                        log::warn!("删除旧数据库备份失败 {}: {}", path.display(), err);
+                        true
+                    }
+                }
+            });
+        }
+
+        let max_total = crate::settings::effective_backup_max_total_bytes();
+        if max_total == u64::MAX {
             return Ok(());
         }
 
-        let remove_count = entries.len().saturating_sub(retain);
-        let mut sorted = entries;
-        sorted.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
-
-        let mut removed = 0;
-        for entry in sorted {
-            if removed >= remove_count {
-                break;
-            }
+        // Newest-first: keep backups until the accumulated size exceeds the
+        // cap. The newest non-protected backup is always kept even when it
+        // alone exceeds the cap, so a restore point always survives.
+        let mut kept = 0usize;
+        let mut total = 0u64;
+        for entry in entries.iter().rev() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let size = metadata.len();
             let path = entry.path();
-            if protected_paths
-                .iter()
-                .any(|protected| Self::same_existing_backup_path(&path, protected))
-            {
+            if is_protected(&path) {
+                total = total.saturating_add(size);
+                kept += 1;
                 continue;
             }
 
-            if let Err(err) = fs::remove_file(&path) {
-                log::warn!("删除旧数据库备份失败 {}: {}", path.display(), err);
-            } else {
-                removed += 1;
+            if total.saturating_add(size) <= max_total || kept == 0 {
+                total = total.saturating_add(size);
+                kept += 1;
+                continue;
+            }
+
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    log::info!(
+                        "删除超限数据库备份 {}（目录总大小超过上限）",
+                        path.display()
+                    );
+                    Self::remove_backup_sidecars(&path);
+                }
+                Err(err) => {
+                    log::warn!("删除超限数据库备份失败 {}: {}", path.display(), err);
+                    total = total.saturating_add(size);
+                    kept += 1;
+                }
             }
         }
         Ok(())
@@ -1173,6 +1307,7 @@ impl Database {
         }
 
         fs::remove_file(&backup_path).map_err(|e| AppError::io(&backup_path, e))?;
+        Self::remove_backup_sidecars(&backup_path);
         log::info!("Deleted backup: {filename}");
         Ok(())
     }
@@ -1242,12 +1377,356 @@ mod tests {
             update_settings(next).expect("set backup retention for test");
             Self { previous }
         }
+
+        fn with_backup_max_total_mb(max_total_mb: u32) -> Self {
+            let previous = get_settings();
+            let mut next = previous.clone();
+            next.backup_max_total_mb = Some(max_total_mb);
+            update_settings(next).expect("set backup size cap for test");
+            Self { previous }
+        }
     }
 
     impl Drop for SettingsGuard {
         fn drop(&mut self) {
             let _ = update_settings(self.previous.clone());
         }
+    }
+
+    fn write_backup_file(
+        backup_dir: &std::path::Path,
+        filename: &str,
+        size_bytes: usize,
+        age_secs: u64,
+    ) -> Result<std::path::PathBuf, AppError> {
+        let path = backup_dir.join(filename);
+        std::fs::write(&path, vec![0u8; size_bytes]).map_err(|e| AppError::io(&path, e))?;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .map_err(|e| AppError::io(&path, e))?;
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs))
+            .map_err(|e| AppError::io(&path, e))?;
+        Ok(path)
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_db_backups_enforces_total_size_cap() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+        let _cap = SettingsGuard::with_backup_max_total_mb(1);
+
+        // Reproduces #6706: three full-image backups of a bloated database
+        // under a 1 MB cap must keep only the newest restore point.
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            600 * 1024,
+            3 * 86400,
+        )?;
+        let middle = write_backup_file(
+            &backup_dir,
+            "db_backup_20260802_000002.db",
+            600 * 1024,
+            2 * 86400,
+        )?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260803_000003.db",
+            600 * 1024,
+            86400,
+        )?;
+
+        Database::cleanup_db_backups(&backup_dir, &[])?;
+
+        assert!(
+            !oldest.exists(),
+            "oldest backup over the size cap must be removed"
+        );
+        assert!(
+            !middle.exists(),
+            "second-oldest backup over the size cap must be removed"
+        );
+        assert!(
+            newest.exists(),
+            "newest backup is always kept even when it alone exceeds the cap"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_db_backups_size_cap_never_deletes_protected_paths() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+        let _cap = SettingsGuard::with_backup_max_total_mb(1);
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            900 * 1024,
+            3 * 86400,
+        )?;
+        let protected = write_backup_file(
+            &backup_dir,
+            "db_backup_20260802_000002.db",
+            900 * 1024,
+            2 * 86400,
+        )?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260803_000003.db",
+            900 * 1024,
+            86400,
+        )?;
+
+        Database::cleanup_db_backups(&backup_dir, &[&protected])?;
+
+        assert!(protected.exists(), "restore source must never be deleted");
+        assert!(newest.exists(), "newest backup must be kept");
+        assert!(
+            !oldest.exists(),
+            "oldest backup over the size cap must be removed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_db_backups_size_cap_counts_protected_toward_kept() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+        let _cap = SettingsGuard::with_backup_max_total_mb(1);
+
+        // A protected backup already guarantees a restore point exists, so
+        // the "always keep the first non-protected entry" sentinel must not
+        // re-trigger for the backup right after it. If the protected branch
+        // doesn't increment `kept`, `middle` below is spuriously force-kept
+        // even though protected + middle alone already exceed the cap.
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let protected = write_backup_file(
+            &backup_dir,
+            "db_backup_20260803_000003.db",
+            600 * 1024,
+            3600,
+        )?;
+        let middle = write_backup_file(
+            &backup_dir,
+            "db_backup_20260802_000002.db",
+            600 * 1024,
+            2 * 86400,
+        )?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            600 * 1024,
+            3 * 86400,
+        )?;
+
+        Database::cleanup_db_backups(&backup_dir, &[&protected])?;
+
+        assert!(protected.exists(), "protected backup must never be deleted");
+        assert!(
+            !middle.exists(),
+            "backup right after a protected one must not be spuriously force-kept"
+        );
+        assert!(
+            !oldest.exists(),
+            "oldest backup over the size cap must be removed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_db_backups_removes_sqlite_sidecars() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+        let _cap = SettingsGuard::with_backup_max_total_mb(1);
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            900 * 1024,
+            3 * 86400,
+        )?;
+        // 侧车与本体一起会被删除（份数/大小两条路径共用 remove_backup_sidecars）。
+        std::fs::write(
+            backup_dir.join("db_backup_20260801_000001.db-journal"),
+            b"x",
+        )
+        .map_err(|e| AppError::io(&oldest, e))?;
+        // 已无对应 .db 的孤儿侧车必须被清掉；活备份的侧车保持不动。
+        std::fs::write(
+            backup_dir.join("db_backup_20260807_203829.db-journal"),
+            b"x",
+        )
+        .map_err(|e| AppError::io(&backup_dir, e))?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260803_000003.db",
+            900 * 1024,
+            86400,
+        )?;
+        let newest_journal = backup_dir.join("db_backup_20260803_000003.db-wal");
+        std::fs::write(&newest_journal, b"x").map_err(|e| AppError::io(&newest, e))?;
+
+        Database::cleanup_db_backups(&backup_dir, &[])?;
+
+        assert!(!oldest.exists(), "over-cap backup must be removed");
+        assert!(
+            !backup_dir
+                .join("db_backup_20260801_000001.db-journal")
+                .exists(),
+            "sidecar of a removed backup must be removed with it"
+        );
+        assert!(
+            !backup_dir
+                .join("db_backup_20260807_203829.db-journal")
+                .exists(),
+            "orphan sidecar without its .db must be swept"
+        );
+        assert!(newest.exists(), "newest backup must be kept");
+        assert!(
+            newest_journal.exists(),
+            "sidecar of a surviving backup must be left alone"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_db_backups_removes_orphan_crash_snapshots() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+
+        // A killed process never runs `TempPath`'s destructor, so a
+        // `.cc-switch-backup-*.tmp` snapshot from `backup_database_file_locked`
+        // can survive indefinitely. Retention only recognized `.db` files, so
+        // this debris counted toward neither the size cap nor cleanup.
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let crash_snapshot = backup_dir.join(".cc-switch-backup-abc123.tmp");
+        std::fs::write(&crash_snapshot, vec![0u8; 1024])
+            .map_err(|e| AppError::io(&crash_snapshot, e))?;
+        let kept = write_backup_file(&backup_dir, "db_backup_20260803_000003.db", 1024, 3600)?;
+
+        Database::cleanup_db_backups(&backup_dir, &[])?;
+
+        assert!(
+            !crash_snapshot.exists(),
+            "orphan crash snapshot must be swept regardless of extension"
+        );
+        assert!(kept.exists(), "unrelated backup must be left alone");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn preflight_backup_retention_runs_before_database_connection_opens() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _retain = SettingsGuard::with_backup_retain_count(10);
+        let _cap = SettingsGuard::with_backup_max_total_mb(1);
+
+        // Simulates #6706 on a full disk: retention must not depend on a
+        // successful `Database::init()` (which can hard-fail on
+        // `SQLITE_FULL` while migrating), so call it standalone here.
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            900 * 1024,
+            2 * 86400,
+        )?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260802_000002.db",
+            900 * 1024,
+            86400,
+        )?;
+
+        Database::preflight_backup_retention();
+
+        assert!(
+            !oldest.exists(),
+            "preflight retention must bound the backups folder without an open connection"
+        );
+        assert!(newest.exists(), "newest backup must be kept");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn periodic_backup_if_needed_enforces_size_cap_without_new_backup() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let previous = get_settings();
+        let mut next = previous.clone();
+        next.backup_interval_hours = Some(0);
+        next.backup_retain_count = Some(10);
+        next.backup_max_total_mb = Some(1);
+        update_settings(next).expect("set backup settings for test");
+        let _settings = SettingsGuard { previous };
+
+        let db = Database::init()?;
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        // Database::init() may publish its own safety backup; start from a
+        // clean directory so the cap math only sees this test's files.
+        if backup_dir.exists() {
+            std::fs::remove_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        }
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let oldest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260801_000001.db",
+            900 * 1024,
+            2 * 86400,
+        )?;
+        let newest = write_backup_file(
+            &backup_dir,
+            "db_backup_20260802_000002.db",
+            900 * 1024,
+            86400,
+        )?;
+
+        db.periodic_backup_if_needed()?;
+
+        assert!(
+            !oldest.exists(),
+            "startup retention must bound an oversized backups folder"
+        );
+        assert!(newest.exists(), "newest backup must be kept");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn delete_backup_removes_sqlite_sidecars() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let filename = "db_backup_20260803_000003.db";
+        let target = write_backup_file(&backup_dir, filename, 1024, 0)?;
+        let journal = backup_dir.join(format!("{filename}-journal"));
+        std::fs::write(&journal, b"x").map_err(|e| AppError::io(&journal, e))?;
+
+        Database::delete_backup(filename)?;
+
+        assert!(!target.exists(), "backup file must be deleted");
+        assert!(
+            !journal.exists(),
+            "manual delete must also remove the backup's sidecar files"
+        );
+        Ok(())
     }
 
     #[test]

@@ -487,6 +487,9 @@ pub struct AppSettings {
     /// Maximum number of backup files to retain (default 10)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup_retain_count: Option<u32>,
+    /// Total size cap for the backups directory in MB (default 2048, 0 = unlimited)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_max_total_mb: Option<u32>,
 
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
@@ -565,6 +568,7 @@ impl Default for AppSettings {
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
+            backup_max_total_mb: None,
             preferred_terminal: None,
             local_migrations: None,
         }
@@ -1125,6 +1129,24 @@ pub fn effective_backup_retain_count() -> usize {
         .backup_retain_count
         .map(|n| (n as usize).max(1))
         .unwrap_or(10)
+}
+
+/// Get the effective total size cap for the backups directory in bytes
+/// (default 2048 MiB; 0 disables the cap)
+pub fn effective_backup_max_total_bytes() -> u64 {
+    const DEFAULT_MAX_TOTAL_MB: u32 = 2048;
+    let configured = settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .backup_max_total_mb;
+    match configured {
+        Some(0) => u64::MAX,
+        Some(mb) => u64::from(mb) * 1024 * 1024,
+        None => u64::from(DEFAULT_MAX_TOTAL_MB) * 1024 * 1024,
+    }
 }
 
 // ===== 终端设置管理函数 =====
