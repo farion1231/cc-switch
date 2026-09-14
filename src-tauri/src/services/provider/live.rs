@@ -14,7 +14,7 @@ use crate::config::{delete_file, get_claude_settings_path, read_json_file, write
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use crate::proxy::providers::codex_oauth_auth::{CodexLiveAuthSwitchGuard, CodexOAuthManager};
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -869,6 +869,10 @@ fn get_codex_managed_oauth_live_auth_value(
 ) -> Result<Value, AppError> {
     std::thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
+            manager
+                .ensure_account_exists(&account_id)
+                .await
+                .map_err(|error| error.to_string())?;
             let bundle = manager
                 .get_valid_token_bundle_for_account(&account_id)
                 .await
@@ -907,7 +911,7 @@ fn get_codex_managed_oauth_live_auth_value(
 pub(crate) fn prepare_codex_managed_oauth_live_auth_switch_away(
     manager: Arc<CodexOAuthManager>,
     account_id: String,
-) -> Result<Option<String>, AppError> {
+) -> Result<CodexLiveAuthSwitchGuard, AppError> {
     std::thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
             manager

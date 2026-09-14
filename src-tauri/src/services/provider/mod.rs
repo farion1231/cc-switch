@@ -17,6 +17,7 @@ use crate::app_config::AppType;
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
+use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -3037,6 +3038,267 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn deleted_codex_account_can_rebind_or_switch_in_every_takeover_state() {
+        for mode in ["direct", "active", "backup-only"] {
+            for rebind in [true, false] {
+                with_test_home(|state, _| {
+                    crate::settings::reload_settings().unwrap();
+                    let runtime = tauri::async_runtime::handle();
+                    let token = crate::codex_config::test_codex_id_token("same-user");
+                    runtime
+                        .block_on(
+                            state
+                                .codex_oauth_manager
+                                .add_test_account_with_workspace_and_access_token(
+                                    "old-local-id",
+                                    "workspace",
+                                    "old-access",
+                                    Some(&token),
+                                ),
+                        )
+                        .unwrap();
+                    let current = managed_codex_provider("current", "old-local-id");
+                    state.db.save_provider("codex", &current).unwrap();
+                    ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
+                    if mode != "direct" {
+                        runtime.block_on(async {
+                            let mut config = state.db.get_proxy_config().await.unwrap();
+                            config.listen_port = 0;
+                            state.db.update_proxy_config(config).await.unwrap();
+                            state
+                                .proxy_service
+                                .set_takeover_for_app("codex", true)
+                                .await
+                                .unwrap();
+                        });
+                        if mode == "backup-only" {
+                            write_json_file(
+                                &crate::codex_config::get_codex_auth_path(),
+                                &json!({}),
+                            )
+                            .unwrap();
+                            fs::write(crate::codex_config::get_codex_config_path(), "").unwrap();
+                        }
+                    }
+                    runtime
+                        .block_on(
+                            crate::commands::remove_codex_oauth_account_with_switch_lock(
+                                state,
+                                "old-local-id",
+                            ),
+                        )
+                        .unwrap();
+                    let restarted = (mode == "direct").then(|| AppState::new(state.db.clone()));
+                    let state = restarted.as_ref().unwrap_or(state);
+                    runtime.block_on(async {
+                        let mut config = state.db.get_proxy_config().await.unwrap();
+                        config.listen_port = 0;
+                        state.db.update_proxy_config(config).await.unwrap();
+                    });
+                    // Ordinary login creates a new local ID, even for the same user/workspace.
+                    runtime
+                        .block_on(
+                            state
+                                .codex_oauth_manager
+                                .add_test_account_with_workspace_and_access_token(
+                                    "new-local-id",
+                                    "workspace",
+                                    "new-access",
+                                    Some(&token),
+                                ),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        ProviderService::managed_codex_oauth_account_id(
+                            &state
+                                .db
+                                .get_provider_by_id("current", "codex")
+                                .unwrap()
+                                .unwrap()
+                        )
+                        .as_deref(),
+                        Some("old-local-id")
+                    );
+                    let error = if mode == "backup-only" {
+                        build_effective_provider_for_live_with_codex_oauth_manager(
+                            &state.db,
+                            &AppType::Codex,
+                            &current,
+                            &state.codex_oauth_manager,
+                        )
+                        .unwrap_err()
+                        .to_string()
+                    } else {
+                        runtime
+                            .block_on(state.proxy_service.set_takeover_for_app("codex", true))
+                            .unwrap_err()
+                    };
+                    assert!(error.contains("选择账号"), "{mode}: {error}");
+                    assert_eq!(
+                        runtime
+                            .block_on(state.db.get_live_backup("codex"))
+                            .unwrap()
+                            .is_some(),
+                        mode != "direct"
+                    );
+                    assert_eq!(
+                        state
+                            .proxy_service
+                            .detect_takeover_in_live_config_for_app(&AppType::Codex),
+                        mode == "active"
+                    );
+
+                    let target = managed_codex_provider(
+                        if rebind { "current" } else { "target" },
+                        "new-local-id",
+                    );
+                    if rebind {
+                        ProviderService::update(state, AppType::Codex, None, target.clone())
+                            .unwrap();
+                    } else {
+                        state.db.save_provider("codex", &target).unwrap();
+                        ProviderService::switch(state, AppType::Codex, &target.id).unwrap();
+                    }
+                    let auth: Value =
+                        read_json_file(&crate::codex_config::get_codex_auth_path()).unwrap();
+                    assert_eq!(
+                        auth["tokens"]["access_token"], "new-access",
+                        "{mode}, rebind={rebind}"
+                    );
+                    assert_eq!(
+                        crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+                            .unwrap()
+                            .as_deref(),
+                        Some(target.id.as_str())
+                    );
+                    runtime.block_on(async {
+                        state
+                            .proxy_service
+                            .set_takeover_for_app("codex", true)
+                            .await
+                            .unwrap();
+                        let backup = state.db.get_live_backup("codex").await.unwrap().unwrap();
+                        assert!(serde_json::from_str::<Value>(&backup.original_config)
+                            .unwrap()
+                            .get("auth")
+                            .is_none());
+                        state
+                            .proxy_service
+                            .set_takeover_for_app("codex", false)
+                            .await
+                            .unwrap();
+                        if state.proxy_service.is_running().await {
+                            state.proxy_service.stop().await.unwrap();
+                        }
+                    });
+                    let restored: Value =
+                        read_json_file(&crate::codex_config::get_codex_auth_path()).unwrap();
+                    assert_eq!(
+                        restored, auth,
+                        "proxy restore must keep the replacement account"
+                    );
+                });
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn missing_codex_account_preserves_native_login_but_corrupt_store_blocks_recovery() {
+        for takeover in [false, true] {
+            for corrupt in [false, true] {
+                with_test_home(|state, _| {
+                    crate::settings::reload_settings().unwrap();
+                    crate::settings::update_settings(crate::settings::AppSettings {
+                        preserve_codex_official_auth_on_switch: true,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                    let runtime = tauri::async_runtime::handle();
+                    runtime
+                        .block_on(
+                            state
+                                .codex_oauth_manager
+                                .add_test_account_with_user_identity("old", "access", "user"),
+                        )
+                        .unwrap();
+                    let current = managed_codex_provider("current", "old");
+                    state.db.save_provider("codex", &current).unwrap();
+                    ProviderService::switch(state, AppType::Codex, "current").unwrap();
+                    let mut auth: Value =
+                        read_json_file(&crate::codex_config::get_codex_auth_path()).unwrap();
+                    if takeover {
+                        runtime.block_on(async {
+                            state
+                                .proxy_service
+                                .sync_codex_live_from_provider_while_proxy_active(&current)
+                                .await
+                                .unwrap();
+                            state
+                                .db
+                                .save_live_backup("codex", &current.settings_config.to_string())
+                                .await
+                                .unwrap();
+                        });
+                    }
+                    runtime
+                        .block_on(
+                            crate::commands::remove_codex_oauth_account_with_switch_lock(
+                                state, "old",
+                            ),
+                        )
+                        .unwrap();
+                    // A stale marker must not claim a later native login of the same user.
+                    auth["tokens"]["refresh_token"] = json!("native-rotated-token");
+                    write_json_file(&crate::codex_config::get_codex_auth_path(), &auth).unwrap();
+                    crate::codex_config::record_codex_managed_oauth_live_auth(&auth, "old")
+                        .unwrap();
+                    if corrupt {
+                        fs::write(
+                            crate::config::get_app_config_dir().join("codex_oauth_auth.json"),
+                            "{broken",
+                        )
+                        .unwrap();
+                    }
+                    let restarted = AppState::new(state.db.clone());
+                    let target = Provider::with_id(
+                        "target".into(),
+                        "Third party".into(),
+                        codex_settings("https://example.test/v1", "sk-target"),
+                        None,
+                    );
+                    state.db.save_provider("codex", &target).unwrap();
+                    let before = crate::codex_config::CodexLiveStateSnapshot::capture().unwrap();
+                    let result = ProviderService::switch(&restarted, AppType::Codex, "target");
+                    if corrupt {
+                        assert!(result.is_err());
+                        assert_eq!(
+                            crate::codex_config::CodexLiveStateSnapshot::capture().unwrap(),
+                            before
+                        );
+                        assert_eq!(
+                            state.db.get_current_provider("codex").unwrap().as_deref(),
+                            Some("current")
+                        );
+                    } else {
+                        result.unwrap();
+                        assert!(
+                            !crate::codex_config::codex_managed_oauth_live_auth_marker_exists(),
+                            "missing account must relinquish ownership"
+                        );
+                    }
+                    assert_eq!(
+                        read_json_file::<Value>(&crate::codex_config::get_codex_auth_path())
+                            .unwrap(),
+                        auth
+                    );
+                });
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
     fn codex_auth_center_removal_waits_for_provider_switch_lock() {
         with_test_home(|state, _| {
             crate::settings::reload_settings().expect("reload settings");
@@ -4392,7 +4654,7 @@ impl ProviderService {
     fn prepare_outgoing_managed_codex_live_auth(
         state: &AppState,
         account_id: Option<&str>,
-    ) -> Result<Option<String>, AppError> {
+    ) -> Result<Option<CodexLiveAuthSwitchGuard>, AppError> {
         let Some(account_id) = account_id else {
             return Ok(None);
         };
@@ -4400,38 +4662,27 @@ impl ProviderService {
             state.codex_oauth_manager.clone(),
             account_id.to_string(),
         )
+        .map(Some)
     }
 
     fn ensure_outgoing_managed_codex_live_auth_unchanged(
         account_id: Option<&str>,
-        expected_refresh_token: Option<&str>,
+        guard: Option<&CodexLiveAuthSwitchGuard>,
     ) -> Result<(), AppError> {
-        if let (Some(account_id), Some(expected_refresh_token)) =
-            (account_id, expected_refresh_token)
-        {
-            crate::codex_config::ensure_codex_live_auth_unchanged_for_managed_account(
-                account_id,
-                expected_refresh_token,
-            )?;
+        if let (Some(account_id), Some(guard)) = (account_id, guard) {
+            guard.ensure_unchanged(account_id)?;
         }
         Ok(())
     }
 
     fn clear_outgoing_managed_codex_live_auth(
         account_id: Option<&str>,
-        expected_refresh_token: Option<&str>,
+        guard: Option<&CodexLiveAuthSwitchGuard>,
     ) -> Result<(), AppError> {
-        let Some(account_id) = account_id else {
-            return Ok(());
-        };
-        if let Some(expected_refresh_token) = expected_refresh_token {
-            crate::codex_config::clear_codex_live_auth_for_managed_account_if_unchanged(
-                account_id,
-                Some(expected_refresh_token),
-            )
-        } else {
-            crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
+        if let (Some(account_id), Some(guard)) = (account_id, guard) {
+            guard.clear_outgoing(account_id)?;
         }
+        Ok(())
     }
 
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
@@ -4881,7 +5132,7 @@ impl ProviderService {
                 return Ok(true);
             }
 
-            let outgoing_live_refresh_token = Self::prepare_outgoing_managed_codex_live_auth(
+            let outgoing_live_auth_guard = Self::prepare_outgoing_managed_codex_live_auth(
                 state,
                 outgoing_managed_codex_account_id.as_deref(),
             )?;
@@ -4905,7 +5156,7 @@ impl ProviderService {
                 let commit_result = (|| {
                     Self::ensure_outgoing_managed_codex_live_auth_unchanged(
                         outgoing_managed_codex_account_id.as_deref(),
-                        outgoing_live_refresh_token.as_deref(),
+                        outgoing_live_auth_guard.as_ref(),
                     )?;
                     Self::write_preflighted_or_current_live(
                         state,
@@ -4915,7 +5166,7 @@ impl ProviderService {
                     )?;
                     Self::clear_outgoing_managed_codex_live_auth(
                         outgoing_managed_codex_account_id.as_deref(),
-                        outgoing_live_refresh_token.as_deref(),
+                        outgoing_live_auth_guard.as_ref(),
                     )?;
                     state.db.save_provider(app_type.as_str(), &provider)?;
                     Ok::<(), AppError>(())
@@ -4940,7 +5191,7 @@ impl ProviderService {
             let commit_result = (|| {
                 Self::ensure_outgoing_managed_codex_live_auth_unchanged(
                     outgoing_managed_codex_account_id.as_deref(),
-                    outgoing_live_refresh_token.as_deref(),
+                    outgoing_live_auth_guard.as_ref(),
                 )?;
                 futures::executor::block_on(
                     state.proxy_service.update_live_backup_from_provider_inner(
@@ -4958,7 +5209,7 @@ impl ProviderService {
                             .sync_codex_live_from_provider_while_proxy_active_guarded(
                                 &provider,
                                 outgoing_managed_codex_account_id.as_deref(),
-                                outgoing_live_refresh_token.as_deref(),
+                                outgoing_live_auth_guard.as_ref(),
                             ),
                     )
                     .map_err(|error| {
@@ -4970,7 +5221,7 @@ impl ProviderService {
                     // with the edited current provider as well as the backup.
                     Self::ensure_outgoing_managed_codex_live_auth_unchanged(
                         outgoing_managed_codex_account_id.as_deref(),
-                        outgoing_live_refresh_token.as_deref(),
+                        outgoing_live_auth_guard.as_ref(),
                     )?;
                     Self::write_preflighted_or_current_live(
                         state,
@@ -4982,7 +5233,7 @@ impl ProviderService {
 
                 Self::clear_outgoing_managed_codex_live_auth(
                     outgoing_managed_codex_account_id.as_deref(),
-                    outgoing_live_refresh_token.as_deref(),
+                    outgoing_live_auth_guard.as_ref(),
                 )?;
 
                 // DB is the final commit. Every fallible side effect above can be
@@ -5361,7 +5612,7 @@ impl ProviderService {
             .as_ref()
             .filter(|account_id| target_managed_codex_account_id.as_ref() != Some(*account_id))
             .cloned();
-        let outgoing_live_refresh_token = Self::prepare_outgoing_managed_codex_live_auth(
+        let outgoing_live_auth_guard = Self::prepare_outgoing_managed_codex_live_auth(
             state,
             outgoing_managed_codex_account_id.as_deref(),
         )?;
@@ -5381,7 +5632,7 @@ impl ProviderService {
             let live_result = (|| {
                 Self::ensure_outgoing_managed_codex_live_auth_unchanged(
                     outgoing_managed_codex_account_id.as_deref(),
-                    outgoing_live_refresh_token.as_deref(),
+                    outgoing_live_auth_guard.as_ref(),
                 )?;
                 Self::write_preflighted_or_current_live(
                     state,
@@ -5391,7 +5642,7 @@ impl ProviderService {
                 )?;
                 Self::clear_outgoing_managed_codex_live_auth(
                     outgoing_managed_codex_account_id.as_deref(),
-                    outgoing_live_refresh_token.as_deref(),
+                    outgoing_live_auth_guard.as_ref(),
                 )?;
                 Ok::<(), AppError>(())
             })();
