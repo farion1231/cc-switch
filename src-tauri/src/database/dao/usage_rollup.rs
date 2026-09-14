@@ -63,6 +63,11 @@ impl Database {
         let cutoff = compute_local_midnight_cutoff(Local::now(), retain_days)?;
         let conn = lock_conn!(self.conn);
 
+        // Cherry Studio can reset its source rowids before retained legacy details
+        // become old enough to prune. Preserve those request IDs even when this
+        // maintenance pass has no rows to roll up.
+        crate::services::session_usage_cherry_studio::backfill_dedup_ledger_on_conn(&conn)?;
+
         // Check if there are any rows to process
         let count: i64 = conn
             .query_row(

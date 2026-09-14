@@ -13,15 +13,38 @@ import { UsageDashboard } from "@/components/usage/UsageDashboard";
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
 const usageHeroMock = vi.hoisted(() => vi.fn());
+const syncSessionUsageMock = vi.hoisted(() => vi.fn());
+const toastWarningMock = vi.hoisted(() => vi.fn());
+const toastSuccessMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, options?: string | Record<string, unknown>) =>
+      typeof options === "string"
+        ? options
+        : options
+          ? `${key}:${JSON.stringify(options)}`
+          : key,
     i18n: {
       resolvedLanguage: "en",
       language: "en",
     },
   }),
+}));
+
+vi.mock("@/lib/api/usage", () => ({
+  usageApi: {
+    syncSessionUsage: (...args: unknown[]) =>
+      syncSessionUsageMock(...args),
+  },
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    success: (...args: unknown[]) => toastSuccessMock(...args),
+    warning: (...args: unknown[]) => toastWarningMock(...args),
+  },
 }));
 
 vi.mock("framer-motion", () => ({
@@ -114,6 +137,9 @@ describe("UsageDashboard", () => {
     useProviderStatsMock.mockReset();
     useModelStatsMock.mockReset();
     usageHeroMock.mockReset();
+    syncSessionUsageMock.mockReset();
+    toastWarningMock.mockReset();
+    toastSuccessMock.mockReset();
     useProviderStatsMock.mockReturnValue({ data: [] });
     useModelStatsMock.mockReturnValue({ data: [] });
   });
@@ -143,6 +169,29 @@ describe("UsageDashboard", () => {
     );
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ appType: "pi" }),
+    );
+  });
+
+  it("exposes imported Cherry Studio usage as an application filter", async () => {
+    renderDashboard();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.appFilter.cherry-studio" }),
+    );
+
+    expect(
+      screen.getByRole("img", { name: "usage.appFilter.cherry-studio" }),
+    ).toHaveAttribute("src", expect.stringContaining("cherry-studio.png"));
+
+    await waitFor(() =>
+      expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+        expect.anything(),
+        { appType: "cherry-studio" },
+        expect.anything(),
+      ),
+    );
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appType: "cherry-studio" }),
     );
   });
 
@@ -178,5 +227,27 @@ describe("UsageDashboard", () => {
     await waitFor(() =>
       expect(screen.getByTestId("select-30000")).toBeInTheDocument(),
     );
+  });
+
+  it("warns when manual session sync leaves files deferred", async () => {
+    syncSessionUsageMock.mockResolvedValue({
+      imported: 1,
+      skipped: 0,
+      filesScanned: 3,
+      suspectedDuplicates: 0,
+      deferredFiles: 2,
+      errors: [],
+    });
+    renderDashboard({ sessionAutoSyncEnabled: false });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.sessionSync.syncNow" }),
+    );
+
+    await waitFor(() => expect(toastWarningMock).toHaveBeenCalledOnce());
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      expect.stringContaining('"deferred":2'),
+    );
+    expect(toastSuccessMock).not.toHaveBeenCalled();
   });
 });
