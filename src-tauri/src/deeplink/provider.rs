@@ -646,7 +646,7 @@ pub fn parse_and_merge_config(
     }
 
     match request.app.as_deref().unwrap_or("") {
-        "claude" => merge_claude_config(&mut merged, &config_value)?,
+        "claude" | "claude-desktop" => merge_claude_config(&mut merged, &config_value)?,
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
