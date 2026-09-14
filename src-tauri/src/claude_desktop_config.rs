@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use crate::config::get_home_dir;
 use crate::config::{atomic_write, delete_file, read_json_file, write_json_file};
 use crate::database::Database;
@@ -14,9 +14,9 @@ use crate::provider::{ClaudeDesktopMode, Provider};
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
 
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 const CONFIG_FILE: &str = "claude_desktop_config.json";
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
@@ -1211,7 +1211,7 @@ fn meta_has_profile_entry(path: &Path) -> bool {
 }
 
 fn is_supported_platform() -> bool {
-    cfg!(any(target_os = "macos", windows))
+    cfg!(any(target_os = "macos", target_os = "linux", windows))
 }
 
 #[allow(clippy::needless_return)]
@@ -1227,7 +1227,16 @@ fn current_platform_paths() -> Result<ClaudeDesktopPaths, AppError> {
         return Ok(windows_paths_from_local_app_data(&local_app_data));
     }
 
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    {
+        let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+        return Ok(linux_paths_from_config_home(
+            &get_home_dir(),
+            xdg_config_home.as_deref(),
+        ));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         Err(unsupported_platform_error())
     }
@@ -1237,6 +1246,18 @@ fn current_platform_paths() -> Result<ClaudeDesktopPaths, AppError> {
 fn macos_paths_from_home(home: &Path) -> ClaudeDesktopPaths {
     let app_support = home.join("Library").join("Application Support");
     paths_from_dirs(app_support.join("Claude"), app_support.join("Claude-3p"))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_paths_from_config_home(home: &Path, xdg_config_home: Option<&Path>) -> ClaudeDesktopPaths {
+    // Electron's app.getPath("userData") is rooted in XDG_CONFIG_HOME on Linux.
+    // XDG_CONFIG_HOME must be absolute; ignore malformed values so they cannot
+    // redirect configuration writes into the process working directory.
+    let config_home = xdg_config_home
+        .filter(|path| path.is_absolute())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home.join(".config"));
+    paths_from_dirs(config_home.join("Claude"), config_home.join("Claude-3p"))
 }
 
 #[cfg(windows)]
@@ -1281,7 +1302,7 @@ fn pick_windows_claude_dir(local_app_data: &Path, threep: bool) -> Option<PathBu
     candidates.into_iter().next()
 }
 
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 fn paths_from_dirs(normal_dir: PathBuf, threep_dir: PathBuf) -> ClaudeDesktopPaths {
     let config_library_path = threep_dir.join(CONFIG_LIBRARY_DIR);
     let profile_path = config_library_path.join(format!("{PROFILE_ID}.json"));
@@ -1311,12 +1332,12 @@ fn proxy_origin_from_parts(listen_address: &str, listen_port: u16) -> String {
     format!("http://{}:{}", connect_host_for_url, listen_port)
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn unsupported_platform_error() -> AppError {
     AppError::localized(
         "claude_desktop.unsupported_platform",
-        "当前平台暂不支持 Claude Desktop 3P 配置。第一阶段仅支持 macOS 和 Windows。",
-        "Claude Desktop 3P configuration is not supported on this platform yet. Phase 1 only supports macOS and Windows.",
+        "当前平台暂不支持 Claude Desktop 3P 配置。",
+        "Claude Desktop 3P configuration is not supported on this platform yet.",
     )
 }
 
@@ -1337,6 +1358,43 @@ mod tests {
                 .join("Application Support")
                 .join("Claude-3p"),
         )
+    }
+
+    #[test]
+    fn linux_paths_use_absolute_xdg_config_home() {
+        let temp = TempDir::new().expect("tempdir");
+        let home = temp.path().join("home");
+        let config_home = temp.path().join("xdg-config");
+        let paths = linux_paths_from_config_home(&home, Some(&config_home));
+
+        assert_eq!(
+            paths.normal_config_path,
+            config_home.join("Claude/claude_desktop_config.json")
+        );
+        assert_eq!(
+            paths.profile_path,
+            config_home
+                .join("Claude-3p/configLibrary")
+                .join(format!("{PROFILE_ID}.json"))
+        );
+    }
+
+    #[test]
+    fn linux_paths_fall_back_to_home_config_for_invalid_xdg_value() {
+        let temp = TempDir::new().expect("tempdir");
+        let home = temp.path().join("home");
+
+        for xdg_config_home in [None, Some(Path::new("")), Some(Path::new("relative"))] {
+            let paths = linux_paths_from_config_home(&home, xdg_config_home);
+            assert_eq!(
+                paths.normal_config_path,
+                home.join(".config/Claude/claude_desktop_config.json")
+            );
+            assert_eq!(
+                paths.threep_config_path,
+                home.join(".config/Claude-3p/claude_desktop_config.json")
+            );
+        }
     }
 
     fn test_db() -> Database {
