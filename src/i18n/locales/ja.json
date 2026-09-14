@@ -987,6 +987,10 @@
       "readFailed": "Pi のプロバイダー設定を読み込めません",
       "stateUnavailableHint": "CC Switch が Pi のプロバイダー設定を読み込むまで、プロバイダーの変更は無効です。"
     },
+    "login": {
+      "configured": "/login で設定済み",
+      "managedHint": "Pi の /login で管理されています。変更するには Pi で /login または /logout を使用してください。"
+    },
     "prompts": {
       "globalTab": "グローバルプロンプト",
       "systemTab": "グローバルシステムプロンプト",

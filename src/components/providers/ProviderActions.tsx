@@ -114,6 +114,15 @@ export function ProviderActions({
     !isAdditiveMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
   const isMembershipMode = isAdditiveMode;
   const piStateChangeHint = t("pi.current.stateUnavailableHint");
+  const readOnlyHint =
+    appId === "pi"
+      ? t("pi.login.managedHint", {
+          defaultValue:
+            "由 Pi /login 管理，请在 Pi 中使用 /login 或 /logout 修改",
+        })
+      : t("provider.managedByHermesHint", {
+          defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
+        });
 
   const handleMainButtonClick = () => {
     if (isOmo) {
@@ -163,6 +172,18 @@ export function ProviderActions({
 
     // 累加模式（OpenCode 非 OMO / OpenClaw）
     if (isMembershipMode) {
+      if (isReadOnly && appId === "pi") {
+        return {
+          disabled: true,
+          variant: "secondary" as const,
+          className: "opacity-60 cursor-not-allowed",
+          icon: <Check className="h-4 w-4" />,
+          text: t("pi.login.configured", {
+            defaultValue: "已通过 /login 配置",
+          }),
+          title: readOnlyHint,
+        };
+      }
       if (isStateChangeProtected) {
         return {
           disabled: true,
@@ -266,15 +287,11 @@ export function ProviderActions({
       : isOmo || isAdditiveMode
         ? true
         : !isCurrent);
-  const readOnlyHint = t("provider.managedByHermesHint", {
-    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
-  });
-  const deleteHint =
-    appId === "pi" && isStateChangeProtected
+  const deleteHint = isReadOnly
+    ? readOnlyHint
+    : appId === "pi" && isStateChangeProtected
       ? piStateChangeHint
-      : isReadOnly
-        ? readOnlyHint
-        : t("common.delete");
+      : t("common.delete");
 
   return (
     <div className="flex items-center gap-1.5">

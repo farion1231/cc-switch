@@ -1,4 +1,4 @@
-# Pi 显式供应商同步需求
+# Pi 显式供应商与登录渠道同步需求
 
 ## 背景
 
@@ -40,9 +40,9 @@ Pi 额外需要支持同名内置供应商的显式覆盖：只要供应商节�
 
 - `models.json.providers` 中的显式配置由 CC Switch 管理。
 - Pi `/login` 写入 `auth.json` 的凭证始终由 Pi 管理，无论其类型为 OAuth 还是 API Key。
-- CC Switch 不读取、复制、修改或删除 `auth.json` 中的凭证。
+- CC Switch 只读取 `auth.json` 顶层的 provider ID，不复制、持久化、修改或删除其中的凭证内容。
 - CC Switch 不刷新 OAuth Token。
-- 只有 `auth.json` 凭证、没有 `models.json.providers` 节点的供应商，不生成 CC Switch 卡片。
+- 只有 `auth.json` 凭证、没有 `models.json.providers` 节点的供应商，生成由 Pi `/login` 管理的只读卡片。
 - 环境变量中的凭证不导入 CC Switch。
 - 同一供应商同时存在显式配置和 Pi 登录时，CC Switch 只管理显式配置。
 - 移除显式配置不退出 Pi 登录，也不删除 `auth.json`。
@@ -94,12 +94,19 @@ Pi 额外需要支持同名内置供应商的显式覆盖：只要供应商节�
 主要修改范围：
 
 - Pi live provider 配置读取；
+- Pi `/login` provider ID 读取与只读投影；
 - Pi 供应商列表同步；
 - 内置 provider ID 过滤规则；
 - 启用和移除操作；
 - 页面刷新后的状态更新。
 
-不增加数据库 Schema，也不建立新的 ownership 状态。
+不增加数据库 Schema。允许在 Provider `meta` 中保存最小来源状态：
+
+- `providerType = pi_login`：当前卡片由 Pi `/login` 管理，只读；
+- `piLoginOrigin`：卡片具有登录来源，或在 `auth.json` 暂时不可读时等待下次成功读取核对；
+- `piLoginSynthetic`：卡片是否仅包含 CC Switch 生成的展示配置，用于决定 `/logout` 后删除纯投影还是保留最后一份显式配置。
+
+这些元数据不得写入 Pi 原生文件，也不得包含任何凭证内容。
 
 明确不做：
 
@@ -119,7 +126,7 @@ Pi 额外需要支持同名内置供应商的显式覆盖：只要供应商节�
 4. 在没有 `auth.json` 凭证和相关环境变量时重启 Pi，被显式配置激活的模型不再可用。
 5. 再次启用后完整配置恢复，Pi 可以继续使用。
 6. 在 CC Switch 外部新增、修改或删除 provider，刷新页面后自动同步。
-7. Pi `/login` 写入的 OAuth 或 API Key 凭证不被读取或修改。
+7. Pi `/login` 写入的 OAuth 或 API Key 只读取所属 provider ID，凭证内容不被复制、持久化或修改。
 8. 移除供应商前后 `auth.json` 内容与文件状态完全不变。
 9. 自定义 Header、模型能力字段和未知 JSON 字段在同步、编辑、保存、移除与重新启用后不丢失。
 10. 所有操作前后 Pi 当前默认供应商和默认模型保持不变。

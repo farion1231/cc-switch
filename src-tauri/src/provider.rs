@@ -558,6 +558,14 @@ pub struct ProviderMeta {
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
     pub provider_type: Option<String>,
+    /// 该 Pi Provider 是否来自 `/login` 投影，或因 auth.json 暂时不可读而待核对。
+    /// 显式 models.json 覆盖期间保留此标记，用于覆盖移除后恢复只读来源。
+    #[serde(rename = "piLoginOrigin", skip_serializing_if = "Option::is_none")]
+    pub pi_login_origin: Option<bool>,
+    /// 该 Pi `/login` 卡片是否只包含 CC Switch 生成的展示配置。
+    /// 独立元数据可避免与 models.json 中用户自定义的未知字段发生冲突。
+    #[serde(rename = "piLoginSynthetic", skip_serializing_if = "Option::is_none")]
+    pub pi_login_synthetic: Option<bool>,
     /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]

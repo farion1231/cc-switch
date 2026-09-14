@@ -78,6 +78,7 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
+  isReadOnly?: boolean;
   isStateChangeProtected?: boolean;
   onSetAsDefault?: (modelId?: string) => void;
 }
@@ -195,6 +196,7 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   isRemovalProtected,
+  isReadOnly = false,
   isStateChangeProtected,
   onSetAsDefault,
 }: ProviderCardProps) {
@@ -299,6 +301,7 @@ export function ProviderCard({
   // read-only here — writes have to go through Hermes Web UI.
   const isHermesReadOnly =
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
+  const isProviderReadOnly = isHermesReadOnly || isReadOnly;
   const isCodexOauth =
     appId === "codex"
       ? isBoundCodexOfficial
@@ -688,7 +691,7 @@ export function ProviderCard({
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
               isOfficialBlockedByProxy={isOfficialBlockedByProxy}
-              isReadOnly={isHermesReadOnly}
+              isReadOnly={isProviderReadOnly}
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
@@ -704,6 +707,7 @@ export function ProviderCard({
                   : undefined
               }
               onConfigureUsage={
+                isReadOnly ||
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
                 (isCodexOauth && !isBoundCodexOfficial) ||
