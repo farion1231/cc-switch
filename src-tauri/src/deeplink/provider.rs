@@ -9,7 +9,7 @@ use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
 use crate::services::ProviderService;
 use crate::store::AppState;
 use crate::AppType;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::str::FromStr;
 
 /// Import a provider from a deep link request
@@ -67,6 +67,12 @@ pub fn import_provider_from_deeplink(
         .first()
         .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
 
+    if matches!(app_str.as_str(), "copilot-byok" | "copilot-cli") && all_endpoints.len() > 1 {
+        return Err(AppError::InvalidInput(
+            "VS Code Copilot providers support one shared endpoint per provider group".to_string(),
+        ));
+    }
+
     // Auto-infer homepage from endpoint if not provided
     if merged_request
         .homepage
@@ -109,6 +115,30 @@ pub fn import_provider_from_deeplink(
 
     let provider_id = provider.id.clone();
 
+    if matches!(app_type, AppType::CopilotByok | AppType::CopilotCli) {
+        let mut group: crate::copilot_byok::CopilotByokGroup =
+            serde_json::from_value(provider.settings_config.clone()).map_err(|error| {
+                AppError::InvalidInput(format!(
+                    "Invalid VS Code Copilot provider configuration: {error}"
+                ))
+            })?;
+        group.id = provider_id.clone();
+        group.name = provider.name;
+        group.website_url = provider.website_url;
+        if provider.notes.is_some() {
+            group.notes = provider.notes;
+        }
+        if provider.icon.is_some() {
+            group.icon = provider.icon;
+        }
+        if matches!(app_type, AppType::CopilotCli) {
+            crate::copilot_byok::upsert_cli_group(state.db.as_ref(), group)?;
+        } else {
+            crate::copilot_byok::upsert_group(state.db.as_ref(), group)?;
+        }
+        return Ok(provider_id);
+    }
+
     // Use ProviderService to add the provider
     ProviderService::add(state, app_type.clone(), provider, true)?;
 
@@ -150,6 +180,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
+        AppType::CopilotByok | AppType::CopilotCli => build_copilot_settings(request)?,
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
         AppType::Pi => {
@@ -192,6 +223,115 @@ fn get_primary_endpoint(request: &DeepLinkImportRequest) -> String {
         .and_then(|ep| ep.split(',').next())
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+fn build_copilot_settings(request: &DeepLinkImportRequest) -> Result<serde_json::Value, AppError> {
+    let mut group = request
+        .config
+        .as_ref()
+        .map(|config_b64| {
+            let decoded = decode_base64_param("config", config_b64)?;
+            let text = String::from_utf8(decoded).map_err(|error| {
+                AppError::InvalidInput(format!("Invalid UTF-8 in config: {error}"))
+            })?;
+            let config: Value = match request.config_format.as_deref().unwrap_or("json") {
+                "json" => serde_json::from_str(&text).map_err(|error| {
+                    AppError::InvalidInput(format!("Invalid JSON config: {error}"))
+                })?,
+                "toml" => {
+                    let value: toml::Value = toml::from_str(&text).map_err(|error| {
+                        AppError::InvalidInput(format!("Invalid TOML config: {error}"))
+                    })?;
+                    serde_json::to_value(value).map_err(|error| {
+                        AppError::Message(format!("Failed to convert TOML to JSON: {error}"))
+                    })?
+                }
+                format => {
+                    return Err(AppError::InvalidInput(format!(
+                        "Unsupported config format: {format}"
+                    )))
+                }
+            };
+            config
+                .get("provider")
+                .unwrap_or(&config)
+                .as_object()
+                .cloned()
+                .ok_or_else(|| {
+                    AppError::InvalidInput(
+                        "VS Code Copilot config must be a provider object".to_string(),
+                    )
+                })
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    let configured_first_model = group
+        .get("models")
+        .and_then(Value::as_array)
+        .and_then(|models| models.first())
+        .and_then(|model| {
+            model
+                .get("modelId")
+                .or_else(|| model.get("id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::to_string);
+
+    group.insert(
+        "name".to_string(),
+        json!(request.name.as_deref().unwrap_or("custom")),
+    );
+    group.insert("url".to_string(), json!(get_primary_endpoint(request)));
+    group.insert(
+        "apiKey".to_string(),
+        json!(request.api_key.clone().unwrap_or_default()),
+    );
+    group
+        .entry("apiType".to_string())
+        .or_insert_with(|| json!("chat-completions"));
+    group
+        .entry("requestHeaders".to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(homepage) = &request.homepage {
+        group.insert("websiteUrl".to_string(), json!(homepage));
+    }
+    if let Some(notes) = &request.notes {
+        group.insert("notes".to_string(), json!(notes));
+    }
+    if let Some(icon) = &request.icon {
+        group.insert("icon".to_string(), json!(icon));
+    }
+    if let Some(enabled) = request.enabled {
+        group.insert("enabled".to_string(), json!(enabled));
+    } else {
+        group
+            .entry("enabled".to_string())
+            .or_insert_with(|| json!(true));
+    }
+
+    if let Some(model) = request.model.as_deref() {
+        // `merge_copilot_config` fills `request.model` from the first configured
+        // model. Preserve the complete model list in that case; an explicit,
+        // different URL model still overrides the inline catalog as documented.
+        if configured_first_model.as_deref() != Some(model) {
+            group.insert(
+                "models".to_string(),
+                json!([{
+                    "modelId": model,
+                    "name": model,
+                    "enabled": true,
+                    "modelOptions": {}
+                }]),
+            );
+        }
+    } else {
+        group
+            .entry("models".to_string())
+            .or_insert_with(|| json!([]));
+    }
+
+    Ok(Value::Object(group))
 }
 
 fn normalize_deeplink_api_key(api_key: &str) -> String {
@@ -654,6 +794,7 @@ pub fn parse_and_merge_config(
         "openclaw" | "opencode" | "hermes" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
+        "copilot-byok" | "copilot-cli" => merge_copilot_config(&mut merged, &config_value)?,
         "" => {
             // No app specified, skip merging
             return Ok(merged);
@@ -896,6 +1037,92 @@ fn merge_grokbuild_config(
         }
     }
 
+    Ok(())
+}
+
+fn merge_copilot_config(
+    request: &mut DeepLinkImportRequest,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    let group = config.get("provider").unwrap_or(config);
+    if !group.is_object() {
+        return Err(AppError::InvalidInput(
+            "VS Code Copilot config must be a provider object".to_string(),
+        ));
+    }
+
+    if request.name.as_ref().is_none_or(|value| value.is_empty()) {
+        request.name = group
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+
+    if request
+        .api_key
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.api_key = group
+            .get("apiKey")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    if request
+        .endpoint
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.endpoint = group
+            .get("url")
+            .or_else(|| group.get("baseUrl"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    if request.model.as_ref().is_none_or(|value| value.is_empty()) {
+        request.model = group
+            .get("models")
+            .and_then(Value::as_array)
+            .and_then(|models| models.first())
+            .and_then(|model| {
+                model
+                    .get("modelId")
+                    .or_else(|| model.get("id"))
+                    .and_then(Value::as_str)
+            })
+            .map(str::to_string);
+    }
+    if request
+        .homepage
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.homepage = group
+            .get("websiteUrl")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                request
+                    .endpoint
+                    .as_deref()
+                    .and_then(infer_homepage_from_endpoint)
+            });
+    }
+    if request.notes.as_ref().is_none_or(|value| value.is_empty()) {
+        request.notes = group
+            .get("notes")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    if request.icon.as_ref().is_none_or(|value| value.is_empty()) {
+        request.icon = group
+            .get("icon")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    if request.enabled.is_none() {
+        request.enabled = group.get("enabled").and_then(Value::as_bool);
+    }
     Ok(())
 }
 

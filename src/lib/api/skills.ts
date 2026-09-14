@@ -9,6 +9,8 @@ export type AppType =
   | "gemini"
   | "grokbuild"
   | "opencode"
+  | "copilot-byok"
+  | "copilot-cli"
   | "openclaw"
   | "hermes"
   | "pi";
@@ -21,6 +23,8 @@ export interface SkillApps {
   gemini: boolean;
   grokbuild?: boolean;
   opencode: boolean;
+  "copilot-byok"?: boolean;
+  "copilot-cli"?: boolean;
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;

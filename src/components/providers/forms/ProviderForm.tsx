@@ -56,6 +56,7 @@ import {
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
+import { ProviderFormLayout } from "./shared";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
@@ -2138,10 +2139,9 @@ function ProviderFormFull({
   return (
     <>
       <Form {...form}>
-        <form
+        <ProviderFormLayout
           id="provider-form"
           onSubmit={form.handleSubmit(handleSubmit)}
-          className="space-y-6 glass rounded-xl p-6 border border-white/10"
         >
           {!initialData && (
             <ProviderPresetSelector
@@ -2799,7 +2799,7 @@ function ProviderFormFull({
               </Button>
             </div>
           )}
-        </form>
+        </ProviderFormLayout>
       </Form>
 
       <ConfirmDialog
