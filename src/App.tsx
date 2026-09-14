@@ -226,6 +226,14 @@ function App() {
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
+    if (
+      sharedFeatureApp === "mcode" &&
+      currentView !== "providers" &&
+      currentView !== "settings"
+    ) {
+      setCurrentView("providers");
+      return;
+    }
     if (currentView === "mcp" && sharedFeatureApp === "pi") {
       setCurrentView("providers");
       return;
@@ -307,7 +315,8 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "mcode";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -317,7 +326,8 @@ function App() {
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
     sharedFeatureApp === "pi";
-  const hasMcpSupport = sharedFeatureApp !== "pi";
+  const hasMcpSupport =
+    sharedFeatureApp !== "pi" && sharedFeatureApp !== "mcode";
 
   const {
     addProvider,
@@ -616,6 +626,7 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
+        if (activeApp === "mcode") return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -1125,7 +1136,8 @@ function App() {
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
-                        activeApp === "pi"
+                        activeApp === "pi" ||
+                        activeApp === "mcode"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1390,6 +1402,7 @@ function App() {
                 </div>
               )}
             {currentView === "providers" &&
+              activeApp !== "mcode" &&
               (settingsData?.showProfileSwitcher ?? true) && (
                 <div
                   className="flex shrink-0 items-center"
@@ -1687,15 +1700,17 @@ function App() {
                               >
                                 <Wrench className="flex-shrink-0 w-4 h-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("prompts")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("prompts.manage")}
-                              >
-                                <Book className="w-4 h-4" />
-                              </Button>
+                              {activeApp !== "mcode" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("prompts")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("prompts.manage")}
+                                >
+                                  <Book className="w-4 h-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"

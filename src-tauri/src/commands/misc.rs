@@ -3280,7 +3280,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     extra_env: &[(&str, String)],
     working_dir: &Path,
 ) -> Result<std::process::Output, String> {
-    if !VALID_TOOLS.contains(&tool) && tool != "mcode" {
+    if !VALID_TOOLS.contains(&tool) {
         return Err(format!("Unsupported tool: {tool}"));
     }
     if args.iter().any(|arg| {

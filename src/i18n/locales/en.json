@@ -914,7 +914,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "mcode": "MCode"
   },
   "pi": {
     "empty": {
@@ -3261,19 +3262,5 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
-  },
-  "mcode": {
-    "description": "Manage MiniMax Code credentials using your installed mcode CLI (0.4.5 or later). Changes apply to new MCode runs.",
-    "source": "MiniMax credential source",
-    "keySaved": "API key saved",
-    "noKey": "No API key",
-    "saveAndUse": "Save and use",
-    "useApiKey": "Use API Key",
-    "useTokenPlan": "Use Token Plan",
-    "test": "Test API Key",
-    "loginHint": "For Token Plan, sign in first with mcode login. Credentials stay in MCode’s own configuration.",
-    "working": "Working…",
-    "testPassed": "MiniMax API key test passed.",
-    "saved": "MCode settings saved."
   }
 }

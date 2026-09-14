@@ -20,6 +20,7 @@ mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
+mod mcode_config;
 mod mcp;
 mod model_capabilities;
 mod openclaw_config;
@@ -1369,7 +1370,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::manage_mcode,
             commands::get_providers,
             commands::get_current_provider,
             commands::add_provider,

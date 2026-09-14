@@ -51,7 +51,6 @@ import { ConnectivityCheckConfigPanel } from "@/components/usage/ConnectivityChe
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
-import { McodeSettings } from "@/components/settings/McodeSettings";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
@@ -310,7 +309,6 @@ export function SettingsPage({
                   className="space-y-6"
                 >
                   <AuthCenterPanel />
-                  <McodeSettings />
                 </motion.div>
               </TabsContent>
 

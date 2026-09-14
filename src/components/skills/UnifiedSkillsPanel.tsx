@@ -278,7 +278,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
-    if (!skills || !beginWrite()) return;
+    if (app === "mcode" || !skills || !beginWrite()) return;
 
     const ids = skills
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)

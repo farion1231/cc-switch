@@ -569,6 +569,9 @@ impl SkillService {
     pub fn get_app_skills_dir(app: &AppType) -> Result<PathBuf> {
         // 目录覆盖：优先使用用户在 settings.json 中配置的 override 目录
         match app {
+            AppType::Mcode => {
+                return Err(anyhow::anyhow!("MCode skill management is not supported"))
+            }
             AppType::Claude => {
                 if let Some(custom) = crate::settings::get_claude_override_dir() {
                     return Ok(custom.join("skills"));
@@ -616,6 +619,9 @@ impl SkillService {
         let home = crate::config::get_home_dir();
 
         Ok(match app {
+            AppType::Mcode => {
+                return Err(anyhow::anyhow!("MCode skill management is not supported"))
+            }
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -682,6 +688,9 @@ impl SkillService {
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
         for app in AppType::all() {
+            if app == AppType::Mcode {
+                continue;
+            }
             if matches!(app, AppType::ClaudeDesktop) {
                 continue;
             }
@@ -1035,6 +1044,9 @@ impl SkillService {
 
                     // 其他应用沿用既有的逐项容错行为。
                     for app in AppType::all() {
+                        if app == AppType::Mcode {
+                            continue;
+                        }
                         if matches!(app, AppType::Pi) {
                             continue;
                         }
@@ -1675,6 +1687,9 @@ impl SkillService {
 
         // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
         for app in AppType::all() {
+            if app == AppType::Mcode {
+                continue;
+            }
             let _ = Self::sync_to_app_unlocked(db, &app);
         }
         for (directory, deployment) in pi_deployments {
@@ -1877,6 +1892,9 @@ impl SkillService {
         // 收集所有待扫描的目录及其来源标签
         let mut scan_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
+            if app == AppType::Mcode {
+                continue;
+            }
             if let Ok(d) = Self::get_app_skills_dir(&app) {
                 scan_sources.push((d, app.as_str().to_string()));
             }
@@ -1949,6 +1967,9 @@ impl SkillService {
         // 收集所有候选搜索目录
         let mut search_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
+            if app == AppType::Mcode {
+                continue;
+            }
             if let Ok(d) = Self::get_app_skills_dir(&app) {
                 search_sources.push((d, app.as_str().to_string()));
             }
@@ -2463,7 +2484,7 @@ impl SkillService {
 
     /// Caller must hold either the Skills state read or write guard.
     fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::Pi | AppType::Mcode) {
             return Ok(());
         }
 
@@ -3397,6 +3418,9 @@ impl SkillService {
         }
 
         for app in AppType::all() {
+            if app == AppType::Mcode {
+                continue;
+            }
             let app_dir = match Self::get_app_skills_dir(&app) {
                 Ok(dir) => dir,
                 Err(_) => continue,
@@ -4136,6 +4160,9 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     // 扫描各应用目录
     for app in AppType::all() {
+        if app == AppType::Mcode {
+            continue;
+        }
         let app_dir = match SkillService::get_app_skills_dir(&app) {
             Ok(d) => d,
             Err(_) => continue,
